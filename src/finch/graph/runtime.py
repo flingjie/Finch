@@ -32,8 +32,9 @@ class GraphRuntime:
             existing = self.store.find_node(run_id, node.name, node.idempotency_key)
             if existing is not None and existing.status == "succeeded":
                 ctx.hydrate(node.writes, existing.output_json)
-                if node.succeeds_to:
-                    final_state = GraphState(node.succeeds_to)
+                resolved = self._resolve_terminal_state(node, ctx.outputs.get(node.writes, {}))
+                if resolved is not None:
+                    final_state = resolved
                 continue
             try:
                 projected = ctx.project(node.reads)
@@ -50,8 +51,9 @@ class GraphRuntime:
                 )
                 break
             ctx.put(node.writes, result.output)
-            if node.succeeds_to:
-                final_state = GraphState(node.succeeds_to)
+            resolved = self._resolve_terminal_state(node, result.output)
+            if resolved is not None:
+                final_state = resolved
 
         self.store.upsert_run(
             RunRecord(id=run_id, state=final_state.value, updated_at=_utcnow())
@@ -59,6 +61,16 @@ class GraphRuntime:
         run = self.store.get_run(run_id)
         assert run is not None
         return run
+
+    def _resolve_terminal_state(self, node: Node, output: dict) -> GraphState | None:
+        key = node.terminal_state_key
+        if key:
+            value = output.get(key)
+            if value:
+                return GraphState(value)
+        if node.succeeds_to:
+            return GraphState(node.succeeds_to)
+        return None
 
     def _safe_run(self, node: Node, ctx: dict) -> NodeResult:
         try:
