@@ -1,19 +1,20 @@
 """周复盘分析：从草稿 / 审核 / 反馈记录汇总批准率、跳过原因与已发布候选。"""
 
 from collections import Counter
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from finch.review.models import ReviewAction
+from finch.review.models import ReviewAction, ReviewDecision
 from finch.storage.repositories import DraftRepository, FeedbackRepository, ReviewRepository
 
 
 class WeeklyReport(BaseModel):
-    total_drafts: int = 0
+    reviewed_drafts: int = 0  # 时间窗内已作出审核决策的草稿数
     approved: int = 0
     revised: int = 0
     skipped: int = 0
-    approval_rate: float = 0.0
+    approval_rate: float = 0.0  # approved / reviewed_drafts（无决策则 0.0）
     skip_reasons: dict[str, int] = Field(default_factory=dict)
     published_draft_ids: list[str] = Field(default_factory=list)
     published_candidate_ids: list[str] = Field(default_factory=list)
@@ -23,17 +24,27 @@ def weekly_analysis(
     drafts: DraftRepository,
     reviews: ReviewRepository,
     feedbacks: FeedbackRepository,
+    *,
+    since: datetime | None = None,
 ) -> WeeklyReport:
-    """汇总本周（当前库中全部）草稿的审核与反馈数据。"""
+    """汇总 `since`（含）之后的审核与反馈数据；`since` 为 None 则汇总全部。
+
+    批准率分母是「已审核草稿」数（approved+revised+skipped），不含待审草稿，
+    否则待审会被误记为「未批准」而压低批准率。
+    """
     all_drafts = drafts.list_drafts()
-    # ReviewRepository 按 draft_id 幂等（id="rev_<draft_id>"），list_reviews 每稿一条最终决策。
-    decisions = {r.draft_id: r for r in reviews.list_reviews()}
+    decisions: dict[str, ReviewDecision] = {}
+    for r in reviews.list_reviews():
+        if since is not None and r.decided_at < since:
+            continue
+        decisions[r.draft_id] = r
 
     approved = sum(1 for r in decisions.values() if r.action == ReviewAction.APPROVE)
     revised = sum(1 for r in decisions.values() if r.action == ReviewAction.REVISE)
     skipped = sum(1 for r in decisions.values() if r.action == ReviewAction.SKIP)
+    reviewed = approved + revised + skipped
     skip_reasons = Counter(
-        r.reason or "other"
+        r.reason or "unknown"
         for r in decisions.values()
         if r.action == ReviewAction.SKIP
     )
@@ -42,17 +53,17 @@ def weekly_analysis(
     published_cands: list[str] = []
     for d in all_drafts:
         fb = feedbacks.get_feedback(d.id)
-        if fb is not None and fb.published_url:
+        if fb is not None and fb.published_url and (since is None or fb.recorded_at >= since):
             published_ids.append(d.id)
             if d.candidate_id:
                 published_cands.append(d.candidate_id)
 
     return WeeklyReport(
-        total_drafts=len(all_drafts),
+        reviewed_drafts=reviewed,
         approved=approved,
         revised=revised,
         skipped=skipped,
-        approval_rate=approved / len(all_drafts) if all_drafts else 0.0,
+        approval_rate=approved / reviewed if reviewed else 0.0,
         skip_reasons=dict(skip_reasons),
         published_draft_ids=published_ids,
         published_candidate_ids=published_cands,
@@ -62,7 +73,7 @@ def weekly_analysis(
 def render_weekly(report: WeeklyReport) -> str:
     """把 WeeklyReport 渲染为 Markdown。"""
     lines = ["# Finch Weekly Review", ""]
-    lines.append(f"- 草稿总数: {report.total_drafts}")
+    lines.append(f"- 已审核草稿: {report.reviewed_drafts}")
     lines.append(f"- 批准: {report.approved} / 修改: {report.revised} / 跳过: {report.skipped}")
     lines.append(f"- 批准率: {report.approval_rate:.0%}")
     if report.skip_reasons:
@@ -71,5 +82,5 @@ def render_weekly(report: WeeklyReport) -> str:
             lines.append(f"  - {reason}: {count}")
     if report.published_draft_ids:
         lines.append(f"- 已发布草稿: {len(report.published_draft_ids)}")
-        lines.append(f"- 产生对话的候选: {', '.join(report.published_candidate_ids)}")
+        lines.append(f"- 已发布候选: {', '.join(report.published_candidate_ids)}")
     return "\n".join(lines)

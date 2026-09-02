@@ -210,12 +210,14 @@ def run_daily() -> None:
 
 @run_app.command("weekly")
 def run_weekly() -> None:
-    """周复盘：汇总批准率、修改/跳过原因与已发布候选。"""
+    """周复盘：汇总最近 7 天的批准率、修改/跳过原因与已发布候选。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
+    since = datetime.now(UTC) - timedelta(days=7)
     report = weekly_analysis(
-        DraftRepository(store), ReviewRepository(store), FeedbackRepository(store)
+        DraftRepository(store), ReviewRepository(store), FeedbackRepository(store),
+        since=since,
     )
     typer.echo(render_weekly(report))
 
