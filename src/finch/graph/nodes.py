@@ -15,6 +15,9 @@ class Node(BaseModel):
     max_retries: int = 3
     idempotency_key: str = "default"
     side_effect: Literal["none", "read", "write"] = "none"
+    reads: list[str] = []
+    writes: str = ""
+    succeeds_to: str = ""
 
     def run(self, ctx: dict) -> NodeResult:
         return NodeResult(status="succeeded", output={})
