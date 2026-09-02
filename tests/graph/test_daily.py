@@ -9,6 +9,36 @@ from finch.storage.database import Store
 from finch.twitter.opencli_client import OpenCliClient
 
 
+def test_daily_nodes_has_nine_nodes(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    nodes = daily_nodes(
+        settings=Settings(repositories=["flingjie/FDE-Gym"]),
+        store=store,
+        gh=GhClient(),
+        opencli=OpenCliClient(),
+        extractor=Extractor(CodexRunner()),
+        runner=CodexRunner(),
+        commits_by_repo={"flingjie/FDE-Gym": []},
+        known_commit_urls=set(),
+        repo_is_private={"flingjie/FDE-Gym": False},
+    )
+    assert [n.name for n in nodes] == [
+        "preflight",
+        "sync_commits",
+        "extract_events",
+        "collect_tweets",
+        "recall",
+        "match_evidence",
+        "draft",
+        "critique",
+        "brief",
+    ]
+    assert nodes[6].reads == ["match_results", "evidence_cards", "candidates"]
+    assert nodes[8].writes == "brief"
+    assert nodes[8].terminal_state_key == "terminal_state"
+
+
 def test_daily_nodes_order_and_contract(tmp_path):
     store = Store(tmp_path / "db.sqlite")
     store.init()
@@ -26,13 +56,17 @@ def test_daily_nodes_order_and_contract(tmp_path):
     assert [n.name for n in nodes] == [
         "preflight", "sync_commits", "extract_events",
         "collect_tweets", "recall", "match_evidence",
+        "draft", "critique", "brief",
     ]
     assert nodes[4].reads == ["candidates", "evidence_cards"]
     assert nodes[5].writes == "match_results"
     assert nodes[5].reads == ["ranked_candidates", "evidence_cards", "candidates"]
+    assert nodes[7].reads == ["drafts", "match_results", "evidence_cards"]
 
 
 def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
+    from finch.content.critic import CritiqueResult
+    from finch.content.models import ClaimRef, Draft, DraftKind
     from finch.evidence.judge import BatchJudgeItem, BatchJudgeOutput
     from finch.evidence.models import Claim, ClaimConfidence, EngineeringEvent, JudgeScores
     from finch.graph.runtime import GraphRuntime
@@ -94,19 +128,38 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
 
         def run(self, prompt, output_model, **kw):
             self.calls += 1
-            return BatchJudgeOutput(
-                items=[
-                    BatchJudgeItem(
-                        candidate_id="t1",
-                        scores=JudgeScores(
-                            relevance=0.9,
-                            evidence_strength=0.9,
-                            incremental_value=0.9,
-                            discussability=0.9,
-                        ),
-                    )
-                ]
-            )
+            if output_model is BatchJudgeOutput:
+                return BatchJudgeOutput(
+                    items=[
+                        BatchJudgeItem(
+                            candidate_id="t1",
+                            scores=JudgeScores(
+                                relevance=0.9,
+                                evidence_strength=0.9,
+                                incremental_value=0.9,
+                                discussability=0.9,
+                            ),
+                        )
+                    ]
+                )
+            if output_model is CritiqueResult:
+                return CritiqueResult(passed=True, quality_score=0.9)
+            if output_model is Draft:
+                return Draft(
+                    id="d1",
+                    kind=DraftKind.REPLY,
+                    candidate_id="t1",
+                    language="en",
+                    body="token bucket rate limiting is now in place",
+                    claims=[
+                        ClaimRef(
+                            statement="token bucket rate limiting",
+                            evidence_card_id="ev_evt_problem",
+                            confidence=ClaimConfidence.VERIFIED,
+                        )
+                    ],
+                )
+            raise AssertionError(f"unexpected output_model: {output_model}")
 
     store = Store(tmp_path / "db.sqlite")
     store.init()
@@ -130,9 +183,10 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
         )
 
     run = GraphRuntime(store, build()).run()
-    assert run.state == "EVIDENCE_MATCHED"
-    assert runner.calls == 1
+    assert run.state == "WAITING_FOR_REVIEW"
+    calls_after_first = runner.calls
+    assert calls_after_first > 0
 
     run2 = GraphRuntime(store, build()).run(run_id=run.id)
-    assert run2.state == "EVIDENCE_MATCHED"
-    assert runner.calls == 1
+    assert run2.state == "WAITING_FOR_REVIEW"
+    assert runner.calls == calls_after_first

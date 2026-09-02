@@ -25,3 +25,7 @@ def test_node_context_contract_defaults():
     assert n.reads == []
     assert n.writes == ""
     assert n.succeeds_to == ""
+
+
+def test_node_terminal_state_key_default():
+    assert NoopNode(name="n").terminal_state_key == ""

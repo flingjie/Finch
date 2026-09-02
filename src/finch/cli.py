@@ -1,14 +1,17 @@
 """Finch CLI（spec 10）。"""
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import typer
 
 from .codex.runner import CodexRunner
+from .content.models import DailyBrief
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader
 from .github.gh_client import GhClient
 from .github.models import CommitDetail
+from .graph.context import parse_items
 from .graph.daily import daily_nodes
 from .graph.runtime import GraphRuntime
 from .settings import load_settings
@@ -148,7 +151,7 @@ def twitter_diagnose() -> None:
 
 @run_app.command("daily")
 def run_daily() -> None:
-    """运行每日 Graph：同步 commit → 提取证据卡 → 收集推文 → 匹配证据."""
+    """运行每日 Graph：同步 commit → 提取证据卡 → 收集推文 → 匹配证据 → 撰写与审查草稿。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -181,6 +184,11 @@ def run_daily() -> None:
     )
     run = GraphRuntime(store, nodes).run()
     typer.echo(run.state)
+    brief_record = store.find_node(run.id, "brief", "default")
+    if brief_record is not None:
+        briefs = parse_items(json.loads(brief_record.output_json), DailyBrief)
+        if briefs:
+            typer.echo(briefs[0].body)
 
 
 if __name__ == "__main__":
