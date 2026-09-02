@@ -18,7 +18,9 @@ def _significant_words(msg: str) -> set[str]:
     return {w for w in words if w not in _STOPWORDS}
 
 
-def group_commits(commits: list[CommitDetail], *, window_minutes: int = 90) -> list[list[CommitDetail]]:
+def group_commits(commits: list[CommitDetail],
+                  *,
+                  window_minutes: int = 90) -> list[list[CommitDetail]]:
     """把时间窗口内、共享有效词或文件路径的 Commit 聚合为工程事件候选。"""
     ordered = sorted(commits, key=lambda c: c.author_date)
     groups: list[list[CommitDetail]] = []

@@ -13,13 +13,32 @@ def _detail(files, message="feat: x"):
 
 
 def test_is_noise_lockfile():
-    d = _detail([CommitFile(filename="package-lock.json", status="modified", additions=1, deletions=1)])
+    d = _detail(
+        [
+            CommitFile(
+                filename="package-lock.json",
+                status="modified",
+                additions=1,
+                deletions=1,
+            )
+        ]
+    )
     assert is_noise(d) is True
 
 
 def test_is_noise_format_only():
-    d = _detail([CommitFile(filename="src/a.ts", status="modified", additions=0, deletions=0, patch=" ")],
-                message="chore: format with prettier")
+    d = _detail(
+        [
+            CommitFile(
+                filename="src/a.ts",
+                status="modified",
+                additions=0,
+                deletions=0,
+                patch=" ",
+            )
+        ],
+        message="chore: format with prettier",
+    )
     assert is_noise(d) is True
 
 
@@ -29,9 +48,18 @@ def test_is_noise_rename():
 
 
 def test_not_noise_real_change():
-    d = _detail([CommitFile(filename="src/graph/runtime.ts", status="modified", additions=10, deletions=4,
-                            patch="+export function run")],
-                message="feat: node-ize orchestrator")
+    d = _detail(
+        [
+            CommitFile(
+                filename="src/graph/runtime.ts",
+                status="modified",
+                additions=10,
+                deletions=4,
+                patch="+export function run",
+            )
+        ],
+        message="feat: node-ize orchestrator",
+    )
     assert is_noise(d) is False
 
 

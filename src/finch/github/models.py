@@ -1,6 +1,7 @@
 """GitHub 数据模型与 `gh` JSON 归一化（spec 5.2 / 7）。"""
 
 from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 

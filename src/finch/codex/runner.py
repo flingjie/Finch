@@ -11,10 +11,15 @@ from .structured_output import model_to_json_schema, parse_checked
 
 
 class CodexRunner:
-    def run(self, prompt: str, output_model: type[BaseModel], *, timeout: float = 180.0) -> BaseModel:
+    def run(self,
+            prompt: str,
+            output_model: type[BaseModel],
+            *,
+            timeout: float = 180.0) -> BaseModel:
         """非交互调用 `codex exec`，把 prompt 经 stdin 传入，输出经 JSON Schema 校验。
 
-        Raises RuntimeError on subprocess failure or missing output; StructuredOutputError on validation failure.
+        Raises RuntimeError on subprocess failure or missing output;
+        StructuredOutputError on validation failure.
         """
         with tempfile.TemporaryDirectory() as td:
             schema_path = Path(td) / "schema.json"
@@ -31,7 +36,9 @@ class CodexRunner:
             ]
             r = _run(argv, timeout=timeout, stdin=prompt)
             if not r["ok"]:
-                raise RuntimeError(f"codex exec failed: {r['stderr'].strip() or r['stdout'].strip()}")
+                raise RuntimeError(
+                    f"codex exec failed: {r['stderr'].strip() or r['stdout'].strip()}"
+                )
             if not out_path.exists():
                 raise RuntimeError("codex exec produced no output file")
             data = json.loads(out_path.read_text())

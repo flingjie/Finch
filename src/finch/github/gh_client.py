@@ -76,6 +76,7 @@ class GhClient:
         data = self._gh_json(
             ["gh", "repo", "view", repo, "--json", "nameWithOwner,defaultBranchRef,url,isPrivate"]
         )
+        assert isinstance(data, dict)
         return parse_repo_view(data)
 
     def list_commits(self, repo: str, since: str, per_page: int = 100) -> list[CommitSummary]:
@@ -84,12 +85,20 @@ class GhClient:
             ["gh", "api", "--paginate", "-H", "Accept: application/vnd.github+json", url],
             timeout=60.0,
         )
+        assert isinstance(data, list)
         return [parse_commit_summary(item) for item in data]
 
     def commit_detail(self, repo: str, sha: str) -> CommitDetail:
         data = self._gh_json(
-            ["gh", "api", "-H", "Accept: application/vnd.github+json", f"repos/{repo}/commits/{sha}"]
+            [
+                "gh",
+                "api",
+                "-H",
+                "Accept: application/vnd.github+json",
+                f"repos/{repo}/commits/{sha}",
+            ]
         )
+        assert isinstance(data, dict)
         return parse_commit_detail(data)
 
     def pr_view(self, repo: str, number: int) -> PullRequest:
@@ -97,4 +106,5 @@ class GhClient:
             ["gh", "pr", "view", str(number), "--repo", repo,
              "--json", "number,title,body,url,state,commits,files,reviews,comments"]
         )
+        assert isinstance(data, dict)
         return parse_pull_request(data)

@@ -3,10 +3,10 @@ import pytest
 from pydantic import ValidationError
 
 from finch.evidence.models import (
+    Claim,
     ClaimConfidence,
     EngineeringEvent,
     EvidenceCard,
-    Claim,
     Source,
 )
 

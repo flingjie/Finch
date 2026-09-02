@@ -22,19 +22,35 @@ def test_groups_by_message_prefix():
 
 def test_does_not_group_unrelated():
     commits = [
-        _c("a" * 40, "feat: add telemetry", [CommitFile(filename="src/telemetry.ts", status="modified")],
-           "2026-09-01T05:00:00Z"),
-        _c("b" * 40, "docs: update readme", [CommitFile(filename="README.md", status="modified")],
-           "2026-09-01T07:00:00Z"),
+        _c(
+            "a" * 40,
+            "feat: add telemetry",
+            [CommitFile(filename="src/telemetry.ts", status="modified")],
+            "2026-09-01T05:00:00Z",
+        ),
+        _c(
+            "b" * 40,
+            "docs: update readme",
+            [CommitFile(filename="README.md", status="modified")],
+            "2026-09-01T07:00:00Z",
+        ),
     ]
     assert len(group_commits(commits)) == 2
 
 
 def test_does_not_group_same_type_different_topic():
     commits = [
-        _c("a" * 40, "feat: add telemetry", [CommitFile(filename="src/telemetry.ts", status="modified")],
-           "2026-09-01T05:00:00Z"),
-        _c("b" * 40, "feat: add difficulty statistics", [CommitFile(filename="src/stats.ts", status="modified")],
-           "2026-09-01T05:30:00Z"),
+        _c(
+            "a" * 40,
+            "feat: add telemetry",
+            [CommitFile(filename="src/telemetry.ts", status="modified")],
+            "2026-09-01T05:00:00Z",
+        ),
+        _c(
+            "b" * 40,
+            "feat: add difficulty statistics",
+            [CommitFile(filename="src/stats.ts", status="modified")],
+            "2026-09-01T05:30:00Z",
+        ),
     ]
     assert len(group_commits(commits)) == 2

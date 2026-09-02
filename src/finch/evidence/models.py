@@ -1,12 +1,12 @@
 """Evidence 数据模型（spec 7.1/7.2/7.4）。"""
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class ClaimConfidence(str, Enum):
+class ClaimConfidence(StrEnum):
     VERIFIED = "VERIFIED"
     SUPPORTED = "SUPPORTED"
     INFERRED = "INFERRED"
@@ -15,7 +15,11 @@ class ClaimConfidence(str, Enum):
 
     @property
     def assertable(self) -> bool:
-        return self in {ClaimConfidence.VERIFIED, ClaimConfidence.SUPPORTED, ClaimConfidence.USER_CONFIRMED}
+        return self in {
+            ClaimConfidence.VERIFIED,
+            ClaimConfidence.SUPPORTED,
+            ClaimConfidence.USER_CONFIRMED
+        }
 
 
 class Claim(BaseModel):

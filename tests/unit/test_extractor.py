@@ -35,7 +35,7 @@ def test_build_cards_binds_sources_and_confidence():
             result=Claim(statement="r", confidence=ClaimConfidence.VERIFIED),
         )
     ]
-    cards = build_cards(events, repo="flingjie/FDE-Gym")
+    cards = build_cards(events)
     # problem + result → verified 卡片；decision → inferred 卡片
     assert any(c.confidence is ClaimConfidence.VERIFIED for c in cards)
     assert any(c.confidence is ClaimConfidence.INFERRED for c in cards)

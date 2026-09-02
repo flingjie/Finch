@@ -15,4 +15,6 @@ def parse_checked(data: dict, model: type[BaseModel]) -> BaseModel:
     try:
         return model.model_validate(data)
     except ValidationError as exc:
-        raise StructuredOutputError(f"invalid structured output for {model.__name__}: {exc}") from exc
+        raise StructuredOutputError(
+            f"invalid structured output for {model.__name__}: {exc}"
+        ) from exc

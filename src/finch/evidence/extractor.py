@@ -1,11 +1,12 @@
 """从 Commit 组提取 Engineering Event 并生成 Evidence Card（spec 2.2）。"""
 
 from pathlib import Path
+from typing import cast
 
 from ..codex.runner import CodexRunner
 from ..github.change_grouper import group_commits
 from ..github.models import CommitDetail
-from .models import ClaimConfidence, EngineeringEvent, EvidenceCard, Source
+from .models import EngineeringEvent, EvidenceCard, Source
 
 _PROMPT_PATH = Path("prompts/extract-engineering-event.md")
 
@@ -27,17 +28,17 @@ class Extractor:
         events: list[EngineeringEvent] = []
         for group in group_commits(commits):
             prompt = _PROMPT_PATH.read_text().replace("{commits}", _render_commits(group))
-            event = self.runner.run(prompt, EngineeringEvent)
+            event = cast(EngineeringEvent, self.runner.run(prompt, EngineeringEvent))
             if event.repository != repo:
                 event = event.model_copy(update={"repository": repo})
             events.append(event)
         return events
 
 
-def build_cards(events: list[EngineeringEvent], repo: str) -> list[EvidenceCard]:
+def build_cards(events: list[EngineeringEvent]) -> list[EvidenceCard]:
     cards: list[EvidenceCard] = []
     for ev in events:
-        base = f"https://github.com/{repo}/commit/"
+        base = f"https://github.com/{ev.repository}/commit/"
         for claim, label in ((ev.problem, "problem"), (ev.result, "result")):
             cards.append(EvidenceCard(
                 id=f"ev_{ev.id}_{label}",
