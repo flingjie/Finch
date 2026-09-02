@@ -1,16 +1,24 @@
-from finch.graph.events import NodeResult
 from finch.graph.pipeline import (
-    make_collect_node, make_extract_node, make_preflight_node, make_sync_node,
+    make_collect_node,
+    make_extract_node,
+    make_preflight_node,
+    make_sync_node,
 )
 from finch.graph.runtime import GraphRuntime
 from finch.storage.database import Store
 
+
 def _store(tmp_path):
-    s = Store(tmp_path / "db.sqlite"); s.init(); return s
+    s = Store(tmp_path / "db.sqlite")
+    s.init()
+    return s
+
 
 class FakeGh:
     def __init__(self, version="gh 1", auth_ok=True, private=False):
-        self._version = version; self._auth_ok = auth_ok; self._private = private
+        self._version = version
+        self._auth_ok = auth_ok
+        self._private = private
         self.synced = False
     def version(self): return self._version
     def auth_status(self): return {"ok": self._auth_ok, "exit_code": 0, "detail": "ok"}
@@ -44,7 +52,10 @@ def test_extract_writes_cards_envelope(tmp_path, monkeypatch):
         def extract(self, commits, repo):
             return [EngineeringEvent(
                 id="evt", repository=repo, commits=["abc123"],
-                problem=Claim(statement="false positive in eval", confidence=ClaimConfidence.VERIFIED),
+                problem=Claim(
+                    statement="false positive in eval",
+                    confidence=ClaimConfidence.VERIFIED,
+                ),
                 decision=Claim(statement="add checks", confidence=ClaimConfidence.INFERRED),
                 result=Claim(statement="tests pass", confidence=ClaimConfidence.VERIFIED),
             )]
@@ -67,6 +78,7 @@ def test_extract_writes_cards_envelope(tmp_path, monkeypatch):
 
 def test_sync_and_collect_states(tmp_path):
     from datetime import UTC, datetime
+
     from finch.twitter.models import DiscussionCandidate
 
     flags = {"synced": False}

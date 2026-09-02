@@ -39,10 +39,9 @@ def judge_batch(
     """
     if not ranked:
         return BatchJudgeOutput(items=[])
-    prompt = (
-        _PROMPT_PATH.read_text()
-        .replace("{pairs}", _to_json_text(ranked))
-        .replace("{candidates}", _to_json_text(candidates))
-        .replace("{cards}", _to_json_text(cards))
+    prompt = _PROMPT_PATH.read_text().format(
+        pairs=_to_json_text(ranked),
+        candidates=_to_json_text(candidates),
+        cards=_to_json_text(cards),
     )
     return cast(BatchJudgeOutput, runner.run(prompt, BatchJudgeOutput))
