@@ -26,6 +26,13 @@ def test_hydrate_from_output_json():
     assert ctx.project(["evidence_cards"])["evidence_cards"]["items"][0]["id"] == "ev_1"
 
 
+def test_hydrate_empty_output_still_stores_key():
+    ctx = GraphContext()
+    ctx.hydrate("evidence_cards", "{}")
+    # 空输出也必须占位，否则下游 project 会误报 MISSING_CONTEXT
+    assert ctx.project(["evidence_cards"])["evidence_cards"] == {}
+
+
 def test_items_payload_roundtrip():
     payload = items_payload([Item(id="a")])
     assert parse_items(payload, Item)[0].id == "a"

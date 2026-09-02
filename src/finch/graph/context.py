@@ -38,8 +38,7 @@ class GraphContext:
         else:
             parsed = json.loads(output_json)
 
-        if parsed:
-            self.outputs[writes] = parsed
+        self.outputs[writes] = parsed
 
     def project(self, reads: list[str]) -> dict[str, dict]:
         """Project context for node reads.
