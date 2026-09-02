@@ -1,0 +1,47 @@
+[
+  {
+    "id": "2095030314678522186",
+    "author": "killix",
+    "bio": "",
+    "text": "Published agent evals run on repos that fit in one context window. The internal ones run on monorepos where a change lands three teams away. Neither counts the runs you kill at minute six. I killed four yesterday and the success rate I report to myself didn't move.",
+    "created_at": "Wed Sep 02 06:05:25 +0000 2026",
+    "likes": 0,
+    "views": "6",
+    "url": "https://x.com/i/status/2095030314678522186",
+    "has_media": false,
+    "media_urls": [],
+    "media_posters": [],
+    "card": null,
+    "quoted_tweet": null
+  },
+  {
+    "id": "2094953486269993067",
+    "author": "MrGeorgeCheng",
+    "bio": "",
+    "text": "Open weights do not make an AI stack portable. DeepSeek's new model ships vLLM and SGLang paths, which exposes the real test: run the same agent evals on both. If tools, vision, or recovery diverge, your inference engine is the lock in.",
+    "created_at": "Wed Sep 02 01:00:08 +0000 2026",
+    "likes": 0,
+    "views": "9",
+    "url": "https://x.com/i/status/2094953486269993067",
+    "has_media": false,
+    "media_urls": [],
+    "media_posters": [],
+    "card": null,
+    "quoted_tweet": null
+  },
+  {
+    "id": "2094892570379767849",
+    "author": "killix",
+    "bio": "",
+    "text": "Agent evals count the runs that finished. We count the ones we threw out: a run gets marked discarded if a human edits the same file by hand within 24h of it landing. That bucket is bigger than our failure bucket, and no published eval has a column for it.",
+    "created_at": "Tue Sep 01 20:58:04 +0000 2026",
+    "likes": 0,
+    "views": "8",
+    "url": "https://x.com/i/status/2094892570379767849",
+    "has_media": false,
+    "media_urls": [],
+    "media_posters": [],
+    "card": null,
+    "quoted_tweet": null
+  }
+]

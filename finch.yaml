@@ -4,7 +4,23 @@ repositories:
 twitter:
   daily_limit: 100
   per_query_limit: 20
-  queries: []
+  queries:
+    - id: agent_harness_live
+      text: '"agent harness" OR "agent loop"'
+      filter: live
+      priority: 5
+    - id: agent_eval_live
+      text: '"agent evals" OR "trajectory evaluation"'
+      filter: live
+      priority: 5
+    - id: context_engineering
+      text: '"context engineering" agent'
+      filter: live
+      priority: 4
+    - id: tool_failure
+      text: '"tool calling" failure agent'
+      filter: live
+      priority: 4
 
 quality_gates:
   max_daily_replies: 5
