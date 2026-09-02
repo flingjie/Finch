@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, cast
 
 from finch.codex.runner import CodexRunner
 from finch.content.claims import validate_draft
-from finch.content.models import Draft
+from finch.content.models import Draft, DraftKind
 from finch.evidence.models import EvidenceCard, MatchResult
 from finch.twitter.models import DiscussionCandidate
 
@@ -62,7 +62,9 @@ def write_reply(
     draft = cast(Draft, runner.run(prompt, Draft))
     if validate_draft(draft, card_ids=set(match.card_ids)):
         return None
-    return draft
+    return draft.model_copy(
+        update={"kind": DraftKind.REPLY, "candidate_id": match.candidate_id, "language": "en"}
+    )
 
 
 def write_original(
@@ -73,7 +75,9 @@ def write_original(
     draft = cast(Draft, runner.run(prompt, Draft))
     if validate_draft(draft, card_ids={card.id for card in cards}):
         return None
-    return draft
+    return draft.model_copy(
+        update={"kind": DraftKind.ORIGINAL, "candidate_id": None, "language": "zh"}
+    )
 
 
 def rewrite(

@@ -53,6 +53,19 @@ def test_write_reply_none_on_invalid_claim():
     assert write_reply(r, _match(), _candidate(), {"ev_1": _card()}) is None
 
 
+def test_write_reply_stamps_metadata():
+    # 模型返回的 Draft 缺 candidate_id —— write_reply 必须盖章，否则 reply 被误判为 original
+    unstamped = Draft(id="d", kind=DraftKind.REPLY, body="hi",
+                      claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
+                                       confidence=ClaimConfidence.VERIFIED)])
+    r = FakeRunner(unstamped)
+    d = write_reply(r, _match(), _candidate(), {"ev_1": _card()})
+    assert d is not None
+    assert d.candidate_id == "t1"
+    assert d.kind == DraftKind.REPLY
+    assert d.language == "en"
+
+
 def test_write_reply_prompt_orders_instructions_before_candidate_data():
     captured: list[str] = []
 
@@ -83,6 +96,19 @@ def test_write_original_none_on_invalid_claim():
                                               confidence=ClaimConfidence.VERIFIED)])
     r = FakeRunner(bad)
     assert write_original(r, [_card()]) is None
+
+
+def test_write_original_stamps_metadata():
+    # 模型返回的 Draft 元数据错误 —— write_original 必须覆盖为 original/None/zh
+    wrong = Draft(id="d", kind=DraftKind.REPLY, candidate_id="t1", body="日记",
+                  claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
+                                   confidence=ClaimConfidence.VERIFIED)])
+    r = FakeRunner(wrong)
+    d = write_original(r, [_card()])
+    assert d is not None
+    assert d.kind == DraftKind.ORIGINAL
+    assert d.candidate_id is None
+    assert d.language == "zh"
 
 
 def test_rewrite_regenerates_body():
