@@ -18,6 +18,7 @@ class Node(BaseModel):
     reads: list[str] = []
     writes: str = ""
     succeeds_to: str = ""
+    terminal_state_key: str = ""   # 非空则成功/重放时从 output[key] 读 GraphState.value
 
     def run(self, ctx: dict) -> NodeResult:
         return NodeResult(status="succeeded", output={})

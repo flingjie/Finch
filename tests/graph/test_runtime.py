@@ -112,3 +112,23 @@ def test_blocked_error_sets_blocked_state(tmp_path):
             return NodeResult(status="failed", error_code="BLOCKED", retryable=False)
     run = GraphRuntime(_store(tmp_path), [Blocked(name="pre")]).run()
     assert run.state == "BLOCKED"
+
+
+class DynNode(Node):
+    def run(self, ctx: dict) -> NodeResult:
+        return NodeResult(status="succeeded", output={"terminal_state": "WAITING_FOR_REVIEW"})
+
+
+def test_terminal_state_key_overrides_succeeds_to(tmp_path):
+    node = DynNode(name="n", succeeds_to="DRAFTED", terminal_state_key="terminal_state")
+    run = GraphRuntime(_store(tmp_path), [node]).run()
+    assert run.state == "WAITING_FOR_REVIEW"
+
+
+def test_terminal_state_key_replay(tmp_path):
+    store = _store(tmp_path)
+    node = DynNode(name="n", writes="brief", terminal_state_key="terminal_state")
+    r1 = GraphRuntime(store, [node]).run()
+    assert r1.state == "WAITING_FOR_REVIEW"
+    r2 = GraphRuntime(store, [node]).run(run_id=r1.id)
+    assert r2.state == "WAITING_FOR_REVIEW"  # 从持久化 output 重放，非回落 succeeds_to
