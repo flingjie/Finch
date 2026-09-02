@@ -1,10 +1,12 @@
-"""Evidence Card 仓储（spec 7.1/7.2）."""
+"""Evidence Card 仓储（spec 7.1/7.2）与草稿/审核/反馈仓储（Phase 6）。"""
 
 from datetime import UTC, datetime
 
 from sqlmodel import Field, Session, SQLModel, select
 
+from finch.content.models import Draft
 from finch.evidence.models import EvidenceCard
+from finch.review.models import Feedback, ReviewDecision
 from finch.storage.database import Store
 
 
@@ -50,3 +52,129 @@ class EvidenceRepository:
             stmt = select(EvidenceCardRecord)
             records = list(session.exec(stmt))
             return [EvidenceCard.model_validate_json(r.payload_json) for r in records]
+
+
+class DraftRecord(SQLModel, table=True):
+    """Draft 持久化模型（C2）。"""
+
+    id: str = Field(primary_key=True)  # = draft.id
+    kind: str  # DraftKind.value
+    candidate_id: str | None = None
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class DraftRepository:
+    """Draft 仓储（C2）。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def upsert_draft(self, draft: Draft) -> None:
+        """按 id merge 插入或更新 Draft（幂等）。"""
+        payload_json = draft.model_dump_json()
+        record = DraftRecord(
+            id=draft.id,
+            kind=draft.kind.value,
+            candidate_id=draft.candidate_id,
+            payload_json=payload_json,
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def get_draft(self, draft_id: str) -> Draft | None:
+        """按 id 获取 Draft，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            record = session.get(DraftRecord, draft_id)
+            if record is None:
+                return None
+            return Draft.model_validate_json(record.payload_json)
+
+    def list_drafts(self) -> list[Draft]:
+        """列出所有 Draft。"""
+        with Session(self.store.engine) as session:
+            stmt = select(DraftRecord)
+            records = list(session.exec(stmt))
+            return [Draft.model_validate_json(r.payload_json) for r in records]
+
+
+class ReviewRecord(SQLModel, table=True):
+    """ReviewDecision 持久化模型（C2）。"""
+
+    id: str = Field(primary_key=True)  # = decision.id（"rev_<draft_id>"）
+    draft_id: str = Field(index=True)
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ReviewRepository:
+    """ReviewDecision 仓储（C2）。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def save_review(self, decision: ReviewDecision) -> None:
+        """按 id merge 保存 ReviewDecision（幂等，可重放）。"""
+        payload_json = decision.model_dump_json()
+        record = ReviewRecord(
+            id=decision.id,
+            draft_id=decision.draft_id,
+            payload_json=payload_json,
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def get_review(self, draft_id: str) -> ReviewDecision | None:
+        """按 draft_id 获取 ReviewDecision，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            stmt = select(ReviewRecord).where(ReviewRecord.draft_id == draft_id)
+            record = session.exec(stmt).first()
+            if record is None:
+                return None
+            return ReviewDecision.model_validate_json(record.payload_json)
+
+    def list_reviews(self) -> list[ReviewDecision]:
+        """列出所有 ReviewDecision。"""
+        with Session(self.store.engine) as session:
+            stmt = select(ReviewRecord)
+            records = list(session.exec(stmt))
+            return [ReviewDecision.model_validate_json(r.payload_json) for r in records]
+
+
+class FeedbackRecord(SQLModel, table=True):
+    """Feedback 持久化模型（C2）。"""
+
+    id: str = Field(primary_key=True)  # = feedback.draft_id
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class FeedbackRepository:
+    """Feedback 仓储（C2）。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def save_feedback(self, feedback: Feedback) -> None:
+        """按 id merge 保存 Feedback（幂等）。"""
+        payload_json = feedback.model_dump_json()
+        record = FeedbackRecord(
+            id=feedback.draft_id,
+            payload_json=payload_json,
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def get_feedback(self, draft_id: str) -> Feedback | None:
+        """按 draft_id 获取 Feedback，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            record = session.get(FeedbackRecord, draft_id)
+            if record is None:
+                return None
+            return Feedback.model_validate_json(record.payload_json)
