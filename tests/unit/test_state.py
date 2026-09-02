@@ -28,3 +28,8 @@ def test_abnormal_flag():
 def test_can_transition_to_abnormal_from_anywhere():
     assert can_transition(GraphState.CREATED, GraphState.FAILED)
     assert can_transition(GraphState.DRAFTED, GraphState.BLOCKED)
+
+
+def test_can_transition_review_fork():
+    assert can_transition(GraphState.WAITING_FOR_REVIEW, GraphState.APPROVED)
+    assert can_transition(GraphState.WAITING_FOR_REVIEW, GraphState.SKIPPED)

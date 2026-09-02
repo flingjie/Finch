@@ -19,7 +19,7 @@ def test_replay_from_node_reuses_prior_results(tmp_path):
     run = GraphRuntime(store, nodes).run()
     assert run.state == "COMPLETED"
 
-    # 从 b 重放：a 跳过，b、c 重新执行，仍 COMPLETED。
+    # 从 b 重放：已成功节点全部复用（幂等），不重复写入，仍 COMPLETED。
     run2 = replay(store, nodes, run_id=run.id, from_node="b")
     assert run2.state == "COMPLETED"
     assert len(store.list_nodes(run.id)) == 3  # 复用 a，不重复插入

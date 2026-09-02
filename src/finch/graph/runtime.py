@@ -34,6 +34,7 @@ class GraphRuntime:
             result = self._safe_run(node)
             self._persist_node(run_id, node, result)
 
+            # Phase 1 不自动重试；retryable/max_retries 留待后续 Phase 实现重试策略。
             if result.status == "failed":
                 final_state = GraphState.FAILED
                 break

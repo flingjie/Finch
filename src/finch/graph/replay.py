@@ -1,4 +1,4 @@
-"""Replay 骨架：从指定节点安全重放，复用已完成节点记录。"""
+"""Replay 骨架：从指定节点安全重放，复用已完成节点记录，不重复写入。"""
 
 from ..storage.database import RunRecord, Store
 from .nodes import Node
@@ -11,7 +11,7 @@ def replay(
     run_id: str,
     from_node: str | None = None,
 ) -> RunRecord:
-    """复用 from_node 之前已成功的节点，重新执行其后的节点。"""
+    """复用已完成节点（幂等，不重复写入）；from_node 仅缩小考察的节点范围。"""
     if from_node is None:
         # 全量重放：复用全部已成功节点，等价于恢复运行。
         return GraphRuntime(store, nodes).run(run_id=run_id)

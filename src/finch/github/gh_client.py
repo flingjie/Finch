@@ -21,6 +21,8 @@ def _run(argv: list[str], timeout: float) -> dict:
         }
     except subprocess.TimeoutExpired:
         return {"ok": False, "exit_code": None, "stdout": "", "stderr": "timeout"}
+    except FileNotFoundError:
+        return {"ok": False, "exit_code": None, "stdout": "", "stderr": "not found"}
 
 
 class GhClient:

@@ -59,10 +59,12 @@ _MAIN_CHAIN: list[GraphState] = [
 
 
 def can_transition(src: GraphState, dst: GraphState) -> bool:
-    """异常状态可从任意非终态迁入；其余按主链前进。"""
+    """异常状态可从任意非终态迁入；其余按主链或审核分叉前进。"""
     if src.is_terminal:
         return False
     if dst.is_abnormal:
+        return True
+    if src == GraphState.WAITING_FOR_REVIEW and dst in {GraphState.APPROVED, GraphState.SKIPPED}:
         return True
     return advance(src) == dst
 
@@ -73,10 +75,4 @@ def advance(state: GraphState) -> GraphState:
         return state
     if state == GraphState.SKIPPED:
         return GraphState.PUBLISHED
-    try:
-        idx = _MAIN_CHAIN.index(state)
-    except ValueError:
-        return state
-    if idx + 1 >= len(_MAIN_CHAIN):
-        return GraphState.COMPLETED
-    return _MAIN_CHAIN[idx + 1]
+    return _MAIN_CHAIN[_MAIN_CHAIN.index(state) + 1]

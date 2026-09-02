@@ -24,3 +24,9 @@ def test_opencli_client_returns_diagnostic_dict(monkeypatch):
     c = OpenCliClient()
     r = c.doctor()
     assert r == {"ok": True, "exit_code": 0, "detail": "ok"}
+
+
+def test_run_missing_binary_returns_not_found():
+    r = _run(["definitely_not_a_real_binary_xyz"], timeout=5.0)
+    assert r["ok"] is False
+    assert r["stderr"] == "not found"
