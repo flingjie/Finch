@@ -35,6 +35,9 @@ class Store:
         self.engine = create_engine(f"sqlite:///{self.db_path}")
 
     def init(self) -> None:
+        # Import repositories module to register EvidenceCardRecord before create_all
+        from finch.storage import repositories as _
+
         SQLModel.metadata.create_all(self.engine)
 
     def upsert_run(self, record: RunRecord) -> None:
