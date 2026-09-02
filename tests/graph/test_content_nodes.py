@@ -208,6 +208,70 @@ def test_critique_node_drops_unfixable_draft(tmp_path):
     assert rec.output_json.replace(" ", "") == '{"items":[]}'
 
 
+def test_critique_node_keeps_draft_fixed_by_single_rewrite(tmp_path):
+    calls = {"critique": 0, "rewrite": 0}
+    fixed = _reply_draft().model_copy(update={"body": "fixed"})
+
+    def critique(runner, draft, cards_by_id):
+        calls["critique"] += 1
+        if calls["critique"] == 1:
+            return CritiqueResult(passed=False, quality_score=0.5)
+        return CritiqueResult(passed=True, quality_score=0.8)
+
+    def rewrite(runner, draft, critique_result, cards_by_id):
+        calls["rewrite"] += 1
+        return fixed
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="draft", writes="drafts", seed=items_payload([_reply_draft()])),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        make_critique_node(
+            CodexRunner(), rewrite, critique, QualityGates(max_rewrite_rounds=1)
+        ),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "CRITIQUED"
+    rec = store.find_node(run.id, "critique", "default")
+    assert rec is not None
+    assert "fixed" in rec.output_json
+    assert calls == {"critique": 2, "rewrite": 1}
+
+
+def test_critique_node_keeps_draft_fixed_by_second_rewrite(tmp_path):
+    calls = {"critique": 0, "rewrite": 0}
+    fixed = _reply_draft().model_copy(update={"body": "fixed"})
+
+    def critique(runner, draft, cards_by_id):
+        calls["critique"] += 1
+        if calls["critique"] < 3:
+            return CritiqueResult(passed=False, quality_score=0.5)
+        return CritiqueResult(passed=True, quality_score=0.8)
+
+    def rewrite(runner, draft, critique_result, cards_by_id):
+        calls["rewrite"] += 1
+        if calls["rewrite"] < 2:
+            return draft
+        return fixed
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="draft", writes="drafts", seed=items_payload([_reply_draft()])),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        make_critique_node(
+            CodexRunner(), rewrite, critique, QualityGates(max_rewrite_rounds=2)
+        ),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "CRITIQUED"
+    rec = store.find_node(run.id, "critique", "default")
+    assert rec is not None
+    assert "fixed" in rec.output_json
+    assert calls == {"critique": 3, "rewrite": 2}
+
+
 def test_critique_node_warns_on_invalid_rewritten_claims():
     invalid = _reply_draft().model_copy(
         update={

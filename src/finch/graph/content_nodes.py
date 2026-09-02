@@ -80,7 +80,7 @@ def make_critique_node(
     critique: CritiqueFn,
     gates: QualityGates,
 ) -> Node:
-    """草稿审查节点：对每条 draft 做有界重写循环，只保留达标草稿。"""
+    """草稿审查节点：对每条 draft 最多 max_rewrite_rounds 次重写，每次重写后再审查。"""
 
     class CritiqueNode(Node):
         def run(self, ctx: dict) -> NodeResult:
@@ -107,29 +107,24 @@ def make_critique_node(
                     card_ids = set(cards_by_id)
 
                 current = draft
-                passed = False
-                invalid = False
-                for _ in range(gates.max_rewrite_rounds):
+                for i in range(gates.max_rewrite_rounds + 1):
                     result = critique(runner, current, cards_by_id)
                     if evaluate_passed(result, gates):
-                        passed = True
+                        kept.append(current)
+                        break
+                    if i == gates.max_rewrite_rounds:
+                        warnings.append(
+                            f"draft {current.id} failed critique after "
+                            f"{gates.max_rewrite_rounds} rewrites"
+                        )
                         break
                     current = rewrite(runner, current, result, cards_by_id)
                     violations = validate_draft(current, card_ids=card_ids)
                     if violations:
-                        invalid = True
                         warnings.append(
-                            f"draft {draft.id}: rewrite produced invalid claims: {violations[0]}"
+                            f"draft {current.id} rewrite produced invalid claims: {violations}"
                         )
                         break
-
-                if passed:
-                    kept.append(current)
-                elif not invalid:
-                    warnings.append(
-                        f"draft {draft.id}: did not pass critique after "
-                        f"{gates.max_rewrite_rounds} rounds"
-                    )
 
             return NodeResult(
                 status="succeeded",
