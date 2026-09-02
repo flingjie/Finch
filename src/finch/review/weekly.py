@@ -10,10 +10,10 @@ from finch.storage.repositories import DraftRepository, FeedbackRepository, Revi
 
 
 class WeeklyReport(BaseModel):
-    reviewed_drafts: int = 0  # 时间窗内已作出审核决策的草稿数
-    approved: int = 0
-    revised: int = 0
-    skipped: int = 0
+    reviewed_drafts: int = 0  # 时间窗内已作出最终决策的草稿数
+    approved: int = 0         # 最终决策为 approve 的草稿数
+    revised: int = 0          # 修改次数（REVISE 历史事件数，含后被 approve 覆盖的）
+    skipped: int = 0          # 最终决策为 skip 的草稿数
     approval_rate: float = 0.0  # approved / reviewed_drafts（无决策则 0.0）
     skip_reasons: dict[str, int] = Field(default_factory=dict)
     published_draft_ids: list[str] = Field(default_factory=list)
@@ -40,9 +40,14 @@ def weekly_analysis(
         decisions[r.draft_id] = r
 
     approved = sum(1 for r in decisions.values() if r.action == ReviewAction.APPROVE)
-    revised = sum(1 for r in decisions.values() if r.action == ReviewAction.REVISE)
     skipped = sum(1 for r in decisions.values() if r.action == ReviewAction.SKIP)
-    reviewed = approved + revised + skipped
+    reviewed = len(decisions)
+    # 「修改次数」来自追加式历史：revise 后被 approve 也不丢，能反映「频繁修改」。
+    revised = sum(
+        1
+        for r in reviews.list_history()
+        if r.action == ReviewAction.REVISE and (since is None or r.decided_at >= since)
+    )
     skip_reasons = Counter(
         r.reason or "unknown"
         for r in decisions.values()
@@ -74,7 +79,7 @@ def render_weekly(report: WeeklyReport) -> str:
     """把 WeeklyReport 渲染为 Markdown。"""
     lines = ["# Finch Weekly Review", ""]
     lines.append(f"- 已审核草稿: {report.reviewed_drafts}")
-    lines.append(f"- 批准: {report.approved} / 修改: {report.revised} / 跳过: {report.skipped}")
+    lines.append(f"- 批准: {report.approved} / 跳过: {report.skipped} / 修改次数: {report.revised}")
     lines.append(f"- 批准率: {report.approval_rate:.0%}")
     if report.skip_reasons:
         lines.append("- 跳过原因:")

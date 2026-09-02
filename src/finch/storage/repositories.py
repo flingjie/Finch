@@ -1,6 +1,7 @@
 """Evidence Card 仓储（spec 7.1/7.2）与草稿/审核/反馈仓储（Phase 6）。"""
 
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from sqlmodel import Field, Session, SQLModel, select
 
@@ -143,6 +144,34 @@ class ReviewRepository:
             stmt = select(ReviewRecord)
             records = list(session.exec(stmt))
             return [ReviewDecision.model_validate_json(r.payload_json) for r in records]
+
+    def append_history(self, decision: ReviewDecision) -> None:
+        """追加一条审核历史（不覆盖，供周复盘统计修改次数）。"""
+        record = ReviewHistoryRecord(
+            id=f"revhist_{uuid4().hex}",
+            draft_id=decision.draft_id,
+            payload_json=decision.model_dump_json(),
+            created_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.add(record)
+            session.commit()
+
+    def list_history(self) -> list[ReviewDecision]:
+        """列出全部审核历史事件。"""
+        with Session(self.store.engine) as session:
+            stmt = select(ReviewHistoryRecord)
+            records = list(session.exec(stmt))
+            return [ReviewDecision.model_validate_json(r.payload_json) for r in records]
+
+
+class ReviewHistoryRecord(SQLModel, table=True):
+    """ReviewDecision 追加式历史模型（Phase 9）。"""
+
+    id: str = Field(primary_key=True)  # 唯一事件 id
+    draft_id: str = Field(index=True)
+    payload_json: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class FeedbackRecord(SQLModel, table=True):

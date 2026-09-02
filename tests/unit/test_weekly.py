@@ -78,6 +78,25 @@ def test_weekly_since_filters(tmp_path):
     assert report.skipped == 1
 
 
+def test_weekly_revised_preserved_across_approve(tmp_path):
+    from finch.review.service import ReviewService
+
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    drafts = DraftRepository(store)
+    reviews = ReviewRepository(store)
+    drafts.upsert_draft(_draft("d1"))
+
+    svc = ReviewService(drafts, reviews)
+    svc.revise("d1", "fixed body")
+    svc.approve("d1")
+
+    report = weekly_analysis(drafts, reviews, FeedbackRepository(store))
+    assert report.reviewed_drafts == 1
+    assert report.approved == 1
+    assert report.revised == 1  # 修改次数保留，未被 approve 覆盖
+
+
 def test_weekly_analysis_empty(tmp_path):
     store = Store(tmp_path / "db.sqlite")
     store.init()

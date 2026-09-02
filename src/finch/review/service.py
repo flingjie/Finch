@@ -37,6 +37,7 @@ class ReviewService:
             decided_at=datetime.now(UTC),
         )
         self.reviews.save_review(decision)
+        self.reviews.append_history(decision)
         return decision
 
     def revise(self, draft_id: str, revised_body: str) -> ReviewDecision:
@@ -50,6 +51,7 @@ class ReviewService:
             decided_at=datetime.now(UTC),
         )
         self.reviews.save_review(decision)
+        self.reviews.append_history(decision)
         return decision
 
     def skip(self, draft_id: str, reason: SkipReason) -> ReviewDecision:
@@ -62,6 +64,7 @@ class ReviewService:
             decided_at=datetime.now(UTC),
         )
         self.reviews.save_review(decision)
+        self.reviews.append_history(decision)
         return decision
 
     def _require_draft(self, draft_id: str) -> Draft:
