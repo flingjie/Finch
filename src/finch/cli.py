@@ -8,7 +8,11 @@ from .codex.runner import CodexRunner
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader
 from .github.gh_client import GhClient
+from .github.models import CommitDetail
+from .graph.daily import daily_nodes
+from .graph.runtime import GraphRuntime
 from .settings import load_settings
+from .storage.database import Store
 from .twitter.normalizer import normalize_tweets
 from .twitter.opencli_client import OpenCliClient
 from .twitter.query_builder import QueryBuilder
@@ -20,6 +24,9 @@ app.add_typer(github_app, name="github")
 
 twitter_app = typer.Typer(help="Twitter 搜索与读取")
 app.add_typer(twitter_app, name="twitter")
+
+run_app = typer.Typer(help="Run graph pipelines")
+app.add_typer(run_app, name="run")
 
 
 def _since_iso(since: str | None) -> str | None:
@@ -137,6 +144,43 @@ def twitter_diagnose() -> None:
         typer.echo(f"search probe: ok ({len(tweets)} tweets)")
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"search probe: failed ({type(exc).__name__}: {exc})")
+
+
+@run_app.command("daily")
+def run_daily() -> None:
+    """运行每日 Graph：同步 commit → 提取证据卡 → 收集推文 → 匹配证据."""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    gh = GhClient()
+    opencli = OpenCliClient()
+
+    commits_by_repo: dict[str, list[CommitDetail]] = {}
+    known_commit_urls: set[str] = set()
+    repo_is_private: dict[str, bool] = {}
+    for repo in settings.repositories:
+        info = gh.repo_view(repo)
+        repo_is_private[repo] = info.is_private
+        summaries = gh.list_commits(repo)
+        details = [gh.commit_detail(repo, c.sha) for c in summaries]
+        details = CommitReader(gh, repo).filter_noise(details)
+        commits_by_repo[repo] = details
+        for detail in details:
+            known_commit_urls.add(f"https://github.com/{repo}/commit/{detail.sha}")
+
+    nodes = daily_nodes(
+        settings=settings,
+        store=store,
+        gh=gh,
+        opencli=opencli,
+        extractor=Extractor(CodexRunner()),
+        runner=CodexRunner(),
+        commits_by_repo=commits_by_repo,
+        known_commit_urls=known_commit_urls,
+        repo_is_private=repo_is_private,
+    )
+    run = GraphRuntime(store, nodes).run()
+    typer.echo(run.state)
 
 
 if __name__ == "__main__":
