@@ -14,6 +14,6 @@ def test_load_settings_defaults():
 def test_load_settings_creates_var_dirs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     # 不存在的配置文件 -> 走默认值；相对路径 var/ 按当前 cwd(=tmp_path) 解析
-    s = load_settings(tmp_path / "finch.yaml")
+    load_settings(tmp_path / "finch.yaml")
     assert (tmp_path / "var").exists()
     assert (tmp_path / "var" / "outputs").exists()

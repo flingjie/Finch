@@ -1,4 +1,4 @@
-from finch.graph.events import DomainEvent, NodeResult
+from finch.graph.events import NodeResult
 
 
 def test_node_result_contract_matches_spec():

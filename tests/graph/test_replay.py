@@ -1,5 +1,5 @@
 # tests/graph/test_replay.py
-from finch.graph.nodes import FailingNode, NoopNode
+from finch.graph.nodes import NoopNode
 from finch.graph.replay import replay
 from finch.graph.runtime import GraphRuntime
 from finch.storage.database import Store

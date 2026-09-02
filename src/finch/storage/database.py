@@ -1,13 +1,13 @@
 """SQLite 持久化：运行记录与节点记录（spec 6/7）。"""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class RunRecord(SQLModel, table=True):

@@ -1,17 +1,17 @@
 """确定性 Graph Runtime：顺序执行、幂等、失败与恢复。"""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
+from ..storage.database import NodeRecord, RunRecord, Store
 from .events import NodeResult
 from .nodes import Node
 from .state import GraphState
-from ..storage.database import NodeRecord, RunRecord, Store
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class GraphRuntime:

@@ -1,6 +1,6 @@
 """领域事件与节点结果契约（spec 6.3）。"""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class DomainEvent(BaseModel):

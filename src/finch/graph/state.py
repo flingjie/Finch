@@ -1,9 +1,9 @@
 """Graph 状态机：spec 6.1。"""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class GraphState(str, Enum):
+class GraphState(StrEnum):
     # 主链（spec 6.1）
     CREATED = "CREATED"
     PREFLIGHT_PASSED = "PREFLIGHT_PASSED"
