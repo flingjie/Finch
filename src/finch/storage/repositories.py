@@ -1,11 +1,11 @@
 """Evidence Card 仓储（spec 7.1/7.2）."""
 
 from datetime import UTC, datetime
-from typing import cast
+
+from sqlmodel import Field, Session, SQLModel, select
 
 from finch.evidence.models import EvidenceCard
 from finch.storage.database import Store
-from sqlmodel import Field, Session, SQLModel, select
 
 
 class EvidenceCardRecord(SQLModel, table=True):
