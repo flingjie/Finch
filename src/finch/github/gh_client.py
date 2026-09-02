@@ -16,8 +16,8 @@ from finch.github.models import (
 )
 
 
-def _run(argv: list[str], timeout: float) -> dict:
-    """子进程数组传参 + 超时，返回结构化结果。"""
+def _run(argv: list[str], timeout: float, stdin: str | None = None) -> dict:
+    """子进程数组传参 + 超时，返回结构化结果；可选 stdin 输入。"""
     try:
         proc = subprocess.run(
             argv,
@@ -25,6 +25,7 @@ def _run(argv: list[str], timeout: float) -> dict:
             text=True,
             timeout=timeout,
             check=False,
+            input=stdin,
         )
         return {
             "ok": proc.returncode == 0,
