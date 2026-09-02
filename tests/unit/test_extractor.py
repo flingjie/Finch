@@ -40,3 +40,19 @@ def test_build_cards_binds_sources_and_confidence():
     assert any(c.confidence is ClaimConfidence.VERIFIED for c in cards)
     assert any(c.confidence is ClaimConfidence.INFERRED for c in cards)
     assert all(c.sources for c in cards)
+
+
+def test_decision_coerced_not_verified():
+    class FakeRunner:
+        def run(self, prompt, output_model, **kw):
+            return EngineeringEvent(
+                id="evt_1", repository="flingjie/FDE-Gym", commits=["a" * 40],
+                problem=Claim(statement="p", confidence=ClaimConfidence.VERIFIED),
+                decision=Claim(statement="d", confidence=ClaimConfidence.VERIFIED),
+                result=Claim(statement="r", confidence=ClaimConfidence.VERIFIED),
+            )
+
+    events = Extractor(FakeRunner()).extract([_commit("a" * 40)], repo="flingjie/FDE-Gym")
+    assert events[0].decision.confidence is ClaimConfidence.INFERRED
+    assert events[0].problem.confidence is ClaimConfidence.VERIFIED
+    assert events[0].result.confidence is ClaimConfidence.VERIFIED

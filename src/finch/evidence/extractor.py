@@ -6,17 +6,28 @@ from typing import cast
 from ..codex.runner import CodexRunner
 from ..github.change_grouper import group_commits
 from ..github.models import CommitDetail
-from .models import EngineeringEvent, EvidenceCard, Source
+from .models import ClaimConfidence, EngineeringEvent, EvidenceCard, Source
 
 _PROMPT_PATH = Path("prompts/extract-engineering-event.md")
 
 
+def _coerce_decision(event: EngineeringEvent) -> EngineeringEvent:
+    """decision（动机）在本管线中无 PR/Issue 证据，不得高于 INFERRED（spec 7.4）。"""
+    if event.decision.confidence in {ClaimConfidence.VERIFIED, ClaimConfidence.SUPPORTED}:
+        decision = event.decision.model_copy(update={"confidence": ClaimConfidence.INFERRED})
+        return event.model_copy(update={"decision": decision})
+    return event
+
+
 def _render_commits(commits: list[CommitDetail]) -> str:
-    lines = []
+    lines: list[str] = []
     for c in commits:
-        lines.append(f"- {c.sha[:8]} {c.message}")
+        lines.append(f"- {c.sha[:8]} {c.message[:200]}")
         for f in c.files[:12]:
             lines.append(f"    {f.status} {f.filename} (+{f.additions}/-{f.deletions})")
+            if f.patch:
+                snippet = "\n".join(f.patch.splitlines()[:10])
+                lines.append(f"    ```diff\n{snippet}\n    ```")
     return "\n".join(lines)
 
 
@@ -31,6 +42,7 @@ class Extractor:
             event = cast(EngineeringEvent, self.runner.run(prompt, EngineeringEvent))
             if event.repository != repo:
                 event = event.model_copy(update={"repository": repo})
+            event = _coerce_decision(event)
             events.append(event)
         return events
 

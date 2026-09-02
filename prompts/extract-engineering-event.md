@@ -5,8 +5,8 @@ You are given a group of related commits from one repository. Extract ONE engine
 ## Rules
 
 - Distinguish what the code PROVES from what is INFERRED.
-- `problem` / `result` must be directly provable from the diff/tests/PR → `VERIFIED`; if only strongly implied, use `SUPPORTED`.
-- `decision` (why / motivation) is almost always `INFERRED` unless a PR/issue explicitly states it.
+- `problem` / `result`: use `VERIFIED` ONLY if the diff/patch shown directly proves it. If you only see commit messages and file paths (no diff, or a truncated diff), use `SUPPORTED` — never `VERIFIED` from metadata alone.
+- `decision` (why / motivation): ALWAYS `INFERRED` (or `UNKNOWN`) — the diff cannot prove motivation. Never use `VERIFIED`/`SUPPORTED` for `decision`.
 - Never mark an inference as `VERIFIED`.
 - If context is missing (e.g. was this a real bug or a proactive hardening?), list it in `missing_context`.
 - `id` must be a stable slug, e.g. `evt_<repo-slug>_<short-topic>`.
