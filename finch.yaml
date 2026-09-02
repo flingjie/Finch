@@ -1,0 +1,15 @@
+repositories:
+  - flingjie/FDE-Gym
+
+twitter:
+  daily_limit: 100
+  per_query_limit: 20
+  queries: []
+
+quality_gates:
+  max_daily_replies: 5
+  max_daily_original_posts: 1
+  min_candidate_score: 0.65
+  min_evidence_score: 0.75
+  min_quality_score: 0.75
+  max_rewrite_rounds: 2
