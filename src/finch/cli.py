@@ -18,6 +18,7 @@ from .graph.runtime import GraphRuntime
 from .review.feedback import FeedbackService
 from .review.models import SkipReason
 from .review.service import ReviewService
+from .review.weekly import render_weekly, weekly_analysis
 from .settings import load_settings
 from .storage.database import Store
 from .storage.repositories import DraftRepository, FeedbackRepository, ReviewRepository
@@ -205,6 +206,18 @@ def run_daily() -> None:
         briefs = parse_items(json.loads(brief_record.output_json), DailyBrief)
         if briefs:
             typer.echo(briefs[0].body)
+
+
+@run_app.command("weekly")
+def run_weekly() -> None:
+    """周复盘：汇总批准率、修改/跳过原因与已发布候选。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    report = weekly_analysis(
+        DraftRepository(store), ReviewRepository(store), FeedbackRepository(store)
+    )
+    typer.echo(render_weekly(report))
 
 
 def _review_service() -> ReviewService:
