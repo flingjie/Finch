@@ -7,6 +7,9 @@ from finch.evidence.models import (
     ClaimConfidence,
     EngineeringEvent,
     EvidenceCard,
+    JudgeScores,
+    MatchResult,
+    RankedCandidate,
     Source,
 )
 
@@ -40,3 +43,27 @@ def test_evidence_card_sources():
 def test_invalid_confidence_rejected():
     with pytest.raises(ValidationError):
         Claim(statement="x", confidence="NOT_A_LEVEL")
+
+
+def test_judge_scores_bounds():
+    JudgeScores(relevance=0, evidence_strength=1, incremental_value=0.5, discussability=0.5)
+    with pytest.raises(ValidationError):
+        JudgeScores(relevance=1.1, evidence_strength=0, incremental_value=0, discussability=0)
+
+
+def test_match_result_shape():
+    m = MatchResult(
+        candidate_id="t1",
+        card_ids=["ev_1"],
+        scores=JudgeScores(
+            relevance=0.8, evidence_strength=0.9,
+            incremental_value=0.7, discussability=0.6,
+        ),
+        timing=0.3, relationship_value=0.5, score=0.77,
+    )
+    assert m.card_ids == ["ev_1"]
+
+
+def test_ranked_candidate_shape():
+    r = RankedCandidate(candidate_id="t1", card_ids=["ev_1", "ev_2"], recall_score=0.4)
+    assert r.recall_score == 0.4

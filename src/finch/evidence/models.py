@@ -51,3 +51,25 @@ class EvidenceCard(BaseModel):
     confidence: ClaimConfidence
     publishable: bool = False
     topics: list[str] = Field(default_factory=list)
+
+
+class JudgeScores(BaseModel):
+    relevance: float = Field(ge=0.0, le=1.0)
+    evidence_strength: float = Field(ge=0.0, le=1.0)
+    incremental_value: float = Field(ge=0.0, le=1.0)
+    discussability: float = Field(ge=0.0, le=1.0)
+
+
+class RankedCandidate(BaseModel):
+    candidate_id: str
+    card_ids: list[str]
+    recall_score: float = Field(ge=0.0, le=1.0)
+
+
+class MatchResult(BaseModel):
+    candidate_id: str
+    card_ids: list[str]
+    scores: JudgeScores
+    timing: float = Field(ge=0.0, le=1.0)
+    relationship_value: float = Field(ge=0.0, le=1.0)
+    score: float = Field(ge=0.0, le=1.0)
