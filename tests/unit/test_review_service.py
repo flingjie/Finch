@@ -1,10 +1,9 @@
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence
-from finch.review.feedback import FeedbackService
 from finch.review.models import ReviewAction, SkipReason
 from finch.review.service import ReviewService, compute_diff
 from finch.storage.database import Store
-from finch.storage.repositories import DraftRepository, FeedbackRepository, ReviewRepository
+from finch.storage.repositories import DraftRepository, ReviewRepository
 
 
 def _draft(id="d1", body="hi"):
@@ -14,7 +13,8 @@ def _draft(id="d1", body="hi"):
 
 
 def _svc(tmp_path):
-    store = Store(tmp_path / "db.sqlite"); store.init()
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
     return (ReviewService(DraftRepository(store), ReviewRepository(store)), store)
 
 
@@ -46,6 +46,7 @@ def test_revise_saves_diff(tmp_path):
 def test_list_pending_excludes_reviewed(tmp_path):
     svc, store = _svc(tmp_path)
     repo = DraftRepository(store)
-    repo.upsert_draft(_draft("d1")); repo.upsert_draft(_draft("d2"))
+    repo.upsert_draft(_draft("d1"))
+    repo.upsert_draft(_draft("d2"))
     svc.approve("d1")
     assert [d.id for d in svc.list_pending()] == ["d2"]
