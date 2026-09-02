@@ -79,8 +79,11 @@ class GhClient:
         assert isinstance(data, dict)
         return parse_repo_view(data)
 
-    def list_commits(self, repo: str, since: str, per_page: int = 100) -> list[CommitSummary]:
-        url = f"repos/{repo}/commits?sha=main&since={since}&per_page={per_page}"
+    def list_commits(
+        self, repo: str, since: str | None = None, per_page: int = 100
+    ) -> list[CommitSummary]:
+        since_clause = f"&since={since}" if since else ""
+        url = f"repos/{repo}/commits?sha=main{since_clause}&per_page={per_page}"
         data = self._gh_json(
             ["gh", "api", "--paginate", "-H", "Accept: application/vnd.github+json", url],
             timeout=60.0,
