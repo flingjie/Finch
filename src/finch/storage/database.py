@@ -36,7 +36,7 @@ class Store:
 
     def init(self) -> None:
         # Import repositories module to register EvidenceCardRecord before create_all
-        from finch.storage import repositories as _
+        from finch.storage import repositories as _  # noqa: F401
 
         SQLModel.metadata.create_all(self.engine)
 

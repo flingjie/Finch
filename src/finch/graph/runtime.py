@@ -45,7 +45,9 @@ class GraphRuntime:
             result = self._safe_run(node, projected)
             self._persist_node(run_id, node, result)
             if result.status == "failed":
-                final_state = GraphState.BLOCKED if result.error_code == "BLOCKED" else GraphState.FAILED
+                final_state = (
+                    GraphState.BLOCKED if result.error_code == "BLOCKED" else GraphState.FAILED
+                )
                 break
             ctx.put(node.writes, result.output)
             if node.succeeds_to:

@@ -1,7 +1,7 @@
 # tests/unit/test_settings.py
 from pathlib import Path
 
-from finch.settings import load_settings, QualityGates, TwitterSettings
+from finch.settings import QualityGates, load_settings
 
 
 def test_load_settings_defaults():

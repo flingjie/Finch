@@ -2,8 +2,9 @@
 
 import json
 
-from finch.graph.context import GraphContext, MissingContextError, items_payload, parse_items
 from pydantic import BaseModel
+
+from finch.graph.context import GraphContext, MissingContextError, items_payload, parse_items
 
 
 class Item(BaseModel):

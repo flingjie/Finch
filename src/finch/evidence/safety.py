@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from finch.evidence.models import EvidenceCard, Source
+from finch.evidence.models import EvidenceCard
 
 
 class SafetyHit(BaseModel):
@@ -85,7 +85,10 @@ def scan_cards(
 
         secret_matches = _scan_for_secrets(all_text)
         if secret_matches:
-            detail = f"Secret patterns detected in card {card.id}: {len(secret_matches)} pattern(s) matched"
+            detail = (
+                f"Secret patterns detected in card {card.id}: "
+                f"{len(secret_matches)} pattern(s) matched"
+            )
             hits.append(SafetyHit(
                 code="secret_detected",
                 detail=detail,
