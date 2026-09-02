@@ -15,7 +15,8 @@ class Paths(BaseModel):
     cache_dir: Path = Field(default_factory=lambda: Path("var/cache"))
 
     def ensure(self) -> "Paths":
-        for d in (self.var_dir, self.outputs_dir, self.inbox_dir, self.cache_dir):
+        dirs = (self.var_dir, self.outputs_dir, self.inbox_dir, self.cache_dir, self.db_path.parent)
+        for d in dirs:
             d.mkdir(parents=True, exist_ok=True)
         return self
 
