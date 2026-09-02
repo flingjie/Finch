@@ -1,11 +1,8 @@
 """GraphContext envelope: pass structured data between nodes (spec C3)."""
 
 import json
-from typing import TypeVar, Generic
 
 from pydantic import BaseModel
-
-T = TypeVar("T", bound=BaseModel)
 
 
 class MissingContextError(KeyError):
@@ -74,7 +71,7 @@ def items_payload(models: list[BaseModel]) -> dict:
     return {"items": [m.model_dump(mode="json") for m in models]}
 
 
-def parse_items(payload: dict, model: type[T]) -> list[T]:
+def parse_items[T: BaseModel](payload: dict, model: type[T]) -> list[T]:
     """Parse items payload back to a list of Pydantic models."""
     items = payload.get("items", [])
     return [model.model_validate(m) for m in items]
