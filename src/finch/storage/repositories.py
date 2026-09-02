@@ -207,3 +207,10 @@ class FeedbackRepository:
             if record is None:
                 return None
             return Feedback.model_validate_json(record.payload_json)
+
+    def list_feedbacks(self) -> list[Feedback]:
+        """列出所有 Feedback。"""
+        with Session(self.store.engine) as session:
+            stmt = select(FeedbackRecord)
+            records = list(session.exec(stmt))
+            return [Feedback.model_validate_json(r.payload_json) for r in records]

@@ -54,11 +54,16 @@ def weekly_analysis(
         if r.action == ReviewAction.SKIP
     )
 
+    # 一次批量拉取 Feedback，避免逐草稿 get_feedback 的 N+1 查询。
+    feedback_by_draft = {
+        fb.draft_id: fb
+        for fb in feedbacks.list_feedbacks()
+        if fb.published_url and (since is None or fb.recorded_at >= since)
+    }
     published_ids: list[str] = []
     published_cands: list[str] = []
     for d in all_drafts:
-        fb = feedbacks.get_feedback(d.id)
-        if fb is not None and fb.published_url and (since is None or fb.recorded_at >= since):
+        if d.id in feedback_by_draft:
             published_ids.append(d.id)
             if d.candidate_id:
                 published_cands.append(d.candidate_id)
