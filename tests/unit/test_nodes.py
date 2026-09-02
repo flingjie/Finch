@@ -18,3 +18,10 @@ def test_node_carries_contract_fields():
     n = NoopNode(name="n", idempotency_key="k1", timeout_seconds=5.0)
     assert n.idempotency_key == "k1"
     assert n.side_effect == "none"
+
+
+def test_node_context_contract_defaults():
+    n = NoopNode(name="n")
+    assert n.reads == []
+    assert n.writes == ""
+    assert n.succeeds_to == ""
