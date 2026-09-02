@@ -73,7 +73,9 @@ def parse_commit_detail(data: dict) -> CommitDetail:
         )
         for f in data.get("files", [])
     ]
-    patch_incomplete = any(f.patch is None or (f.patch and f.patch.endswith("\n...")) for f in files)
+    # spec 5.2: patch 缺失时标记 evidence_incomplete。截断（非 None 但被截短）
+    # 无法从 API 可靠探测，此处保守地只认 None，避免把代码里的合法 `...` 误判为截断。
+    patch_incomplete = any(f.patch is None for f in files)
     return CommitDetail(
         **base.model_dump(),
         files=files,

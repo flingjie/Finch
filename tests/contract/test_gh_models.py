@@ -47,6 +47,12 @@ def test_parse_commit_detail_has_files_and_patch_flag():
     assert isinstance(d.patch_incomplete, bool)
 
 
+def test_patch_incomplete_when_patch_missing():
+    data = _load("commit-detail.json")
+    data["files"][0]["patch"] = None
+    assert parse_commit_detail(data).patch_incomplete is True
+
+
 def test_parse_pull_request():
     p = parse_pull_request(_load("pr-view.json"))
     assert isinstance(p, PullRequest)
