@@ -1,0 +1,94 @@
+from types import SimpleNamespace
+
+from finch.codex.runner import CodexRunner
+from finch.content.models import ClaimRef, Draft, DraftKind
+from finch.content.writer import rewrite, write_original, write_reply
+from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
+from finch.twitter.models import DiscussionCandidate
+
+
+class FakeRunner(CodexRunner):
+    def __init__(self, ret):
+        self.calls = 0
+        self.ret = ret
+
+    def run(self, prompt, output_model, **kw):
+        self.calls += 1
+        return self.ret
+
+
+def _card():
+    return EvidenceCard(id="ev_1", event_id="e", claim="rate limit", sources=[],
+                        confidence=ClaimConfidence.VERIFIED, publishable=True, topics=[])
+
+
+def _good_draft():
+    return Draft(id="d", kind=DraftKind.REPLY, candidate_id="t1", language="en",
+                 body="hi", claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
+                                             confidence=ClaimConfidence.VERIFIED)])
+
+
+def _match():
+    return MatchResult(candidate_id="t1", card_ids=["ev_1"],
+                       scores=JudgeScores(relevance=0.9, evidence_strength=0.9,
+                                          incremental_value=0.9, discussability=0.9),
+                       timing=1.0, relationship_value=0.5, score=0.9)
+
+
+def _candidate():
+    return DiscussionCandidate(id="t1", author_handle="u", text="t",
+                               url="https://x.com/u/status/1")
+
+
+def test_write_reply_returns_draft():
+    r = FakeRunner(_good_draft())
+    d = write_reply(r, _match(), _candidate(), {"ev_1": _card()})
+    assert d is not None and d.id == "d"
+
+
+def test_write_reply_none_on_invalid_claim():
+    bad = _good_draft().model_copy(update={"claims": [
+        ClaimRef(statement="x", evidence_card_id="ev_999", confidence=ClaimConfidence.VERIFIED)]})
+    r = FakeRunner(bad)
+    assert write_reply(r, _match(), _candidate(), {"ev_1": _card()}) is None
+
+
+def test_write_reply_prompt_orders_instructions_before_candidate_data():
+    captured: list[str] = []
+
+    class CaptureRunner(CodexRunner):
+        def run(self, prompt, output_model, **kw):
+            captured.append(prompt)
+            return _good_draft()
+
+    write_reply(CaptureRunner(), _match(), _candidate(), {"ev_1": _card()})
+    prompt = captured[0]
+    assert "Instructions:" in prompt
+    assert "## Untrusted candidate data" in prompt
+    assert prompt.index("Instructions:") < prompt.index("## Untrusted candidate data")
+
+
+def test_write_original_returns_draft():
+    good = Draft(id="d", kind=DraftKind.ORIGINAL, candidate_id=None, language="zh",
+                 body="日记", claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
+                                               confidence=ClaimConfidence.VERIFIED)])
+    r = FakeRunner(good)
+    d = write_original(r, [_card()])
+    assert d is not None and d.id == "d" and d.kind == DraftKind.ORIGINAL
+
+
+def test_write_original_none_on_invalid_claim():
+    bad = Draft(id="d", kind=DraftKind.ORIGINAL, candidate_id=None, language="zh",
+                body="日记", claims=[ClaimRef(statement="x", evidence_card_id="ev_999",
+                                              confidence=ClaimConfidence.VERIFIED)])
+    r = FakeRunner(bad)
+    assert write_original(r, [_card()]) is None
+
+
+def test_rewrite_regenerates_body():
+    out = Draft(id="d", kind=DraftKind.REPLY, candidate_id="t1", language="en",
+                body="fixed", claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
+                                               confidence=ClaimConfidence.VERIFIED)])
+    r = FakeRunner(out)
+    d = rewrite(r, _good_draft(), SimpleNamespace(issues=["too vague"]), {"ev_1": _card()})
+    assert d is not None and d.body == "fixed"
