@@ -10,4 +10,5 @@ class OpenCliClient:
 
     def doctor(self) -> dict:
         r = _run(["opencli", "doctor"], timeout=30.0)
-        return {"ok": r["ok"], "exit_code": r["exit_code"], "detail": (r["stderr"] or r["stdout"]).strip()}
+        detail = (r["stderr"] or r["stdout"]).strip()
+        return {"ok": r["ok"], "exit_code": r["exit_code"], "detail": detail}
