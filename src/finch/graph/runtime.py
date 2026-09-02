@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from ..storage.database import NodeRecord, RunRecord, Store
+from .context import GraphContext, MissingContextError
 from .events import NodeResult
 from .nodes import Node
 from .state import GraphState
@@ -26,18 +27,29 @@ class GraphRuntime:
         )
 
         final_state = GraphState.COMPLETED
+        ctx = GraphContext()
         for node in self.nodes:
             existing = self.store.find_node(run_id, node.name, node.idempotency_key)
             if existing is not None and existing.status == "succeeded":
+                ctx.hydrate(node.writes, existing.output_json)
+                if node.succeeds_to:
+                    final_state = GraphState(node.succeeds_to)
                 continue
-
-            result = self._safe_run(node)
-            self._persist_node(run_id, node, result)
-
-            # Phase 1 不自动重试；retryable/max_retries 留待后续 Phase 实现重试策略。
-            if result.status == "failed":
+            try:
+                projected = ctx.project(node.reads)
+            except MissingContextError:
+                result = NodeResult(status="failed", error_code="MISSING_CONTEXT", retryable=False)
+                self._persist_node(run_id, node, result)
                 final_state = GraphState.FAILED
                 break
+            result = self._safe_run(node, projected)
+            self._persist_node(run_id, node, result)
+            if result.status == "failed":
+                final_state = GraphState.BLOCKED if result.error_code == "BLOCKED" else GraphState.FAILED
+                break
+            ctx.put(node.writes, result.output)
+            if node.succeeds_to:
+                final_state = GraphState(node.succeeds_to)
 
         self.store.upsert_run(
             RunRecord(id=run_id, state=final_state.value, updated_at=_utcnow())
@@ -46,9 +58,9 @@ class GraphRuntime:
         assert run is not None
         return run
 
-    def _safe_run(self, node: Node) -> NodeResult:
+    def _safe_run(self, node: Node, ctx: dict) -> NodeResult:
         try:
-            return node.run({})
+            return node.run(ctx)
         except Exception as exc:  # noqa: BLE001
             return NodeResult(status="failed", retryable=True, error_code=type(exc).__name__)
 
