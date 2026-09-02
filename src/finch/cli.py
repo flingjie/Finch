@@ -2,11 +2,12 @@
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import typer
 
 from .codex.runner import CodexRunner
-from .content.models import DailyBrief
+from .content.models import DailyBrief, Draft
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader
 from .github.gh_client import GhClient
@@ -14,8 +15,12 @@ from .github.models import CommitDetail
 from .graph.context import parse_items
 from .graph.daily import daily_nodes
 from .graph.runtime import GraphRuntime
+from .review.feedback import FeedbackService
+from .review.models import SkipReason
+from .review.service import ReviewService
 from .settings import load_settings
 from .storage.database import Store
+from .storage.repositories import DraftRepository, FeedbackRepository, ReviewRepository
 from .twitter.normalizer import normalize_tweets
 from .twitter.opencli_client import OpenCliClient
 from .twitter.query_builder import QueryBuilder
@@ -30,6 +35,9 @@ app.add_typer(twitter_app, name="twitter")
 
 run_app = typer.Typer(help="Run graph pipelines")
 app.add_typer(run_app, name="run")
+
+review_app = typer.Typer(help="Review drafts")
+app.add_typer(review_app, name="review")
 
 
 def _since_iso(since: str | None) -> str | None:
@@ -184,11 +192,113 @@ def run_daily() -> None:
     )
     run = GraphRuntime(store, nodes).run()
     typer.echo(run.state)
+    draft_record = store.find_node(run.id, "critique", "default")
+    if draft_record is None:
+        draft_record = store.find_node(run.id, "draft", "default")
+    if draft_record is not None and draft_record.output_json:
+        drafts = parse_items(json.loads(draft_record.output_json), Draft)
+        draft_repo = DraftRepository(store)
+        for draft in drafts:
+            draft_repo.upsert_draft(draft)
     brief_record = store.find_node(run.id, "brief", "default")
     if brief_record is not None:
         briefs = parse_items(json.loads(brief_record.output_json), DailyBrief)
         if briefs:
             typer.echo(briefs[0].body)
+
+
+def _review_service() -> ReviewService:
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    return ReviewService(DraftRepository(store), ReviewRepository(store))
+
+
+def _feedback_service() -> FeedbackService:
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    return FeedbackService(FeedbackRepository(store))
+
+
+@review_app.command("list")
+def review_list() -> None:
+    """列出 pending 草稿（id + kind + 正文前 80 字符）。"""
+    service = _review_service()
+    drafts = service.list_pending()
+    if not drafts:
+        typer.echo("no pending drafts")
+        return
+    for draft in drafts:
+        typer.echo(f"{draft.id}\t{draft.kind.value}\t{draft.body[:80]}")
+
+
+@review_app.command("show")
+def review_show(draft_id: str) -> None:
+    """打印草稿全文。"""
+    draft = _review_service().show(draft_id)
+    if draft is None:
+        typer.echo(f"draft not found: {draft_id}")
+        raise typer.Exit(code=1)
+    typer.echo(draft.body)
+
+
+@review_app.command("approve")
+def review_approve(draft_id: str) -> None:
+    """批准草稿（可重放）。"""
+    service = _review_service()
+    try:
+        decision = service.approve(draft_id)
+    except KeyError:
+        typer.echo(f"draft not found: {draft_id}")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"approved {decision.draft_id}")
+
+
+@review_app.command("revise")
+def review_revise(
+    draft_id: str,
+    path: Path = typer.Option(..., "--file", help="修订后的 Markdown 文件"),  # noqa: B008
+) -> None:
+    """保存修订正文与 diff（不自动发布）。"""
+    service = _review_service()
+    try:
+        decision = service.revise(draft_id, path.read_text())
+    except KeyError:
+        typer.echo(f"draft not found: {draft_id}")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"revised {decision.draft_id}")
+    if decision.diff:
+        typer.echo(decision.diff)
+
+
+@review_app.command("skip")
+def review_skip(
+    draft_id: str,
+    reason: SkipReason = typer.Option(..., "--reason", help="跳过理由"),  # noqa: B008
+) -> None:
+    """跳过草稿并记录理由。"""
+    service = _review_service()
+    try:
+        decision = service.skip(draft_id, reason)
+    except KeyError:
+        typer.echo(f"draft not found: {draft_id}")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"skipped {decision.draft_id} ({decision.reason})")
+
+
+@review_app.command("feedback")
+def review_feedback(
+    draft_id: str,
+    url: str | None = typer.Option(None, "--url", help="发布链接"),
+    metrics: str | None = typer.Option(None, "--metrics", help="互动数据 JSON"),
+) -> None:
+    """登记发布链接与互动数据。"""
+    metrics_dict: dict | None = None
+    if metrics:
+        metrics_dict = json.loads(metrics)
+    feedback = _feedback_service().record(draft_id, published_url=url, metrics=metrics_dict)
+    typer.echo(f"feedback recorded: {feedback.draft_id}")
 
 
 if __name__ == "__main__":
