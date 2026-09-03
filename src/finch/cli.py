@@ -26,7 +26,7 @@ from .graph.daily import daily_nodes
 from .graph.replay import replay
 from .graph.runtime import GraphRuntime
 from .review.feedback import FeedbackService
-from .review.models import ReviewAction, SkipReason
+from .review.models import OutcomeAssessment, ReviewAction, SkipReason
 from .review.service import ReviewService
 from .review.weekly import render_weekly, weekly_analysis
 from .settings import load_settings
@@ -298,13 +298,17 @@ def run_resume(run_id: str) -> None:
 
 @run_app.command("weekly")
 def run_weekly() -> None:
-    """周复盘：汇总最近 7 天的批准率、修改/跳过原因与已发布候选。"""
+    """周复盘：汇总最近 7 天的批准率、修改/跳过原因、内容效果指标与已发布候选。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
     since = datetime.now(UTC) - timedelta(days=7)
     report = weekly_analysis(
-        DraftRepository(store), ReviewRepository(store), FeedbackRepository(store),
+        DraftRepository(store),
+        ReviewRepository(store),
+        FeedbackRepository(store),
+        ContentJobRepository(store),
+        CriticReportRepository(store),
         since=since,
     )
     typer.echo(render_weekly(report))
@@ -407,12 +411,20 @@ def review_feedback(
     draft_id: str,
     url: str | None = typer.Option(None, "--url", help="发布链接"),
     metrics: str | None = typer.Option(None, "--metrics", help="互动数据 JSON"),
+    outcome: str | None = typer.Option(
+        None, "--outcome", help="结果评估 JSON（OutcomeAssessment）"
+    ),
 ) -> None:
-    """登记发布链接与互动数据。"""
+    """登记发布链接、互动数据与结果评估（outcome）。"""
     metrics_dict: dict | None = None
     if metrics:
         metrics_dict = json.loads(metrics)
-    feedback = _feedback_service().record(draft_id, published_url=url, metrics=metrics_dict)
+    outcome_obj: OutcomeAssessment | None = None
+    if outcome:
+        outcome_obj = OutcomeAssessment.model_validate_json(outcome)
+    feedback = _feedback_service().record(
+        draft_id, published_url=url, metrics=metrics_dict, outcome=outcome_obj
+    )
     typer.echo(f"feedback recorded: {feedback.draft_id}")
 
 

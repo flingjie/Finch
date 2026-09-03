@@ -3,7 +3,13 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from finch.review.models import Feedback, ReviewAction, ReviewDecision, SkipReason
+from finch.review.models import (
+    Feedback,
+    OutcomeAssessment,
+    ReviewAction,
+    ReviewDecision,
+    SkipReason,
+)
 
 
 def test_enums():
@@ -64,3 +70,45 @@ def test_feedback_shape():
     f = Feedback(draft_id="d1", published_url="https://x.com/u/status/1",
                  interaction_metrics={"likes": 3}, recorded_at=datetime(2026, 1, 1))
     assert f.interaction_metrics["likes"] == 3
+
+
+def test_feedback_outcome_default_none():
+    f = Feedback(draft_id="d1", recorded_at=datetime(2026, 1, 1))
+    assert f.outcome is None
+
+
+def test_outcome_assessment_roundtrip():
+    o = OutcomeAssessment(job_completed="partly", reader_understood=True,
+                          desired_action_count=2, useful_reply_count=1,
+                          github_clicks=3, notes="ok")
+    assert o.job_completed == "partly"
+    assert o.desired_action_count == 2
+    assert o.github_clicks == 3
+    # JSON 序列化往返
+    loaded = OutcomeAssessment.model_validate_json(o.model_dump_json())
+    assert loaded == o
+
+
+def test_outcome_assessment_defaults():
+    o = OutcomeAssessment(job_completed="unknown")
+    assert o.reader_understood is None
+    assert o.desired_action_count is None
+    assert o.useful_reply_count is None
+    assert o.github_clicks is None
+    assert o.notes is None
+
+
+def test_outcome_assessment_job_completed_enum():
+    with pytest.raises(ValidationError):
+        OutcomeAssessment(job_completed="maybe")
+
+
+def test_feedback_outcome_persistence_roundtrip():
+    o = OutcomeAssessment(job_completed="yes", useful_reply_count=4)
+    f = Feedback(draft_id="d1", published_url="https://x.com/u/status/1",
+                 recorded_at=datetime(2026, 1, 1), outcome=o)
+    # FeedbackRecord.payload_json 存整份 Feedback，outcome 随 JSON 持久化往返
+    loaded = Feedback.model_validate_json(f.model_dump_json())
+    assert loaded.outcome is not None
+    assert loaded.outcome.job_completed == "yes"
+    assert loaded.outcome.useful_reply_count == 4

@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from finch.review.models import Feedback
+from finch.review.models import Feedback, OutcomeAssessment
 from finch.storage.repositories import FeedbackRepository
 
 
@@ -16,12 +16,14 @@ class FeedbackService:
         *,
         published_url: str | None = None,
         metrics: dict | None = None,
+        outcome: OutcomeAssessment | None = None,
     ) -> Feedback:
         feedback = Feedback(
             draft_id=draft_id,
             published_url=published_url,
             interaction_metrics=metrics or {},
             recorded_at=datetime.now(UTC),
+            outcome=outcome,
         )
         self.feedbacks.save_feedback(feedback)
         return feedback

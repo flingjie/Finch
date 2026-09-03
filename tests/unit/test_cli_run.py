@@ -38,6 +38,18 @@ def test_run_daily_help():
     assert r.exit_code == 0
 
 
+def test_run_weekly_renders_with_new_repos(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["run", "weekly"])
+    assert r.exit_code == 0, r.output
+    assert "Finch Weekly Review" in r.output
+    assert "建议" in r.output
+
+
 def _settings(tmp_path):
     return Settings(paths=Paths(db_path=tmp_path / "finch.db"))
 
