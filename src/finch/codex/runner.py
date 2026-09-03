@@ -7,7 +7,12 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from ..github.gh_client import _run
-from .structured_output import model_to_json_schema, parse_checked
+from .structured_output import (
+    StructuredOutputError,
+    load_json,
+    model_to_json_schema,
+    parse_checked,
+)
 
 
 class CodexRunner:
@@ -15,12 +20,25 @@ class CodexRunner:
             prompt: str,
             output_model: type[BaseModel],
             *,
-            timeout: float = 180.0) -> BaseModel:
+            timeout: float = 180.0,
+            max_attempts: int = 3) -> BaseModel:
         """非交互调用 `codex exec`，把 prompt 经 stdin 传入，输出经 JSON Schema 校验。
 
         Raises RuntimeError on subprocess failure or missing output;
         StructuredOutputError on validation failure.
         """
+        last_error: Exception | None = None
+        for _ in range(max_attempts):
+            try:
+                return self._run_once(prompt, output_model, timeout=timeout)
+            except (json.JSONDecodeError, StructuredOutputError) as exc:
+                last_error = exc
+        raise StructuredOutputError(
+            f"codex exec failed to produce valid structured output after "
+            f"{max_attempts} attempts: {last_error}"
+        ) from last_error
+
+    def _run_once(self, prompt: str, output_model: type[BaseModel], *, timeout: float) -> BaseModel:
         with tempfile.TemporaryDirectory() as td:
             schema_path = Path(td) / "schema.json"
             out_path = Path(td) / "out.json"
@@ -41,5 +59,5 @@ class CodexRunner:
                 )
             if not out_path.exists():
                 raise RuntimeError("codex exec produced no output file")
-            data = json.loads(out_path.read_text())
+            data = load_json(out_path.read_text())
         return parse_checked(data, output_model)
