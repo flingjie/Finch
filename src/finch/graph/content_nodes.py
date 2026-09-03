@@ -45,7 +45,16 @@ WriteReplyFn = Callable[
     Draft | None,
 ]
 WriteOriginalFn = Callable[[CodexRunner, list[EvidenceCard], ContentJob | None], Draft | None]
-RewriteFn = Callable[[CodexRunner, Draft, list[CheckResult], dict[str, EvidenceCard]], Draft]
+RewriteFn = Callable[
+    [
+        CodexRunner,
+        Draft,
+        list[CheckResult],
+        dict[str, EvidenceCard],
+        ContentJob | None,
+    ],
+    Draft,
+]
 
 
 def make_draft_node(
@@ -247,7 +256,7 @@ def make_critique_node(
                             f"{gates.max_rewrite_rounds} rewrites"
                         )
                         break
-                    current = rewrite(runner, current, failed, cards_by_id)
+                    current = rewrite(runner, current, failed, cards_by_id, job)
                     violations = validate_draft(current, card_ids=card_ids)
                     if violations:
                         warnings.append(

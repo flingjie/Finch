@@ -325,7 +325,7 @@ def test_scenario_7_unfixable_draft_dropped_after_two_rewrites(tmp_path):
     """重写两轮仍失败 → 不进审核：max_rewrite_rounds 后草稿从 kept 中丢弃。"""
     checker = AlwaysFailChecker()
 
-    def rewrite(runner, draft, failed_checks, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         return draft.model_copy(update={"body": f"{draft.body} (revised)"})
 
     store = _store(tmp_path)

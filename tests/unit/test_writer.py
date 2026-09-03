@@ -240,3 +240,38 @@ def test_rewrite_preserves_stamped_identity():
     assert d.kind == DraftKind.REPLY
     assert d.candidate_id == "t1"
     assert d.language == "en"
+
+
+def test_rewrite_prompt_includes_job_context():
+    captured: list[str] = []
+
+    class CaptureRunner(CodexRunner):
+        def run(self, prompt, output_model, **kw):
+            captured.append(prompt)
+            return _good_draft().model_copy(update={"body": "fixed"})
+
+    rewrite(
+        CaptureRunner(),
+        _good_draft(),
+        [_failed_check()],
+        {"ev_1": _card()},
+        _job(),
+    )
+    prompt = captured[0]
+    assert "use token bucket" in prompt
+    assert "more memory" in prompt
+    assert "token bucket rate limiting" in prompt
+    assert "Author's decision and intent" in prompt
+
+
+def test_rewrite_without_job_omits_job_context():
+    captured: list[str] = []
+
+    class CaptureRunner(CodexRunner):
+        def run(self, prompt, output_model, **kw):
+            captured.append(prompt)
+            return _good_draft().model_copy(update={"body": "fixed"})
+
+    rewrite(CaptureRunner(), _good_draft(), [_failed_check()], {"ev_1": _card()})
+    prompt = captured[0]
+    assert "Author's decision and intent" not in prompt

@@ -284,7 +284,7 @@ def test_critique_node_rewrites_until_pass(tmp_path):
     fixed = _reply_draft().model_copy(update={"body": "v2"})
     checker = SeqChecker([_failed_check(), _pass_check()])
 
-    def rewrite(runner, draft, failed_checks, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         calls["rewrite"] += 1
         return fixed
 
@@ -301,7 +301,7 @@ def test_critique_node_rewrites_until_pass(tmp_path):
 def test_critique_node_drops_unfixable_draft(tmp_path):
     checker = SeqChecker([_failed_check()])
 
-    def rewrite(runner, draft, failed_checks, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         return draft.model_copy(update={"body": "v2"})
 
     store = _store(tmp_path)
@@ -321,7 +321,7 @@ def test_critique_node_keeps_draft_fixed_by_single_rewrite(tmp_path):
     fixed = _reply_draft().model_copy(update={"body": "fixed"})
     checker = SeqChecker([_failed_check(), _pass_check()])
 
-    def rewrite(runner, draft, failed_checks, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         calls["rewrite"] += 1
         return fixed
 
@@ -342,7 +342,7 @@ def test_critique_node_keeps_draft_fixed_by_second_rewrite(tmp_path):
     fixed = _reply_draft().model_copy(update={"body": "fixed"})
     checker = SeqChecker([_failed_check(), _failed_check(), _pass_check()])
 
-    def rewrite(runner, draft, failed_checks, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         calls["rewrite"] += 1
         if calls["rewrite"] < 2:
             return draft
@@ -373,7 +373,7 @@ def test_critique_node_warns_on_invalid_rewritten_claims():
     )
     checker = SeqChecker([_failed_check()])
 
-    def rewrite(runner, draft, failed_checks, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         return invalid
 
     node = make_critique_node(CodexRunner(), rewrite, QualityGates(), checkers=[checker])
@@ -405,7 +405,7 @@ def test_critique_node_drops_hard_fail_draft(tmp_path):
     )
     calls = {"rewrite": 0}
 
-    def rewrite(runner, draft, failed_checks, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         calls["rewrite"] += 1
         return draft
 
@@ -434,7 +434,7 @@ def test_critique_node_stops_on_needs_input():
         ]
     )
 
-    def rewrite(runner, draft, failed_checks, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         return draft
 
     node = make_critique_node(CodexRunner(), rewrite, QualityGates(), checkers=[checker])
@@ -454,7 +454,7 @@ def test_critique_node_passes_only_failed_checks_to_rewrite(tmp_path):
     checker = SeqChecker([_failed_check(), _pass_check()])
     fixed = _reply_draft().model_copy(update={"body": "fixed"})
 
-    def rewrite(runner, draft, failed_checks, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         captured.append(failed_checks)
         return fixed
 
@@ -470,7 +470,7 @@ def test_critique_node_emits_per_round_reports(tmp_path):
     checker = SeqChecker([_failed_check(), _pass_check()])
     fixed = _reply_draft().model_copy(update={"body": "fixed"})
 
-    def rewrite(runner, draft, failed_checks, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         return fixed
 
     store = _store(tmp_path)
@@ -891,7 +891,7 @@ def test_critique_node_needs_input_via_safety_checker(tmp_path):
         update={"body": "my token is ghp_abcdefghijklmnopqrstuvwxyz123"}
     )
 
-    def rewrite(runner, draft, failed_checks, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         return draft
 
     node = make_critique_node(

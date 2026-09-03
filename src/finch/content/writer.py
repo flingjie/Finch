@@ -26,7 +26,7 @@ Instructions:
 - Fix exactly the failures listed under Failed checks. Do NOT restyle, polish, or improve
   the rest of the draft — change only what is needed to resolve the listed failures.
 
-## Original draft
+{job_context}## Original draft
 {body}
 
 ## Failed checks
@@ -39,6 +39,29 @@ Instructions:
 
 def _render_cards(cards: list[EvidenceCard]) -> str:
     return json.dumps([card.model_dump(mode="json") for card in cards])
+
+
+def _render_job_context(job: ContentJob | None) -> str:
+    """渲染 job 的决策/取舍/预期效果，作为定向重写的显式约束；无 job 时返回空串。
+
+    决策/取舍/预期效果正是 DecisionChecker / ActionabilityChecker 校验的对象，缺了它们
+    writer 无法修复这类失败（F2）。
+    """
+    if job is None:
+        return ""
+    position = job.author_position
+    decision = position.decision if position is not None else ""
+    tradeoff = position.tradeoff if position is not None else ""
+    effect = job.intended_effect
+    blocks = [
+        "## Author's decision and intent",
+        f"- decision: {decision}",
+        f"- tradeoff: {tradeoff}",
+        f"- intended_effect.understand: {effect.understand}",
+        f"- intended_effect.believe: {effect.believe or '(none)'}",
+        f"- intended_effect.action: {effect.action or '(none)'}",
+    ]
+    return "\n".join(blocks) + "\n\n"
 
 
 def _render_failed_checks(failed_checks: list[CheckResult]) -> str:
@@ -133,11 +156,13 @@ def rewrite(
     draft: Draft,
     failed_checks: list[CheckResult],
     cards_by_id: dict[str, EvidenceCard],
+    job: ContentJob | None = None,
 ) -> Draft:
     card_ids = {ref.evidence_card_id for ref in draft.claims}
     cards = [cards_by_id[cid] for cid in card_ids if cid in cards_by_id]
     prompt = _REWRITE_PROMPT.format(
         body=draft.body,
+        job_context=_render_job_context(job),
         rewrite_instructions=_render_failed_checks(failed_checks),
         cards=_render_cards(cards),
     )
