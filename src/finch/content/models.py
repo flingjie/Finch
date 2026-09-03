@@ -25,6 +25,9 @@ class Draft(BaseModel):
     language: str = "en"              # reply="en"；original="zh"
     body: str
     claims: list[ClaimRef] = Field(default_factory=list)
+    content_job_id: str | None = None
+    position_statement: str = ""
+    critic_report_id: str | None = None
 
 
 class DailyBrief(BaseModel):

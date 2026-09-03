@@ -1,10 +1,11 @@
-"""Evidence Card 仓储（spec 7.1/7.2）与草稿/审核/反馈仓储（Phase 6）。"""
+"""Evidence Card 仓储（spec 7.1/7.2）与草稿/审核/反馈/ContentJob 仓储（Phase 6/8）。"""
 
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlmodel import Field, Session, SQLModel, select
 
+from finch.content.jobs import ContentJob
 from finch.content.models import Draft
 from finch.evidence.models import EvidenceCard
 from finch.review.models import Feedback, ReviewDecision
@@ -214,3 +215,45 @@ class FeedbackRepository:
             stmt = select(FeedbackRecord)
             records = list(session.exec(stmt))
             return [Feedback.model_validate_json(r.payload_json) for r in records]
+
+
+class ContentJobRecord(SQLModel, table=True):
+    """ContentJob 持久化模型（C8）。"""
+
+    id: str = Field(primary_key=True)  # = job.id
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ContentJobRepository:
+    """ContentJob 仓储（C8）。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def upsert_job(self, job: ContentJob) -> None:
+        """按 id merge 插入或更新 ContentJob（幂等）。"""
+        payload_json = job.model_dump_json()
+        record = ContentJobRecord(
+            id=job.id,
+            payload_json=payload_json,
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def get_job(self, job_id: str) -> ContentJob | None:
+        """按 id 获取 ContentJob，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            record = session.get(ContentJobRecord, job_id)
+            if record is None:
+                return None
+            return ContentJob.model_validate_json(record.payload_json)
+
+    def list_jobs(self) -> list[ContentJob]:
+        """列出所有 ContentJob（单查询，避免 N+1）。"""
+        with Session(self.store.engine) as session:
+            stmt = select(ContentJobRecord)
+            records = list(session.exec(stmt))
+            return [ContentJob.model_validate_json(r.payload_json) for r in records]
