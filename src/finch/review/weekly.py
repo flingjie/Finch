@@ -42,14 +42,14 @@ class WeeklyReport(BaseModel):
     published_draft_ids: list[str] = Field(default_factory=list)
     published_candidate_ids: list[str] = Field(default_factory=list)
 
-    # ---- Task 8 新指标（全部为比例 0.0–1.0）----
-    evidence_coverage: float = 0.0
-    decision_density: float = 0.0
-    generic_sentence_rate: float = 0.0
-    human_correction_rate: float = 0.0
-    job_completion_rate: float = 0.0
-    useful_reply_rate: float = 0.0
-    do_not_write_rate: float = 0.0
+    # ---- Task 8 新指标（比例 0.0–1.0；None = 无分母/无数据）----
+    evidence_coverage: float | None = None
+    decision_density: float | None = None
+    generic_sentence_rate: float | None = None
+    human_correction_rate: float | None = None
+    job_completion_rate: float | None = None
+    useful_reply_rate: float | None = None
+    do_not_write_rate: float = 0.0  # 信息性，无「继续/停止」判定
 
 
 # ---- 「继续/调整/停止」建议阈值 ----
@@ -125,7 +125,7 @@ def weekly_analysis(
     # ---- Task 8 新指标：只统计非遗留草稿 ----
     eligible_ids = {d.id for d in all_drafts if d.content_job_id is not None}
     jobs_by_id = {job.id: job for job in jobs.list_jobs()}
-    all_reports = critic_reports.list_all_reports()
+    all_reports = critic_reports.list_all_reports(since=since)
 
     return WeeklyReport(
         reviewed_drafts=reviewed,
@@ -168,14 +168,17 @@ def _reports_for(all_reports: dict[str, list[dict]], eligible_ids: set[str]) -> 
     ]
 
 
-def _evidence_coverage(all_reports: dict[str, list[dict]], eligible_ids: set[str]) -> float:
+def _evidence_coverage(
+    all_reports: dict[str, list[dict]], eligible_ids: set[str]
+) -> float | None:
     """证据覆盖：evidence 检查通过的报告 / 全部报告。
 
     报告级（一个草稿每轮产生一份报告）；无证据检查的报告计入分母、不计分子。
+    无报告（无分母）时返回 None，表示无数据而非 0%。
     """
     reports = _reports_for(all_reports, eligible_ids)
     if not reports:
-        return 0.0
+        return None
     passed = sum(
         1
         for r in reports
@@ -189,16 +192,17 @@ def _decision_density(
     published_by_draft: dict[str, Feedback],
     eligible_ids: set[str],
     jobs_by_id: dict[str, ContentJob],
-) -> float:
+) -> float | None:
     """立场密度：已发布非遗留草稿中，绑定 job 有非空 decision 且 tradeoff 的占比。
 
     有 content_job_id 但 job 缺失/无立场 → 计入分母、不计分子。
+    无已发布非遗留草稿（无分母）时返回 None。
     """
     published_eligible = [
         d for d in all_drafts if d.id in eligible_ids and d.id in published_by_draft
     ]
     if not published_eligible:
-        return 0.0
+        return None
     with_position = 0
     for d in published_eligible:
         job = jobs_by_id.get(d.content_job_id) if d.content_job_id else None
@@ -210,15 +214,16 @@ def _decision_density(
 
 def _generic_sentence_rate(
     all_reports: dict[str, list[dict]], eligible_ids: set[str]
-) -> float:
+) -> float | None:
     """套话率（代理）：portability 或 specificity 失败的报告 / 全部报告。
 
     选此定义并记录：per-sentence 计数需要草稿正文的句子总数，而 Critic 报告
     payload 只保存逐项 checks 的 locations、不含正文，故用报告级代理。
+    无报告（无分母）时返回 None。
     """
     reports = _reports_for(all_reports, eligible_ids)
     if not reports:
-        return 0.0
+        return None
     flagged = sum(
         1
         for r in reports
@@ -235,14 +240,15 @@ def _human_correction_rate(
     history: list[ReviewDecision],
     eligible_ids: set[str],
     since: datetime | None,
-) -> float:
+) -> float | None:
     """人工修正率：已审非遗留草稿中，需人工改事实/立场的占比。
 
     修正 = 存在 REVISE 历史事件，或最终 skip 且 reason in {fact_error, no_clear_position}。
+    无已审非遗留草稿（无分母）时返回 None。
     """
     reviewed_ids = {draft_id for draft_id in decisions if draft_id in eligible_ids}
     if not reviewed_ids:
-        return 0.0
+        return None
     revised_ids = {
         h.draft_id
         for h in history
@@ -262,11 +268,11 @@ def _human_correction_rate(
 
 def _job_completion_rate(
     outcome_by_draft: dict[str, Feedback], eligible_ids: set[str]
-) -> float:
+) -> float | None:
     """任务完成率：有结果评估的非遗留草稿中 job_completed in {yes, partly} 的占比。"""
     assessments = [fb for draft_id, fb in outcome_by_draft.items() if draft_id in eligible_ids]
     if not assessments:
-        return 0.0
+        return None
     completed = 0
     for fb in assessments:
         outcome = fb.outcome
@@ -279,7 +285,7 @@ def _useful_reply_rate(
     all_drafts: list[Draft],
     outcome_by_draft: dict[str, Feedback],
     eligible_ids: set[str],
-) -> float:
+) -> float | None:
     """有用回复率：已记录结果的回复（非遗留 + candidate_id 非空）中 useful_reply_count>0 的占比。"""
     reply_with_outcome = [
         d
@@ -287,7 +293,7 @@ def _useful_reply_rate(
         if d.id in eligible_ids and d.candidate_id is not None and d.id in outcome_by_draft
     ]
     if not reply_with_outcome:
-        return 0.0
+        return None
     useful = 0
     for d in reply_with_outcome:
         outcome = outcome_by_draft[d.id].outcome
@@ -335,6 +341,9 @@ def render_weekly(report: WeeklyReport) -> str:
     lines.append("## 建议 (继续/调整/停止)")
     for metric, label in _METRIC_LABELS.items():
         value = getattr(report, metric)
+        if value is None:
+            lines.append(f"- {label}: 无数据")
+            continue
         verdict = _classify(metric, value)
         if metric == "do_not_write_rate":
             lines.append(f"- {label}: {value:.0%} → {verdict}（不视为失败）")

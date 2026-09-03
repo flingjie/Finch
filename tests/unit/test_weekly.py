@@ -147,8 +147,8 @@ def test_weekly_analysis_empty(tmp_path):
     assert report.reviewed_drafts == 0
     assert report.approval_rate == 0.0
     assert report.skip_reasons == {}
-    assert report.evidence_coverage == 0.0
-    assert report.job_completion_rate == 0.0
+    assert report.evidence_coverage is None
+    assert report.job_completion_rate is None
 
 
 def test_render_weekly(tmp_path):
@@ -287,8 +287,8 @@ def test_legacy_drafts_excluded_from_new_metrics(tmp_path):
     jobs.upsert_job(_job("job1", decision="d", tradeoff="t"))
 
     report = weekly_analysis(drafts, reviews, feedbacks, jobs, critic)
-    assert report.decision_density == 0.0  # 遗留草稿不计入分母
-    assert report.job_completion_rate == 0.0  # 遗留草稿的 outcome 不计入
+    assert report.decision_density is None  # 遗留草稿不计入分母
+    assert report.job_completion_rate is None  # 遗留草稿的 outcome 不计入
 
 
 def test_render_weekly_includes_recommendations(tmp_path):
@@ -299,3 +299,77 @@ def test_render_weekly_includes_recommendations(tmp_path):
     assert "任务完成率" in out
     assert "不写率" in out
     assert "不视为失败" in out
+
+
+def _backdate_report(store, record_id, ts):
+    """直接改写某条 CriticReportRecord.updated_at，用于时间窗过滤测试。"""
+    from sqlmodel import Session
+
+    from finch.storage.repositories import CriticReportRecord
+
+    with Session(store.engine) as session:
+        record = session.get(CriticReportRecord, record_id)
+        assert record is not None
+        record.updated_at = ts
+        session.commit()
+
+
+def test_weekly_since_filters_evidence_coverage(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    drafts, reviews, feedbacks, jobs, critic = _repos(store)
+    drafts.upsert_draft(_draft("d1", content_job_id="job1"))
+    drafts.upsert_draft(_draft("d2", content_job_id="job2"))
+    critic.upsert_report(
+        "d1", 0, [CheckResult(checker="evidence", passed=True, severity="low")], "pass"
+    )
+    critic.upsert_report(
+        "d2", 0, [CheckResult(checker="evidence", passed=False, severity="hard_fail")], "reject"
+    )
+    now = datetime(2026, 1, 10, tzinfo=UTC)
+    _backdate_report(store, "d1:0", now - timedelta(days=10))
+    _backdate_report(store, "d2:0", now)
+
+    all_time = weekly_analysis(drafts, reviews, feedbacks, jobs, critic)
+    assert all_time.evidence_coverage == 0.5
+
+    windowed = weekly_analysis(
+        drafts, reviews, feedbacks, jobs, critic, since=now - timedelta(days=1)
+    )
+    # 窗口内只有 d2（evidence 失败），窗口外的 d1 不计入。
+    assert windowed.evidence_coverage == 0.0
+
+
+def test_weekly_since_filters_generic_sentence_rate(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    drafts, reviews, feedbacks, jobs, critic = _repos(store)
+    drafts.upsert_draft(_draft("d1", content_job_id="job1"))
+    drafts.upsert_draft(_draft("d2", content_job_id="job2"))
+    critic.upsert_report(
+        "d1", 0, [CheckResult(checker="portability", passed=False, severity="high")], "rewrite"
+    )
+    critic.upsert_report(
+        "d2", 0, [CheckResult(checker="specificity", passed=True, severity="low")], "pass"
+    )
+    now = datetime(2026, 1, 10, tzinfo=UTC)
+    _backdate_report(store, "d1:0", now - timedelta(days=10))
+    _backdate_report(store, "d2:0", now)
+
+    all_time = weekly_analysis(drafts, reviews, feedbacks, jobs, critic)
+    assert all_time.generic_sentence_rate == 0.5
+
+    windowed = weekly_analysis(
+        drafts, reviews, feedbacks, jobs, critic, since=now - timedelta(days=1)
+    )
+    assert windowed.generic_sentence_rate == 0.0
+
+
+def test_render_weekly_empty_metrics_show_no_data(tmp_path):
+    r = WeeklyReport()
+    out = render_weekly(r)
+    assert "无数据" in out
+    assert "证据覆盖: 无数据" in out
+    # 无分母时不应输出误导性的「继续/停止」判定。
+    assert "→ 停止" not in out
+    assert "→ 继续" not in out

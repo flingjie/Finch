@@ -351,10 +351,15 @@ class CriticReportRepository:
             records = list(session.exec(stmt))
             return [json.loads(r.payload_json) for r in records]
 
-    def list_all_reports(self) -> dict[str, list[dict]]:
-        """按 draft_id 分组返回全部 Critic 报告（单查询，供周复盘批量统计，避免 N+1）。"""
+    def list_all_reports(self, since: datetime | None = None) -> dict[str, list[dict]]:
+        """按 draft_id 分组返回 Critic 报告（单查询，供周复盘批量统计，避免 N+1）。
+
+        `since` 非 None 时仅返回 ``updated_at >= since`` 的报告，使周复盘指标遵守时间窗。
+        """
         with Session(self.store.engine) as session:
             stmt = select(CriticReportRecord).order_by("draft_id", "round")
+            if since is not None:
+                stmt = stmt.where(CriticReportRecord.updated_at >= since)
             records = list(session.exec(stmt))
         grouped: dict[str, list[dict]] = {}
         for record in records:

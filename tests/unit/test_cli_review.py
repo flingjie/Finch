@@ -59,3 +59,32 @@ def test_review_feedback_rejects_invalid_outcome(monkeypatch, tmp_path):
         app, ["review", "feedback", "d1", "--outcome", json.dumps({"job_completed": "maybe"})]
     )
     assert r.exit_code != 0
+
+
+def test_review_feedback_outcome_preserves_url_and_metrics(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    from finch.storage.repositories import DraftRepository
+
+    DraftRepository(store).upsert_draft(
+        Draft(id="d1", kind=DraftKind.REPLY, candidate_id="t", body="hi", claims=[])
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r1 = CliRunner().invoke(
+        app,
+        ["review", "feedback", "d1", "--url", "https://x.com/1",
+         "--metrics", json.dumps({"likes": 5})],
+    )
+    assert r1.exit_code == 0, r1.output
+    outcome_json = json.dumps({"job_completed": "yes"})
+    r2 = CliRunner().invoke(app, ["review", "feedback", "d1", "--outcome", outcome_json])
+    assert r2.exit_code == 0, r2.output
+
+    fb = FeedbackRepository(store).get_feedback("d1")
+    assert fb is not None
+    assert fb.published_url == "https://x.com/1"
+    assert fb.interaction_metrics == {"likes": 5}
+    assert fb.outcome is not None
+    assert fb.outcome.job_completed == "yes"

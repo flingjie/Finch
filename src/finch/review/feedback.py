@@ -18,12 +18,28 @@ class FeedbackService:
         metrics: dict | None = None,
         outcome: OutcomeAssessment | None = None,
     ) -> Feedback:
-        feedback = Feedback(
-            draft_id=draft_id,
-            published_url=published_url,
-            interaction_metrics=metrics or {},
-            recorded_at=datetime.now(UTC),
-            outcome=outcome,
-        )
+        # 读-改-写：后续 --outcome 不应覆盖先前登记的 url / metrics。
+        existing = self.feedbacks.get_feedback(draft_id)
+        if existing is not None:
+            feedback = Feedback(
+                draft_id=draft_id,
+                published_url=(
+                    existing.published_url if published_url is None else published_url
+                ),
+                interaction_metrics={
+                    **existing.interaction_metrics,
+                    **(metrics or {}),
+                },
+                recorded_at=datetime.now(UTC),
+                outcome=existing.outcome if outcome is None else outcome,
+            )
+        else:
+            feedback = Feedback(
+                draft_id=draft_id,
+                published_url=published_url,
+                interaction_metrics=metrics or {},
+                recorded_at=datetime.now(UTC),
+                outcome=outcome,
+            )
         self.feedbacks.save_feedback(feedback)
         return feedback
