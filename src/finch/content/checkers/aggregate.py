@@ -1,7 +1,10 @@
 """确定性聚合器（C7）：把逐项 CheckResult 汇总成单一决策。
 
-决策完全由规则计算，绝不信任模型输出的 ``passed``。四种结果字符串稳定：
-"pass" | "rewrite" | "reject" | "needs_input"。
+聚合规则完全由代码计算，绝不信任任何单一模型输出的 ``passed`` 字段。注意：规则本身是
+确定性的，但输入的 ``CheckResult`` 大多来自 LLM 驱动的检查器（entailment / decision /
+portability / specificity），因此 "pass" 并非独立于模型。真正 fail-closed 的门是确定性的
+``EvidenceChecker`` hard_fail；LLM 检查器的失败只会触发 rewrite（fail-safe），不会放行。
+四种结果字符串稳定："pass" | "rewrite" | "reject" | "needs_input"。
 """
 
 from enum import StrEnum
