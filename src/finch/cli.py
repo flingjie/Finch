@@ -588,18 +588,20 @@ def voice_approve_example(draft_id: str) -> None:
     if draft is None:
         typer.echo(f"draft not found: {draft_id}")
         raise typer.Exit(code=1)
-    decision = ReviewRepository(store).get_review(draft_id)
+    review_repo = ReviewRepository(store)
+    decision = review_repo.get_review(draft_id)
     if decision is None or decision.action != ReviewAction.APPROVE:
         typer.echo(f"not approved: {draft_id}")
         raise typer.Exit(code=1)
-    position = ReviewRepository(store).get_position_review(draft_id)
+    position = review_repo.get_position_review(draft_id)
     if position is None or position.voice_match is None:
         typer.echo(f"voice_match not recorded: {draft_id}")
         raise typer.Exit(code=1)
     if position.voice_match < _VOICE_MATCH_THRESHOLD:
         typer.echo(f"voice_match below threshold: {draft_id}")
         raise typer.Exit(code=1)
-    text = decision.revised_body if decision.revised_body else draft.body
+    # approve() 用 revised_body=None 覆盖最终决策，故人工修订文本需从历史读取。
+    text = review_repo.latest_revised_body(draft_id) or draft.body
     path = settings.paths.voice_profile_path
     profile = load_voice_profile(path)
     if any(ex.id == draft_id for ex in profile.approved_examples):

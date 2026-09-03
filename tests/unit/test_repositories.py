@@ -95,6 +95,22 @@ def test_feedback_roundtrip(tmp_path):
     assert repo.get_feedback("d1").published_url == "https://x.com/u/status/1"
 
 
+def test_latest_revised_body_reads_history_not_final_decision(tmp_path):
+    """F3: approve() 覆盖 rev_<id>（revised_body=None）后，修订文本仍需从历史读回。"""
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = ReviewRepository(store)
+    repo.append_history(ReviewDecision(id="rev_d1", draft_id="d1", action=ReviewAction.REVISE,
+                                       revised_body="v1", decided_at=datetime(2026, 1, 1)))
+    repo.append_history(ReviewDecision(id="rev_d1", draft_id="d1", action=ReviewAction.REVISE,
+                                       revised_body="v2", decided_at=datetime(2026, 1, 2)))
+    # 最终决策被 approve 覆盖，revised_body=None
+    repo.save_review(ReviewDecision(id="rev_d1", draft_id="d1", action=ReviewAction.APPROVE,
+                                    decided_at=datetime(2026, 1, 3)))
+    assert repo.latest_revised_body("d1") == "v2"
+    assert repo.latest_revised_body("missing") is None
+
+
 def test_contentjob_record_table_registered(tmp_path):
     """Test that ContentJobRecord is registered for table creation."""
     store = Store(tmp_path / "db.sqlite")

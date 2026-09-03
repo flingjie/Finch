@@ -22,6 +22,7 @@ from finch.content.voice import (
     save_voice_profile,
 )
 from finch.review.models import ReviewAction, ReviewDecision
+from finch.review.service import ReviewService
 from finch.settings import Paths, Settings
 from finch.storage.database import Store
 from finch.storage.repositories import (
@@ -293,10 +294,12 @@ def test_voice_approve_example_uses_revised_body_and_dedupes(monkeypatch, tmp_pa
     store = Store(settings.paths.db_path)
     store.init()
     _seed_draft(store, "d1", "original ai draft body")
-    ReviewRepository(store).save_review(
-        _approve_decision("d1", voice_match=4, revised_body="human revised body")
-    )
-    ReviewRepository(store).save_review(_confirm_decision("d1", voice_match=4))
+    # 走真实 revise → approve 路径：approve 会用 revised_body=None 覆盖最终决策，
+    # 人工修订文本只能从追加式历史里读回（F3）。
+    svc = ReviewService(DraftRepository(store), ReviewRepository(store))
+    svc.revise("d1", "human revised body")
+    svc.approve("d1")
+    svc.confirm_position("d1", voice_match=4)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["voice", "approve-example", "d1"])

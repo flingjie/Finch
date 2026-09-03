@@ -13,7 +13,7 @@ from finch.content.checkers.base import CheckResult
 from finch.content.jobs import ContentJob
 from finch.content.models import Draft
 from finch.evidence.models import EvidenceCard
-from finch.review.models import Feedback, ReviewDecision
+from finch.review.models import Feedback, ReviewAction, ReviewDecision
 from finch.storage.database import Store
 
 
@@ -184,6 +184,24 @@ class ReviewRepository:
             stmt = select(ReviewHistoryRecord)
             records = list(session.exec(stmt))
             return [ReviewDecision.model_validate_json(r.payload_json) for r in records]
+
+    def latest_revised_body(self, draft_id: str) -> str | None:
+        """返回该草稿历史中最近一次 REVISE 的人工修订正文，无则返回 None。
+
+        approve() 会用 ``revised_body=None`` 覆盖 ``rev_<id>`` 记录，因此最终决策里
+        的人工修订文本已丢失；改为从追加式历史中读取最近一次 REVISE 的 revised_body。
+        """
+        revisions = [
+            d
+            for d in self.list_history()
+            if d.draft_id == draft_id
+            and d.action == ReviewAction.REVISE
+            and d.revised_body is not None
+        ]
+        if not revisions:
+            return None
+        latest = max(revisions, key=lambda d: d.decided_at)
+        return latest.revised_body
 
 
 class ReviewHistoryRecord(SQLModel, table=True):
