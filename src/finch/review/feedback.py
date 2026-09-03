@@ -30,7 +30,9 @@ class FeedbackService:
                     **existing.interaction_metrics,
                     **(metrics or {}),
                 },
-                recorded_at=datetime.now(UTC),
+                # 保留首次登记的 recorded_at：后续 --outcome/--metrics 不应把旧发布
+                # 挪进当前周窗口（F4）。
+                recorded_at=existing.recorded_at,
                 outcome=existing.outcome if outcome is None else outcome,
             )
         else:

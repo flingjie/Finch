@@ -126,3 +126,26 @@ def test_review_feedback_outcome_preserves_url_and_metrics(monkeypatch, tmp_path
     assert fb.interaction_metrics == {"likes": 5}
     assert fb.outcome is not None
     assert fb.outcome.job_completed == "yes"
+
+
+def test_review_feedback_preserves_recorded_at(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    DraftRepository(store).upsert_draft(
+        Draft(id="d1", kind=DraftKind.REPLY, candidate_id="t", body="hi", claims=[])
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r1 = CliRunner().invoke(app, ["review", "feedback", "d1", "--url", "https://x.com/1"])
+    assert r1.exit_code == 0, r1.output
+    first = FeedbackRepository(store).get_feedback("d1")
+    assert first is not None
+
+    outcome_json = json.dumps({"job_completed": "yes"})
+    r2 = CliRunner().invoke(app, ["review", "feedback", "d1", "--outcome", outcome_json])
+    assert r2.exit_code == 0, r2.output
+
+    second = FeedbackRepository(store).get_feedback("d1")
+    assert second is not None
+    assert second.recorded_at == first.recorded_at
