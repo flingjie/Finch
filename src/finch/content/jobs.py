@@ -1,10 +1,20 @@
 """Content Job 模型（Spec §8）：定义内容目标与作者立场。"""
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from finch.content.models import DraftKind
+
+
+class ContentJobStatus(StrEnum):
+    """Content Job 状态枚举。"""
+
+    PROPOSED = "proposed"
+    NEEDS_INPUT = "needs_input"
+    READY = "ready"
+    DO_NOT_WRITE = "do_not_write"
 
 
 class IntendedEffect(BaseModel):
@@ -33,15 +43,6 @@ class SuccessCriterion(BaseModel):
     measurement: Literal["critic", "human", "outcome"]
 
 
-class ContentJobStatus:
-    """Content Job 状态枚举（StrEnum 风格，但使用类常量以兼容 Pydantic）。"""
-
-    PROPOSED = "proposed"
-    NEEDS_INPUT = "needs_input"
-    READY = "ready"
-    DO_NOT_WRITE = "do_not_write"
-
-
 class ContentJob(BaseModel):
     """
     Content Job: define what the content must accomplish.
@@ -68,7 +69,7 @@ class ContentJob(BaseModel):
     author_position: AuthorPosition | None = None
     success_criteria: list[SuccessCriterion]
     recommended_format: DraftKind
-    status: str
+    status: ContentJobStatus
     missing_questions: list[str] = Field(default_factory=list, max_length=3)
 
     def validate_source_cards(self, available_card_ids: list[str]) -> bool:
@@ -90,7 +91,7 @@ class ContentJob(BaseModel):
         return False
 
 
-def infer_status(job: ContentJob) -> str:
+def infer_status(job: ContentJob) -> ContentJobStatus:
     """
     根据 job 的内容推断其应处的状态。
 

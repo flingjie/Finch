@@ -61,7 +61,7 @@ Otherwise return `status: "ready"`.
 - `missing_questions`: List at MOST 3 open questions that need answers before writing. Leave empty if everything is clear.
 - `author_position.decision`: Be specific. Example: "Use connection pooling with 10 connections" not "Connection pooling is good".
 - `author_position.tradeoff`: Explicitly state the sacrifice. Example: "Increased memory usage per connection" or "More complex configuration".
-- `recommended_format`: Choose "reply" for discussion responses, "original" for standalone posts.
+- `recommended_format`: Choose "reply" for discussion responses, "original" for standalone posts. Must be exactly "reply" or "original".
 - `status`: Follow the logic above strictly.
 
 ### DO_NOT_WRITE branch

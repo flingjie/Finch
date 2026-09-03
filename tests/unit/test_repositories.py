@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from sqlalchemy import inspect
+
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard, Source
 from finch.review.models import Feedback, ReviewAction, ReviewDecision, SkipReason
@@ -66,3 +68,13 @@ def test_feedback_roundtrip(tmp_path):
     repo.save_feedback(Feedback(draft_id="d1", published_url="https://x.com/u/status/1",
                                 recorded_at=datetime(2026, 1, 1)))
     assert repo.get_feedback("d1").published_url == "https://x.com/u/status/1"
+
+
+def test_contentjob_record_table_registered(tmp_path):
+    """Test that ContentJobRecord is registered for table creation."""
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+
+    # Check that contentjobrecord table exists via SQLAlchemy inspect
+    inspector = inspect(store.engine)
+    assert inspector.has_table("contentjobrecord")
