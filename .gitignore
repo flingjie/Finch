@@ -11,6 +11,7 @@ build/
 
 # Local data (spec: var/ 默认加入 .gitignore)
 var/
+.codex/
 
 # Secrets
 .env
