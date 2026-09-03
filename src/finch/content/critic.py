@@ -7,6 +7,7 @@ from typing import cast
 from pydantic import BaseModel, Field
 
 from finch.codex.runner import CodexRunner
+from finch.content.checkers.aggregate import aggregate_checks
 from finch.content.checkers.base import CheckResult
 from finch.content.models import Draft
 from finch.evidence.models import EvidenceCard
@@ -29,6 +30,11 @@ class CritiqueResult(BaseModel):
     entailment_failed: list[str] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
     checks: list[CheckResult] = Field(default_factory=list)
+
+    @classmethod
+    def from_checks(cls, checks: list[CheckResult]) -> "CritiqueResult":
+        """构建兼容性汇总：``passed`` 由确定性聚合器计算，绝不信任模型输出。"""
+        return cls(passed=aggregate_checks(checks) == "pass", checks=checks)
 
 
 def _render_draft(draft: Draft) -> str:

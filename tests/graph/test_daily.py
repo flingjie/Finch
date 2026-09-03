@@ -68,11 +68,15 @@ def test_daily_nodes_order_and_contract(tmp_path):
     assert nodes[5].reads == ["ranked_candidates", "evidence_cards", "candidates"]
     assert nodes[6].writes == "content_jobs"
     assert nodes[7].writes == "ready_jobs"
-    assert nodes[9].reads == ["drafts", "match_results", "evidence_cards"]
+    assert nodes[9].reads == [
+        "drafts", "match_results", "evidence_cards", "content_jobs", "ready_jobs",
+    ]
 
 
 def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
-    from finch.content.critic import CritiqueResult
+    from finch.content.checkers.decision import _DecisionOutput
+    from finch.content.checkers.evidence import _EntailmentOutput
+    from finch.content.checkers.portability import _PortabilityOutput
     from finch.content.jobs import (
         AuthorPosition,
         ContentJob,
@@ -185,8 +189,14 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
                         )
                     ]
                 )
-            if output_model is CritiqueResult:
-                return CritiqueResult(passed=True, quality_score=0.9)
+            if output_model is _EntailmentOutput:
+                return _EntailmentOutput(entailment_failed=[])
+            if output_model is _DecisionOutput:
+                return _DecisionOutput(
+                    expresses_decision=True, expresses_tradeoff=True, missing=[]
+                )
+            if output_model is _PortabilityOutput:
+                return _PortabilityOutput(generic_sentences=[])
             if output_model is Draft:
                 return Draft(
                     id="d1",
@@ -242,8 +252,9 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
 
     run2 = GraphRuntime(store, build()).run(run_id=run.id)
     assert run2.state == "WAITING_FOR_REVIEW"
-    # resume 新增 draft + critique 两次 LLM 调用（gate 从 repo 读到最新 confirmed 放行）。
-    assert runner.calls == calls_after_first + 2
+    # resume 新增 draft(1) + critique 检查器套件(evidence entailment + decision +
+    # portability = 3 次 LLM)。specificity 无套话句子，确定性路径不调 LLM。
+    assert runner.calls == calls_after_first + 4
 
     calls_after_second = runner.calls
     run3 = GraphRuntime(store, build()).run(run_id=run.id)

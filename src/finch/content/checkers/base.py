@@ -6,6 +6,7 @@
 其中 ``hard_fail`` 是独立于 ``high`` 的级别：hard fail 不可被平均分掩盖。
 """
 
+import re
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
@@ -13,6 +14,13 @@ from pydantic import BaseModel, Field
 from finch.content.jobs import ContentJob
 from finch.content.models import Draft
 from finch.evidence.models import EvidenceCard
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?。！？\n])\s*")
+
+
+def split_sentences(body: str) -> list[str]:
+    """把草稿正文切成句子（去掉空串与首尾空白）。Specificity/Portability 共用。"""
+    return [s.strip() for s in _SENTENCE_SPLIT.split(body) if s.strip()]
 
 
 class CheckResult(BaseModel):

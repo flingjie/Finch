@@ -71,3 +71,25 @@ def test_critique_result_round_trips_checks():
     back = CritiqueResult.model_validate(result.model_dump(mode="json"))
     assert back.checks == result.checks
     assert back.checks[0].severity == "low"
+
+
+def test_critique_result_from_checks_computes_passed_from_aggregate():
+    failed = [
+        CheckResult(
+            checker="specificity",
+            passed=False,
+            severity="medium",
+            locations=["sentence[0]"],
+            issues=["vague"],
+            rewrite_instructions=["be specific"],
+        )
+    ]
+    result = CritiqueResult.from_checks(failed)
+    assert result.passed is False
+    assert result.checks == failed
+
+    hard = CheckResult(checker="evidence", passed=False, severity="hard_fail")
+    assert CritiqueResult.from_checks([hard]).passed is False
+
+    passed = [CheckResult(checker="evidence", passed=True, severity="low")]
+    assert CritiqueResult.from_checks(passed).passed is True

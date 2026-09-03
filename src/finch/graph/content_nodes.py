@@ -10,8 +10,13 @@ from typing import cast
 from pydantic import BaseModel
 
 from ..codex.runner import CodexRunner
+from ..content.checkers.aggregate import AggregateOutcome, aggregate_checks
+from ..content.checkers.base import CheckContext, Checker, CheckResult
+from ..content.checkers.decision import DecisionChecker
+from ..content.checkers.evidence import EvidenceChecker
+from ..content.checkers.portability import PortabilityChecker
+from ..content.checkers.specificity import SpecificityChecker
 from ..content.claims import validate_draft
-from ..content.critic import CritiqueResult, evaluate_passed
 from ..content.jobs import ContentJob, ContentJobStatus, define_content_jobs
 from ..content.models import DailyBrief, Draft, DraftKind
 from ..evidence.models import EvidenceCard, MatchResult
@@ -35,8 +40,7 @@ WriteReplyFn = Callable[
     Draft | None,
 ]
 WriteOriginalFn = Callable[[CodexRunner, list[EvidenceCard], ContentJob | None], Draft | None]
-RewriteFn = Callable[[CodexRunner, Draft, CritiqueResult, dict[str, EvidenceCard]], Draft]
-CritiqueFn = Callable[[CodexRunner, Draft, dict[str, EvidenceCard]], CritiqueResult]
+RewriteFn = Callable[[CodexRunner, Draft, list[CheckResult], dict[str, EvidenceCard]], Draft]
 
 
 def make_draft_node(
@@ -110,22 +114,45 @@ def make_draft_node(
 def make_critique_node(
     runner: CodexRunner,
     rewrite: RewriteFn,
-    critique: CritiqueFn,
     gates: QualityGates,
+    checkers: list[Checker] | None = None,
 ) -> Node:
-    """草稿审查节点：对每条 draft 最多 max_rewrite_rounds 次重写，每次重写后再审查。"""
+    """草稿审查节点：Critic Suite 逐项检查 → 确定性聚合 → 定向重写。
+
+    对每条 draft：跑检查器套件，``aggregate_checks`` 决定去向：
+    - pass → 保留
+    - reject（hard_fail）→ 丢弃，绝不到 review
+    - needs_input → 停下管线（runtime 处理）
+    - rewrite → 定向重写（只传失败检查器的指令），最多 max_rewrite_rounds 次
+    每轮产出 checker report（供 Task 7 持久化为 DraftVersionRecord/CriticReportRecord）。
+    """
+
+    suite: list[Checker] = (
+        checkers
+        if checkers is not None
+        else [
+            EvidenceChecker(runner),
+            DecisionChecker(runner),
+            SpecificityChecker(runner),
+            PortabilityChecker(runner),
+        ]
+    )
 
     class CritiqueNode(Node):
         def run(self, ctx: dict) -> NodeResult:
             drafts = parse_items(ctx["drafts"], Draft)
             matches = parse_items(ctx["match_results"], MatchResult)
             cards = parse_items(ctx["evidence_cards"], EvidenceCard)
+            content_jobs = parse_items(ctx.get("content_jobs") or {}, ContentJob)
+            ready_jobs = parse_items(ctx.get("ready_jobs") or {}, ContentJob)
 
             cards_by_id = {card.id: card for card in cards}
             match_by_candidate = {match.candidate_id: match for match in matches}
+            jobs_by_id = {job.id: job for job in [*content_jobs, *ready_jobs]}
 
             kept: list[Draft] = []
             warnings: list[str] = []
+            reports: list[dict] = []
 
             for draft in drafts:
                 if draft.candidate_id is not None:
@@ -139,19 +166,65 @@ def make_critique_node(
                 else:
                     card_ids = set(cards_by_id)
 
+                job = jobs_by_id.get(draft.content_job_id) if draft.content_job_id else None
+
                 current = draft
                 for i in range(gates.max_rewrite_rounds + 1):
-                    result = critique(runner, current, cards_by_id)
-                    if evaluate_passed(result, gates):
+                    check_ctx = CheckContext(draft=current, cards=cards, job=job)
+                    checks = [checker.check(check_ctx) for checker in suite]
+                    outcome = aggregate_checks(checks)
+                    reports.append(
+                        {
+                            "draft_id": draft.id,
+                            "round": i,
+                            "checks": [check.model_dump(mode="json") for check in checks],
+                            "outcome": outcome,
+                        }
+                    )
+
+                    if outcome == AggregateOutcome.PASS:
                         kept.append(current)
                         break
+
+                    if outcome == AggregateOutcome.REJECT:
+                        for check in checks:
+                            if check.severity == "hard_fail" and not check.passed:
+                                warnings.append(
+                                    f"draft {draft.id}: rejected by {check.checker} "
+                                    f"({', '.join(check.locations) or 'n/a'})"
+                                )
+                        break
+
+                    if outcome == AggregateOutcome.NEEDS_INPUT:
+                        offending = [
+                            check
+                            for check in checks
+                            if check.severity == "high"
+                            and check.requires_human_input
+                            and not check.passed
+                        ]
+                        input_warnings = [
+                            f"draft {draft.id}: needs human input ({check.checker})"
+                            for check in offending
+                        ]
+                        out = items_payload(cast(list[BaseModel], []))
+                        out["warnings"] = input_warnings
+                        out["reports"] = reports
+                        return NodeResult(
+                            status="needs_input",
+                            output=out,
+                            warnings=input_warnings,
+                        )
+
+                    # rewrite：只把失败检查器的指令交给 writer
+                    failed = [check for check in checks if not check.passed]
                     if i == gates.max_rewrite_rounds:
                         warnings.append(
-                            f"draft {current.id} failed critique after "
+                            f"draft {draft.id} failed critique after "
                             f"{gates.max_rewrite_rounds} rewrites"
                         )
                         break
-                    current = rewrite(runner, current, result, cards_by_id)
+                    current = rewrite(runner, current, failed, cards_by_id)
                     violations = validate_draft(current, card_ids=card_ids)
                     if violations:
                         warnings.append(
@@ -161,6 +234,7 @@ def make_critique_node(
 
             out = items_payload(cast(list[BaseModel], kept))
             out["warnings"] = warnings
+            out["reports"] = reports
             return NodeResult(
                 status="succeeded",
                 output=out,
@@ -169,7 +243,7 @@ def make_critique_node(
 
     return CritiqueNode(
         name="critique",
-        reads=["drafts", "match_results", "evidence_cards"],
+        reads=["drafts", "match_results", "evidence_cards", "content_jobs", "ready_jobs"],
         writes="drafts",
         succeeds_to="CRITIQUED",
     )

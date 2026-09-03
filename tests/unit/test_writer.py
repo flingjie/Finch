@@ -1,6 +1,5 @@
-from types import SimpleNamespace
-
 from finch.codex.runner import CodexRunner
+from finch.content.checkers.base import CheckResult
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
@@ -160,10 +159,84 @@ def test_write_original_stamps_metadata():
     assert d.language == "zh"
 
 
+def _failed_check(
+    checker: str = "specificity",
+    issue: str = "too vague",
+    instruction: str = "replace the vague sentence with a specific claim",
+) -> CheckResult:
+    return CheckResult(
+        checker=checker,
+        passed=False,
+        severity="medium",
+        locations=["sentence[0]"],
+        issues=[issue],
+        rewrite_instructions=[instruction],
+    )
+
+
 def test_rewrite_regenerates_body():
     out = Draft(id="d", kind=DraftKind.REPLY, candidate_id="t1", language="en",
                 body="fixed", claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
                                                confidence=ClaimConfidence.VERIFIED)])
     r = FakeRunner(out)
-    d = rewrite(r, _good_draft(), SimpleNamespace(issues=["too vague"]), {"ev_1": _card()})
+    d = rewrite(r, _good_draft(), [_failed_check()], {"ev_1": _card()})
     assert d is not None and d.body == "fixed"
+
+
+def test_rewrite_prompt_contains_only_failed_instructions():
+    captured: list[str] = []
+
+    class CaptureRunner(CodexRunner):
+        def run(self, prompt, output_model, **kw):
+            captured.append(prompt)
+            return _good_draft().model_copy(update={"body": "fixed"})
+
+    rewrite(
+        CaptureRunner(),
+        _good_draft(),
+        [_failed_check(checker="specificity", instruction="tie the claim to evidence")],
+        {"ev_1": _card()},
+    )
+    prompt = captured[0]
+    assert "tie the claim to evidence" in prompt
+    assert "specificity" in prompt
+    assert "too vague" in prompt
+    assert "Do NOT restyle" in prompt
+    assert "improve the writing" not in prompt
+
+
+def test_rewrite_renders_each_failed_check():
+    captured: list[str] = []
+
+    class CaptureRunner(CodexRunner):
+        def run(self, prompt, output_model, **kw):
+            captured.append(prompt)
+            return _good_draft().model_copy(update={"body": "fixed"})
+
+    rewrite(
+        CaptureRunner(),
+        _good_draft(),
+        [
+            _failed_check(checker="specificity", instruction="fix specificity"),
+            _failed_check(checker="portability", instruction="anchor the claim"),
+        ],
+        {"ev_1": _card()},
+    )
+    prompt = captured[0]
+    assert "fix specificity" in prompt
+    assert "anchor the claim" in prompt
+    assert "specificity" in prompt
+    assert "portability" in prompt
+
+
+def test_rewrite_preserves_stamped_identity():
+    out = Draft(id="wrong", kind=DraftKind.ORIGINAL, candidate_id=None, language="zh",
+                body="fixed", claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
+                                               confidence=ClaimConfidence.VERIFIED)])
+    r = FakeRunner(out)
+    d = rewrite(r, _good_draft(), [_failed_check()], {"ev_1": _card()})
+    assert d is not None
+    assert d.id == "d"
+    assert d.kind == DraftKind.REPLY
+    assert d.candidate_id == "t1"
+    assert d.language == "en"

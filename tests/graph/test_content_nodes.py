@@ -3,7 +3,7 @@
 import json
 
 from finch.codex.runner import CodexRunner
-from finch.content.critic import CritiqueResult
+from finch.content.checkers.base import CheckResult
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
@@ -227,52 +227,87 @@ def test_draft_node_empty_ready_jobs_writes_empty(tmp_path):
     assert calls == {"reply": 0, "original": 0}
 
 
+def _failed_check(
+    checker: str = "specificity",
+    severity: str = "high",
+    requires_human_input: bool = False,
+    locations: tuple = ("sentence[0]",),
+    issue: str = "vague",
+    instruction: str = "be specific",
+) -> CheckResult:
+    return CheckResult(
+        checker=checker,
+        passed=False,
+        severity=severity,  # type: ignore[arg-type]
+        locations=list(locations),
+        issues=[issue],
+        rewrite_instructions=[instruction],
+        requires_human_input=requires_human_input,
+    )
+
+
+def _pass_check(checker: str = "specificity") -> CheckResult:
+    return CheckResult(checker=checker, passed=True, severity="low")
+
+
+class SeqChecker:
+    """Fake checker that returns a scripted sequence of CheckResults, then repeats the last."""
+
+    name = "seq"
+
+    def __init__(self, results: list[CheckResult]):
+        self._results = list(results)
+        self.calls = 0
+
+    def check(self, ctx) -> CheckResult:
+        self.calls += 1
+        idx = min(self.calls - 1, len(self._results) - 1)
+        return self._results[idx]
+
+
+def _critique_nodes(rewrite, checker, gates=None):
+    return [
+        Seed(name="draft", writes="drafts", seed=items_payload([_reply_draft()])),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
+        Seed(name="position_gate", writes="ready_jobs", seed=items_payload([])),
+        make_critique_node(
+            CodexRunner(), rewrite, gates or QualityGates(), checkers=[checker]
+        ),
+    ]
+
+
 def test_critique_node_rewrites_until_pass(tmp_path):
-    calls = {"critique": 0, "rewrite": 0}
+    calls = {"rewrite": 0}
     fixed = _reply_draft().model_copy(update={"body": "v2"})
+    checker = SeqChecker([_failed_check(), _pass_check()])
 
-    def critique(runner, draft, cards_by_id):
-        calls["critique"] += 1
-        if calls["critique"] == 1:
-            return CritiqueResult(passed=False, quality_score=0.5)
-        return CritiqueResult(passed=True, quality_score=0.8)
-
-    def rewrite(runner, draft, critique_result, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id):
         calls["rewrite"] += 1
         return fixed
 
     store = _store(tmp_path)
-    nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([_reply_draft()])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        make_critique_node(CodexRunner(), rewrite, critique, QualityGates()),
-    ]
-    run = GraphRuntime(store, nodes).run()
+    run = GraphRuntime(store, _critique_nodes(rewrite, checker)).run()
     assert run.state == "CRITIQUED"
     rec = store.find_node(run.id, "critique", "default")
     assert rec is not None
     assert "v2" in rec.output_json
-    assert calls == {"critique": 2, "rewrite": 1}
+    assert calls == {"rewrite": 1}
+    assert checker.calls == 2
 
 
 def test_critique_node_drops_unfixable_draft(tmp_path):
-    def critique(runner, draft, cards_by_id):
-        return CritiqueResult(passed=False, quality_score=0.5)
+    checker = SeqChecker([_failed_check()])
 
-    def rewrite(runner, draft, critique_result, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id):
         return draft.model_copy(update={"body": "v2"})
 
     store = _store(tmp_path)
-    nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([_reply_draft()])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        make_critique_node(
-            CodexRunner(), rewrite, critique, QualityGates(max_rewrite_rounds=2)
-        ),
-    ]
-    run = GraphRuntime(store, nodes).run()
+    run = GraphRuntime(
+        store,
+        _critique_nodes(rewrite, checker, gates=QualityGates(max_rewrite_rounds=2)),
+    ).run()
     assert run.state == "CRITIQUED"
     rec = store.find_node(run.id, "critique", "default")
     assert rec is not None
@@ -281,67 +316,48 @@ def test_critique_node_drops_unfixable_draft(tmp_path):
 
 
 def test_critique_node_keeps_draft_fixed_by_single_rewrite(tmp_path):
-    calls = {"critique": 0, "rewrite": 0}
+    calls = {"rewrite": 0}
     fixed = _reply_draft().model_copy(update={"body": "fixed"})
+    checker = SeqChecker([_failed_check(), _pass_check()])
 
-    def critique(runner, draft, cards_by_id):
-        calls["critique"] += 1
-        if calls["critique"] == 1:
-            return CritiqueResult(passed=False, quality_score=0.5)
-        return CritiqueResult(passed=True, quality_score=0.8)
-
-    def rewrite(runner, draft, critique_result, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id):
         calls["rewrite"] += 1
         return fixed
 
     store = _store(tmp_path)
-    nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([_reply_draft()])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        make_critique_node(
-            CodexRunner(), rewrite, critique, QualityGates(max_rewrite_rounds=1)
-        ),
-    ]
-    run = GraphRuntime(store, nodes).run()
+    run = GraphRuntime(
+        store,
+        _critique_nodes(rewrite, checker, gates=QualityGates(max_rewrite_rounds=1)),
+    ).run()
     assert run.state == "CRITIQUED"
     rec = store.find_node(run.id, "critique", "default")
     assert rec is not None
     assert "fixed" in rec.output_json
-    assert calls == {"critique": 2, "rewrite": 1}
+    assert calls == {"rewrite": 1}
 
 
 def test_critique_node_keeps_draft_fixed_by_second_rewrite(tmp_path):
-    calls = {"critique": 0, "rewrite": 0}
+    calls = {"rewrite": 0}
     fixed = _reply_draft().model_copy(update={"body": "fixed"})
+    checker = SeqChecker([_failed_check(), _failed_check(), _pass_check()])
 
-    def critique(runner, draft, cards_by_id):
-        calls["critique"] += 1
-        if calls["critique"] < 3:
-            return CritiqueResult(passed=False, quality_score=0.5)
-        return CritiqueResult(passed=True, quality_score=0.8)
-
-    def rewrite(runner, draft, critique_result, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id):
         calls["rewrite"] += 1
         if calls["rewrite"] < 2:
             return draft
         return fixed
 
     store = _store(tmp_path)
-    nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([_reply_draft()])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        make_critique_node(
-            CodexRunner(), rewrite, critique, QualityGates(max_rewrite_rounds=2)
-        ),
-    ]
-    run = GraphRuntime(store, nodes).run()
+    run = GraphRuntime(
+        store,
+        _critique_nodes(rewrite, checker, gates=QualityGates(max_rewrite_rounds=2)),
+    ).run()
     assert run.state == "CRITIQUED"
     rec = store.find_node(run.id, "critique", "default")
     assert rec is not None
     assert "fixed" in rec.output_json
-    assert calls == {"critique": 3, "rewrite": 2}
+    assert calls == {"rewrite": 2}
+    assert checker.calls == 3
 
 
 def test_critique_node_warns_on_invalid_rewritten_claims():
@@ -354,14 +370,12 @@ def test_critique_node_warns_on_invalid_rewritten_claims():
             ]
         }
     )
+    checker = SeqChecker([_failed_check()])
 
-    def critique(runner, draft, cards_by_id):
-        return CritiqueResult(passed=False, quality_score=0.5)
-
-    def rewrite(runner, draft, critique_result, cards_by_id):
+    def rewrite(runner, draft, failed_checks, cards_by_id):
         return invalid
 
-    node = make_critique_node(CodexRunner(), rewrite, critique, QualityGates())
+    node = make_critique_node(CodexRunner(), rewrite, QualityGates(), checkers=[checker])
     result = node.run(
         {
             "drafts": items_payload([_reply_draft()]),
@@ -374,6 +388,107 @@ def test_critique_node_warns_on_invalid_rewritten_claims():
     assert any("invalid claims" in w for w in result.warnings)
     # F2: warnings are also embedded in the persisted output (runtime only persists output).
     assert any("invalid claims" in w for w in result.output["warnings"])
+
+
+def test_critique_node_drops_hard_fail_draft(tmp_path):
+    checker = SeqChecker(
+        [
+            _failed_check(
+                checker="evidence",
+                severity="hard_fail",
+                locations=("claim[0]",),
+                issue="unsupported claim",
+                instruction="re-bind the claim",
+            )
+        ]
+    )
+    calls = {"rewrite": 0}
+
+    def rewrite(runner, draft, failed_checks, cards_by_id):
+        calls["rewrite"] += 1
+        return draft
+
+    store = _store(tmp_path)
+    run = GraphRuntime(store, _critique_nodes(rewrite, checker)).run()
+    assert run.state == "CRITIQUED"
+    rec = store.find_node(run.id, "critique", "default")
+    assert rec is not None
+    payload = json.loads(rec.output_json)
+    assert payload["items"] == []
+    assert any("rejected" in w and "evidence" in w for w in payload["warnings"])
+    # hard_fail is dropped immediately, never rewritten
+    assert calls == {"rewrite": 0}
+
+
+def test_critique_node_stops_on_needs_input():
+    checker = SeqChecker(
+        [
+            _failed_check(
+                checker="decision",
+                severity="high",
+                requires_human_input=True,
+                issue="missing decision",
+                instruction="state the decision",
+            )
+        ]
+    )
+
+    def rewrite(runner, draft, failed_checks, cards_by_id):
+        return draft
+
+    node = make_critique_node(CodexRunner(), rewrite, QualityGates(), checkers=[checker])
+    result = node.run(
+        {
+            "drafts": items_payload([_reply_draft()]),
+            "match_results": items_payload([_match()]),
+            "evidence_cards": items_payload([_card()]),
+        }
+    )
+    assert result.status == "needs_input"
+    assert any("decision" in w for w in result.warnings)
+
+
+def test_critique_node_passes_only_failed_checks_to_rewrite(tmp_path):
+    captured: list[list[CheckResult]] = []
+    checker = SeqChecker([_failed_check(), _pass_check()])
+    fixed = _reply_draft().model_copy(update={"body": "fixed"})
+
+    def rewrite(runner, draft, failed_checks, cards_by_id):
+        captured.append(failed_checks)
+        return fixed
+
+    store = _store(tmp_path)
+    run = GraphRuntime(store, _critique_nodes(rewrite, checker)).run()
+    assert run.state == "CRITIQUED"
+    assert len(captured) == 1
+    assert [c.checker for c in captured[0]] == ["specificity"]
+    assert all(not c.passed for c in captured[0])
+
+
+def test_critique_node_emits_per_round_reports(tmp_path):
+    checker = SeqChecker([_failed_check(), _pass_check()])
+    fixed = _reply_draft().model_copy(update={"body": "fixed"})
+
+    def rewrite(runner, draft, failed_checks, cards_by_id):
+        return fixed
+
+    store = _store(tmp_path)
+    run = GraphRuntime(store, _critique_nodes(rewrite, checker)).run()
+    assert run.state == "CRITIQUED"
+    rec = store.find_node(run.id, "critique", "default")
+    assert rec is not None
+    reports = json.loads(rec.output_json)["reports"]
+    assert len(reports) == 2
+    assert reports[0] == {
+        "draft_id": "d1",
+        "round": 0,
+        "checks": [
+            _failed_check().model_dump(mode="json"),
+        ],
+        "outcome": "rewrite",
+    }
+    assert reports[1]["round"] == 1
+    assert reports[1]["outcome"] == "pass"
 
 
 def test_define_jobs_node_produces_and_filters_jobs(tmp_path):
