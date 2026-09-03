@@ -1,35 +1,26 @@
 """SafetyChecker：草稿正文安全扫描（Critic Suite 检查器之一，Task 6）。
 
-确定性部分（无需 LLM）：扫描草稿正文中的密钥/私密模式（复用 evidence/safety.py 的思路，
-但在此复制一小套 pattern，不 import 私有内部）。LLM 部分：判定
+确定性部分（无需 LLM）：扫描草稿正文中的密钥/私密模式（复用 evidence/safety.py 的
+``SECRET_PATTERNS``，单一事实来源）。LLM 部分：判定
 ``invented_personal_experience`` / ``unsupported_metric`` 两个语义安全 flag。
 
 安全命中 → ``requires_human_input=True`` 且 ``severity="high"``：这正是
 ``aggregate_checks`` 返回 ``needs_input`` 的触发条件（此前无检查器设置该字段，分支死代码）。
 """
 
-import re
 from typing import cast
 
 from pydantic import BaseModel
 
 from finch.codex.runner import CodexRunner
 from finch.content.checkers.base import CheckContext, Checker, CheckResult
-
-_SECRET_PATTERNS = (
-    re.compile(r"ghp_[A-Za-z0-9]{20,}"),
-    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
-    re.compile(r"sk-[A-Za-z0-9]{20,}"),
-    re.compile(r"AKIA[0-9A-Z]{16}"),
-    re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----"),
-    re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),
-)
+from finch.evidence.safety import SECRET_PATTERNS
 
 
 def scan_secrets(body: str) -> list[str]:
     """扫描正文中的密钥模式，返回命中的 pattern 字符串列表。"""
     found: list[str] = []
-    for pattern in _SECRET_PATTERNS:
+    for pattern in SECRET_PATTERNS:
         if pattern.search(body):
             found.append(pattern.pattern)
     return found

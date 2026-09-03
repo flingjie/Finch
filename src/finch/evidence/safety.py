@@ -22,7 +22,7 @@ class SafetyReport(BaseModel):
         return bool(self.hits)
 
 
-_SECRET_PATTERNS = (
+SECRET_PATTERNS = (
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
     re.compile(r"sk-[A-Za-z0-9]{20,}"),
@@ -30,6 +30,9 @@ _SECRET_PATTERNS = (
     re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----"),
     re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),
 )
+
+# Backwards-compatible alias for existing private references.
+_SECRET_PATTERNS = SECRET_PATTERNS
 
 _GITHUB_COMMIT_URL_PATTERN = re.compile(r"https://github\.com/([^/]+)/([^/]+)/commit/[^/]+")
 

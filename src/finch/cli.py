@@ -25,7 +25,7 @@ from .graph.daily import daily_nodes
 from .graph.replay import replay
 from .graph.runtime import GraphRuntime
 from .review.feedback import FeedbackService
-from .review.models import SkipReason
+from .review.models import ReviewAction, SkipReason
 from .review.service import ReviewService
 from .review.weekly import render_weekly, weekly_analysis
 from .settings import load_settings
@@ -499,9 +499,15 @@ def voice_show() -> None:
     )
 
 
+_VOICE_MATCH_THRESHOLD = 4
+
+
 @voice_app.command("approve-example")
 def voice_approve_example(draft_id: str) -> None:
-    """把草稿追加为 approved example（人工修改文本优先于原始 AI 草稿，按 id 去重）。"""
+    """把草稿追加为 approved example（人工修改文本优先于原始 AI 草稿，按 id 去重）。
+
+    仅当草稿已被人工 APPROVE 且 voice_match 达标时允许进入 approved examples。
+    """
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -510,16 +516,24 @@ def voice_approve_example(draft_id: str) -> None:
         typer.echo(f"draft not found: {draft_id}")
         raise typer.Exit(code=1)
     decision = ReviewRepository(store).get_review(draft_id)
-    text = (
-        decision.revised_body
-        if decision is not None and decision.revised_body
-        else draft.body
-    )
+    if decision is None or decision.action != ReviewAction.APPROVE:
+        typer.echo(f"not approved: {draft_id}")
+        raise typer.Exit(code=1)
+    if decision.voice_match is None:
+        typer.echo(f"voice_match not recorded: {draft_id}")
+        raise typer.Exit(code=1)
+    if decision.voice_match < _VOICE_MATCH_THRESHOLD:
+        typer.echo(f"voice_match below threshold: {draft_id}")
+        raise typer.Exit(code=1)
+    text = decision.revised_body if decision.revised_body else draft.body
     path = settings.paths.voice_profile_path
     profile = load_voice_profile(path)
     if any(ex.id == draft_id for ex in profile.approved_examples):
         typer.echo(f"already approved: {draft_id}")
         return
+    profile.rejected_examples = [
+        ex for ex in profile.rejected_examples if ex.id != draft_id
+    ]
     profile.approved_examples.append(ApprovedExample(id=draft_id, text=text))
     save_voice_profile(profile, path)
     typer.echo(f"approved example: {draft_id}")
@@ -532,11 +546,20 @@ def voice_reject_example(
 ) -> None:
     """把草稿追加为 rejected example（按 id 去重）。"""
     settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    draft = DraftRepository(store).get_draft(draft_id)
+    if draft is None:
+        typer.echo(f"draft not found: {draft_id}")
+        raise typer.Exit(code=1)
     path = settings.paths.voice_profile_path
     profile = load_voice_profile(path)
     if any(ex.id == draft_id for ex in profile.rejected_examples):
         typer.echo(f"already rejected: {draft_id}")
         return
+    profile.approved_examples = [
+        ex for ex in profile.approved_examples if ex.id != draft_id
+    ]
     profile.rejected_examples.append(RejectedExample(id=draft_id, reason=reason))
     save_voice_profile(profile, path)
     typer.echo(f"rejected example: {draft_id}")

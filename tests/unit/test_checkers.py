@@ -412,6 +412,13 @@ def test_safety_checker_flags_secret_deterministic():
     assert any("secret" in i for i in result.issues)
 
 
+def test_safety_checker_uses_shared_secret_patterns():
+    import finch.content.checkers.safety as checker_safety
+    from finch.evidence.safety import SECRET_PATTERNS
+
+    assert checker_safety.SECRET_PATTERNS is SECRET_PATTERNS
+
+
 def test_safety_checker_flags_invented_personal_experience():
     runner = FakeRunner(
         SimpleNamespace(invented_personal_experience=True, unsupported_metric=False)
