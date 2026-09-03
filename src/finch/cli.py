@@ -5,8 +5,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import typer
+import yaml
 
 from .codex.runner import CodexRunner
+from .content.jobs import AuthorPosition, ContentJobStatus
 from .content.models import DailyBrief, Draft
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader
@@ -14,6 +16,7 @@ from .github.gh_client import GhClient
 from .github.models import CommitDetail
 from .graph.context import parse_items
 from .graph.daily import daily_nodes
+from .graph.replay import replay
 from .graph.runtime import GraphRuntime
 from .review.feedback import FeedbackService
 from .review.models import SkipReason
@@ -21,7 +24,12 @@ from .review.service import ReviewService
 from .review.weekly import render_weekly, weekly_analysis
 from .settings import load_settings
 from .storage.database import Store
-from .storage.repositories import DraftRepository, FeedbackRepository, ReviewRepository
+from .storage.repositories import (
+    ContentJobRepository,
+    DraftRepository,
+    FeedbackRepository,
+    ReviewRepository,
+)
 from .twitter.normalizer import normalize_tweets
 from .twitter.opencli_client import OpenCliClient
 from .twitter.query_builder import QueryBuilder
@@ -39,6 +47,9 @@ app.add_typer(run_app, name="run")
 
 review_app = typer.Typer(help="Review drafts")
 app.add_typer(review_app, name="review")
+
+jobs_app = typer.Typer(help="Inspect and answer Content Jobs (human-in-the-loop)")
+app.add_typer(jobs_app, name="jobs")
 
 
 def _since_iso(since: str | None) -> str | None:
@@ -208,6 +219,42 @@ def run_daily() -> None:
             typer.echo(briefs[0].body)
 
 
+@run_app.command("resume")
+def run_resume(run_id: str) -> None:
+    """从 run-id 恢复：复用已完成节点，从 position_gate 继续（读取用户最新 job 编辑）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    gh = GhClient()
+    opencli = OpenCliClient()
+
+    # 只需重建节点依赖；已成功节点由 replay 复用，不会重新同步/收集/匹配。
+    commits_by_repo: dict[str, list[CommitDetail]] = {
+        repo: [] for repo in settings.repositories
+    }
+    known_commit_urls: set[str] = set()
+    repo_is_private = {repo: False for repo in settings.repositories}
+
+    nodes = daily_nodes(
+        settings=settings,
+        store=store,
+        gh=gh,
+        opencli=opencli,
+        extractor=Extractor(CodexRunner()),
+        runner=CodexRunner(),
+        commits_by_repo=commits_by_repo,
+        known_commit_urls=known_commit_urls,
+        repo_is_private=repo_is_private,
+    )
+    run = replay(store, nodes, run_id)
+    typer.echo(run.state)
+    brief_record = store.find_node(run_id, "brief", "default")
+    if brief_record is not None and brief_record.output_json:
+        briefs = parse_items(json.loads(brief_record.output_json), DailyBrief)
+        if briefs:
+            typer.echo(briefs[0].body)
+
+
 @run_app.command("weekly")
 def run_weekly() -> None:
     """周复盘：汇总最近 7 天的批准率、修改/跳过原因与已发布候选。"""
@@ -234,6 +281,13 @@ def _feedback_service() -> FeedbackService:
     store = Store(settings.paths.db_path)
     store.init()
     return FeedbackService(FeedbackRepository(store))
+
+
+def _jobs_repo() -> ContentJobRepository:
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    return ContentJobRepository(store)
 
 
 @review_app.command("list")
@@ -314,6 +368,103 @@ def review_feedback(
         metrics_dict = json.loads(metrics)
     feedback = _feedback_service().record(draft_id, published_url=url, metrics=metrics_dict)
     typer.echo(f"feedback recorded: {feedback.draft_id}")
+
+
+@jobs_app.command("list")
+def jobs_list(
+    status: ContentJobStatus | None = typer.Option(None, "--status", help="按状态过滤"),  # noqa: B008
+) -> None:
+    """列出 Content Jobs（可按状态过滤）。"""
+    jobs = _jobs_repo().list_jobs()
+    if status is not None:
+        jobs = [job for job in jobs if job.status == status]
+    if not jobs:
+        typer.echo("no jobs")
+        return
+    for job in jobs:
+        typer.echo(f"{job.id}\t{job.status.value}\t{job.reader_problem[:60]}")
+
+
+@jobs_app.command("show")
+def jobs_show(job_id: str) -> None:
+    """打印单个 Content Job 详情。"""
+    job = _jobs_repo().get_job(job_id)
+    if job is None:
+        typer.echo(f"job not found: {job_id}")
+        raise typer.Exit(code=1)
+    effect = job.intended_effect
+    typer.echo(f"id: {job.id}")
+    typer.echo(f"status: {job.status.value}")
+    typer.echo(f"reader_problem: {job.reader_problem}")
+    typer.echo(f"audience: {job.audience}")
+    typer.echo(
+        f"intended_effect: understand={effect.understand}; "
+        f"believe={effect.believe or ''}; action={effect.action or ''}"
+    )
+    typer.echo(
+        f"author_position: "
+        f"{job.author_position.model_dump_json() if job.author_position else 'none'}"
+    )
+    typer.echo(f"missing_questions: {json.dumps(job.missing_questions)}")
+    typer.echo(f"source_card_ids: {json.dumps(job.source_card_ids)}")
+    if job.reject_reason:
+        typer.echo(f"reject_reason: {job.reject_reason}")
+
+
+@jobs_app.command("answer")
+def jobs_answer(
+    job_id: str,
+    path: Path = typer.Option(..., "--file", help="author_position 字段的 YAML 文件"),  # noqa: B008
+) -> None:
+    """从 YAML 读取 author_position 字段并写入 job（confirmed 保持 False）。"""
+    repo = _jobs_repo()
+    job = repo.get_job(job_id)
+    if job is None:
+        typer.echo(f"job not found: {job_id}")
+        raise typer.Exit(code=1)
+    data = yaml.safe_load(path.read_text()) or {}
+    try:
+        position = AuthorPosition(**data)
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"invalid answers: {exc}")
+        raise typer.Exit(code=1) from None
+    position.confirmed = False
+    repo.upsert_job(job.model_copy(update={"author_position": position}))
+    typer.echo(f"answered {job_id}")
+
+
+@jobs_app.command("confirm-position")
+def jobs_confirm_position(job_id: str) -> None:
+    """确认作者立场（独立于最终发布批准）。"""
+    repo = _jobs_repo()
+    job = repo.get_job(job_id)
+    if job is None:
+        typer.echo(f"job not found: {job_id}")
+        raise typer.Exit(code=1)
+    if job.author_position is None:
+        typer.echo(f"job has no author_position: {job_id}")
+        raise typer.Exit(code=1)
+    position = job.author_position.model_copy(update={"confirmed": True})
+    repo.upsert_job(job.model_copy(update={"author_position": position}))
+    typer.echo(f"confirmed {job_id}")
+
+
+@jobs_app.command("reject")
+def jobs_reject(
+    job_id: str,
+    reason: str = typer.Option(..., "--reason", help="拒绝理由"),  # noqa: B008
+) -> None:
+    """标记 job 为 DO_NOT_WRITE 并记录理由。"""
+    repo = _jobs_repo()
+    job = repo.get_job(job_id)
+    if job is None:
+        typer.echo(f"job not found: {job_id}")
+        raise typer.Exit(code=1)
+    updated = job.model_copy(
+        update={"status": ContentJobStatus.DO_NOT_WRITE, "reject_reason": reason}
+    )
+    repo.upsert_job(updated)
+    typer.echo(f"rejected {job_id}")
 
 
 if __name__ == "__main__":

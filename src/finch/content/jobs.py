@@ -81,6 +81,7 @@ class ContentJob(BaseModel):
     recommended_format: DraftKind
     status: ContentJobStatus
     missing_questions: list[str] = Field(default_factory=list, max_length=3)
+    reject_reason: str | None = None
 
     def validate_source_cards(self, available_card_ids: list[str]) -> bool:
         """
@@ -127,10 +128,16 @@ def define_content_jobs(runner: CodexRunner, cards: list[EvidenceCard]) -> Conte
 
     - 加载 prompts/define-content-jobs.md
     - 格式化 evidence cards
+    - 强制每个 job 的 author_position.confirmed = False（剥离 LLM 输出的 confirmed，
+      只有人工 `jobs confirm-position` 命令才能置 True，防止 fail-open 绕过人审门）
     - 返回 ContentJobsOutput (items: list[ContentJob])
     """
     # 用 .replace 而非 .format：prompt 里含 JSON 示例的字面大括号，会被 .format 误解析。
     template = Path("prompts/define-content-jobs.md").read_text()
     prompt = template.replace("{cards}", dumps([c.model_dump(mode="json") for c in cards]))
     result = runner.run(prompt, ContentJobsOutput)
-    return cast(ContentJobsOutput, result)
+    output = cast(ContentJobsOutput, result)
+    for job in output.items:
+        if job.author_position is not None:
+            job.author_position = job.author_position.model_copy(update={"confirmed": False})
+    return output

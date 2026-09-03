@@ -27,6 +27,7 @@ from finch.graph.nodes import Node
 from finch.graph.runtime import GraphRuntime
 from finch.settings import QualityGates
 from finch.storage.database import NodeRecord, Store
+from finch.storage.repositories import ContentJobRepository
 from finch.twitter.models import DiscussionCandidate
 
 
@@ -48,6 +49,8 @@ def test_brief_node_terminal_state(tmp_path):
     nodes = [
         Seed(name="draft", writes="drafts", seed=items_payload([])),
         Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
+        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
         make_brief_node(QualityGates()),
     ]
     run = GraphRuntime(_store(tmp_path), nodes).run()
@@ -61,6 +64,8 @@ def test_brief_node_waiting_when_drafts(tmp_path):
     nodes = [
         Seed(name="draft", writes="drafts", seed=items_payload([d])),
         Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
+        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
         make_brief_node(QualityGates()),
     ]
     run = GraphRuntime(_store(tmp_path), nodes).run()
@@ -479,4 +484,155 @@ def test_position_gate_resume_proceeds_once_confirmed(tmp_path):
     assert run2.state == "DRAFTED"
     gate_rec2 = store.find_node(run1.id, "position_gate", "default")
     assert gate_rec2 is not None and gate_rec2.status == "succeeded"
+
+
+def test_define_jobs_strips_model_confirmed_so_gate_needs_input(tmp_path):
+    """模型输出的 confirmed=true 必须被剥除：只有人类 confirm-position 才能放行。"""
+    store = _store(tmp_path)
+    repo = ContentJobRepository(store)
+    job = _job(job_id="j1", candidate_id="t1", position=_position(confirmed=True))
+    runner = FakeJobsRunner([job])
+
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_define_jobs_node(runner, jobs_repo=repo),
+        make_position_gate_node(jobs_repo=repo),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "NEEDS_INPUT"
+
+
+def test_define_jobs_rejects_job_with_unknown_candidate(tmp_path):
+    """candidate_id 必须存在于 match_results；否则过滤掉。"""
+    good = _job(job_id="j1", candidate_id="t1", source_card_ids=("ev1",))
+    unknown = _job(job_id="j2", candidate_id="t_unknown", source_card_ids=("ev1",))
+    runner = FakeJobsRunner([good, unknown])
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_define_jobs_node(runner),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "JOBS_DEFINED"
+    rec = store.find_node(run.id, "define_jobs", "default")
+    assert rec is not None
+    assert "j1" in rec.output_json
+    assert "j2" not in rec.output_json
+
+
+def test_define_jobs_upserts_into_repo(tmp_path):
+    """D7: define_jobs 将每个 job 写入 ContentJobRepository。"""
+    store = _store(tmp_path)
+    repo = ContentJobRepository(store)
+    job = _job(job_id="j1", candidate_id="t1", position=_position(confirmed=False))
+    runner = FakeJobsRunner([job])
+
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_define_jobs_node(runner, jobs_repo=repo),
+    ]
+    GraphRuntime(store, nodes).run()
+    got = repo.get_job("j1")
+    assert got is not None
+    assert got.author_position is not None
+    assert got.author_position.confirmed is False
+
+
+def test_position_gate_reads_fresh_from_repo(tmp_path):
+    """D7: gate 从 repo 取最新版本，用户确认后 context 里的旧版本不阻挡。"""
+    store = _store(tmp_path)
+    repo = ContentJobRepository(store)
+    unconfirmed = _job(job_id="j1", candidate_id=None, position=_position(confirmed=False))
+    confirmed = _job(job_id="j1", candidate_id=None, position=_position(confirmed=True))
+    repo.upsert_job(confirmed)
+
+    node = make_position_gate_node(jobs_repo=repo)
+    result = node.run({"content_jobs": items_payload([unconfirmed])})
+    assert result.status == "succeeded"
+    assert [j["id"] for j in result.output["items"]] == ["j1"]
+
+
+def test_position_gate_falls_back_to_context_when_repo_missing(tmp_path):
+    """D7: repo 查不到时回退到 context 里的 job。"""
+    store = _store(tmp_path)
+    repo = ContentJobRepository(store)
+    unconfirmed = _job(job_id="j1", candidate_id=None, position=_position(confirmed=False))
+
+    node = make_position_gate_node(jobs_repo=repo)
+    result = node.run({"content_jobs": items_payload([unconfirmed])})
+    assert result.status == "needs_input"
+
+
+def test_draft_node_caps_replies_and_originals(tmp_path):
+    """资源上限：replies ≤ max_daily_replies，originals ≤ max_daily_original_posts。"""
+    jobs = [_job(job_id=f"r{i}", candidate_id="t1", source_card_ids=("ev1",)) for i in range(6)]
+    jobs += [_job(job_id=f"o{i}", candidate_id=None, source_card_ids=("ev1",)) for i in range(3)]
+
+    def write_reply(runner, match, candidate, cards_by_id, job):
+        return _reply_draft().model_copy(update={"id": f"d_{job.id}"})
+
+    def write_original(runner, cards, job):
+        return _reply_draft().model_copy(
+            update={"id": f"d_{job.id}", "kind": DraftKind.ORIGINAL, "candidate_id": None}
+        )
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="gate", writes="ready_jobs", seed=items_payload(jobs)),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "DRAFTED"
+    rec = store.find_node(run.id, "draft", "default")
+    assert rec is not None
+    drafts = json.loads(rec.output_json)["items"]
+    replies = [d for d in drafts if d["kind"] == "reply"]
+    originals = [d for d in drafts if d["kind"] == "original"]
+    assert len(replies) == 5
+    assert len(originals) == 1
+
+
+def test_brief_renders_six_items_per_candidate(tmp_path):
+    """D10: Daily Brief 每个候选渲染 Spec §7 的 6 项。"""
+    job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))
+    draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="draft", writes="drafts", seed=items_payload([draft])),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([job])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        make_brief_node(QualityGates()),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "WAITING_FOR_REVIEW"
+    rec = store.find_node(run.id, "brief", "default")
+    assert rec is not None
+    briefs = json.loads(rec.output_json)["items"]
+    assert briefs
+    body = briefs[0]["body"]
+    for marker in (
+        "要完成的工作",
+        "目标读者与期望动作",
+        "证据来源",
+        "核心判断与取舍",
+        "Critic 未解决风险",
+        "推荐动作",
+    ):
+        assert marker in body, marker
+    assert "readers don't know how to rate limit" in body
+    assert "backend engineers" in body
+    assert "token bucket rate limiting" in body
+    assert "use token bucket" in body
+    assert "more memory" in body
 

@@ -10,6 +10,7 @@ class ReviewAction(StrEnum):
     APPROVE = "approve"
     REVISE = "revise"
     SKIP = "skip"
+    CONFIRM_POSITION = "confirm_position"  # 独立于最终发布批准
 
 
 class SkipReason(StrEnum):
@@ -18,6 +19,10 @@ class SkipReason(StrEnum):
     LOW_QUALITY = "low_quality"
     NOT_NOW = "not_now"
     OTHER = "other"
+    NO_CLEAR_POSITION = "no_clear_position"
+    GENERIC_VOICE = "generic_voice"
+    JOB_NOT_USEFUL = "job_not_useful"
+    FACT_ERROR = "fact_error"
 
 
 class ReviewDecision(BaseModel):
@@ -27,6 +32,9 @@ class ReviewDecision(BaseModel):
     reason: str | None = None                # skip 理由（SkipReason.value）
     revised_body: str | None = None          # revise 后的正文
     diff: str | None = None                  # 修改前后 unified diff
+    position_correct: bool | None = None     # 立场是否正确（confirm_position）
+    voice_match: int | None = None           # 语气匹配度 0-5（confirm_position）
+    job_clear: bool | None = None            # job 是否清晰（confirm_position）
     decided_at: datetime
 
 

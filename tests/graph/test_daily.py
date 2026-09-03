@@ -6,6 +6,7 @@ from finch.github.gh_client import GhClient
 from finch.graph.daily import daily_nodes
 from finch.settings import Settings
 from finch.storage.database import Store
+from finch.storage.repositories import ContentJobRepository
 from finch.twitter.opencli_client import OpenCliClient
 
 
@@ -172,7 +173,7 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
                                 claim="use token bucket",
                                 decision="use token bucket",
                                 tradeoff="more memory",
-                                confirmed=True,
+                                confirmed=False,
                             ),
                             success_criteria=[
                                 SuccessCriterion(
@@ -225,10 +226,26 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
         )
 
     run = GraphRuntime(store, build()).run()
-    assert run.state == "WAITING_FOR_REVIEW"
+    assert run.state == "NEEDS_INPUT"
     calls_after_first = runner.calls
     assert calls_after_first > 0
 
+    # 模拟人工 confirm-position：把 repo 里的 job 置为 confirmed。
+    jobs_repo = ContentJobRepository(store)
+    job = jobs_repo.get_job("job1")
+    assert job is not None and job.author_position is not None
+    jobs_repo.upsert_job(
+        job.model_copy(
+            update={"author_position": job.author_position.model_copy(update={"confirmed": True})}
+        )
+    )
+
     run2 = GraphRuntime(store, build()).run(run_id=run.id)
     assert run2.state == "WAITING_FOR_REVIEW"
-    assert runner.calls == calls_after_first
+    # resume 新增 draft + critique 两次 LLM 调用（gate 从 repo 读到最新 confirmed 放行）。
+    assert runner.calls == calls_after_first + 2
+
+    calls_after_second = runner.calls
+    run3 = GraphRuntime(store, build()).run(run_id=run.id)
+    assert run3.state == "WAITING_FOR_REVIEW"
+    assert runner.calls == calls_after_second

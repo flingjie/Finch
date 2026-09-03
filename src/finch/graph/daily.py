@@ -9,7 +9,7 @@ from ..github.gh_client import GhClient
 from ..github.models import CommitDetail
 from ..settings import Settings
 from ..storage.database import Store
-from ..storage.repositories import EvidenceRepository
+from ..storage.repositories import ContentJobRepository, EvidenceRepository
 from ..twitter.models import DiscussionCandidate, to_candidate
 from ..twitter.normalizer import normalize_tweets
 from ..twitter.opencli_client import OpenCliClient
@@ -71,6 +71,7 @@ def daily_nodes(
         return candidates
 
     repo = settings.repositories[0]
+    jobs_repo = ContentJobRepository(store)
 
     return [
         make_preflight_node(gh, opencli),
@@ -86,8 +87,8 @@ def daily_nodes(
         make_collect_node(collect_fn),
         make_recall_node(settings.quality_gates),
         make_match_node(runner, settings.quality_gates, settings.twitter),
-        make_define_jobs_node(runner),
-        make_position_gate_node(),
+        make_define_jobs_node(runner, jobs_repo=jobs_repo),
+        make_position_gate_node(jobs_repo=jobs_repo),
         make_draft_node(runner, write_reply, write_original, settings.quality_gates),
         make_critique_node(runner, rewrite, critique, settings.quality_gates),
         make_brief_node(settings.quality_gates),
