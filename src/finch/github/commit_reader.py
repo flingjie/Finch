@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .gh_client import GhClient
+from .local_repo import LocalRepoClient, find_local_clone
 from .models import CommitDetail, CommitSummary
 
 _LOCKFILE_MARKERS = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
@@ -57,3 +58,21 @@ class CommitReader:
         path = _cursor_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"last_synced_at": datetime.now(UTC).isoformat()}))
+
+
+def load_commit_details(
+    repo: str,
+    gh: GhClient,
+    *,
+    local_dirs: list[Path],
+    since: str | None = None,
+    workers: int = 6,
+) -> list[CommitDetail]:
+    """Load commit details from a local checkout when available, else gh."""
+    local = find_local_clone(repo, local_dirs)
+    if local is not None:
+        client = LocalRepoClient(repo, local)
+        summaries = client.list_commits(repo, since=since)
+        return [client.commit_detail(repo, s.sha) for s in summaries]
+    summaries = gh.list_commits(repo, since=since)
+    return gh.list_commit_details(repo, [s.sha for s in summaries], workers=workers)

@@ -3,6 +3,7 @@
 import json
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from finch.github.models import (
     CommitDetail,
@@ -68,7 +69,11 @@ class GhClient:
                     raise GhError(f"gh returned non-JSON: {exc}") from exc
             last = r
             if attempt < retries - 1:
-                _sleep(2 ** attempt)
+                detail = (r["stderr"] or r["stdout"]).strip().lower()
+                delay = 2 ** attempt
+                if "rate limit" in detail or "secondary rate limit" in detail:
+                    delay = max(delay, 30.0)
+                _sleep(delay)
         assert last is not None
         raise GhError(f"gh failed after {retries} attempts: {last['stderr'].strip()}")
 
@@ -103,6 +108,17 @@ class GhClient:
         )
         assert isinstance(data, dict)
         return parse_commit_detail(data)
+
+    def list_commit_details(
+        self, repo: str, shas: list[str], *, workers: int = 6
+    ) -> list[CommitDetail]:
+        """Fetch commit details concurrently, preserving input order."""
+        results: dict[str, CommitDetail] = {}
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(self.commit_detail, repo, sha): sha for sha in shas}
+            for future in as_completed(futures):
+                results[futures[future]] = future.result()
+        return [results[sha] for sha in shas]
 
     def pr_view(self, repo: str, number: int) -> PullRequest:
         data = self._gh_json(

@@ -4,6 +4,7 @@ import json
 import pytest
 
 from finch.github.gh_client import GhClient, GhError
+from finch.github.models import CommitDetail
 
 
 @pytest.fixture
@@ -58,3 +59,57 @@ def test_backoff_retries_then_raises(monkeypatch):
     with pytest.raises(GhError):
         GhClient().repo_view("x/y")
     assert calls["n"] == 3
+
+
+def test_backoff_respects_rate_limit(monkeypatch):
+    calls = {"n": 0}
+    sleeps = []
+
+    def fake(argv, timeout):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return {
+                "ok": False,
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "HTTP 403: API rate limit exceeded",
+            }
+        return {
+            "ok": True,
+            "exit_code": 0,
+            "stdout": json.dumps(
+                {
+                    "nameWithOwner": "x/y",
+                    "defaultBranchRef": {"name": "main"},
+                    "url": "u",
+                    "isPrivate": False,
+                }
+            ),
+            "stderr": "",
+        }
+
+    monkeypatch.setattr("finch.github.gh_client._run", fake)
+    monkeypatch.setattr("finch.github.gh_client._sleep", sleeps.append)
+    GhClient().repo_view("x/y")
+    assert calls["n"] == 3
+    assert sleeps == [30.0, 30.0]
+
+
+def test_list_commit_details_preserves_order(monkeypatch):
+    client = GhClient()
+
+    def fake_commit_detail(repo, sha):
+        return CommitDetail(
+            sha=sha,
+            message=f"m {sha}",
+            author_date="2026-09-01T00:00:00Z",
+            html_url="u",
+            parents=[],
+            files=[],
+            stats={},
+        )
+
+    monkeypatch.setattr(client, "commit_detail", fake_commit_detail)
+    shas = ["c", "a", "b"]
+    out = client.list_commit_details("x/y", shas, workers=2)
+    assert [d.sha for d in out] == shas

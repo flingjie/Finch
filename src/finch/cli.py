@@ -18,7 +18,7 @@ from .content.voice import (
     save_voice_profile,
 )
 from .evidence.extractor import Extractor, build_cards
-from .github.commit_reader import CommitReader
+from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient
 from .github.models import CommitDetail
 from .graph.context import parse_items
@@ -161,8 +161,10 @@ def github_reflect(repo: str = typer.Option("flingjie/FDE-Gym"),
                    since: str = typer.Option("7d")) -> None:
     """读取最近 Commit，提取工程事件并输出 Evidence Cards。"""
     gh = GhClient()
-    summaries = gh.list_commits(repo, since=_since_iso(since))
-    details = [gh.commit_detail(repo, c.sha) for c in summaries]
+    settings = load_settings()
+    details = load_commit_details(
+        repo, gh, local_dirs=settings.paths.local_repos_dirs, since=_since_iso(since)
+    )
     reader = CommitReader(gh, repo)
     details = reader.filter_noise(details)
     events = Extractor(CodexRunner()).extract(details, repo=repo)
@@ -240,8 +242,7 @@ def run_daily() -> None:
     for repo in settings.repositories:
         info = gh.repo_view(repo)
         repo_is_private[repo] = info.is_private
-        summaries = gh.list_commits(repo)
-        details = [gh.commit_detail(repo, c.sha) for c in summaries]
+        details = load_commit_details(repo, gh, local_dirs=settings.paths.local_repos_dirs)
         details = CommitReader(gh, repo).filter_noise(details)
         commits_by_repo[repo] = details
         for detail in details:
