@@ -276,7 +276,8 @@ def test_critique_node_drops_unfixable_draft(tmp_path):
     assert run.state == "CRITIQUED"
     rec = store.find_node(run.id, "critique", "default")
     assert rec is not None
-    assert rec.output_json.replace(" ", "") == '{"items":[]}'
+    assert json.loads(rec.output_json)["items"] == []
+    assert any("failed critique" in w for w in json.loads(rec.output_json)["warnings"])
 
 
 def test_critique_node_keeps_draft_fixed_by_single_rewrite(tmp_path):
@@ -371,6 +372,8 @@ def test_critique_node_warns_on_invalid_rewritten_claims():
     assert result.status == "succeeded"
     assert result.output["items"] == []
     assert any("invalid claims" in w for w in result.warnings)
+    # F2: warnings are also embedded in the persisted output (runtime only persists output).
+    assert any("invalid claims" in w for w in result.output["warnings"])
 
 
 def test_define_jobs_node_produces_and_filters_jobs(tmp_path):
@@ -635,4 +638,114 @@ def test_brief_renders_six_items_per_candidate(tmp_path):
     assert "token bucket rate limiting" in body
     assert "use token bucket" in body
     assert "more memory" in body
+
+
+def test_brief_recommended_action_uses_fresh_job_from_repo(tmp_path):
+    """F1: brief 从 repo 取 fresh job，resume 后已确认的 job 不再提示「确认观点」。"""
+    store = _store(tmp_path)
+    repo = ContentJobRepository(store)
+    confirmed = _job(job_id="job1", candidate_id="t1", position=_position(confirmed=True))
+    stale = _job(job_id="job1", candidate_id="t1", position=_position(confirmed=False))
+    repo.upsert_job(confirmed)
+    draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
+
+    nodes = [
+        Seed(name="draft", writes="drafts", seed=items_payload([draft])),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([stale])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        make_brief_node(QualityGates(), jobs_repo=repo),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "WAITING_FOR_REVIEW"
+    rec = store.find_node(run.id, "brief", "default")
+    assert rec is not None
+    body = json.loads(rec.output_json)["items"][0]["body"]
+    assert "待人工审核（发布需手动）" in body
+    assert "确认观点" not in body
+
+
+def test_brief_recommended_action_needs_input_when_unconfirmed(tmp_path):
+    """F1: 未确认（needs_input）的 job 仍提示「确认观点」。"""
+    store = _store(tmp_path)
+    repo = ContentJobRepository(store)
+    unconfirmed = _job(job_id="job1", candidate_id="t1", position=_position(confirmed=False))
+    repo.upsert_job(unconfirmed)
+    draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
+
+    nodes = [
+        Seed(name="draft", writes="drafts", seed=items_payload([draft])),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([unconfirmed])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        make_brief_node(QualityGates(), jobs_repo=repo),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    rec = store.find_node(run.id, "brief", "default")
+    assert rec is not None
+    body = json.loads(rec.output_json)["items"][0]["body"]
+    assert "确认观点" in body
+
+
+def test_brief_falls_back_to_context_job_when_repo_missing(tmp_path):
+    """F1: repo 查不到 job 时回退到 context 里的 job。"""
+    store = _store(tmp_path)
+    repo = ContentJobRepository(store)
+    confirmed = _job(job_id="job1", candidate_id="t1", position=_position(confirmed=True))
+    draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
+
+    nodes = [
+        Seed(name="draft", writes="drafts", seed=items_payload([draft])),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([confirmed])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        make_brief_node(QualityGates(), jobs_repo=repo),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    rec = store.find_node(run.id, "brief", "default")
+    assert rec is not None
+    body = json.loads(rec.output_json)["items"][0]["body"]
+    assert "待人工审核（发布需手动）" in body
+
+
+def test_brief_renders_critic_warnings_from_persisted_output(tmp_path):
+    """F2: brief 从 persisted critique 输出读取 warnings 渲染第 5 项。"""
+    job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))
+    draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
+    drafts_payload = items_payload([draft])
+    drafts_payload["warnings"] = [f"draft {draft.id}: failed critique after 2 rewrites"]
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="draft", writes="drafts", seed=drafts_payload),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([job])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        make_brief_node(QualityGates()),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    rec = store.find_node(run.id, "brief", "default")
+    assert rec is not None
+    body = json.loads(rec.output_json)["items"][0]["body"]
+    assert "failed critique after 2 rewrites" in body
+
+
+def test_brief_renders_none_when_no_critic_warnings(tmp_path):
+    """F2: 无 warnings 时第 5 项渲染「无」。"""
+    job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))
+    draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="draft", writes="drafts", seed=items_payload([draft])),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([job])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        make_brief_node(QualityGates()),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    rec = store.find_node(run.id, "brief", "default")
+    assert rec is not None
+    body = json.loads(rec.output_json)["items"][0]["body"]
+    assert "Critic 未解决风险：无" in body
 

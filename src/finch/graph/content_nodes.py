@@ -159,9 +159,11 @@ def make_critique_node(
                         )
                         break
 
+            out = items_payload(cast(list[BaseModel], kept))
+            out["warnings"] = warnings
             return NodeResult(
                 status="succeeded",
-                output=items_payload(cast(list[BaseModel], kept)),
+                output=out,
                 warnings=warnings,
             )
 
@@ -201,10 +203,14 @@ def _recommended_action(job: ContentJob | None) -> str:
         return "确认观点"
     if job.status == ContentJobStatus.DO_NOT_WRITE:
         return "暂不写"
-    if job.author_position is None or not job.author_position.confirmed:
-        return "确认观点"
-    if job.missing_questions:
-        return "补充背景"
+    position = job.author_position
+    if (
+        position is not None
+        and position.confirmed
+        and bool(position.decision)
+        and bool(position.tradeoff)
+    ):
+        return "待人工审核（发布需手动）"
     return "确认观点"
 
 
@@ -212,15 +218,18 @@ def _render_candidate_brief(
     job: ContentJob | None,
     draft: Draft,
     cards_by_id: dict[str, EvidenceCard],
+    warnings: list[str],
 ) -> str:
     """按 Spec §7 渲染单个候选的 6 项。"""
     lines = [f"## 候选 {draft.id}"]
+    draft_warnings = [w for w in warnings if f"draft {draft.id}" in w]
+    critic_risk = "；".join(draft_warnings) if draft_warnings else "无"
     if job is None:
         lines.append("1. 要完成的工作：无")
         lines.append("2. 目标读者与期望动作：无")
         lines.append("3. 证据来源：无")
         lines.append("4. 核心判断与取舍：无")
-        lines.append("5. Critic 未解决风险：无")
+        lines.append(f"5. Critic 未解决风险：{critic_risk}")
         lines.append("6. 推荐动作：确认观点")
         lines.append(f"草稿正文：{draft.body}")
         return "\n".join(lines)
@@ -231,14 +240,16 @@ def _render_candidate_brief(
     lines.append(f"2. 目标读者与期望动作：{job.audience}；期望动作：{action}")
     lines.append(f"3. 证据来源：{_format_evidence(job, cards_by_id)}")
     lines.append(f"4. 核心判断与取舍：{_format_position(job)}")
-    # Critic 未解决风险暂未持久化到 context（checker 报告后补），此处给最佳可用信号。
-    lines.append("5. Critic 未解决风险：无")
+    lines.append(f"5. Critic 未解决风险：{critic_risk}")
     lines.append(f"6. 推荐动作：{_recommended_action(job)}")
     lines.append(f"草稿正文：{draft.body}")
     return "\n".join(lines)
 
 
-def make_brief_node(gates: QualityGates) -> Node:
+def make_brief_node(
+    gates: QualityGates,
+    jobs_repo: ContentJobRepository | None = None,
+) -> Node:
     """每日简报节点：渲染 DailyBrief 并写入动态终态。"""
 
     class BriefNode(Node):
@@ -248,14 +259,20 @@ def make_brief_node(gates: QualityGates) -> Node:
             cards = parse_items(ctx.get("evidence_cards", []), EvidenceCard)
             cards_by_id = {card.id: card for card in cards}
             jobs_by_id = {job.id: job for job in jobs}
+            warnings: list[str] = ctx["drafts"].get("warnings", [])
 
             reply_count = sum(1 for draft in drafts if draft.kind == DraftKind.REPLY)
             original_count = sum(1 for draft in drafts if draft.kind == DraftKind.ORIGINAL)
 
             blocks: list[str] = []
             for draft in drafts:
-                job = jobs_by_id.get(draft.content_job_id) if draft.content_job_id else None
-                blocks.append(_render_candidate_brief(job, draft, cards_by_id))
+                job = None
+                if draft.content_job_id:
+                    if jobs_repo is not None:
+                        job = jobs_repo.get_job(draft.content_job_id)
+                    if job is None:
+                        job = jobs_by_id.get(draft.content_job_id)
+                blocks.append(_render_candidate_brief(job, draft, cards_by_id, warnings))
 
             body = "\n\n".join(blocks)
             brief = DailyBrief(
@@ -273,7 +290,7 @@ def make_brief_node(gates: QualityGates) -> Node:
 
     return BriefNode(
         name="brief",
-        reads=["drafts", "match_results", "content_jobs", "evidence_cards"],
+        reads=["drafts", "content_jobs", "evidence_cards"],
         writes="brief",
         succeeds_to="WAITING_FOR_REVIEW",
         terminal_state_key="terminal_state",

@@ -33,7 +33,7 @@ class ReviewDecision(BaseModel):
     revised_body: str | None = None          # revise 后的正文
     diff: str | None = None                  # 修改前后 unified diff
     position_correct: bool | None = None     # 立场是否正确（confirm_position）
-    voice_match: int | None = None           # 语气匹配度 0-5（confirm_position）
+    voice_match: int | None = Field(default=None, ge=0, le=5)  # 语气匹配度 0-5（confirm_position）
     job_clear: bool | None = None            # job 是否清晰（confirm_position）
     decided_at: datetime
 

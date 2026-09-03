@@ -91,5 +91,5 @@ def daily_nodes(
         make_position_gate_node(jobs_repo=jobs_repo),
         make_draft_node(runner, write_reply, write_original, settings.quality_gates),
         make_critique_node(runner, rewrite, critique, settings.quality_gates),
-        make_brief_node(settings.quality_gates),
+        make_brief_node(settings.quality_gates, jobs_repo=jobs_repo),
     ]

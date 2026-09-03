@@ -1,5 +1,8 @@
 from datetime import datetime
 
+import pytest
+from pydantic import ValidationError
+
 from finch.review.models import Feedback, ReviewAction, ReviewDecision, SkipReason
 
 
@@ -36,6 +39,18 @@ def test_review_decision_confirm_position_carries_fields():
     assert d.position_correct is True
     assert d.voice_match == 4
     assert d.job_clear is True
+
+
+def test_voice_match_bounded_0_to_5():
+    with pytest.raises(ValidationError):
+        ReviewDecision(id="rev_d1", draft_id="d1", action=ReviewAction.CONFIRM_POSITION,
+                       voice_match=6, decided_at=datetime(2026, 1, 1))
+    with pytest.raises(ValidationError):
+        ReviewDecision(id="rev_d1", draft_id="d1", action=ReviewAction.CONFIRM_POSITION,
+                       voice_match=-1, decided_at=datetime(2026, 1, 1))
+    d = ReviewDecision(id="rev_d1", draft_id="d1", action=ReviewAction.CONFIRM_POSITION,
+                       voice_match=5, decided_at=datetime(2026, 1, 1))
+    assert d.voice_match == 5
 
 
 def test_review_decision_shape():

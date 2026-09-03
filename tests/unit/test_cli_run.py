@@ -106,6 +106,64 @@ def test_jobs_answer_sets_position_unconfirmed(monkeypatch, tmp_path):
     assert job.author_position.confirmed is False
 
 
+def test_jobs_answer_idempotent_single_record(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    repo = ContentJobRepository(store)
+    repo.upsert_job(_job(job_id="job1"))
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    answers = tmp_path / "answers.yaml"
+    answers.write_text(
+        "claim: use token bucket\n"
+        "decision: use token bucket\n"
+        "tradeoff: more memory\n"
+    )
+    for _ in range(2):
+        r = CliRunner().invoke(app, ["jobs", "answer", "job1", "--file", str(answers)])
+        assert r.exit_code == 0, r.output
+    jobs = repo.list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].author_position is not None
+    assert jobs[0].author_position.decision == "use token bucket"
+
+
+def test_jobs_answer_rejects_empty_yaml(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    repo = ContentJobRepository(store)
+    repo.upsert_job(_job(job_id="job1"))
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    answers = tmp_path / "answers.yaml"
+    answers.write_text("")
+    r = CliRunner().invoke(app, ["jobs", "answer", "job1", "--file", str(answers)])
+    assert r.exit_code == 1
+    assert "empty" in r.output
+    # No default empty position is silently created.
+    job = repo.get_job("job1")
+    assert job is not None and job.author_position is None
+
+
+def test_jobs_answer_rejects_missing_required_fields(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    repo = ContentJobRepository(store)
+    repo.upsert_job(_job(job_id="job1"))
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    answers = tmp_path / "answers.yaml"
+    answers.write_text("claim: use token bucket\n")
+    r = CliRunner().invoke(app, ["jobs", "answer", "job1", "--file", str(answers)])
+    assert r.exit_code == 1
+    assert "missing required" in r.output
+    job = repo.get_job("job1")
+    assert job is not None and job.author_position is None
+
+
 def test_jobs_confirm_position_sets_confirmed(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     store = Store(settings.paths.db_path)

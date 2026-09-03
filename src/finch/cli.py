@@ -422,7 +422,14 @@ def jobs_answer(
     if job is None:
         typer.echo(f"job not found: {job_id}")
         raise typer.Exit(code=1)
-    data = yaml.safe_load(path.read_text()) or {}
+    data = yaml.safe_load(path.read_text())
+    if not isinstance(data, dict) or not data:
+        typer.echo("answers file is empty or not a YAML mapping")
+        raise typer.Exit(code=1)
+    missing = [k for k in ("decision", "tradeoff", "claim") if not data.get(k)]
+    if missing:
+        typer.echo(f"answers missing required field(s): {', '.join(missing)}")
+        raise typer.Exit(code=1)
     try:
         position = AuthorPosition(**data)
     except Exception as exc:  # noqa: BLE001
