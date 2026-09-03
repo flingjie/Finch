@@ -52,6 +52,15 @@ def test_list_pending_excludes_reviewed(tmp_path):
     assert [d.id for d in svc.list_pending()] == ["d2"]
 
 
+def test_list_pending_keeps_confirm_position_only_draft(tmp_path):
+    # CONFIRM_POSITION 独立于最终发布批准：仅确认过立场的草稿仍应留在 pending。
+    svc, store = _svc(tmp_path)
+    repo = DraftRepository(store)
+    repo.upsert_draft(_draft("d1"))
+    svc.confirm_position("d1", voice_match=4, position_correct=True)
+    assert [d.id for d in svc.list_pending()] == ["d1"]
+
+
 def test_confirm_position_distinct_from_approve(tmp_path):
     svc, store = _svc(tmp_path)
     DraftRepository(store).upsert_draft(_draft())

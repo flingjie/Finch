@@ -21,8 +21,16 @@ class ReviewService:
         self.reviews = reviews
 
     def list_pending(self) -> list[Draft]:
-        """返回尚未有 ReviewRecord 的草稿（已审核的 draft_id 过滤掉）。"""
-        reviewed = {r.draft_id for r in self.reviews.list_reviews()}
+        """返回尚未有最终决策（approve/revise/skip）的草稿。
+
+        CONFIRM_POSITION 独立于最终发布批准，不计入「已审核」，故不把仅确认过
+        立场的草稿从 pending 队列中剔除。
+        """
+        reviewed = {
+            r.draft_id
+            for r in self.reviews.list_reviews()
+            if r.action != ReviewAction.CONFIRM_POSITION
+        }
         return [d for d in self.drafts.list_drafts() if d.id not in reviewed]
 
     def show(self, draft_id: str) -> Draft | None:
