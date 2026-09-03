@@ -12,6 +12,7 @@ from finch.content.checkers import (
     PortabilityChecker,
     SpecificityChecker,
 )
+from finch.content.checkers.base import split_sentences
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus, IntendedEffect
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard
@@ -217,6 +218,29 @@ def test_specificity_checker_passes_concrete_sentence():
     result = checker.check(CheckContext(draft=draft, cards=[_card("ev_1")]))
     assert result.passed is True
     assert result.severity == "low"
+
+
+def test_split_sentences_keeps_decimals_and_urls_intact():
+    body = "Pi is 3.14 and the site is https://example.com for setup."
+    assert split_sentences(body) == [
+        "Pi is 3.14 and the site is https://example.com for setup."
+    ]
+
+
+def test_split_sentences_splits_on_normal_boundaries():
+    assert split_sentences("First. Second.") == ["First.", "Second."]
+    assert split_sentences("One!\nTwo? Three.") == ["One!", "Two?", "Three."]
+
+
+def test_specificity_checker_does_not_flag_decimal_or_url_sentence():
+    checker = SpecificityChecker()
+    draft = _draft(
+        body="Pi is 3.14 and the site is https://example.com for a great setup."
+    )
+    result = checker.check(CheckContext(draft=draft, cards=[_card("ev_1")]))
+    assert result.passed is True
+    assert result.severity == "low"
+    assert result.locations == []
 
 
 def test_specificity_checker_upgrades_to_high_when_llm_confirms_filler():

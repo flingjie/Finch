@@ -15,7 +15,7 @@ from finch.content.jobs import ContentJob
 from finch.content.models import Draft
 from finch.evidence.models import EvidenceCard
 
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?。！？\n])\s*")
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?。！？])\s+|(?<=\n)")
 
 
 def split_sentences(body: str) -> list[str]:
