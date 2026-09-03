@@ -646,6 +646,32 @@ def test_define_jobs_rejects_job_with_unknown_candidate(tmp_path):
     assert "j2" not in rec.output_json
 
 
+def test_define_jobs_rejects_cards_outside_own_candidate(tmp_path):
+    """F5: reply job 的 source_card_ids 必须属于其自身候选的 match；original 可引用任意卡。"""
+    card2 = _card().model_copy(update={"id": "ev2"})
+    match2 = _match().model_copy(update={"candidate_id": "t2", "card_ids": ["ev2"]})
+
+    bad = _job(job_id="j_bad", candidate_id="t1", source_card_ids=("ev1", "ev2"))
+    good_original = _job(job_id="j_orig", candidate_id=None, source_card_ids=("ev2",))
+    runner = FakeJobsRunner([bad, good_original])
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="match_evidence", writes="match_results",
+             seed=items_payload([_match(), match2])),
+        Seed(name="extract_events", writes="evidence_cards",
+             seed=items_payload([_card(), card2])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_define_jobs_node(runner),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "JOBS_DEFINED"
+    rec = store.find_node(run.id, "define_jobs", "default")
+    assert rec is not None
+    assert "j_orig" in rec.output_json
+    assert "j_bad" not in rec.output_json
+
+
 def test_define_jobs_upserts_into_repo(tmp_path):
     """D7: define_jobs 将每个 job 写入 ContentJobRepository。"""
     store = _store(tmp_path)
@@ -866,6 +892,33 @@ def test_brief_renders_none_when_no_critic_warnings(tmp_path):
     assert rec is not None
     body = json.loads(rec.output_json)["items"][0]["body"]
     assert "Critic 未解决风险：无" in body
+
+
+def test_brief_does_not_prefix_match_draft_ids(tmp_path):
+    """F6: draft 1 的 brief 不应继承 draft 10 的 warning。"""
+    draft_1 = _reply_draft().model_copy(update={"id": "1"})
+    draft_10 = _reply_draft().model_copy(update={"id": "10"})
+    drafts_payload = items_payload([draft_1, draft_10])
+    drafts_payload["warnings"] = ["draft 10: rejected by evidence (claim[0])"]
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="draft", writes="drafts", seed=drafts_payload),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        make_brief_node(QualityGates()),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    rec = store.find_node(run.id, "brief", "default")
+    assert rec is not None
+    briefs = json.loads(rec.output_json)["items"]
+    assert len(briefs) == 1
+    sections = briefs[0]["body"].split("## 候选 ")
+    block_1 = next(s for s in sections if s.startswith("1\n"))
+    block_10 = next(s for s in sections if s.startswith("10\n"))
+    assert "rejected by evidence" not in block_1
+    assert "rejected by evidence" in block_10
 
 
 def test_default_checker_suite_has_eight_checkers():

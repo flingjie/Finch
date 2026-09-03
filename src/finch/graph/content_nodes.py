@@ -4,6 +4,7 @@ Note: writer.py functions now accept optional ContentJob param to stamp content_
 and position_statement on Drafts.
 """
 
+import re
 from collections.abc import Callable
 from typing import cast
 
@@ -328,7 +329,9 @@ def _render_candidate_brief(
 ) -> str:
     """按 Spec §7 渲染单个候选的 6 项。"""
     lines = [f"## 候选 {draft.id}"]
-    draft_warnings = [w for w in warnings if f"draft {draft.id}" in w]
+    # 精确前缀匹配（词边界）：避免 draft_1 继承 draft_10 的 warning（F6）。
+    prefix = re.compile(rf"^draft {re.escape(draft.id)}\b")
+    draft_warnings = [w for w in warnings if prefix.match(w)]
     critic_risk = "；".join(draft_warnings) if draft_warnings else "无"
     if job is None:
         lines.append("1. 要完成的工作：无")
@@ -411,7 +414,8 @@ def make_define_jobs_node(
 
     通过 Codex runner 调用 define_content_jobs prompt 生成 ContentJob 列表。
     对每个 job 验证：
-    - source_card_ids 是 match 的 card_ids 的子集
+    - source_card_ids 是该 job 自身卡片范围的子集：candidate_id 非空时取该候选
+      match 的 card_ids；candidate_id 为空（original）时取全部 matched card_ids 的并集
     - candidate_id（若非空）存在于 match_results 的 candidate ids 中
     不合法的 job 被过滤。可选 jobs_repo 会把合法 job upsert 进 ContentJobRepository。
     """
@@ -424,16 +428,23 @@ def make_define_jobs_node(
             # Pass all cards to the LLM for job generation
             jobs_output = define_content_jobs(runner, cards)
 
-            # Filter jobs: keep only those whose source_card_ids are a subset of the
-            # union of all matched card_ids, and whose candidate_id (if any) was matched.
-            available_ids = list({cid for mr in match_results for cid in mr.card_ids})
-            matched_candidate_ids = {mr.candidate_id for mr in match_results}
-            valid_jobs = [
-                job
-                for job in jobs_output.items
-                if job.validate_source_cards(available_ids)
-                and (job.candidate_id is None or job.candidate_id in matched_candidate_ids)
-            ]
+            # Filter jobs: validate source_card_ids against the job's OWN card scope —
+            # its candidate's match card_ids when candidate_id is set, otherwise the union
+            # of all matched card_ids (original). A reply job carrying a card from a
+            # different candidate would later be dropped, so reject it here (F5).
+            match_by_candidate = {mr.candidate_id: mr for mr in match_results}
+            all_card_ids = list({cid for mr in match_results for cid in mr.card_ids})
+            valid_jobs: list[ContentJob] = []
+            for job in jobs_output.items:
+                if job.candidate_id is not None:
+                    match = match_by_candidate.get(job.candidate_id)
+                    if match is None:
+                        continue
+                    available_ids = match.card_ids
+                else:
+                    available_ids = all_card_ids
+                if job.validate_source_cards(available_ids):
+                    valid_jobs.append(job)
 
             if jobs_repo is not None:
                 for job in valid_jobs:
