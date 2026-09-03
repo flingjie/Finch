@@ -15,6 +15,7 @@ from finch.content.jobs import (
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
 from finch.graph.content_nodes import (
+    default_checker_suite,
     make_brief_node,
     make_critique_node,
     make_define_jobs_node,
@@ -863,4 +864,45 @@ def test_brief_renders_none_when_no_critic_warnings(tmp_path):
     assert rec is not None
     body = json.loads(rec.output_json)["items"][0]["body"]
     assert "Critic 未解决风险：无" in body
+
+
+def test_default_checker_suite_has_eight_checkers():
+    """Task 6: 默认检查器套件 = 现有 4 个 + 新增 4 个。"""
+    suite = default_checker_suite(CodexRunner())
+    assert [c.name for c in suite] == [
+        "evidence",
+        "decision",
+        "specificity",
+        "portability",
+        "voice",
+        "structure",
+        "actionability",
+        "safety",
+    ]
+
+
+def test_critique_node_needs_input_via_safety_checker(tmp_path):
+    """Task 6: SafetyChecker 设置 requires_human_input → needs_input 分支可达。"""
+    from finch.content.checkers.safety import SafetyChecker
+
+    draft = _reply_draft().model_copy(
+        update={"body": "my token is ghp_abcdefghijklmnopqrstuvwxyz123"}
+    )
+
+    def rewrite(runner, draft, failed_checks, cards_by_id):
+        return draft
+
+    node = make_critique_node(
+        CodexRunner(), rewrite, QualityGates(), checkers=[SafetyChecker()]
+    )
+    result = node.run(
+        {
+            "drafts": items_payload([draft]),
+            "match_results": items_payload([_match()]),
+            "evidence_cards": items_payload([_card()]),
+        }
+    )
+    assert result.status == "needs_input"
+    assert any("safety" in w for w in result.warnings)
+
 

@@ -74,9 +74,11 @@ def test_daily_nodes_order_and_contract(tmp_path):
 
 
 def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
+    from finch.content.checkers.actionability import _ActionabilityOutput
     from finch.content.checkers.decision import _DecisionOutput
     from finch.content.checkers.evidence import _EntailmentOutput
     from finch.content.checkers.portability import _PortabilityOutput
+    from finch.content.checkers.safety import _SafetyOutput
     from finch.content.jobs import (
         AuthorPosition,
         ContentJob,
@@ -197,6 +199,12 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
                 )
             if output_model is _PortabilityOutput:
                 return _PortabilityOutput(generic_sentences=[])
+            if output_model is _ActionabilityOutput:
+                return _ActionabilityOutput(fulfills_effect=True, missing=[])
+            if output_model is _SafetyOutput:
+                return _SafetyOutput(
+                    invented_personal_experience=False, unsupported_metric=False
+                )
             if output_model is Draft:
                 return Draft(
                     id="d1",
@@ -252,9 +260,10 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
 
     run2 = GraphRuntime(store, build()).run(run_id=run.id)
     assert run2.state == "WAITING_FOR_REVIEW"
-    # resume 新增 draft(1) + critique 检查器套件(evidence entailment + decision +
-    # portability = 3 次 LLM)。specificity 无套话句子，确定性路径不调 LLM。
-    assert runner.calls == calls_after_first + 4
+    # resume 新增 draft(1) + critique 检查器套件 LLM 调用：evidence entailment +
+    # decision + portability + actionability + safety = 5 次。
+    # specificity（无套话）、structure（无结构问题）、voice（空画像）走确定性路径，不调 LLM。
+    assert runner.calls == calls_after_first + 6
 
     calls_after_second = runner.calls
     run3 = GraphRuntime(store, build()).run(run_id=run.id)

@@ -10,6 +10,12 @@ import yaml
 from .codex.runner import CodexRunner
 from .content.jobs import AuthorPosition, ContentJobStatus
 from .content.models import DailyBrief, Draft
+from .content.voice import (
+    ApprovedExample,
+    RejectedExample,
+    load_voice_profile,
+    save_voice_profile,
+)
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader
 from .github.gh_client import GhClient
@@ -50,6 +56,9 @@ app.add_typer(review_app, name="review")
 
 jobs_app = typer.Typer(help="Inspect and answer Content Jobs (human-in-the-loop)")
 app.add_typer(jobs_app, name="jobs")
+
+voice_app = typer.Typer(help="Manage the author voice profile (local, no auto-publish)")
+app.add_typer(voice_app, name="voice")
 
 
 def _since_iso(since: str | None) -> str | None:
@@ -201,6 +210,7 @@ def run_daily() -> None:
         commits_by_repo=commits_by_repo,
         known_commit_urls=known_commit_urls,
         repo_is_private=repo_is_private,
+        voice_profile=load_voice_profile(settings.paths.voice_profile_path),
     )
     run = GraphRuntime(store, nodes).run()
     typer.echo(run.state)
@@ -245,6 +255,7 @@ def run_resume(run_id: str) -> None:
         commits_by_repo=commits_by_repo,
         known_commit_urls=known_commit_urls,
         repo_is_private=repo_is_private,
+        voice_profile=load_voice_profile(settings.paths.voice_profile_path),
     )
     run = replay(store, nodes, run_id)
     typer.echo(run.state)
@@ -288,6 +299,11 @@ def _jobs_repo() -> ContentJobRepository:
     store = Store(settings.paths.db_path)
     store.init()
     return ContentJobRepository(store)
+
+
+def _voice_profile_path() -> Path:
+    settings = load_settings()
+    return settings.paths.voice_profile_path
 
 
 @review_app.command("list")
@@ -472,6 +488,58 @@ def jobs_reject(
     )
     repo.upsert_job(updated)
     typer.echo(f"rejected {job_id}")
+
+
+@voice_app.command("show")
+def voice_show() -> None:
+    """加载并打印声音画像。"""
+    profile = load_voice_profile(_voice_profile_path())
+    typer.echo(
+        yaml.safe_dump(profile.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
+    )
+
+
+@voice_app.command("approve-example")
+def voice_approve_example(draft_id: str) -> None:
+    """把草稿追加为 approved example（人工修改文本优先于原始 AI 草稿，按 id 去重）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    draft = DraftRepository(store).get_draft(draft_id)
+    if draft is None:
+        typer.echo(f"draft not found: {draft_id}")
+        raise typer.Exit(code=1)
+    decision = ReviewRepository(store).get_review(draft_id)
+    text = (
+        decision.revised_body
+        if decision is not None and decision.revised_body
+        else draft.body
+    )
+    path = settings.paths.voice_profile_path
+    profile = load_voice_profile(path)
+    if any(ex.id == draft_id for ex in profile.approved_examples):
+        typer.echo(f"already approved: {draft_id}")
+        return
+    profile.approved_examples.append(ApprovedExample(id=draft_id, text=text))
+    save_voice_profile(profile, path)
+    typer.echo(f"approved example: {draft_id}")
+
+
+@voice_app.command("reject-example")
+def voice_reject_example(
+    draft_id: str,
+    reason: str = typer.Option(..., "--reason", help="拒绝理由"),  # noqa: B008
+) -> None:
+    """把草稿追加为 rejected example（按 id 去重）。"""
+    settings = load_settings()
+    path = settings.paths.voice_profile_path
+    profile = load_voice_profile(path)
+    if any(ex.id == draft_id for ex in profile.rejected_examples):
+        typer.echo(f"already rejected: {draft_id}")
+        return
+    profile.rejected_examples.append(RejectedExample(id=draft_id, reason=reason))
+    save_voice_profile(profile, path)
+    typer.echo(f"rejected example: {draft_id}")
 
 
 if __name__ == "__main__":

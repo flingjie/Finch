@@ -10,15 +10,20 @@ from typing import cast
 from pydantic import BaseModel
 
 from ..codex.runner import CodexRunner
+from ..content.checkers.actionability import ActionabilityChecker
 from ..content.checkers.aggregate import AggregateOutcome, aggregate_checks
 from ..content.checkers.base import CheckContext, Checker, CheckResult
 from ..content.checkers.decision import DecisionChecker
 from ..content.checkers.evidence import EvidenceChecker
 from ..content.checkers.portability import PortabilityChecker
+from ..content.checkers.safety import SafetyChecker
 from ..content.checkers.specificity import SpecificityChecker
+from ..content.checkers.structure import StructureChecker
+from ..content.checkers.voice import VoiceChecker
 from ..content.claims import validate_draft
 from ..content.jobs import ContentJob, ContentJobStatus, define_content_jobs
 from ..content.models import DailyBrief, Draft, DraftKind
+from ..content.voice import VoiceProfile
 from ..evidence.models import EvidenceCard, MatchResult
 from ..settings import QualityGates
 from ..storage.repositories import ContentJobRepository
@@ -111,11 +116,33 @@ def make_draft_node(
     )
 
 
+def default_checker_suite(
+    runner: CodexRunner,
+    voice_profile: VoiceProfile | None = None,
+) -> list[Checker]:
+    """Critic Suite 默认检查器套件（Task 6）：现有 4 个 + 新增 4 个 = 8 个。
+
+    顺序即执行顺序；VoiceChecker 需要 VoiceProfile（默认空画像）。
+    """
+    profile = voice_profile if voice_profile is not None else VoiceProfile()
+    return [
+        EvidenceChecker(runner),
+        DecisionChecker(runner),
+        SpecificityChecker(runner),
+        PortabilityChecker(runner),
+        VoiceChecker(runner, profile),
+        StructureChecker(runner),
+        ActionabilityChecker(runner),
+        SafetyChecker(runner),
+    ]
+
+
 def make_critique_node(
     runner: CodexRunner,
     rewrite: RewriteFn,
     gates: QualityGates,
     checkers: list[Checker] | None = None,
+    voice_profile: VoiceProfile | None = None,
 ) -> Node:
     """草稿审查节点：Critic Suite 逐项检查 → 确定性聚合 → 定向重写。
 
@@ -130,12 +157,7 @@ def make_critique_node(
     suite: list[Checker] = (
         checkers
         if checkers is not None
-        else [
-            EvidenceChecker(runner),
-            DecisionChecker(runner),
-            SpecificityChecker(runner),
-            PortabilityChecker(runner),
-        ]
+        else default_checker_suite(runner, voice_profile)
     )
 
     class CritiqueNode(Node):

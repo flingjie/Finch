@@ -1,4 +1,6 @@
 """Unit tests for finch run/jobs CLI commands."""
+from datetime import UTC, datetime
+
 from typer.testing import CliRunner
 
 from finch import cli
@@ -10,10 +12,12 @@ from finch.content.jobs import (
     IntendedEffect,
     SuccessCriterion,
 )
-from finch.content.models import DraftKind
+from finch.content.models import Draft, DraftKind
+from finch.content.voice import load_voice_profile
+from finch.review.models import ReviewAction, ReviewDecision
 from finch.settings import Paths, Settings
 from finch.storage.database import Store
-from finch.storage.repositories import ContentJobRepository
+from finch.storage.repositories import ContentJobRepository, DraftRepository, ReviewRepository
 
 
 def test_run_daily_help():
@@ -205,6 +209,110 @@ def test_jobs_reject_sets_do_not_write_and_reason(monkeypatch, tmp_path):
 def test_run_resume_help():
     r = CliRunner().invoke(app, ["run", "resume", "--help"])
     assert r.exit_code == 0
+
+
+def _voice_settings(tmp_path):
+    return Settings(
+        paths=Paths(
+            db_path=tmp_path / "finch.db",
+            voice_profile_path=tmp_path / "voice-profile.yaml",
+        )
+    )
+
+
+def _seed_draft(store: Store, draft_id: str, body: str) -> None:
+    DraftRepository(store).upsert_draft(
+        Draft(id=draft_id, kind=DraftKind.REPLY, candidate_id="t", body=body, claims=[])
+    )
+
+
+def test_voice_subcommands_exist():
+    r = CliRunner()
+    for cmd in ["show", "approve-example", "reject-example"]:
+        res = r.invoke(app, ["voice", cmd, "--help"])
+        assert res.exit_code == 0, cmd
+
+
+def test_voice_show_prints_profile(monkeypatch, tmp_path):
+    settings = _voice_settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    r = CliRunner().invoke(app, ["voice", "show"])
+    assert r.exit_code == 0, r.output
+    assert "preferred_patterns" in r.output
+    assert "avoid_phrases" in r.output
+
+
+def test_voice_approve_example_uses_revised_body_and_dedupes(monkeypatch, tmp_path):
+    settings = _voice_settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    _seed_draft(store, "d1", "original ai draft body")
+    ReviewRepository(store).save_review(
+        ReviewDecision(
+            id="rev_d1",
+            draft_id="d1",
+            action=ReviewAction.REVISE,
+            revised_body="human revised body",
+            decided_at=datetime.now(UTC),
+        )
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["voice", "approve-example", "d1"])
+    assert r.exit_code == 0, r.output
+    profile = load_voice_profile(settings.paths.voice_profile_path)
+    assert len(profile.approved_examples) == 1
+    assert profile.approved_examples[0].id == "d1"
+    # 人工修改文本优先于原始 AI 草稿
+    assert profile.approved_examples[0].text == "human revised body"
+
+    r = CliRunner().invoke(app, ["voice", "approve-example", "d1"])
+    assert r.exit_code == 0, r.output
+    assert "already approved" in r.output
+    assert len(load_voice_profile(settings.paths.voice_profile_path).approved_examples) == 1
+
+
+def test_voice_approve_example_falls_back_to_draft_body(monkeypatch, tmp_path):
+    settings = _voice_settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    _seed_draft(store, "d2", "original ai draft body")
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["voice", "approve-example", "d2"])
+    assert r.exit_code == 0, r.output
+    profile = load_voice_profile(settings.paths.voice_profile_path)
+    assert profile.approved_examples[0].text == "original ai draft body"
+
+
+def test_voice_approve_example_missing_draft(monkeypatch, tmp_path):
+    settings = _voice_settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    r = CliRunner().invoke(app, ["voice", "approve-example", "nope"])
+    assert r.exit_code == 1
+    assert "not found" in r.output
+
+
+def test_voice_reject_example_and_dedupe(monkeypatch, tmp_path):
+    settings = _voice_settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["voice", "reject-example", "d1", "--reason", "too generic"])
+    assert r.exit_code == 0, r.output
+    profile = load_voice_profile(settings.paths.voice_profile_path)
+    assert len(profile.rejected_examples) == 1
+    assert profile.rejected_examples[0].id == "d1"
+    assert profile.rejected_examples[0].reason == "too generic"
+
+    r = CliRunner().invoke(app, ["voice", "reject-example", "d1", "--reason", "again"])
+    assert r.exit_code == 0, r.output
+    assert "already rejected" in r.output
+    assert len(load_voice_profile(settings.paths.voice_profile_path).rejected_examples) == 1
+
 
 
 def test_run_resume_echoes_state_and_brief(monkeypatch, tmp_path):
