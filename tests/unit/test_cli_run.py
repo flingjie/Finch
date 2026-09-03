@@ -1,10 +1,12 @@
 """Unit tests for finch run/jobs CLI commands."""
+import json
 from datetime import UTC, datetime
 
 from typer.testing import CliRunner
 
 from finch import cli
 from finch.cli import app
+from finch.content.checkers.base import CheckResult
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
@@ -22,7 +24,13 @@ from finch.content.voice import (
 from finch.review.models import ReviewAction, ReviewDecision
 from finch.settings import Paths, Settings
 from finch.storage.database import Store
-from finch.storage.repositories import ContentJobRepository, DraftRepository, ReviewRepository
+from finch.storage.repositories import (
+    ContentJobRepository,
+    CriticReportRepository,
+    DraftRepository,
+    DraftVersionRepository,
+    ReviewRepository,
+)
 
 
 def test_run_daily_help():
@@ -470,3 +478,86 @@ def test_run_resume_echoes_state_and_brief(monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
     assert "WAITING_FOR_REVIEW" in r.output
     assert "草稿正文：hi" in r.output
+
+
+def test_persist_critique_reports_helper(tmp_path):
+    from finch.cli import persist_critique_reports
+
+    store = Store(tmp_path / "finch.db")
+    store.init()
+    draft = Draft(id="d1", kind=DraftKind.REPLY, candidate_id="t", body="v0", claims=[])
+    payload = json.dumps(
+        {
+            "reports": [
+                {
+                    "draft_id": "d1",
+                    "round": 0,
+                    "version": draft.model_dump(mode="json"),
+                    "checks": [
+                        CheckResult(
+                            checker="specificity", passed=True, severity="low"
+                        ).model_dump(mode="json")
+                    ],
+                    "outcome": "pass",
+                }
+            ]
+        }
+    )
+    persist_critique_reports(store, payload)
+
+    versions = DraftVersionRepository(store).list_versions("d1")
+    assert [v.body for v in versions] == ["v0"]
+    reports = CriticReportRepository(store).list_reports("d1")
+    assert len(reports) == 1
+    assert reports[0]["outcome"] == "pass"
+    assert reports[0]["checks"][0]["checker"] == "specificity"
+
+
+def test_run_daily_persists_versions_and_reports(monkeypatch, tmp_path):
+    from finch.codex.runner import CodexRunner
+    from finch.graph.content_nodes import make_critique_node
+    from finch.graph.context import items_payload
+    from finch.graph.events import NodeResult
+    from finch.graph.nodes import Node
+    from finch.settings import QualityGates
+
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    class Seed(Node):
+        model_config = {"extra": "allow"}
+
+        def run(self, ctx):
+            return NodeResult(status="succeeded", output=self.seed)
+
+    class PassChecker:
+        name = "pass"
+
+        def check(self, ctx):
+            return CheckResult(checker="pass", passed=True, severity="low")
+
+    draft = Draft(id="d1", kind=DraftKind.ORIGINAL, candidate_id=None, body="hi", claims=[])
+
+    def build_nodes(**kw):
+        return [
+            Seed(name="draft", writes="drafts", seed=items_payload([draft])),
+            Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
+            Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
+            Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
+            Seed(name="position_gate", writes="ready_jobs", seed=items_payload([])),
+            make_critique_node(
+                CodexRunner(), lambda *a, **k: draft, QualityGates(), checkers=[PassChecker()]
+            ),
+        ]
+
+    monkeypatch.setattr(cli, "daily_nodes", build_nodes)
+    r = CliRunner().invoke(app, ["run", "daily"])
+    assert r.exit_code == 0, r.output
+
+    versions = DraftVersionRepository(store).list_versions("d1")
+    assert len(versions) == 1
+    reports = CriticReportRepository(store).list_reports("d1")
+    assert len(reports) == 1
+    assert reports[0]["outcome"] == "pass"

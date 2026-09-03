@@ -1,10 +1,15 @@
-"""Evidence Card 仓储（spec 7.1/7.2）与草稿/审核/反馈/ContentJob 仓储（Phase 6/8）。"""
+"""Evidence Card 仓储（spec 7.1/7.2）与草稿/审核/反馈/ContentJob 仓储（Phase 6/8）。
 
+另含草稿版本（DraftVersionRecord）与 Critic 报告（CriticReportRecord）仓储（Task 7）。
+"""
+
+import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlmodel import Field, Session, SQLModel, select
 
+from finch.content.checkers.base import CheckResult
 from finch.content.jobs import ContentJob
 from finch.content.models import Draft
 from finch.evidence.models import EvidenceCard
@@ -257,3 +262,91 @@ class ContentJobRepository:
             stmt = select(ContentJobRecord)
             records = list(session.exec(stmt))
             return [ContentJob.model_validate_json(r.payload_json) for r in records]
+
+
+class DraftVersionRecord(SQLModel, table=True):
+    """草稿每轮版本持久化模型（Task 7：C8）。"""
+
+    id: str = Field(primary_key=True)  # f"{draft_id}:{round}"
+    draft_id: str = Field(index=True)
+    round: int
+    payload_json: str  # Draft.model_dump_json()
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class DraftVersionRepository:
+    """草稿版本仓储（Task 7）：逐轮保留 Critique 前的草稿快照。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def upsert_version(self, draft_id: str, round: int, draft: Draft) -> None:
+        """按 id（draft_id:round）merge 插入或更新某一轮草稿版本（幂等）。"""
+        record = DraftVersionRecord(
+            id=f"{draft_id}:{round}",
+            draft_id=draft_id,
+            round=round,
+            payload_json=draft.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def list_versions(self, draft_id: str) -> list[Draft]:
+        """按 round 升序返回某草稿的全部版本（单查询，避免 N+1）。"""
+        with Session(self.store.engine) as session:
+            stmt = (
+                select(DraftVersionRecord)
+                .where(DraftVersionRecord.draft_id == draft_id)
+                .order_by("round")
+            )
+            records = list(session.exec(stmt))
+            return [Draft.model_validate_json(r.payload_json) for r in records]
+
+
+class CriticReportRecord(SQLModel, table=True):
+    """Critic 每轮报告持久化模型（Task 7：C8）。"""
+
+    id: str = Field(primary_key=True)  # f"{draft_id}:{round}"
+    draft_id: str = Field(index=True)
+    round: int
+    payload_json: str  # {"checks": [...], "outcome": "..."}
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CriticReportRepository:
+    """Critic 报告仓储（Task 7）：逐轮保留检查结果与聚合去向。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def upsert_report(
+        self, draft_id: str, round: int, checks: list[CheckResult], outcome: str
+    ) -> None:
+        """按 id（draft_id:round）merge 插入或更新某轮 Critic 报告（幂等）。"""
+        payload = {
+            "checks": [check.model_dump(mode="json") for check in checks],
+            "outcome": outcome,
+        }
+        record = CriticReportRecord(
+            id=f"{draft_id}:{round}",
+            draft_id=draft_id,
+            round=round,
+            payload_json=json.dumps(payload),
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def list_reports(self, draft_id: str) -> list[dict]:
+        """按 round 升序返回某草稿的全部报告（单查询，避免 N+1）。"""
+        with Session(self.store.engine) as session:
+            stmt = (
+                select(CriticReportRecord)
+                .where(CriticReportRecord.draft_id == draft_id)
+                .order_by("round")
+            )
+            records = list(session.exec(stmt))
+            return [json.loads(r.payload_json) for r in records]

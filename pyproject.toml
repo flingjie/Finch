@@ -38,6 +38,10 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+src = ["src"]
+# Alembic 迁移脚本由 autogenerate 生成，遵循 alembic 模板约定（Union/Sequence/单引号/长行），
+# 不按本项目 ruff 规则 lint。
+extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

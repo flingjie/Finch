@@ -483,6 +483,7 @@ def test_critique_node_emits_per_round_reports(tmp_path):
     assert reports[0] == {
         "draft_id": "d1",
         "round": 0,
+        "version": _reply_draft().model_dump(mode="json"),
         "checks": [
             _failed_check().model_dump(mode="json"),
         ],
@@ -490,6 +491,7 @@ def test_critique_node_emits_per_round_reports(tmp_path):
     }
     assert reports[1]["round"] == 1
     assert reports[1]["outcome"] == "pass"
+    assert reports[1]["version"]["body"] == "fixed"
 
 
 def test_define_jobs_node_produces_and_filters_jobs(tmp_path):

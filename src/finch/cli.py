@@ -8,6 +8,7 @@ import typer
 import yaml
 
 from .codex.runner import CodexRunner
+from .content.checkers.base import CheckResult
 from .content.jobs import AuthorPosition, ContentJobStatus
 from .content.models import DailyBrief, Draft
 from .content.voice import (
@@ -32,7 +33,9 @@ from .settings import load_settings
 from .storage.database import Store
 from .storage.repositories import (
     ContentJobRepository,
+    CriticReportRepository,
     DraftRepository,
+    DraftVersionRepository,
     FeedbackRepository,
     ReviewRepository,
 )
@@ -69,6 +72,30 @@ def _since_iso(since: str | None) -> str | None:
     if since.endswith("d"):
         return (datetime.now(UTC) - timedelta(days=int(since[:-1]))).isoformat()
     return since
+
+
+def persist_critique_reports(store: Store, output_json: str) -> None:
+    """从 critique 节点输出持久化草稿版本与 Critic 报告（Task 7）。
+
+    critique 节点保持无状态（不访问 DB），持久化在 CLI 层完成。每个 report 条目含
+    draft_id / round / version / checks / outcome，分别写入 DraftVersionRepository
+    与 CriticReportRepository。历史草稿（content_job_id=None）照常读回，
+    不参与新指标（Task 8 在指标侧跳过）。
+    """
+    payload = json.loads(output_json)
+    reports = payload.get("reports", [])
+    if not reports:
+        return
+    version_repo = DraftVersionRepository(store)
+    report_repo = CriticReportRepository(store)
+    for report in reports:
+        draft_id = report["draft_id"]
+        round_no = report["round"]
+        version = report.get("version")
+        if version is not None:
+            version_repo.upsert_version(draft_id, round_no, Draft.model_validate(version))
+        checks = [CheckResult.model_validate(c) for c in report.get("checks", [])]
+        report_repo.upsert_report(draft_id, round_no, checks, report["outcome"])
 
 
 @app.command()
@@ -214,7 +241,10 @@ def run_daily() -> None:
     )
     run = GraphRuntime(store, nodes).run()
     typer.echo(run.state)
-    draft_record = store.find_node(run.id, "critique", "default")
+    critique_record = store.find_node(run.id, "critique", "default")
+    if critique_record is not None and critique_record.output_json:
+        persist_critique_reports(store, critique_record.output_json)
+    draft_record = critique_record
     if draft_record is None:
         draft_record = store.find_node(run.id, "draft", "default")
     if draft_record is not None and draft_record.output_json:

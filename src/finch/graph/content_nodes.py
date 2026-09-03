@@ -199,6 +199,7 @@ def make_critique_node(
                         {
                             "draft_id": draft.id,
                             "round": i,
+                            "version": current.model_dump(mode="json"),
                             "checks": [check.model_dump(mode="json") for check in checks],
                             "outcome": outcome,
                         }

@@ -2,12 +2,15 @@ from datetime import datetime
 
 from sqlalchemy import inspect
 
+from finch.content.checkers.base import CheckResult
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard, Source
 from finch.review.models import Feedback, ReviewAction, ReviewDecision, SkipReason
 from finch.storage.database import Store
 from finch.storage.repositories import (
+    CriticReportRepository,
     DraftRepository,
+    DraftVersionRepository,
     EvidenceRepository,
     FeedbackRepository,
     ReviewRepository,
@@ -78,3 +81,45 @@ def test_contentjob_record_table_registered(tmp_path):
     # Check that contentjobrecord table exists via SQLAlchemy inspect
     inspector = inspect(store.engine)
     assert inspector.has_table("contentjobrecord")
+
+
+def test_draft_version_roundtrip_ordering_and_idempotent_merge(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = DraftVersionRepository(store)
+    repo.upsert_version("d1", 0, _draft().model_copy(update={"body": "v0"}))
+    repo.upsert_version("d1", 1, _draft().model_copy(update={"body": "v1"}))
+    assert [v.body for v in repo.list_versions("d1")] == ["v0", "v1"]
+    # 幂等 merge：round 0 被覆盖而非重复
+    repo.upsert_version("d1", 0, _draft().model_copy(update={"body": "v0-again"}))
+    versions = repo.list_versions("d1")
+    assert len(versions) == 2
+    assert [v.body for v in versions] == ["v0-again", "v1"]
+
+
+def test_critic_report_roundtrip(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = CriticReportRepository(store)
+    repo.upsert_report(
+        "d1",
+        0,
+        [
+            CheckResult(
+                checker="specificity",
+                passed=False,
+                severity="high",
+                locations=["s[0]"],
+                issues=["vague"],
+                rewrite_instructions=["be specific"],
+            )
+        ],
+        "rewrite",
+    )
+    repo.upsert_report(
+        "d1", 1, [CheckResult(checker="specificity", passed=True, severity="low")], "pass"
+    )
+    reports = repo.list_reports("d1")
+    assert [r["outcome"] for r in reports] == ["rewrite", "pass"]
+    assert reports[0]["checks"][0]["checker"] == "specificity"
+    assert reports[0]["checks"][0]["passed"] is False
