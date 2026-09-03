@@ -1,3 +1,4 @@
+from finch.content.checkers import CheckResult
 from finch.content.critic import CritiqueResult, critique, evaluate_passed
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard
@@ -59,3 +60,36 @@ def test_critique_calls_runner_once():
         },
     )
     assert r.calls == 1 and out.quality_score == 0.8
+
+
+def test_critique_result_round_trips_checks():
+    result = CritiqueResult(
+        passed=True,
+        quality_score=0.8,
+        checks=[CheckResult(checker="evidence", passed=True, severity="low")],
+    )
+    back = CritiqueResult.model_validate(result.model_dump(mode="json"))
+    assert back.checks == result.checks
+    assert back.checks[0].severity == "low"
+
+
+def test_critique_result_from_checks_computes_passed_from_aggregate():
+    failed = [
+        CheckResult(
+            checker="specificity",
+            passed=False,
+            severity="medium",
+            locations=["sentence[0]"],
+            issues=["vague"],
+            rewrite_instructions=["be specific"],
+        )
+    ]
+    result = CritiqueResult.from_checks(failed)
+    assert result.passed is False
+    assert result.checks == failed
+
+    hard = CheckResult(checker="evidence", passed=False, severity="hard_fail")
+    assert CritiqueResult.from_checks([hard]).passed is False
+
+    passed = [CheckResult(checker="evidence", passed=True, severity="low")]
+    assert CritiqueResult.from_checks(passed).passed is True

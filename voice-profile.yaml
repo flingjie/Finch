@@ -1,0 +1,7 @@
+# Finch author voice profile (local configuration; managed via `finch voice *`).
+# All fields default to empty: an empty profile means VoiceChecker has nothing to check.
+preferred_patterns: []
+avoid_phrases: []
+rhythm_rules: []
+approved_examples: []
+rejected_examples: []

@@ -1,11 +1,16 @@
 from datetime import datetime
 
+from sqlalchemy import inspect
+
+from finch.content.checkers.base import CheckResult
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard, Source
 from finch.review.models import Feedback, ReviewAction, ReviewDecision, SkipReason
 from finch.storage.database import Store
 from finch.storage.repositories import (
+    CriticReportRepository,
     DraftRepository,
+    DraftVersionRepository,
     EvidenceRepository,
     FeedbackRepository,
     ReviewRepository,
@@ -59,6 +64,28 @@ def test_review_save_idempotent(tmp_path):
     assert got.reason == SkipReason.NOT_NOW.value
 
 
+def test_get_position_review_latest(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = ReviewRepository(store)
+    repo.save_review(ReviewDecision(id="rev_d1", draft_id="d1", action=ReviewAction.APPROVE,
+                                    decided_at=datetime(2026, 1, 1)))
+    repo.save_review(ReviewDecision(id="confirm_d1", draft_id="d1",
+                                    action=ReviewAction.CONFIRM_POSITION, voice_match=3,
+                                    decided_at=datetime(2026, 1, 1)))
+    assert repo.get_position_review("d1").voice_match == 3
+    # 最新一次确认 merge 覆盖旧值；approve 决策不受影响
+    repo.save_review(ReviewDecision(id="confirm_d1", draft_id="d1",
+                                    action=ReviewAction.CONFIRM_POSITION, voice_match=5,
+                                    decided_at=datetime(2026, 1, 2)))
+    assert repo.get_position_review("d1").voice_match == 5
+    assert repo.get_review("d1").action == ReviewAction.APPROVE
+    # 无 confirm 时返回 None
+    repo.save_review(ReviewDecision(id="rev_d2", draft_id="d2", action=ReviewAction.APPROVE,
+                                    decided_at=datetime(2026, 1, 1)))
+    assert repo.get_position_review("d2") is None
+
+
 def test_feedback_roundtrip(tmp_path):
     store = Store(tmp_path / "db.sqlite")
     store.init()
@@ -66,3 +93,55 @@ def test_feedback_roundtrip(tmp_path):
     repo.save_feedback(Feedback(draft_id="d1", published_url="https://x.com/u/status/1",
                                 recorded_at=datetime(2026, 1, 1)))
     assert repo.get_feedback("d1").published_url == "https://x.com/u/status/1"
+
+
+def test_contentjob_record_table_registered(tmp_path):
+    """Test that ContentJobRecord is registered for table creation."""
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+
+    # Check that contentjobrecord table exists via SQLAlchemy inspect
+    inspector = inspect(store.engine)
+    assert inspector.has_table("contentjobrecord")
+
+
+def test_draft_version_roundtrip_ordering_and_idempotent_merge(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = DraftVersionRepository(store)
+    repo.upsert_version("d1", 0, _draft().model_copy(update={"body": "v0"}))
+    repo.upsert_version("d1", 1, _draft().model_copy(update={"body": "v1"}))
+    assert [v.body for v in repo.list_versions("d1")] == ["v0", "v1"]
+    # 幂等 merge：round 0 被覆盖而非重复
+    repo.upsert_version("d1", 0, _draft().model_copy(update={"body": "v0-again"}))
+    versions = repo.list_versions("d1")
+    assert len(versions) == 2
+    assert [v.body for v in versions] == ["v0-again", "v1"]
+
+
+def test_critic_report_roundtrip(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = CriticReportRepository(store)
+    repo.upsert_report(
+        "d1",
+        0,
+        [
+            CheckResult(
+                checker="specificity",
+                passed=False,
+                severity="high",
+                locations=["s[0]"],
+                issues=["vague"],
+                rewrite_instructions=["be specific"],
+            )
+        ],
+        "rewrite",
+    )
+    repo.upsert_report(
+        "d1", 1, [CheckResult(checker="specificity", passed=True, severity="low")], "pass"
+    )
+    reports = repo.list_reports("d1")
+    assert [r["outcome"] for r in reports] == ["rewrite", "pass"]
+    assert reports[0]["checks"][0]["checker"] == "specificity"
+    assert reports[0]["checks"][0]["passed"] is False

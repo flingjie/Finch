@@ -114,6 +114,26 @@ def test_blocked_error_sets_blocked_state(tmp_path):
     assert run.state == "BLOCKED"
 
 
+class NeedsInputNode(Node):
+    def run(self, ctx: dict) -> NodeResult:
+        return NodeResult(status="needs_input", output={"items": [{"id": "j1"}]})
+
+
+def test_needs_input_stops_pipeline_and_marks_run(tmp_path):
+    store = _store(tmp_path)
+    nodes = [
+        NoopNode(name="a", idempotency_key="ka"),
+        NeedsInputNode(name="gate", idempotency_key="kb"),
+        NoopNode(name="c", idempotency_key="kc"),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "NEEDS_INPUT"
+    gate = store.find_node(run.id, "gate", "kb")
+    assert gate is not None and gate.status == "needs_input"
+    # downstream node never runs
+    assert store.find_node(run.id, "c", "kc") is None
+
+
 class DynNode(Node):
     def run(self, ctx: dict) -> NodeResult:
         return NodeResult(status="succeeded", output={"terminal_state": "WAITING_FOR_REVIEW"})

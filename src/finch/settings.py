@@ -13,6 +13,7 @@ class Paths(BaseModel):
     outputs_dir: Path = Field(default_factory=lambda: Path("var/outputs"))
     inbox_dir: Path = Field(default_factory=lambda: Path("var/inbox"))
     cache_dir: Path = Field(default_factory=lambda: Path("var/cache"))
+    voice_profile_path: Path = Field(default_factory=lambda: Path("voice-profile.yaml"))
 
     def ensure(self) -> "Paths":
         dirs = (self.var_dir, self.outputs_dir, self.inbox_dir, self.cache_dir, self.db_path.parent)

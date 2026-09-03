@@ -1,6 +1,12 @@
-from types import SimpleNamespace
-
 from finch.codex.runner import CodexRunner
+from finch.content.checkers.base import CheckResult
+from finch.content.jobs import (
+    AuthorPosition,
+    ContentJob,
+    ContentJobStatus,
+    IntendedEffect,
+    SuccessCriterion,
+)
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.content.writer import rewrite, write_original, write_reply
 from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
@@ -40,6 +46,28 @@ def _candidate():
                                url="https://x.com/u/status/1")
 
 
+def _job():
+    return ContentJob(
+        id="job_1",
+        source_card_ids=["ev_1"],
+        candidate_id="t1",
+        reader_problem="readers don't know how to rate limit",
+        audience="backend engineers",
+        intended_effect=IntendedEffect(understand="token bucket rate limiting"),
+        author_position=AuthorPosition(
+            claim="use token bucket",
+            decision="use token bucket",
+            tradeoff="more memory",
+            confirmed=True,
+        ),
+        success_criteria=[
+            SuccessCriterion(id="c1", description="critic passes", measurement="critic")
+        ],
+        recommended_format=DraftKind.REPLY,
+        status=ContentJobStatus.READY,
+    )
+
+
 def test_write_reply_returns_draft():
     r = FakeRunner(_good_draft())
     d = write_reply(r, _match(), _candidate(), {"ev_1": _card()})
@@ -64,6 +92,26 @@ def test_write_reply_stamps_metadata():
     assert d.candidate_id == "t1"
     assert d.kind == DraftKind.REPLY
     assert d.language == "en"
+
+
+def test_write_reply_job_path_stamps_metadata():
+    # match=None (job-based reply) must still stamp job id + position statement
+    unstamped = Draft(id="d", kind=DraftKind.REPLY, body="hi",
+                      claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
+                                       confidence=ClaimConfidence.VERIFIED)])
+    r = FakeRunner(unstamped)
+    d = write_reply(r, None, _candidate(), {"ev_1": _card()}, _job())
+    assert d is not None
+    assert d.candidate_id == "t1"
+    assert d.content_job_id == "job_1"
+    assert d.position_statement == "use token bucket"
+
+
+def test_write_reply_job_path_none_on_invalid_claim():
+    bad = _good_draft().model_copy(update={"claims": [
+        ClaimRef(statement="x", evidence_card_id="ev_999", confidence=ClaimConfidence.VERIFIED)]})
+    r = FakeRunner(bad)
+    assert write_reply(r, None, _candidate(), {"ev_1": _card()}, _job()) is None
 
 
 def test_write_reply_prompt_orders_instructions_before_candidate_data():
@@ -111,10 +159,84 @@ def test_write_original_stamps_metadata():
     assert d.language == "zh"
 
 
+def _failed_check(
+    checker: str = "specificity",
+    issue: str = "too vague",
+    instruction: str = "replace the vague sentence with a specific claim",
+) -> CheckResult:
+    return CheckResult(
+        checker=checker,
+        passed=False,
+        severity="medium",
+        locations=["sentence[0]"],
+        issues=[issue],
+        rewrite_instructions=[instruction],
+    )
+
+
 def test_rewrite_regenerates_body():
     out = Draft(id="d", kind=DraftKind.REPLY, candidate_id="t1", language="en",
                 body="fixed", claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
                                                confidence=ClaimConfidence.VERIFIED)])
     r = FakeRunner(out)
-    d = rewrite(r, _good_draft(), SimpleNamespace(issues=["too vague"]), {"ev_1": _card()})
+    d = rewrite(r, _good_draft(), [_failed_check()], {"ev_1": _card()})
     assert d is not None and d.body == "fixed"
+
+
+def test_rewrite_prompt_contains_only_failed_instructions():
+    captured: list[str] = []
+
+    class CaptureRunner(CodexRunner):
+        def run(self, prompt, output_model, **kw):
+            captured.append(prompt)
+            return _good_draft().model_copy(update={"body": "fixed"})
+
+    rewrite(
+        CaptureRunner(),
+        _good_draft(),
+        [_failed_check(checker="specificity", instruction="tie the claim to evidence")],
+        {"ev_1": _card()},
+    )
+    prompt = captured[0]
+    assert "tie the claim to evidence" in prompt
+    assert "specificity" in prompt
+    assert "too vague" in prompt
+    assert "Do NOT restyle" in prompt
+    assert "improve the writing" not in prompt
+
+
+def test_rewrite_renders_each_failed_check():
+    captured: list[str] = []
+
+    class CaptureRunner(CodexRunner):
+        def run(self, prompt, output_model, **kw):
+            captured.append(prompt)
+            return _good_draft().model_copy(update={"body": "fixed"})
+
+    rewrite(
+        CaptureRunner(),
+        _good_draft(),
+        [
+            _failed_check(checker="specificity", instruction="fix specificity"),
+            _failed_check(checker="portability", instruction="anchor the claim"),
+        ],
+        {"ev_1": _card()},
+    )
+    prompt = captured[0]
+    assert "fix specificity" in prompt
+    assert "anchor the claim" in prompt
+    assert "specificity" in prompt
+    assert "portability" in prompt
+
+
+def test_rewrite_preserves_stamped_identity():
+    out = Draft(id="wrong", kind=DraftKind.ORIGINAL, candidate_id=None, language="zh",
+                body="fixed", claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
+                                               confidence=ClaimConfidence.VERIFIED)])
+    r = FakeRunner(out)
+    d = rewrite(r, _good_draft(), [_failed_check()], {"ev_1": _card()})
+    assert d is not None
+    assert d.id == "d"
+    assert d.kind == DraftKind.REPLY
+    assert d.candidate_id == "t1"
+    assert d.language == "en"

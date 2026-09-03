@@ -50,3 +50,33 @@ def test_list_pending_excludes_reviewed(tmp_path):
     repo.upsert_draft(_draft("d2"))
     svc.approve("d1")
     assert [d.id for d in svc.list_pending()] == ["d2"]
+
+
+def test_list_pending_keeps_confirm_position_only_draft(tmp_path):
+    # CONFIRM_POSITION 独立于最终发布批准：仅确认过立场的草稿仍应留在 pending。
+    svc, store = _svc(tmp_path)
+    repo = DraftRepository(store)
+    repo.upsert_draft(_draft("d1"))
+    svc.confirm_position("d1", voice_match=4, position_correct=True)
+    assert [d.id for d in svc.list_pending()] == ["d1"]
+
+
+def test_confirm_position_distinct_from_approve(tmp_path):
+    svc, store = _svc(tmp_path)
+    DraftRepository(store).upsert_draft(_draft())
+    svc.approve("d1")
+    confirm = svc.confirm_position("d1", voice_match=4, position_correct=True)
+    assert confirm.action == ReviewAction.CONFIRM_POSITION
+    assert confirm.id == "confirm_d1"
+    assert confirm.voice_match == 4
+    assert confirm.position_correct is True
+
+    repo = ReviewRepository(store)
+    # 不覆盖 approve 决策：最终决策仍是 approve，立场确认独立可读
+    assert repo.get_review("d1") is not None
+    assert repo.get_review("d1").action == ReviewAction.APPROVE
+    got = repo.get_position_review("d1")
+    assert got is not None
+    assert got.action == ReviewAction.CONFIRM_POSITION
+    assert got.voice_match == 4
+    assert got.position_correct is True
