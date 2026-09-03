@@ -590,3 +590,59 @@ def test_run_daily_persists_versions_and_reports(monkeypatch, tmp_path):
     reports = CriticReportRepository(store).list_reports("d1")
     assert len(reports) == 1
     assert reports[0]["outcome"] == "pass"
+
+
+def test_run_resume_persists_drafts_and_reports(monkeypatch, tmp_path):
+    from finch.codex.runner import CodexRunner
+    from finch.graph.content_nodes import make_brief_node, make_critique_node
+    from finch.graph.context import items_payload
+    from finch.graph.events import NodeResult
+    from finch.graph.nodes import Node
+    from finch.graph.runtime import GraphRuntime
+    from finch.settings import QualityGates
+
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    class Seed(Node):
+        model_config = {"extra": "allow"}
+
+        def run(self, ctx):
+            return NodeResult(status="succeeded", output=self.seed)
+
+    class PassChecker:
+        name = "pass"
+
+        def check(self, ctx):
+            return CheckResult(checker="pass", passed=True, severity="low")
+
+    draft = Draft(id="d1", kind=DraftKind.ORIGINAL, candidate_id=None, body="hi", claims=[])
+
+    def build_nodes(**kw):
+        return [
+            Seed(name="draft", writes="drafts", seed=items_payload([draft])),
+            Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
+            Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
+            Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
+            Seed(name="position_gate", writes="ready_jobs", seed=items_payload([])),
+            make_critique_node(
+                CodexRunner(), lambda *a, **k: draft, QualityGates(), checkers=[PassChecker()]
+            ),
+            make_brief_node(QualityGates()),
+        ]
+
+    monkeypatch.setattr(cli, "daily_nodes", build_nodes)
+    # 第一次直接跑 runtime（不经 CLI），只落节点记录、不持久化草稿/报告。
+    run = GraphRuntime(store, build_nodes()).run()
+    assert DraftRepository(store).get_draft("d1") is None
+    assert CriticReportRepository(store).list_reports("d1") == []
+
+    # resume 复用已完成节点，并应把草稿 + 报告补齐（F1）。
+    r = CliRunner().invoke(app, ["run", "resume", run.id])
+    assert r.exit_code == 0, r.output
+    assert DraftRepository(store).get_draft("d1") is not None
+    reports = CriticReportRepository(store).list_reports("d1")
+    assert len(reports) == 1
+    assert reports[0]["outcome"] == "pass"
