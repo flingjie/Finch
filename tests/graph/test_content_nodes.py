@@ -748,6 +748,39 @@ def test_draft_node_caps_replies_and_originals(tmp_path):
     assert len(originals) == 1
 
 
+def test_draft_node_routes_on_recommended_format_not_candidate(tmp_path):
+    """F7: recommended_format=ORIGINAL 但 candidate_id 非空时仍写 original。"""
+    job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))
+    job = job.model_copy(update={"recommended_format": DraftKind.ORIGINAL})
+    calls = {"reply": 0, "original": 0}
+
+    def write_reply(runner, match, candidate, cards_by_id, job):
+        calls["reply"] += 1
+        return _reply_draft()
+
+    def write_original(runner, cards, job):
+        calls["original"] += 1
+        return _reply_draft().model_copy(
+            update={"id": "d2", "kind": DraftKind.ORIGINAL, "candidate_id": None}
+        )
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="gate", writes="ready_jobs", seed=items_payload([job])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "DRAFTED"
+    rec = store.find_node(run.id, "draft", "default")
+    assert rec is not None
+    drafts = json.loads(rec.output_json)["items"]
+    assert len(drafts) == 1
+    assert drafts[0]["kind"] == "original"
+    assert calls == {"reply": 0, "original": 1}
+
+
 def test_brief_renders_six_items_per_candidate(tmp_path):
     """D10: Daily Brief 每个候选渲染 Spec §7 的 6 项。"""
     job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))

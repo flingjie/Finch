@@ -102,26 +102,6 @@ class ContentJob(BaseModel):
         return False
 
 
-def infer_status(job: ContentJob) -> ContentJobStatus:
-    """
-    根据 job 的内容推断其应处的状态。
-
-    - 缺失 author_position 或 author_position.decision/tradeoff → NEEDS_INPUT
-    - 明确 DO_NOT_WRITE → DO_NOT_WRITE
-    - 其他 → READY
-    """
-    if job.status == ContentJobStatus.DO_NOT_WRITE:
-        return ContentJobStatus.DO_NOT_WRITE
-
-    if job.author_position is None:
-        return ContentJobStatus.NEEDS_INPUT
-
-    if not job.author_position.decision or not job.author_position.tradeoff:
-        return ContentJobStatus.NEEDS_INPUT
-
-    return ContentJobStatus.READY
-
-
 def define_content_jobs(runner: CodexRunner, cards: list[EvidenceCard]) -> ContentJobsOutput:
     """
     调用 Codex runner 生成 Content Job 列表。

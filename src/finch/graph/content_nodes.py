@@ -66,8 +66,9 @@ def make_draft_node(
 ) -> Node:
     """证据草稿节点：ready_jobs × cards → drafts。
 
-    对每个 ready job：candidate_id 为空 → write_original；否则查 DiscussionCandidate 后
-    write_reply（查不到 candidate 则跳过该 job）。空 ready_jobs → drafts=[]（幂等）。
+    对每个 ready job：以 recommended_format 路由（ORIGINAL → write_original；REPLY →
+    查 DiscussionCandidate 后 write_reply）。recommended_format 为 REPLY 但 candidate_id
+    为空时回退到 original 语义。空 ready_jobs → drafts=[]（幂等）。
     """
 
     class DraftNode(Node):
@@ -90,7 +91,13 @@ def make_draft_node(
                 if not job_cards:
                     continue
 
-                is_reply = job.candidate_id is not None
+                # 路由权威是 recommended_format，而非 candidate_id（F7）。ORIGINAL 永远
+                # 写 original；REPLY 需要 candidate_id 查找候选，缺则回退 original 语义。
+                candidate_id = job.candidate_id
+                is_reply = (
+                    job.recommended_format == DraftKind.REPLY and candidate_id is not None
+                )
+
                 # 资源上限：LLM 返回无界 job/draft 列表时也不得超出预算。
                 if is_reply:
                     if reply_count >= gates.max_daily_replies:
@@ -98,13 +105,15 @@ def make_draft_node(
                 elif original_count >= gates.max_daily_original_posts:
                     continue
 
-                if job.candidate_id is None:
-                    draft = write_original(runner, job_cards, job)
-                else:
-                    candidate = candidates_by_id.get(job.candidate_id)
+                if is_reply:
+                    if candidate_id is None:
+                        continue
+                    candidate = candidates_by_id.get(candidate_id)
                     if candidate is None:
                         continue
                     draft = write_reply(runner, None, candidate, cards_by_id, job)
+                else:
+                    draft = write_original(runner, job_cards, job)
 
                 if draft is not None:
                     drafts.append(draft)

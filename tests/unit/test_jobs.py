@@ -6,7 +6,6 @@ from finch.content.jobs import (
     ContentJobStatus,
     IntendedEffect,
     SuccessCriterion,
-    infer_status,
 )
 from finch.content.models import DraftKind
 from finch.storage.database import Store
@@ -255,102 +254,6 @@ class TestContentJob:
             status=ContentJobStatus.PROPOSED,
         )
         assert job.needs_input() is True
-
-
-class TestInferStatus:
-    """Test infer_status function."""
-
-    def test_infer_status_do_not_write(self):
-        """DO_NOT_WRITE status is respected."""
-        job = ContentJob(
-            id="job_1",
-            source_card_ids=["card_1"],
-            candidate_id=None,
-            reader_problem="Problem",
-            audience="Engineers",
-            intended_effect=IntendedEffect(understand="Solution"),
-            author_position=None,
-            success_criteria=[],
-            recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.DO_NOT_WRITE,
-        )
-        assert infer_status(job) == ContentJobStatus.DO_NOT_WRITE
-
-    def test_infer_status_missing_author_position(self):
-        """Missing author_position → NEEDS_INPUT."""
-        job = ContentJob(
-            id="job_1",
-            source_card_ids=["card_1"],
-            candidate_id=None,
-            reader_problem="Problem",
-            audience="Engineers",
-            intended_effect=IntendedEffect(understand="Solution"),
-            author_position=None,
-            success_criteria=[],
-            recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.PROPOSED,
-        )
-        assert infer_status(job) == ContentJobStatus.NEEDS_INPUT
-
-    def test_infer_status_missing_decision(self):
-        """Missing decision → NEEDS_INPUT."""
-        job = ContentJob(
-            id="job_1",
-            source_card_ids=["card_1"],
-            candidate_id=None,
-            reader_problem="Problem",
-            audience="Engineers",
-            intended_effect=IntendedEffect(understand="Solution"),
-            author_position=AuthorPosition(
-                claim="Statement",
-                decision="",
-                tradeoff="Tradeoff",
-            ),
-            success_criteria=[],
-            recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.PROPOSED,
-        )
-        assert infer_status(job) == ContentJobStatus.NEEDS_INPUT
-
-    def test_infer_status_missing_tradeoff(self):
-        """Missing tradeoff → NEEDS_INPUT."""
-        job = ContentJob(
-            id="job_1",
-            source_card_ids=["card_1"],
-            candidate_id=None,
-            reader_problem="Problem",
-            audience="Engineers",
-            intended_effect=IntendedEffect(understand="Solution"),
-            author_position=AuthorPosition(
-                claim="Statement",
-                decision="Decision",
-                tradeoff="",
-            ),
-            success_criteria=[],
-            recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.PROPOSED,
-        )
-        assert infer_status(job) == ContentJobStatus.NEEDS_INPUT
-
-    def test_infer_status_ready(self):
-        """Complete author_position → READY."""
-        job = ContentJob(
-            id="job_1",
-            source_card_ids=["card_1"],
-            candidate_id=None,
-            reader_problem="Problem",
-            audience="Engineers",
-            intended_effect=IntendedEffect(understand="Solution"),
-            author_position=AuthorPosition(
-                claim="Statement",
-                decision="Decision",
-                tradeoff="Tradeoff",
-            ),
-            success_criteria=[],
-            recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.PROPOSED,
-        )
-        assert infer_status(job) == ContentJobStatus.READY
 
 
 class TestContentJobRepository:
