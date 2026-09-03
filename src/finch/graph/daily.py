@@ -14,7 +14,13 @@ from ..twitter.models import DiscussionCandidate, to_candidate
 from ..twitter.normalizer import normalize_tweets
 from ..twitter.opencli_client import OpenCliClient
 from ..twitter.query_builder import QueryBuilder
-from .content_nodes import make_brief_node, make_critique_node, make_draft_node
+from .content_nodes import (
+    make_brief_node,
+    make_critique_node,
+    make_define_jobs_node,
+    make_draft_node,
+    make_position_gate_node,
+)
 from .match_nodes import make_match_node, make_recall_node
 from .nodes import Node
 from .pipeline import (
@@ -80,6 +86,8 @@ def daily_nodes(
         make_collect_node(collect_fn),
         make_recall_node(settings.quality_gates),
         make_match_node(runner, settings.quality_gates, settings.twitter),
+        make_define_jobs_node(runner),
+        make_position_gate_node(),
         make_draft_node(runner, write_reply, write_original, settings.quality_gates),
         make_critique_node(runner, rewrite, critique, settings.quality_gates),
         make_brief_node(settings.quality_gates),

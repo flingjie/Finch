@@ -7,7 +7,9 @@ def test_linear_advance_follows_main_chain():
 
 
 def test_advance_past_review_reaches_waits():
-    assert advance(GraphState.EVIDENCE_MATCHED) == GraphState.DRAFTED
+    assert advance(GraphState.EVIDENCE_MATCHED) == GraphState.JOBS_DEFINED
+    assert advance(GraphState.JOBS_DEFINED) == GraphState.POSITIONS_READY
+    assert advance(GraphState.POSITIONS_READY) == GraphState.DRAFTED
 
 
 def test_terminal_states_are_stable():

@@ -9,7 +9,7 @@ from finch.storage.database import Store
 from finch.twitter.opencli_client import OpenCliClient
 
 
-def test_daily_nodes_has_nine_nodes(tmp_path):
+def test_daily_nodes_has_eleven_nodes(tmp_path):
     store = Store(tmp_path / "db.sqlite")
     store.init()
     nodes = daily_nodes(
@@ -30,13 +30,17 @@ def test_daily_nodes_has_nine_nodes(tmp_path):
         "collect_tweets",
         "recall",
         "match_evidence",
+        "define_jobs",
+        "position_gate",
         "draft",
         "critique",
         "brief",
     ]
     assert nodes[6].reads == ["match_results", "evidence_cards", "candidates"]
-    assert nodes[8].writes == "brief"
-    assert nodes[8].terminal_state_key == "terminal_state"
+    assert nodes[7].reads == ["content_jobs"]
+    assert nodes[8].reads == ["ready_jobs", "evidence_cards", "candidates"]
+    assert nodes[10].writes == "brief"
+    assert nodes[10].terminal_state_key == "terminal_state"
 
 
 def test_daily_nodes_order_and_contract(tmp_path):
@@ -56,16 +60,26 @@ def test_daily_nodes_order_and_contract(tmp_path):
     assert [n.name for n in nodes] == [
         "preflight", "sync_commits", "extract_events",
         "collect_tweets", "recall", "match_evidence",
-        "draft", "critique", "brief",
+        "define_jobs", "position_gate", "draft", "critique", "brief",
     ]
     assert nodes[4].reads == ["candidates", "evidence_cards"]
     assert nodes[5].writes == "match_results"
     assert nodes[5].reads == ["ranked_candidates", "evidence_cards", "candidates"]
-    assert nodes[7].reads == ["drafts", "match_results", "evidence_cards"]
+    assert nodes[6].writes == "content_jobs"
+    assert nodes[7].writes == "ready_jobs"
+    assert nodes[9].reads == ["drafts", "match_results", "evidence_cards"]
 
 
 def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
     from finch.content.critic import CritiqueResult
+    from finch.content.jobs import (
+        AuthorPosition,
+        ContentJob,
+        ContentJobsOutput,
+        ContentJobStatus,
+        IntendedEffect,
+        SuccessCriterion,
+    )
     from finch.content.models import ClaimRef, Draft, DraftKind
     from finch.evidence.judge import BatchJudgeItem, BatchJudgeOutput
     from finch.evidence.models import Claim, ClaimConfidence, EngineeringEvent, JudgeScores
@@ -139,6 +153,34 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
                                 incremental_value=0.9,
                                 discussability=0.9,
                             ),
+                        )
+                    ]
+                )
+            if output_model is ContentJobsOutput:
+                return ContentJobsOutput(
+                    items=[
+                        ContentJob(
+                            id="job1",
+                            source_card_ids=["ev_evt_problem"],
+                            candidate_id="t1",
+                            reader_problem="readers don't know how to rate limit",
+                            audience="backend engineers",
+                            intended_effect=IntendedEffect(
+                                understand="token bucket rate limiting"
+                            ),
+                            author_position=AuthorPosition(
+                                claim="use token bucket",
+                                decision="use token bucket",
+                                tradeoff="more memory",
+                                confirmed=True,
+                            ),
+                            success_criteria=[
+                                SuccessCriterion(
+                                    id="c1", description="critic passes", measurement="critic"
+                                )
+                            ],
+                            recommended_format=DraftKind.REPLY,
+                            status=ContentJobStatus.READY,
                         )
                     ]
                 )

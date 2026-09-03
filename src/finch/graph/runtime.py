@@ -50,6 +50,9 @@ class GraphRuntime:
                     GraphState.BLOCKED if result.error_code == "BLOCKED" else GraphState.FAILED
                 )
                 break
+            if result.status == "needs_input":
+                final_state = GraphState.NEEDS_INPUT
+                break
             ctx.put(node.writes, result.output)
             resolved = self._resolve_terminal_state(node, result.output)
             if resolved is not None:

@@ -1,6 +1,13 @@
 from types import SimpleNamespace
 
 from finch.codex.runner import CodexRunner
+from finch.content.jobs import (
+    AuthorPosition,
+    ContentJob,
+    ContentJobStatus,
+    IntendedEffect,
+    SuccessCriterion,
+)
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.content.writer import rewrite, write_original, write_reply
 from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
@@ -40,6 +47,28 @@ def _candidate():
                                url="https://x.com/u/status/1")
 
 
+def _job():
+    return ContentJob(
+        id="job_1",
+        source_card_ids=["ev_1"],
+        candidate_id="t1",
+        reader_problem="readers don't know how to rate limit",
+        audience="backend engineers",
+        intended_effect=IntendedEffect(understand="token bucket rate limiting"),
+        author_position=AuthorPosition(
+            claim="use token bucket",
+            decision="use token bucket",
+            tradeoff="more memory",
+            confirmed=True,
+        ),
+        success_criteria=[
+            SuccessCriterion(id="c1", description="critic passes", measurement="critic")
+        ],
+        recommended_format=DraftKind.REPLY,
+        status=ContentJobStatus.READY,
+    )
+
+
 def test_write_reply_returns_draft():
     r = FakeRunner(_good_draft())
     d = write_reply(r, _match(), _candidate(), {"ev_1": _card()})
@@ -64,6 +93,26 @@ def test_write_reply_stamps_metadata():
     assert d.candidate_id == "t1"
     assert d.kind == DraftKind.REPLY
     assert d.language == "en"
+
+
+def test_write_reply_job_path_stamps_metadata():
+    # match=None (job-based reply) must still stamp job id + position statement
+    unstamped = Draft(id="d", kind=DraftKind.REPLY, body="hi",
+                      claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
+                                       confidence=ClaimConfidence.VERIFIED)])
+    r = FakeRunner(unstamped)
+    d = write_reply(r, None, _candidate(), {"ev_1": _card()}, _job())
+    assert d is not None
+    assert d.candidate_id == "t1"
+    assert d.content_job_id == "job_1"
+    assert d.position_statement == "use token bucket"
+
+
+def test_write_reply_job_path_none_on_invalid_claim():
+    bad = _good_draft().model_copy(update={"claims": [
+        ClaimRef(statement="x", evidence_card_id="ev_999", confidence=ClaimConfidence.VERIFIED)]})
+    r = FakeRunner(bad)
+    assert write_reply(r, None, _candidate(), {"ev_1": _card()}, _job()) is None
 
 
 def test_write_reply_prompt_orders_instructions_before_candidate_data():

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 
 from finch.codex.runner import CodexRunner
 from finch.content.claims import validate_draft
+from finch.content.jobs import ContentJob
 from finch.content.models import Draft, DraftKind
 from finch.evidence.models import EvidenceCard, MatchResult
 from finch.twitter.models import DiscussionCandidate
@@ -51,33 +52,70 @@ def _cards_for_match(
 
 def write_reply(
     runner: CodexRunner,
-    match: MatchResult,
+    match: MatchResult | None,
     candidate: DiscussionCandidate,
     cards_by_id: dict[str, EvidenceCard],
+    job: ContentJob | None = None,
 ) -> Draft | None:
+    if match:
+        match_cards = _cards_for_match(match, cards_by_id)
+    else:
+        # For non-match jobs, use cards from job's source_card_ids
+        match_cards = (
+            [cards_by_id[cid] for cid in job.source_card_ids if cid in cards_by_id]
+            if job
+            else []
+        )
     prompt = _REPLY_PROMPT_PATH.read_text().format(
         candidate=candidate.text,
-        cards=_render_cards(_cards_for_match(match, cards_by_id)),
+        cards=_render_cards(match_cards),
     )
     draft = cast(Draft, runner.run(prompt, Draft))
-    if validate_draft(draft, card_ids=set(match.card_ids)):
+    if match:
+        card_ids = set(match.card_ids)
+    else:
+        card_ids = set(job.source_card_ids) if job else set()
+    if validate_draft(draft, card_ids=card_ids):
         return None
-    return draft.model_copy(
-        update={"kind": DraftKind.REPLY, "candidate_id": match.candidate_id, "language": "en"}
+    result = draft.model_copy(
+        update={
+            "kind": DraftKind.REPLY,
+            "candidate_id": match.candidate_id if match else candidate.id,
+            "language": "en",
+            "content_job_id": job.id if job else None,
+            "position_statement": (
+                job.author_position.decision
+                if job and job.author_position
+                else ""
+            ),
+        }
     )
+    return result
 
 
 def write_original(
     runner: CodexRunner,
     cards: list[EvidenceCard],
+    job: ContentJob | None = None,
 ) -> Draft | None:
     prompt = _ORIGINAL_PROMPT_PATH.read_text().format(cards=_render_cards(cards))
     draft = cast(Draft, runner.run(prompt, Draft))
     if validate_draft(draft, card_ids={card.id for card in cards}):
         return None
-    return draft.model_copy(
-        update={"kind": DraftKind.ORIGINAL, "candidate_id": None, "language": "zh"}
+    result = draft.model_copy(
+        update={
+            "kind": DraftKind.ORIGINAL,
+            "candidate_id": None,
+            "language": "zh",
+            "content_job_id": job.id if job else None,
+            "position_statement": (
+                job.author_position.decision
+                if job and job.author_position
+                else ""
+            ),
+        }
     )
+    return result
 
 
 def rewrite(

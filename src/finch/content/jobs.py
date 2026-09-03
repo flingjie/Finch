@@ -1,11 +1,21 @@
 """Content Job 模型（Spec §8）：定义内容目标与作者立场。"""
 
 from enum import StrEnum
-from typing import Literal
+from json import dumps
+from pathlib import Path
+from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
+from finch.codex.runner import CodexRunner
 from finch.content.models import DraftKind
+from finch.evidence.models import EvidenceCard
+
+
+class ContentJobsOutput(BaseModel):
+    """define-content-jobs prompt 的输出：ContentJob 列表。"""
+
+    items: list["ContentJob"]
 
 
 class ContentJobStatus(StrEnum):
@@ -109,3 +119,18 @@ def infer_status(job: ContentJob) -> ContentJobStatus:
         return ContentJobStatus.NEEDS_INPUT
 
     return ContentJobStatus.READY
+
+
+def define_content_jobs(runner: CodexRunner, cards: list[EvidenceCard]) -> ContentJobsOutput:
+    """
+    调用 Codex runner 生成 Content Job 列表。
+
+    - 加载 prompts/define-content-jobs.md
+    - 格式化 evidence cards
+    - 返回 ContentJobsOutput (items: list[ContentJob])
+    """
+    # 用 .replace 而非 .format：prompt 里含 JSON 示例的字面大括号，会被 .format 误解析。
+    template = Path("prompts/define-content-jobs.md").read_text()
+    prompt = template.replace("{cards}", dumps([c.model_dump(mode="json") for c in cards]))
+    result = runner.run(prompt, ContentJobsOutput)
+    return cast(ContentJobsOutput, result)

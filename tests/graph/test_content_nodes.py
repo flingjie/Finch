@@ -1,16 +1,32 @@
 """Writer/Critic/Daily Brief 节点 7–9 测试（Phase 5 Task F6）。"""
 
+import json
+
 from finch.codex.runner import CodexRunner
 from finch.content.critic import CritiqueResult
+from finch.content.jobs import (
+    AuthorPosition,
+    ContentJob,
+    ContentJobsOutput,
+    ContentJobStatus,
+    IntendedEffect,
+    SuccessCriterion,
+)
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
-from finch.graph.content_nodes import make_brief_node, make_critique_node, make_draft_node
+from finch.graph.content_nodes import (
+    make_brief_node,
+    make_critique_node,
+    make_define_jobs_node,
+    make_draft_node,
+    make_position_gate_node,
+)
 from finch.graph.context import items_payload
 from finch.graph.events import NodeResult
 from finch.graph.nodes import Node
 from finch.graph.runtime import GraphRuntime
 from finch.settings import QualityGates
-from finch.storage.database import Store
+from finch.storage.database import NodeRecord, Store
 from finch.twitter.models import DiscussionCandidate
 
 
@@ -98,6 +114,51 @@ def _reply_draft():
     )
 
 
+def _position(decision="use token bucket", tradeoff="more memory", confirmed=True):
+    return AuthorPosition(
+        claim="token bucket is the right call",
+        decision=decision,
+        tradeoff=tradeoff,
+        confirmed=confirmed,
+    )
+
+
+_DEFAULT_POSITION = _position()
+
+
+def _job(
+    job_id="job1",
+    candidate_id="t1",
+    source_card_ids=("ev1",),
+    position=_DEFAULT_POSITION,
+    status=ContentJobStatus.READY,
+):
+    return ContentJob(
+        id=job_id,
+        source_card_ids=list(source_card_ids),
+        candidate_id=candidate_id,
+        reader_problem="readers don't know how to rate limit",
+        audience="backend engineers",
+        intended_effect=IntendedEffect(understand="token bucket rate limiting"),
+        author_position=position,
+        success_criteria=[
+            SuccessCriterion(id="c1", description="critic passes", measurement="critic")
+        ],
+        recommended_format=DraftKind.REPLY,
+        status=status,
+    )
+
+
+class FakeJobsRunner(CodexRunner):
+    def __init__(self, jobs):
+        self.jobs = jobs
+        self.calls = 0
+
+    def run(self, prompt, output_model, **kw):
+        self.calls += 1
+        return ContentJobsOutput(items=self.jobs)
+
+
 def test_draft_node_writes_reply_and_original(tmp_path):
     original = Draft(
         id="d2",
@@ -110,15 +171,20 @@ def test_draft_node_writes_reply_and_original(tmp_path):
         ],
     )
 
-    def write_reply(runner, match, candidate, cards_by_id):
+    reply_job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))
+    original_job = _job(job_id="job2", candidate_id=None, source_card_ids=("ev1",))
+
+    def write_reply(runner, match, candidate, cards_by_id, job):
+        assert job is not None
         return _reply_draft()
 
-    def write_original(runner, cards):
+    def write_original(runner, cards, job):
+        assert job is not None
         return original
 
     store = _store(tmp_path)
     nodes = [
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="gate", writes="ready_jobs", seed=items_payload([reply_job, original_job])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
         make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
@@ -130,20 +196,20 @@ def test_draft_node_writes_reply_and_original(tmp_path):
     assert "d1" in rec.output_json and "d2" in rec.output_json
 
 
-def test_draft_node_empty_match_writes_empty(tmp_path):
+def test_draft_node_empty_ready_jobs_writes_empty(tmp_path):
     calls = {"reply": 0, "original": 0}
 
-    def write_reply(runner, match, candidate, cards_by_id):
+    def write_reply(runner, match, candidate, cards_by_id, job):
         calls["reply"] += 1
         return _reply_draft()
 
-    def write_original(runner, cards):
+    def write_original(runner, cards, job):
         calls["original"] += 1
         return _reply_draft()
 
     store = _store(tmp_path)
     nodes = [
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
+        Seed(name="gate", writes="ready_jobs", seed=items_payload([])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([])),
         make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
@@ -300,3 +366,117 @@ def test_critique_node_warns_on_invalid_rewritten_claims():
     assert result.status == "succeeded"
     assert result.output["items"] == []
     assert any("invalid claims" in w for w in result.warnings)
+
+
+def test_define_jobs_node_produces_and_filters_jobs(tmp_path):
+    good = _job(job_id="j1", candidate_id="t1", source_card_ids=("ev1",))
+    bad = _job(job_id="j2", candidate_id=None, source_card_ids=("ev1", "ev_999"))
+    runner = FakeJobsRunner([good, bad])
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_define_jobs_node(runner),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "JOBS_DEFINED"
+    rec = store.find_node(run.id, "define_jobs", "default")
+    assert rec is not None
+    assert "j1" in rec.output_json
+    assert "j2" not in rec.output_json
+    assert runner.calls == 1
+
+
+def test_position_gate_ready_when_confirmed():
+    node = make_position_gate_node()
+    result = node.run(
+        {"content_jobs": items_payload([_job(job_id="j1", position=_position(confirmed=True))])}
+    )
+    assert result.status == "succeeded"
+    assert [j["id"] for j in result.output["items"]] == ["j1"]
+
+
+def test_position_gate_skips_do_not_write():
+    node = make_position_gate_node()
+    job = _job(job_id="j1", status=ContentJobStatus.DO_NOT_WRITE, position=None)
+    result = node.run({"content_jobs": items_payload([job])})
+    assert result.status == "succeeded"
+    assert result.output["items"] == []
+
+
+def test_position_gate_unconfirmed_needs_input():
+    node = make_position_gate_node()
+    job = _job(job_id="j1", position=_position(confirmed=False))
+    result = node.run({"content_jobs": items_payload([job])})
+    assert result.status == "needs_input"
+    assert [j["id"] for j in result.output["items"]] == ["j1"]
+
+
+def test_position_gate_missing_position_needs_input():
+    node = make_position_gate_node()
+    job = _job(job_id="j1", position=None)
+    result = node.run({"content_jobs": items_payload([job])})
+    assert result.status == "needs_input"
+    assert [j["id"] for j in result.output["items"]] == ["j1"]
+
+
+def test_position_gate_empty_decision_needs_input():
+    node = make_position_gate_node()
+    job = _job(job_id="j1", position=_position(decision="", confirmed=True))
+    result = node.run({"content_jobs": items_payload([job])})
+    assert result.status == "needs_input"
+
+
+def test_position_gate_mixed_routes_ready_and_unready():
+    node = make_position_gate_node()
+    ready = _job(job_id="j1", candidate_id="t1", position=_position(confirmed=True))
+    unconfirmed = _job(job_id="j2", candidate_id=None, position=_position(confirmed=False))
+    do_not_write = _job(
+        job_id="j3", status=ContentJobStatus.DO_NOT_WRITE, position=None
+    )
+    result = node.run(
+        {"content_jobs": items_payload([ready, unconfirmed, do_not_write])}
+    )
+    assert result.status == "needs_input"
+    # only the unready job is reported; DO_NOT_WRITE and ready jobs are excluded
+    assert [j["id"] for j in result.output["items"]] == ["j2"]
+
+
+def test_position_gate_resume_proceeds_once_confirmed(tmp_path):
+    store = _store(tmp_path)
+    unconfirmed = _job(job_id="j1", candidate_id=None, position=_position(confirmed=False))
+    confirmed = _job(job_id="j1", candidate_id=None, position=_position(confirmed=True))
+
+    def nodes():
+        return [
+            Seed(name="define_jobs", writes="content_jobs", seed=items_payload([unconfirmed])),
+            make_position_gate_node(),
+            Seed(name="draft", writes="drafts", seed=items_payload([]), succeeds_to="DRAFTED"),
+        ]
+
+    run1 = GraphRuntime(store, nodes()).run()
+    assert run1.state == "NEEDS_INPUT"
+    gate_rec = store.find_node(run1.id, "position_gate", "default")
+    assert gate_rec is not None and gate_rec.status == "needs_input"
+
+    # Simulate the user confirming the position by overwriting the persisted content_jobs.
+    define_rec = store.find_node(run1.id, "define_jobs", "default")
+    assert define_rec is not None
+    store.upsert_node(
+        NodeRecord(
+            id=define_rec.id,
+            run_id=run1.id,
+            node_name="define_jobs",
+            idempotency_key="default",
+            status="succeeded",
+            output_json=json.dumps(items_payload([confirmed])),
+        )
+    )
+
+    run2 = GraphRuntime(store, nodes()).run(run_id=run1.id)
+    assert run2.state == "DRAFTED"
+    gate_rec2 = store.find_node(run1.id, "position_gate", "default")
+    assert gate_rec2 is not None and gate_rec2.status == "succeeded"
+
