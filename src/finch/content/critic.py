@@ -7,6 +7,7 @@ from typing import cast
 from pydantic import BaseModel, Field
 
 from finch.codex.runner import CodexRunner
+from finch.content.checkers.base import CheckResult
 from finch.content.models import Draft
 from finch.evidence.models import EvidenceCard
 from finch.settings import QualityGates
@@ -27,6 +28,7 @@ class CritiqueResult(BaseModel):
     unsupported_metric: bool = False
     entailment_failed: list[str] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
+    checks: list[CheckResult] = Field(default_factory=list)
 
 
 def _render_draft(draft: Draft) -> str:
