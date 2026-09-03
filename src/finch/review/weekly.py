@@ -89,6 +89,8 @@ def weekly_analysis(
     history = reviews.list_history()
     decisions: dict[str, ReviewDecision] = {}
     for r in reviews.list_reviews():
+        if r.action == ReviewAction.CONFIRM_POSITION:
+            continue  # 立场确认独立于最终 approve/skip，不参与批准率
         if since is not None and r.decided_at < since:
             continue
         decisions[r.draft_id] = r

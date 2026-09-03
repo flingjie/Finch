@@ -406,6 +406,37 @@ def review_skip(
     typer.echo(f"skipped {decision.draft_id} ({decision.reason})")
 
 
+@review_app.command("confirm-position")
+def review_confirm_position(
+    draft_id: str,
+    voice_match: int = typer.Option(..., "--voice-match", help="语气匹配度 0-5"),  # noqa: B008
+    position_correct: bool | None = typer.Option(  # noqa: B008
+        None, "--position-correct", help="立场是否正确"
+    ),
+    job_clear: bool | None = typer.Option(  # noqa: B008
+        None, "--job-clear", help="job 是否清晰"
+    ),
+) -> None:
+    """记录立场确认与 voice_match（独立于 approve/skip）。"""
+    if not 0 <= voice_match <= 5:
+        typer.echo(f"voice_match must be 0-5: {voice_match}")
+        raise typer.Exit(code=1)
+    service = _review_service()
+    try:
+        decision = service.confirm_position(
+            draft_id,
+            voice_match=voice_match,
+            position_correct=position_correct,
+            job_clear=job_clear,
+        )
+    except KeyError:
+        typer.echo(f"draft not found: {draft_id}")
+        raise typer.Exit(code=1) from None
+    typer.echo(
+        f"position confirmed {decision.draft_id} (voice_match={decision.voice_match})"
+    )
+
+
 @review_app.command("feedback")
 def review_feedback(
     draft_id: str,
@@ -561,10 +592,11 @@ def voice_approve_example(draft_id: str) -> None:
     if decision is None or decision.action != ReviewAction.APPROVE:
         typer.echo(f"not approved: {draft_id}")
         raise typer.Exit(code=1)
-    if decision.voice_match is None:
+    position = ReviewRepository(store).get_position_review(draft_id)
+    if position is None or position.voice_match is None:
         typer.echo(f"voice_match not recorded: {draft_id}")
         raise typer.Exit(code=1)
-    if decision.voice_match < _VOICE_MATCH_THRESHOLD:
+    if position.voice_match < _VOICE_MATCH_THRESHOLD:
         typer.echo(f"voice_match below threshold: {draft_id}")
         raise typer.Exit(code=1)
     text = decision.revised_body if decision.revised_body else draft.body

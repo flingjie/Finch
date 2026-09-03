@@ -64,6 +64,28 @@ def test_review_save_idempotent(tmp_path):
     assert got.reason == SkipReason.NOT_NOW.value
 
 
+def test_get_position_review_latest(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = ReviewRepository(store)
+    repo.save_review(ReviewDecision(id="rev_d1", draft_id="d1", action=ReviewAction.APPROVE,
+                                    decided_at=datetime(2026, 1, 1)))
+    repo.save_review(ReviewDecision(id="confirm_d1", draft_id="d1",
+                                    action=ReviewAction.CONFIRM_POSITION, voice_match=3,
+                                    decided_at=datetime(2026, 1, 1)))
+    assert repo.get_position_review("d1").voice_match == 3
+    # 最新一次确认 merge 覆盖旧值；approve 决策不受影响
+    repo.save_review(ReviewDecision(id="confirm_d1", draft_id="d1",
+                                    action=ReviewAction.CONFIRM_POSITION, voice_match=5,
+                                    decided_at=datetime(2026, 1, 2)))
+    assert repo.get_position_review("d1").voice_match == 5
+    assert repo.get_review("d1").action == ReviewAction.APPROVE
+    # 无 confirm 时返回 None
+    repo.save_review(ReviewDecision(id="rev_d2", draft_id="d2", action=ReviewAction.APPROVE,
+                                    decided_at=datetime(2026, 1, 1)))
+    assert repo.get_position_review("d2") is None
+
+
 def test_feedback_roundtrip(tmp_path):
     store = Store(tmp_path / "db.sqlite")
     store.init()

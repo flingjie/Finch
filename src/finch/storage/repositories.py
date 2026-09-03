@@ -136,10 +136,25 @@ class ReviewRepository:
             session.commit()
 
     def get_review(self, draft_id: str) -> ReviewDecision | None:
-        """按 draft_id 获取 ReviewDecision，不存在返回 None。"""
+        """按 draft_id 获取最终审核决策（approve/revise/skip），不存在返回 None。
+
+        最终决策以 id ``rev_<draft_id>`` 存储；CONFIRM_POSITION 使用独立 id
+        ``confirm_<draft_id>``，故此处按主键取最终决策，避免二义。
+        """
         with Session(self.store.engine) as session:
-            stmt = select(ReviewRecord).where(ReviewRecord.draft_id == draft_id)
-            record = session.exec(stmt).first()
+            record = session.get(ReviewRecord, f"rev_{draft_id}")
+            if record is None:
+                return None
+            return ReviewDecision.model_validate_json(record.payload_json)
+
+    def get_position_review(self, draft_id: str) -> ReviewDecision | None:
+        """返回该草稿最新的一条 CONFIRM_POSITION 决策（独立于 approve/skip）。
+
+        CONFIRM_POSITION 以独立 id ``confirm_<draft_id>`` 经 merge 保存，因此该记录
+        即是最新一次立场确认；不存在返回 None。
+        """
+        with Session(self.store.engine) as session:
+            record = session.get(ReviewRecord, f"confirm_{draft_id}")
             if record is None:
                 return None
             return ReviewDecision.model_validate_json(record.payload_json)

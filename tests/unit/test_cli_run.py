@@ -278,6 +278,16 @@ def _approve_decision(draft_id, voice_match=4, revised_body=None):
     )
 
 
+def _confirm_decision(draft_id, voice_match=4):
+    return ReviewDecision(
+        id=f"confirm_{draft_id}",
+        draft_id=draft_id,
+        action=ReviewAction.CONFIRM_POSITION,
+        voice_match=voice_match,
+        decided_at=datetime.now(UTC),
+    )
+
+
 def test_voice_approve_example_uses_revised_body_and_dedupes(monkeypatch, tmp_path):
     settings = _voice_settings(tmp_path)
     store = Store(settings.paths.db_path)
@@ -286,6 +296,7 @@ def test_voice_approve_example_uses_revised_body_and_dedupes(monkeypatch, tmp_pa
     ReviewRepository(store).save_review(
         _approve_decision("d1", voice_match=4, revised_body="human revised body")
     )
+    ReviewRepository(store).save_review(_confirm_decision("d1", voice_match=4))
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["voice", "approve-example", "d1"])
@@ -308,6 +319,7 @@ def test_voice_approve_example_falls_back_to_draft_body(monkeypatch, tmp_path):
     store.init()
     _seed_draft(store, "d2", "original ai draft body")
     ReviewRepository(store).save_review(_approve_decision("d2", voice_match=5))
+    ReviewRepository(store).save_review(_confirm_decision("d2", voice_match=5))
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["voice", "approve-example", "d2"])
@@ -376,6 +388,7 @@ def test_voice_approve_example_rejects_voice_match_below_threshold(monkeypatch, 
     store.init()
     _seed_draft(store, "d6", "body")
     ReviewRepository(store).save_review(_approve_decision("d6", voice_match=3))
+    ReviewRepository(store).save_review(_confirm_decision("d6", voice_match=3))
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     r = CliRunner().invoke(app, ["voice", "approve-example", "d6"])
     assert r.exit_code == 1
@@ -388,6 +401,7 @@ def test_voice_approve_example_removes_from_rejected(monkeypatch, tmp_path):
     store.init()
     _seed_draft(store, "d7", "body")
     ReviewRepository(store).save_review(_approve_decision("d7", voice_match=4))
+    ReviewRepository(store).save_review(_confirm_decision("d7", voice_match=4))
     profile = load_voice_profile(settings.paths.voice_profile_path)
     profile.rejected_examples.append(RejectedExample(id="d7", reason="old"))
     save_voice_profile(profile, settings.paths.voice_profile_path)

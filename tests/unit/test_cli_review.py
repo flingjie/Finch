@@ -9,14 +9,52 @@ from finch.content.models import Draft, DraftKind
 from finch.review.models import Feedback
 from finch.settings import Paths, Settings
 from finch.storage.database import Store
-from finch.storage.repositories import FeedbackRepository
+from finch.storage.repositories import DraftRepository, FeedbackRepository, ReviewRepository
 
 
 def test_review_subcommands_exist():
     r = CliRunner()
-    for cmd in ["list", "show", "approve", "revise", "skip", "feedback"]:
+    for cmd in ["list", "show", "approve", "revise", "skip", "feedback", "confirm-position"]:
         res = r.invoke(app, ["review", cmd, "--help"])
         assert res.exit_code == 0, cmd
+
+
+def test_review_confirm_position_records_voice_match(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    DraftRepository(store).upsert_draft(
+        Draft(id="d1", kind=DraftKind.REPLY, candidate_id="t", body="hi", claims=[])
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(
+        app,
+        ["review", "confirm-position", "d1", "--voice-match", "4",
+         "--position-correct", "--job-clear"],
+    )
+    assert r.exit_code == 0, r.output
+
+    repo = ReviewRepository(store)
+    got = repo.get_position_review("d1")
+    assert got is not None
+    assert got.voice_match == 4
+    assert got.position_correct is True
+    assert got.job_clear is True
+
+
+def test_review_confirm_position_rejects_out_of_range(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    DraftRepository(store).upsert_draft(
+        Draft(id="d1", kind=DraftKind.REPLY, candidate_id="t", body="hi", claims=[])
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["review", "confirm-position", "d1", "--voice-match", "6"])
+    assert r.exit_code == 1
+    assert "0-5" in r.output
 
 
 def _settings(tmp_path):

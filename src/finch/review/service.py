@@ -67,6 +67,33 @@ class ReviewService:
         self.reviews.append_history(decision)
         return decision
 
+    def confirm_position(
+        self,
+        draft_id: str,
+        *,
+        voice_match: int,
+        position_correct: bool | None = None,
+        job_clear: bool | None = None,
+    ) -> ReviewDecision:
+        """记录立场确认（CONFIRM_POSITION），独立于 approve/skip 最终决策。
+
+        使用独立 id（``confirm_<draft_id>``）而非 ``rev_<draft_id>``，
+        因此不会覆盖 approve/skip 决策。
+        """
+        self._require_draft(draft_id)
+        decision = ReviewDecision(
+            id=f"confirm_{draft_id}",
+            draft_id=draft_id,
+            action=ReviewAction.CONFIRM_POSITION,
+            voice_match=voice_match,
+            position_correct=position_correct,
+            job_clear=job_clear,
+            decided_at=datetime.now(UTC),
+        )
+        self.reviews.save_review(decision)
+        self.reviews.append_history(decision)
+        return decision
+
     def _require_draft(self, draft_id: str) -> Draft:
         draft = self.drafts.get_draft(draft_id)
         if draft is None:
