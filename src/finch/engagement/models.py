@@ -125,3 +125,19 @@ class Verification(BaseModel):
 
     kind: Literal["case", "code", "experiment", "multi_source"]
     detail: str
+
+
+class EngagementRunStats(BaseModel):
+    """互动轨道单轮运行级计数（执行计划 Phase 7 可观测性）。
+
+    与质量指标（``engagement.metrics.compute_metrics``）互补：这些是运行级计数，回答
+    「扫了多少帖子、产出多少候选与草稿、单轮耗时」，供 ``no_evidence_runs`` /
+    ``posts_scanned`` / 单轮延迟等运行级信号聚合。模型成本需要 CodexRunner 做 per-run
+    token/cost 埋点，本阶段不在本模型记录（明确 OUT of scope）。
+    """
+
+    run_id: str
+    posts_scanned: int = 0
+    candidates: int = 0
+    drafts: int = 0
+    latency_ms: int = 0

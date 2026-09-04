@@ -14,6 +14,7 @@ from finch.content.jobs import ContentJob
 from finch.content.models import Draft
 from finch.engagement.models import (
     ConversationEvidence,
+    EngagementRunStats,
     FeedbackSnapshot,
     InteractionCandidate,
     InteractionStatus,
@@ -467,6 +468,21 @@ class InteractionRepository:
             records = list(session.exec(stmt))
             return [InteractionCandidate.model_validate_json(r.payload_json) for r in records]
 
+    def list_all(self) -> list[InteractionCandidate]:
+        """列出全部候选（含已批准/已拒绝/已执行，供指标聚合）。"""
+        with Session(self.store.engine) as session:
+            records = list(session.exec(select(InteractionCandidateRecord)))
+            return [InteractionCandidate.model_validate_json(r.payload_json) for r in records]
+
+    def list_executed(self) -> list[InteractionCandidate]:
+        """列出全部已执行（EXECUTED）候选。"""
+        with Session(self.store.engine) as session:
+            stmt = select(InteractionCandidateRecord).where(
+                InteractionCandidateRecord.status == InteractionStatus.EXECUTED.value
+            )
+            records = list(session.exec(stmt))
+            return [InteractionCandidate.model_validate_json(r.payload_json) for r in records]
+
     def _update(self, candidate_id: str, **updates: object) -> None:
         """读回候选、应用 updates 后按同 run_id merge（幂等）。不存在时抛 KeyError。"""
         with Session(self.store.engine) as session:
@@ -612,6 +628,21 @@ class ConversationEvidenceRepository:
             records = list(session.exec(stmt))
             return [ConversationEvidence.model_validate_json(r.payload_json) for r in records]
 
+    def list_all(self) -> list[ConversationEvidence]:
+        """列出全部 conversation 证据（含已验证与未验证，供指标聚合）。"""
+        with Session(self.store.engine) as session:
+            records = list(session.exec(select(ConversationEvidenceRecord)))
+            return [ConversationEvidence.model_validate_json(r.payload_json) for r in records]
+
+    def list_verified(self) -> list[ConversationEvidence]:
+        """列出全部已验证（``verified=True``）的证据。"""
+        with Session(self.store.engine) as session:
+            stmt = select(ConversationEvidenceRecord).where(
+                ConversationEvidenceRecord.verified == True  # noqa: E712
+            )
+            records = list(session.exec(stmt))
+            return [ConversationEvidence.model_validate_json(r.payload_json) for r in records]
+
     def mark_verified(self, evidence_id: str) -> None:
         """置 ``verified=True``（幂等；不存在时抛 KeyError）。"""
         with Session(self.store.engine) as session:
@@ -631,3 +662,47 @@ class ConversationEvidenceRepository:
             )
             records = list(session.exec(stmt))
             return [ConversationEvidence.model_validate_json(r.payload_json) for r in records]
+
+
+class EngagementRunStatsRecord(SQLModel, table=True):
+    """互动轨道运行级计数持久化模型（Phase 7 可观测性）。"""
+
+    run_id: str = Field(primary_key=True)
+    posts_scanned: int = 0
+    candidates: int = 0
+    drafts: int = 0
+    latency_ms: int = 0
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class EngagementRunStatsRepository:
+    """互动轨道运行级计数仓储（Phase 7）。
+
+    ``upsert`` 按 ``run_id`` merge（幂等）；``list_all`` 返回全部运行级计数，供 CLI
+    ``finch engagement metrics`` 聚合 ``no_evidence_runs`` / ``posts_scanned`` / 延迟。
+    """
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def upsert(self, stats: EngagementRunStats) -> None:
+        """按 run_id merge 插入或更新运行级计数（幂等，可重放）。"""
+        record = EngagementRunStatsRecord(
+            run_id=stats.run_id,
+            posts_scanned=stats.posts_scanned,
+            candidates=stats.candidates,
+            drafts=stats.drafts,
+            latency_ms=stats.latency_ms,
+            payload_json=stats.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def list_all(self) -> list[EngagementRunStats]:
+        """列出全部运行级计数。"""
+        with Session(self.store.engine) as session:
+            records = list(session.exec(select(EngagementRunStatsRecord)))
+            return [EngagementRunStats.model_validate_json(r.payload_json) for r in records]

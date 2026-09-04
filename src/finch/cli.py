@@ -1,6 +1,7 @@
 """Finch CLI（spec 10）。"""
 
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -18,6 +19,13 @@ from .content.voice import (
     save_voice_profile,
 )
 from .engagement.flow import run_discovery_engagement_flow
+from .engagement.metrics import (
+    compute_metrics,
+    render_metrics,
+    render_run_stats,
+    summarize_run_stats,
+)
+from .engagement.models import EngagementRunStats
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.discovery import resolve_repositories
@@ -36,10 +44,13 @@ from .settings import load_settings
 from .storage.database import Store
 from .storage.repositories import (
     ContentJobRepository,
+    ConversationEvidenceRepository,
     CriticReportRepository,
     DraftRepository,
     DraftVersionRepository,
+    EngagementRunStatsRepository,
     FeedbackRepository,
+    FeedbackSnapshotRepository,
     InteractionRepository,
     ReviewRepository,
 )
@@ -164,6 +175,30 @@ def _persist_engagement_candidates(result: DualTrackResult, store: Store) -> Non
     repo = InteractionRepository(store)
     for candidate in engagement.candidates:
         repo.upsert(candidate, run_id=engagement.run_id)
+
+
+def _persist_engagement_run_stats(
+    result: DualTrackResult, store: Store, *, latency_ms: int
+) -> None:
+    """把互动轨道单轮运行级计数写入运行统计（Phase 7 可观测性）。
+
+    ``posts_scanned`` 来自 ``EngagementRunResult.posts_found``，``candidates`` 为候选数，
+    ``drafts`` 为含非空草稿的候选数。互动轨道未返回结果（异常被双轨调度隔离）时跳过，
+    不写统计。空运行（``posts_scanned=0``）也写入，否则 ``no_evidence_runs`` 无法计数。
+    """
+    engagement = result.engagement
+    if engagement is None:
+        return
+    drafts = sum(1 for c in engagement.candidates if c.draft is not None)
+    EngagementRunStatsRepository(store).upsert(
+        EngagementRunStats(
+            run_id=engagement.run_id,
+            posts_scanned=engagement.posts_found,
+            candidates=len(engagement.candidates),
+            drafts=drafts,
+            latency_ms=latency_ms,
+        )
+    )
 
 
 @app.command()
@@ -316,14 +351,18 @@ def run_daily() -> None:
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
     )
     if settings.engagement.enabled:
+        # 单轮延迟以 run_dual_track（顺序执行原创+互动两条轨道）为口径。
+        start = time.monotonic()
         result = run_dual_track(
             original_track=lambda rid: GraphRuntime(store, nodes).run(run_id=rid),
             engagement_track=lambda rid: run_discovery_engagement_flow(
                 settings, opencli, CodexRunner(), run_id=rid
             ),
         )
+        latency_ms = int((time.monotonic() - start) * 1000)
         _echo_dual_track_result(result, store)
         _persist_engagement_candidates(result, store)
+        _persist_engagement_run_stats(result, store, latency_ms=latency_ms)
         return
 
     run = GraphRuntime(store, nodes).run()
@@ -727,6 +766,21 @@ def engagement_edit(
         raise typer.Exit(code=1)
     repo.edit(candidate_id, path.read_text())
     typer.echo(f"edited {candidate_id}")
+
+
+@engagement_app.command("metrics")
+def engagement_metrics() -> None:
+    """汇总互动质量指标与运行级计数（质量优先，不优化互动数量）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    interactions = InteractionRepository(store).list_all()
+    feedback = FeedbackSnapshotRepository(store).list_all()
+    evidence = ConversationEvidenceRepository(store).list_all()
+    metrics = compute_metrics(interactions, feedback, evidence)
+    typer.echo(render_metrics(metrics))
+    stats = EngagementRunStatsRepository(store).list_all()
+    typer.echo(render_run_stats(summarize_run_stats(stats)))
 
 
 @voice_app.command("show")
