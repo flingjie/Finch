@@ -79,3 +79,40 @@ def test_runner_retries_on_invalid_json(monkeypatch):
 
     assert _runner().run("p", _Out).value == 9
     assert attempts["n"] == 2
+
+
+def _runner_with_cap():
+    return OpenAICompatibleRunner(
+        "https://gateway.example/v1", "secret", "deepseek-v4-flash",
+        timeout=180.0, max_tokens=6000,
+    )
+
+
+def test_runner_sends_max_tokens_and_timeout(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return _FakeResponse(_response('{"value": 42}'))
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    _runner_with_cap().run("score this", _Out)
+
+    data = json.loads(captured["request"].data)
+    assert data["model"] == "deepseek-v4-flash"
+    assert data["max_tokens"] == 6000
+    assert captured["timeout"] == 180.0
+
+
+def test_runner_no_max_tokens_when_unset(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        return _FakeResponse(_response('{"value": 1}'))
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    _runner().run("p", _Out)
+
+    assert "max_tokens" not in json.loads(captured["request"].data)
