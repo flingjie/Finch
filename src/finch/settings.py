@@ -25,6 +25,14 @@ class Paths(BaseModel):
         return self
 
 
+class LLMSettings(BaseModel):
+    """OpenAI 兼容 LLM 配置（base_url + model；api_key 优先读环境变量 LLM_API_KEY）。"""
+
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+
+
 class QualityGates(BaseModel):
     max_daily_replies: int = 5
     max_daily_original_posts: int = 1
@@ -93,6 +101,7 @@ class Settings(BaseModel):
     paths: Paths = Field(default_factory=Paths)
     engagement: EngagementSettings = Field(default_factory=EngagementSettings)
     interests: InterestsSettings = Field(default_factory=InterestsSettings)
+    llm: LLMSettings = Field(default_factory=LLMSettings)
 
 
 def load_settings(path: Path | None = None) -> Settings:

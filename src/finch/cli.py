@@ -36,6 +36,7 @@ from .graph.daily import daily_nodes
 from .graph.dual_track import DualTrackResult, run_dual_track
 from .graph.replay import replay
 from .graph.runtime import GraphRuntime
+from .llm.openai_compatible import create_runner
 from .review.feedback import FeedbackService
 from .review.models import OutcomeAssessment, ReviewAction, SkipReason
 from .review.service import ReviewService
@@ -349,6 +350,7 @@ def run_daily() -> None:
         known_commit_urls=known_commit_urls,
         repo_is_private=repo_is_private,
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
+        judge_runner=create_runner(settings.llm),
     )
     if settings.engagement.enabled:
         # 单轮延迟以 run_dual_track（顺序执行原创+互动两条轨道）为口径。
@@ -398,6 +400,7 @@ def run_resume(run_id: str) -> None:
         known_commit_urls=known_commit_urls,
         repo_is_private=repo_is_private,
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
+        judge_runner=create_runner(settings.llm),
     )
     run = replay(store, nodes, run_id)
     typer.echo(run.state)

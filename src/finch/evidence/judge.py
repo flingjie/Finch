@@ -7,7 +7,7 @@ from typing import cast
 
 from pydantic import BaseModel, Field
 
-from ..codex.runner import CodexRunner
+from ..llm.base import StructuredInferenceRunner
 from ..twitter.models import DiscussionCandidate
 from .models import ClaimConfidence, EvidenceCard, JudgeScores, RankedCandidate
 
@@ -103,7 +103,7 @@ def _select_judge_context(
 
 
 def judge_batch(
-    runner: CodexRunner,
+    runner: StructuredInferenceRunner,
     ranked: list[RankedCandidate],
     candidates: list[DiscussionCandidate],
     cards: list[EvidenceCard],

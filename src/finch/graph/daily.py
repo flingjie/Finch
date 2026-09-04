@@ -7,6 +7,7 @@ from ..evidence.extractor import Extractor
 from ..github.commit_reader import CommitReader
 from ..github.gh_client import GhClient
 from ..github.models import CommitDetail
+from ..llm.base import StructuredInferenceRunner
 from ..settings import Settings
 from ..storage.database import Store
 from ..storage.repositories import ContentJobRepository, EvidenceRepository
@@ -43,6 +44,7 @@ def daily_nodes(
     known_commit_urls: set[str],
     repo_is_private: dict[str, bool],
     voice_profile: VoiceProfile | None = None,
+    judge_runner: StructuredInferenceRunner | None = None,
 ) -> list[Node]:
     """组装每日 Graph：preflight → sync → extract → collect → recall → match → draft →
     critique → brief。
@@ -85,7 +87,11 @@ def daily_nodes(
         ),
         make_collect_node(collect_fn),
         make_recall_node(settings.quality_gates),
-        make_match_node(runner, settings.quality_gates, settings.twitter),
+        make_match_node(
+            judge_runner if judge_runner is not None else runner,
+            settings.quality_gates,
+            settings.twitter,
+        ),
         make_define_jobs_node(runner, jobs_repo=jobs_repo),
         make_position_gate_node(jobs_repo=jobs_repo),
         make_draft_node(runner, write_reply, write_original, settings.quality_gates),

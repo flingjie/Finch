@@ -4,11 +4,11 @@ from typing import cast
 
 from pydantic import BaseModel
 
-from ..codex.runner import CodexRunner
 from ..evidence.judge import judge_batch
 from ..evidence.matcher import recall
 from ..evidence.models import EvidenceCard, MatchResult, RankedCandidate
 from ..evidence.scoring import apply_gates, formula_score, relationship_value, timing_value
+from ..llm.base import StructuredInferenceRunner
 from ..settings import QualityGates, TwitterSettings
 from ..twitter.models import DiscussionCandidate
 from .context import items_payload, parse_items
@@ -41,7 +41,7 @@ def make_recall_node(gates: QualityGates) -> Node:
 
 
 def make_match_node(
-    runner: CodexRunner,
+    runner: StructuredInferenceRunner,
     gates: QualityGates,
     twitter: TwitterSettings,
 ) -> Node:
