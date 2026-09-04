@@ -7,6 +7,7 @@ from finch.evidence.extractor import (
     Extractor,
     IncompleteBatchExtractionError,
     build_cards,
+    group_fingerprint,
     pack_batches,
 )
 from finch.evidence.models import Claim, ClaimConfidence, EngineeringEvent
@@ -184,3 +185,48 @@ def test_extract_multi_batch_preserves_order():
     events = Extractor(runner, settings=settings).extract(commits, repo="flingjie/FDE-Gym")
     assert [e.commits for e in events] == [["a" * 40], ["b" * 40]]
     assert len(runner.calls) == 2
+
+
+def test_group_fingerprint_differs_on_change():
+    g1 = [_commit("a" * 40, msg="feat: add x")]
+    g2 = [_commit("a" * 40, msg="fix: y")]
+    assert group_fingerprint("r", g1, "v1") == group_fingerprint("r", g1, "v1")
+    assert group_fingerprint("r", g1, "v1") != group_fingerprint("r", g2, "v1")
+    assert group_fingerprint("r", g1, "v1") != group_fingerprint("r", g1, "v2")
+
+
+def test_extract_caches_and_reuses(tmp_path):
+    cache_path = tmp_path / "cache.json"
+    # 第一次：miss → 提取 + 写缓存
+    runner1 = FakeRunner(_batch([("g_0", _event(["a" * 40]))]))
+    events1 = Extractor(runner1, cache_path=cache_path).extract(
+        [_commit("a" * 40)], repo="flingjie/FDE-Gym"
+    )
+    assert [e.commits for e in events1] == [["a" * 40]]
+    assert runner1.calls == 1
+
+    # 第二次：hit → 0 调用
+    runner2 = FakeRunner(_batch([]))
+    events2 = Extractor(runner2, cache_path=cache_path).extract(
+        [_commit("a" * 40)], repo="flingjie/FDE-Gym"
+    )
+    assert [e.commits for e in events2] == [["a" * 40]]
+    assert runner2.calls == 0
+
+
+def test_extract_does_not_reuse_cache_for_different_group(tmp_path):
+    cache_path = tmp_path / "cache.json"
+    runner1 = FakeRunner(_batch([("g_0", _event(["a" * 40]))]))
+    Extractor(runner1, cache_path=cache_path).extract(
+        [_commit("a" * 40, msg="feat: add cache", fname="src/cache.py")],
+        repo="flingjie/FDE-Gym",
+    )
+    assert runner1.calls == 1
+
+    # 不同 message → 不同指纹 → miss → 再提取
+    runner2 = FakeRunner(_batch([("g_0", _event(["a" * 40]))]))
+    Extractor(runner2, cache_path=cache_path).extract(
+        [_commit("a" * 40, msg="fix: login", fname="src/auth.py")],
+        repo="flingjie/FDE-Gym",
+    )
+    assert runner2.calls == 1

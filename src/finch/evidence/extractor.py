@@ -1,5 +1,7 @@
 """从 Commit 组批量提取 Engineering Event 并生成 Evidence Card（spec 2.2）。"""
 
+import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
@@ -13,6 +15,9 @@ from ..settings import ExtractionSettings
 from .models import ClaimConfidence, EngineeringEvent, EvidenceCard, Source
 
 _BATCH_PROMPT_PATH = Path("prompts/extract-engineering-events-batch.md")
+
+# 缓存版本：prompt / EngineeringEvent schema / 模型策略任一变化时手动递增，使旧缓存失效。
+_CACHE_VERSION = "v1"
 
 
 class ExtractedGroup(BaseModel):
@@ -84,6 +89,71 @@ def pack_batches(
     if current:
         batches.append(current)
     return batches
+
+
+def group_fingerprint(repo: str, group: list[CommitDetail], version: str) -> str:
+    """计算一个 commit 组的稳定内容指纹（repo + 版本 + 实际进入模型的 commit 内容）。
+
+    指纹变化即缓存失效：message / 文件 / patch 任一变化都会得到不同指纹。
+    """
+    payload = {
+        "repo": repo,
+        "version": version,
+        "commits": [
+            {
+                "sha": c.sha,
+                "message": c.message,
+                "files": [
+                    {
+                        "filename": f.filename,
+                        "status": f.status,
+                        "additions": f.additions,
+                        "deletions": f.deletions,
+                        "patch": f.patch,
+                    }
+                    for f in c.files
+                ],
+            }
+            for c in group
+        ],
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
+class ExtractionCache:
+    """group 指纹 → 已验证 EngineeringEvent 的持久化缓存（单 JSON 文件）。"""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self._data = self._load()
+
+    def _load(self) -> dict[str, str]:
+        if self.path.exists():
+            try:
+                data = json.loads(self.path.read_text())
+                if isinstance(data, dict):
+                    return data
+            except (json.JSONDecodeError, OSError):
+                pass
+        return {}
+
+    def get(self, fingerprint: str) -> EngineeringEvent | None:
+        raw = self._data.get(fingerprint)
+        if raw is None:
+            return None
+        try:
+            return EngineeringEvent.model_validate_json(raw)
+        except Exception:  # noqa: BLE001 - 缓存损坏时按 miss 处理
+            return None
+
+    def put(self, fingerprint: str, event: EngineeringEvent) -> None:
+        self._data[fingerprint] = event.model_dump_json()
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(self._data, ensure_ascii=False, indent=2))
 
 
 def _resolve_commit_shas(refs: list[str], group: list[CommitDetail]) -> list[str]:
@@ -172,27 +242,65 @@ class Extractor:
         self,
         runner: StructuredInferenceRunner,
         settings: ExtractionSettings | None = None,
+        cache_path: Path | None = None,
     ):
         self.runner = runner
         self.settings = settings or ExtractionSettings()
+        self.cache = ExtractionCache(cache_path) if cache_path is not None else None
 
     def extract(self, commits: list[CommitDetail], repo: str) -> list[EngineeringEvent]:
         """批量提取所有 commit 组的事件，缺失组最多局部补偿一次。
 
         保留 Python 的确定性分组，只合并模型调用；默认一次 batch，只有 prompt 超过
-        字节预算或组数超过上限才自动拆批。事件顺序 = 原始 group 顺序。
+        字节预算或组数超过上限才自动拆批。已缓存的 group 直接复用，只有 cache miss
+        才触发模型调用。事件顺序 = 原始 group 顺序。
         """
         groups = list(group_commits(commits))
         if not groups:
             return []
         template = _BATCH_PROMPT_PATH.read_text()
+
+        # 指纹缓存查找：命中直接复用，未命中进入提取列表。
+        events: dict[int, EngineeringEvent] = {}
+        miss_indices: list[int] = []
+        for i, group in enumerate(groups):
+            cached = (
+                self.cache.get(group_fingerprint(repo, group, _CACHE_VERSION))
+                if self.cache is not None
+                else None
+            )
+            if cached is not None:
+                events[i] = cached
+            else:
+                miss_indices.append(i)
+
+        if miss_indices:
+            miss_groups = [groups[i] for i in miss_indices]
+            fresh = self._extract_groups(miss_groups, repo, template)
+            for local_i, global_i in enumerate(miss_indices):
+                events[global_i] = fresh[local_i]
+                if self.cache is not None:
+                    self.cache.put(
+                        group_fingerprint(repo, miss_groups[local_i], _CACHE_VERSION),
+                        fresh[local_i],
+                    )
+            if self.cache is not None:
+                self.cache.save()
+
+        return [events[i] for i in range(len(groups))]
+
+    def _extract_groups(
+        self,
+        groups: list[list[CommitDetail]],
+        repo: str,
+        template: str,
+    ) -> list[EngineeringEvent]:
         batches = pack_batches(
             groups,
             template,
             self.settings.max_prompt_bytes,
             self.settings.max_groups_per_batch,
         )
-
         if len(batches) == 1:
             return self._extract_group_batch(batches[0], repo, template)
 

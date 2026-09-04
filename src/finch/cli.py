@@ -252,7 +252,9 @@ def github_reflect(repo: str = typer.Option("flingjie/FDE-Gym"),
     reader = CommitReader(gh, repo)
     details = reader.filter_noise(details)
     events = Extractor(
-        create_runner(settings.llm) or CodexRunner(), settings=settings.extraction
+        create_runner(settings.llm) or CodexRunner(),
+        settings=settings.extraction,
+        cache_path=settings.paths.cache_dir / "extraction_cache.json",
     ).extract(details, repo=repo)
     cards = build_cards(events)
     typer.echo(f"# Finch reflect: {repo}\n")
@@ -347,7 +349,9 @@ def run_daily() -> None:
         gh=gh,
         opencli=opencli,
         extractor=Extractor(
-            create_runner(settings.llm) or CodexRunner(), settings=settings.extraction
+            create_runner(settings.llm) or CodexRunner(),
+            settings=settings.extraction,
+            cache_path=settings.paths.cache_dir / "extraction_cache.json",
         ),
         runner=CodexRunner(),
         commits_by_repo=commits_by_repo,
@@ -399,7 +403,9 @@ def run_resume(run_id: str) -> None:
         gh=gh,
         opencli=opencli,
         extractor=Extractor(
-            create_runner(settings.llm) or CodexRunner(), settings=settings.extraction
+            create_runner(settings.llm) or CodexRunner(),
+            settings=settings.extraction,
+            cache_path=settings.paths.cache_dir / "extraction_cache.json",
         ),
         runner=CodexRunner(),
         commits_by_repo=commits_by_repo,
