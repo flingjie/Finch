@@ -12,6 +12,7 @@ from sqlmodel import Field, Session, SQLModel, select
 from finch.content.checkers.base import CheckResult
 from finch.content.jobs import ContentJob
 from finch.content.models import Draft
+from finch.engagement.models import InteractionCandidate, InteractionStatus
 from finch.evidence.models import EvidenceCard
 from finch.review.models import Feedback, ReviewAction, ReviewDecision
 from finch.storage.database import Store
@@ -398,3 +399,107 @@ class CriticReportRepository:
         for record in records:
             grouped.setdefault(record.draft_id, []).append(json.loads(record.payload_json))
         return grouped
+
+
+class InteractionCandidateRecord(SQLModel, table=True):
+    """InteractionCandidate 持久化模型（Phase 5 审批队列）。"""
+
+    id: str = Field(primary_key=True)  # = candidate.id（稳定幂等键）
+    run_id: str = Field(index=True)
+    post_id: str = Field(index=True)
+    action: str  # InteractionAction.value
+    status: str  # InteractionStatus.value
+    payload_json: str
+    execution_outcome: str | None = None  # ExecutionStatus.value（record_execution 时写入）
+    execution_detail: str | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class InteractionRepository:
+    """互动候选审批队列仓储（Phase 5）。
+
+    ``upsert`` 按 ``candidate.id`` merge（幂等）；``approve``/``reject``/``edit`` 通过
+    ``_update`` 读回原记录、改写 payload 后按同 ``run_id`` merge，保留 run_id/post_id/action
+    等索引列。``record_execution`` 以 ``candidate.id`` 为幂等键，重复调用只覆盖同一条记录，
+    不会重复执行。
+    """
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    @staticmethod
+    def _to_record(candidate: InteractionCandidate, run_id: str) -> InteractionCandidateRecord:
+        return InteractionCandidateRecord(
+            id=candidate.id,
+            run_id=run_id,
+            post_id=candidate.post.id,
+            action=candidate.action.value,
+            status=candidate.status.value,
+            payload_json=candidate.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+
+    def upsert(self, candidate: InteractionCandidate, run_id: str) -> None:
+        """按 id merge 插入或更新候选（幂等，可重放）。"""
+        with Session(self.store.engine) as session:
+            session.merge(self._to_record(candidate, run_id=run_id))
+            session.commit()
+
+    def get(self, candidate_id: str) -> InteractionCandidate | None:
+        """按 id 获取候选，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            record = session.get(InteractionCandidateRecord, candidate_id)
+            if record is None:
+                return None
+            return InteractionCandidate.model_validate_json(record.payload_json)
+
+    def list_pending(self) -> list[InteractionCandidate]:
+        """列出全部仍处 PROPOSED 状态的候选（未批准、未拒绝、未执行）。"""
+        with Session(self.store.engine) as session:
+            stmt = select(InteractionCandidateRecord).where(
+                InteractionCandidateRecord.status == InteractionStatus.PROPOSED.value
+            )
+            records = list(session.exec(stmt))
+            return [InteractionCandidate.model_validate_json(r.payload_json) for r in records]
+
+    def _update(self, candidate_id: str, **updates: object) -> None:
+        """读回候选、应用 updates 后按同 run_id merge（幂等）。不存在时抛 KeyError。"""
+        with Session(self.store.engine) as session:
+            record = session.get(InteractionCandidateRecord, candidate_id)
+            if record is None:
+                raise KeyError(candidate_id)
+            candidate = InteractionCandidate.model_validate_json(record.payload_json)
+            candidate = candidate.model_copy(update=updates)
+            session.merge(self._to_record(candidate, run_id=record.run_id))
+            session.commit()
+
+    def approve(self, candidate_id: str) -> None:
+        """PROPOSED→APPROVED（幂等：重复批准仍是 APPROVED，不重复执行）。"""
+        self._update(candidate_id, status=InteractionStatus.APPROVED, reject_reason=None)
+
+    def reject(self, candidate_id: str, reason: str) -> None:
+        """→ REJECTED，并记录 reject_reason（幂等）。"""
+        self._update(candidate_id, status=InteractionStatus.REJECTED, reject_reason=reason)
+
+    def edit(self, candidate_id: str, revised_draft: str) -> None:
+        """保存人工修订草稿到 ``revised_draft``（不自动批准、不改变发布权限）。"""
+        self._update(candidate_id, revised_draft=revised_draft)
+
+    def record_execution(self, candidate_id: str, outcome: str, detail: str) -> None:
+        """记录执行结果（``outcome`` ∈ ExecutionStatus 值）并置 status=EXECUTED。
+
+        以 ``candidate.id`` 为幂等键：重复调用只 merge 覆盖同一条记录，不重复执行。
+        真正的「未批准不可执行」由纯函数 ``evaluate_execution`` 在执行前强制，本方法
+        只是被动的结果记录器。
+        """
+        with Session(self.store.engine) as session:
+            record = session.get(InteractionCandidateRecord, candidate_id)
+            if record is None:
+                raise KeyError(candidate_id)
+            candidate = InteractionCandidate.model_validate_json(record.payload_json)
+            candidate = candidate.model_copy(update={"status": InteractionStatus.EXECUTED})
+            merged = self._to_record(candidate, run_id=record.run_id)
+            merged.execution_outcome = outcome
+            merged.execution_detail = detail
+            session.merge(merged)
+            session.commit()

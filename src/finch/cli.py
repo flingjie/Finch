@@ -40,6 +40,7 @@ from .storage.repositories import (
     DraftRepository,
     DraftVersionRepository,
     FeedbackRepository,
+    InteractionRepository,
     ReviewRepository,
 )
 from .twitter.normalizer import normalize_tweets
@@ -65,6 +66,9 @@ app.add_typer(jobs_app, name="jobs")
 
 voice_app = typer.Typer(help="Manage the author voice profile (local, no auto-publish)")
 app.add_typer(voice_app, name="voice")
+
+engagement_app = typer.Typer(help="Review engagement candidates (human-in-the-loop)")
+app.add_typer(engagement_app, name="engagement")
 
 
 def _since_iso(since: str | None) -> str | None:
@@ -147,6 +151,19 @@ def _echo_dual_track_result(result: DualTrackResult, store: Store) -> None:
             f"engagement track error: {result.engagement_error.type}: "
             f"{result.engagement_error.message}"
         )
+
+
+def _persist_engagement_candidates(result: DualTrackResult, store: Store) -> None:
+    """把互动轨道产出的候选写入审批队列（keyed by run_id）。
+
+    无候选时不写入；``engagement.enabled`` 为 False 时调用方跳过，本函数也不处理。
+    """
+    engagement = result.engagement
+    if engagement is None or not engagement.candidates:
+        return
+    repo = InteractionRepository(store)
+    for candidate in engagement.candidates:
+        repo.upsert(candidate, run_id=engagement.run_id)
 
 
 @app.command()
@@ -306,6 +323,7 @@ def run_daily() -> None:
             ),
         )
         _echo_dual_track_result(result, store)
+        _persist_engagement_candidates(result, store)
         return
 
     run = GraphRuntime(store, nodes).run()
@@ -389,6 +407,13 @@ def _jobs_repo() -> ContentJobRepository:
     store = Store(settings.paths.db_path)
     store.init()
     return ContentJobRepository(store)
+
+
+def _engagement_repo() -> InteractionRepository:
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    return InteractionRepository(store)
 
 
 def _voice_profile_path() -> Path:
@@ -617,6 +642,91 @@ def jobs_reject(
     )
     repo.upsert_job(updated)
     typer.echo(f"rejected {job_id}")
+
+
+@engagement_app.command("list")
+def engagement_list() -> None:
+    """列出 pending 互动候选（id + action + 帖子 url/摘要）。"""
+    candidates = _engagement_repo().list_pending()
+    if not candidates:
+        typer.echo("no pending candidates")
+        return
+    for candidate in candidates:
+        snippet = " ".join(candidate.post.content.split())[:60]
+        typer.echo(f"{candidate.id}\t{candidate.action.value}\t{candidate.post.url} — {snippet}")
+
+
+@engagement_app.command("show")
+def engagement_show(candidate_id: str) -> None:
+    """打印候选全文：原帖 + 作者 + 五维评分与理由 + 动作 + 完整草稿 + intent + 事实风险。"""
+    candidate = _engagement_repo().get(candidate_id)
+    if candidate is None:
+        typer.echo(f"candidate not found: {candidate_id}")
+        raise typer.Exit(code=1)
+    score = candidate.score
+    typer.echo(f"id: {candidate.id}")
+    typer.echo(f"status: {candidate.status.value}")
+    typer.echo(f"action: {candidate.action.value}")
+    typer.echo(f"approval_required: {candidate.approval_required}")
+    typer.echo(f"post: {candidate.post.url}")
+    typer.echo(f"author: @{candidate.post.author_name} ({candidate.post.author_id})")
+    typer.echo(f"post_content: {candidate.post.content}")
+    typer.echo(
+        f"score: relevance={score.relevance:.3f} novelty={score.novelty:.3f} "
+        f"discussability={score.discussability:.3f} "
+        f"practical_evidence={score.practical_evidence:.3f} "
+        f"relationship_value={score.relationship_value:.3f} total={score.total:.3f}"
+    )
+    typer.echo(f"score_reasons: {', '.join(score.reasons)}")
+    typer.echo(f"draft: {candidate.draft or '(none)'}")
+    if candidate.revised_draft:
+        typer.echo(f"revised_draft: {candidate.revised_draft}")
+    typer.echo(f"intent: {candidate.intent or '(none)'}")
+    typer.echo(f"source_summary: {candidate.source_summary or '(none)'}")
+    typer.echo(f"factual_risks: {json.dumps(candidate.factual_risks)}")
+    if candidate.reject_reason:
+        typer.echo(f"reject_reason: {candidate.reject_reason}")
+
+
+@engagement_app.command("approve")
+def engagement_approve(candidate_id: str) -> None:
+    """批准候选（PROPOSED→APPROVED，幂等）。"""
+    repo = _engagement_repo()
+    try:
+        repo.approve(candidate_id)
+    except KeyError:
+        typer.echo(f"candidate not found: {candidate_id}")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"approved {candidate_id}")
+
+
+@engagement_app.command("reject")
+def engagement_reject(
+    candidate_id: str,
+    reason: str = typer.Option(..., "--reason", help="拒绝理由"),  # noqa: B008
+) -> None:
+    """拒绝候选并记录理由（→ REJECTED）。"""
+    repo = _engagement_repo()
+    try:
+        repo.reject(candidate_id, reason)
+    except KeyError:
+        typer.echo(f"candidate not found: {candidate_id}")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"rejected {candidate_id}")
+
+
+@engagement_app.command("edit")
+def engagement_edit(
+    candidate_id: str,
+    path: Path = typer.Option(..., "--file", help="人工修订后的草稿文件"),  # noqa: B008
+) -> None:
+    """保存人工修订草稿到 revised_draft（不自动批准、不改变发布权限）。"""
+    repo = _engagement_repo()
+    if repo.get(candidate_id) is None:
+        typer.echo(f"candidate not found: {candidate_id}")
+        raise typer.Exit(code=1)
+    repo.edit(candidate_id, path.read_text())
+    typer.echo(f"edited {candidate_id}")
 
 
 @voice_app.command("show")

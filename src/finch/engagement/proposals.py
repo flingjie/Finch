@@ -147,6 +147,7 @@ def generate_proposals(
                 continue
             candidates.append(
                 InteractionCandidate(
+                    id=f"{sp.post.platform}:{sp.post.id}:{action.value}",
                     post=sp.post,
                     score=sp.score,
                     action=action,
@@ -160,6 +161,7 @@ def generate_proposals(
         else:
             candidates.append(
                 InteractionCandidate(
+                    id=f"{sp.post.platform}:{sp.post.id}:{action.value}",
                     post=sp.post,
                     score=sp.score,
                     action=action,

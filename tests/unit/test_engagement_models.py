@@ -114,6 +114,7 @@ def test_interaction_candidate_default_status():
         **_score_kwargs(relevance=0.8, novelty=0.7, total=0.72)
     )
     candidate = InteractionCandidate(
+        id="x:post_1:bookmark",
         post=post, score=score, action=InteractionAction.BOOKMARK, approval_required=False,
     )
     assert candidate.status is InteractionStatus.PROPOSED
@@ -122,6 +123,8 @@ def test_interaction_candidate_default_status():
     assert candidate.intent is None
     assert candidate.source_summary is None
     assert candidate.factual_risks == []
+    assert candidate.revised_draft is None
+    assert candidate.reject_reason is None
 
 
 def test_settings_defaults_for_engagement_and_interests():
