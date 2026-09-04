@@ -12,7 +12,12 @@ from sqlmodel import Field, Session, SQLModel, select
 from finch.content.checkers.base import CheckResult
 from finch.content.jobs import ContentJob
 from finch.content.models import Draft
-from finch.engagement.models import InteractionCandidate, InteractionStatus
+from finch.engagement.models import (
+    ConversationEvidence,
+    FeedbackSnapshot,
+    InteractionCandidate,
+    InteractionStatus,
+)
 from finch.evidence.models import EvidenceCard
 from finch.review.models import Feedback, ReviewAction, ReviewDecision
 from finch.storage.database import Store
@@ -503,3 +508,126 @@ class InteractionRepository:
             merged.execution_detail = detail
             session.merge(merged)
             session.commit()
+
+
+class FeedbackSnapshotRecord(SQLModel, table=True):
+    """FeedbackSnapshot 持久化模型（Phase 6 反馈回流）。"""
+
+    id: str = Field(primary_key=True)  # = snapshot.id（幂等键）
+    interaction_id: str = Field(index=True)
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class FeedbackSnapshotRepository:
+    """互动反馈快照仓储（Phase 6）。
+
+    ``upsert`` 按 ``snapshot.id`` merge（幂等）；``get`` 按 ``interaction_id`` 查询，
+    返回该互动最近一次写入的快照。
+    """
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def upsert(self, snapshot: FeedbackSnapshot) -> None:
+        """按 id merge 插入或更新快照（幂等，可重放）。"""
+        record = FeedbackSnapshotRecord(
+            id=snapshot.id,
+            interaction_id=snapshot.interaction_id,
+            payload_json=snapshot.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def get(self, interaction_id: str) -> FeedbackSnapshot | None:
+        """按 interaction_id 获取快照，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            stmt = select(FeedbackSnapshotRecord).where(
+                FeedbackSnapshotRecord.interaction_id == interaction_id
+            )
+            record = session.exec(stmt).first()
+            if record is None:
+                return None
+            return FeedbackSnapshot.model_validate_json(record.payload_json)
+
+    def list_all(self) -> list[FeedbackSnapshot]:
+        """列出所有快照。"""
+        with Session(self.store.engine) as session:
+            stmt = select(FeedbackSnapshotRecord)
+            records = list(session.exec(stmt))
+            return [FeedbackSnapshot.model_validate_json(r.payload_json) for r in records]
+
+
+class ConversationEvidenceRecord(SQLModel, table=True):
+    """ConversationEvidence 持久化模型（Phase 6 反馈回流）。"""
+
+    id: str = Field(primary_key=True)  # = evidence.id（幂等键）
+    interaction_id: str = Field(index=True)
+    post_id: str = Field(index=True)
+    origin: str  # 恒为 "conversation"
+    kind: str  # question / disagreement / hypothesis / experiment
+    verified: bool = Field(index=True)
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ConversationEvidenceRepository:
+    """conversation 证据仓储（Phase 6）。
+
+    ``upsert`` 按 ``evidence.id`` merge（幂等）；``mark_verified`` 读回记录、置
+    ``verified=True`` 后按同 id merge；``list_unverified`` 只返回未验证的讨论信号，
+    供升级流程筛选待验证项。
+    """
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    @staticmethod
+    def _to_record(evidence: ConversationEvidence) -> ConversationEvidenceRecord:
+        return ConversationEvidenceRecord(
+            id=evidence.id,
+            interaction_id=evidence.interaction_id,
+            post_id=evidence.post_id,
+            origin=evidence.origin,
+            kind=evidence.kind,
+            verified=evidence.verified,
+            payload_json=evidence.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+
+    def upsert(self, evidence: ConversationEvidence) -> None:
+        """按 id merge 插入或更新证据（幂等，可重放）。"""
+        with Session(self.store.engine) as session:
+            session.merge(self._to_record(evidence))
+            session.commit()
+
+    def list_unverified(self) -> list[ConversationEvidence]:
+        """列出全部未验证（``verified=False``）的证据。"""
+        with Session(self.store.engine) as session:
+            stmt = select(ConversationEvidenceRecord).where(
+                ConversationEvidenceRecord.verified == False  # noqa: E712
+            )
+            records = list(session.exec(stmt))
+            return [ConversationEvidence.model_validate_json(r.payload_json) for r in records]
+
+    def mark_verified(self, evidence_id: str) -> None:
+        """置 ``verified=True``（幂等；不存在时抛 KeyError）。"""
+        with Session(self.store.engine) as session:
+            record = session.get(ConversationEvidenceRecord, evidence_id)
+            if record is None:
+                raise KeyError(evidence_id)
+            evidence = ConversationEvidence.model_validate_json(record.payload_json)
+            evidence = evidence.model_copy(update={"verified": True})
+            session.merge(self._to_record(evidence))
+            session.commit()
+
+    def list_by_interaction(self, interaction_id: str) -> list[ConversationEvidence]:
+        """按 interaction_id 列出全部证据。"""
+        with Session(self.store.engine) as session:
+            stmt = select(ConversationEvidenceRecord).where(
+                ConversationEvidenceRecord.interaction_id == interaction_id
+            )
+            records = list(session.exec(stmt))
+            return [ConversationEvidence.model_validate_json(r.payload_json) for r in records]

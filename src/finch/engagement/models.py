@@ -79,3 +79,49 @@ class InteractionCandidate(BaseModel):
     reject_reason: str | None = None
     approval_required: bool
     status: InteractionStatus = InteractionStatus.PROPOSED
+
+
+class FeedbackSnapshot(BaseModel):
+    """互动结果反馈快照（执行计划 Phase 6 反馈回流）。
+
+    记录一次互动执行后的回复/点赞数量，以及是否获得实质回复（``meaningful``）。
+    ``interaction_id`` 回溯到 ``InteractionCandidate.id``，与 ``ConversationEvidence``
+    共享同一 id 链路，构成 candidate → snapshot → conversation evidence → personal
+    evidence 的可追溯闭环。
+    """
+
+    id: str
+    interaction_id: str
+    replies: int = 0
+    likes: int = 0
+    meaningful: bool = False
+    captured_at: datetime
+
+
+class ConversationEvidence(BaseModel):
+    """互动讨论中提取的候选证据（``conversation`` 类型，执行计划 Phase 6）。
+
+    ``kind`` 区分问题 / 分歧 / 可验证假设 / 可能的实验；``verified`` 为 False 时仅作为
+    讨论信号，只有经个人实践或外部验证并提升（见 ``evidence_upgrade.promote_to_personal``）
+    后才成为 personal 证据。``origin`` 恒为 ``"conversation"``：外部帖子（``external``）
+    是独立的 ``ExternalPost`` 模型，绝不直接成为 personal 证据。
+    """
+
+    id: str
+    interaction_id: str
+    post_id: str
+    origin: Literal["conversation"] = "conversation"
+    kind: Literal["question", "disagreement", "hypothesis", "experiment"]
+    statement: str
+    verified: bool = False
+
+
+class Verification(BaseModel):
+    """conversation → personal 升级所需的验证证据（执行计划 4 证据升级规则）。
+
+    ``kind`` 必须是 case / code / experiment / multi_source 之一；``detail`` 描述验证来源
+    （真实案例、代码、实验或多来源交叉验证），供后续原创内容引用个人新增判断时审计。
+    """
+
+    kind: Literal["case", "code", "experiment", "multi_source"]
+    detail: str
