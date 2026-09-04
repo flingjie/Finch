@@ -8,8 +8,8 @@ from typing import cast
 
 from pydantic import BaseModel, Field
 
-from finch.codex.runner import CodexRunner
 from finch.content.checkers.base import CheckContext, Checker, CheckResult
+from finch.llm.base import StructuredInferenceRunner
 
 _ACTIONABILITY_PROMPT = """\
 You are the Finch actionability checker. You verify that a draft fulfills its Content Job's
@@ -48,7 +48,7 @@ class ActionabilityChecker(Checker):
 
     name: str = "actionability"
 
-    def __init__(self, runner: CodexRunner | None = None):
+    def __init__(self, runner: StructuredInferenceRunner | None = None):
         self._runner = runner
 
     def check(self, ctx: CheckContext) -> CheckResult:

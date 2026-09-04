@@ -9,9 +9,9 @@ from typing import cast
 
 from pydantic import BaseModel, Field
 
-from finch.codex.runner import CodexRunner
 from finch.content.checkers.base import CheckContext, Checker, CheckResult, split_sentences
 from finch.content.voice import VoiceProfile
+from finch.llm.base import StructuredInferenceRunner
 
 _VOICE_PROMPT = """\
 You are the Finch voice checker. You judge whether a draft sounds like the author's own voice.
@@ -55,7 +55,11 @@ class VoiceChecker(Checker):
 
     name: str = "voice"
 
-    def __init__(self, runner: CodexRunner | None = None, profile: VoiceProfile | None = None):
+    def __init__(
+        self,
+        runner: StructuredInferenceRunner | None = None,
+        profile: VoiceProfile | None = None,
+    ):
         self._runner = runner
         self._profile = profile if profile is not None else VoiceProfile()
 

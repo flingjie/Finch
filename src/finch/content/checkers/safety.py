@@ -12,9 +12,9 @@ from typing import cast
 
 from pydantic import BaseModel
 
-from finch.codex.runner import CodexRunner
 from finch.content.checkers.base import CheckContext, Checker, CheckResult
 from finch.evidence.safety import SECRET_PATTERNS
+from finch.llm.base import StructuredInferenceRunner
 
 
 def scan_secrets(body: str) -> list[str]:
@@ -58,7 +58,7 @@ class SafetyChecker(Checker):
 
     name: str = "safety"
 
-    def __init__(self, runner: CodexRunner | None = None):
+    def __init__(self, runner: StructuredInferenceRunner | None = None):
         self._runner = runner
 
     def check(self, ctx: CheckContext) -> CheckResult:

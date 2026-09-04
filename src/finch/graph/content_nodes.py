@@ -159,7 +159,7 @@ def make_draft_node(
 
 
 def default_checker_suite(
-    runner: CodexRunner,
+    runner: StructuredInferenceRunner | None,
     voice_profile: VoiceProfile | None = None,
 ) -> list[Checker]:
     """Critic Suite 默认检查器套件（Task 6）：现有 4 个 + 新增 4 个 = 8 个。

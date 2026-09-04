@@ -8,8 +8,8 @@ from typing import cast
 
 from pydantic import BaseModel, Field
 
-from finch.codex.runner import CodexRunner
 from finch.content.checkers.base import CheckContext, Checker, CheckResult, split_sentences
+from finch.llm.base import StructuredInferenceRunner
 
 _PORTABILITY_PROMPT = """\
 You are the Finch portability checker. For each sentence, ask: could this sentence be
@@ -48,7 +48,7 @@ class PortabilityChecker(Checker):
 
     name: str = "portability"
 
-    def __init__(self, runner: CodexRunner | None = None):
+    def __init__(self, runner: StructuredInferenceRunner | None = None):
         self._runner = runner
 
     def check(self, ctx: CheckContext) -> CheckResult:
