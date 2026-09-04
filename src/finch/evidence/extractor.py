@@ -1,5 +1,6 @@
 """从 Commit 组批量提取 Engineering Event 并生成 Evidence Card（spec 2.2）。"""
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
 
@@ -8,10 +9,10 @@ from pydantic import BaseModel
 from ..github.change_grouper import group_commits
 from ..github.models import CommitDetail
 from ..llm.base import StructuredInferenceRunner
+from ..settings import ExtractionSettings
 from .models import ClaimConfidence, EngineeringEvent, EvidenceCard, Source
 
 _BATCH_PROMPT_PATH = Path("prompts/extract-engineering-events-batch.md")
-_EXTRACTION_TIMEOUT = 120.0
 
 
 class ExtractedGroup(BaseModel):
@@ -55,6 +56,34 @@ def _render_batch(groups: list[list[CommitDetail]]) -> str:
     """把全部 group 渲染为带 group_id 标题的分节文本，一次提交。"""
     sections = [f"### Group g_{i}\n{_render_commits(group)}" for i, group in enumerate(groups)]
     return "\n\n".join(sections)
+
+
+def pack_batches(
+    groups: list[list[CommitDetail]],
+    template: str,
+    max_prompt_bytes: int,
+    max_groups_per_batch: int,
+) -> list[list[list[CommitDetail]]]:
+    """按最终 prompt 字节数把 groups 贪心装箱成 batch。
+
+    保护上限是 prompt 字节数 + 单批 group 数，而不是固定批大小；group 顺序保持稳定。
+    """
+    batches: list[list[list[CommitDetail]]] = []
+    current: list[list[CommitDetail]] = []
+    for group in groups:
+        candidate = [*current, group]
+        prompt = template.replace("{groups}", _render_batch(candidate))
+        if current and (
+            len(prompt.encode("utf-8")) > max_prompt_bytes
+            or len(candidate) > max_groups_per_batch
+        ):
+            batches.append(current)
+            current = [group]
+        else:
+            current = candidate
+    if current:
+        batches.append(current)
+    return batches
 
 
 def _resolve_commit_shas(refs: list[str], group: list[CommitDetail]) -> list[str]:
@@ -139,19 +168,48 @@ def _validate_batch(
 
 
 class Extractor:
-    def __init__(self, runner: StructuredInferenceRunner):
+    def __init__(
+        self,
+        runner: StructuredInferenceRunner,
+        settings: ExtractionSettings | None = None,
+    ):
         self.runner = runner
+        self.settings = settings or ExtractionSettings()
 
     def extract(self, commits: list[CommitDetail], repo: str) -> list[EngineeringEvent]:
-        """一次性 batch 提取所有 commit 组的事件，缺失组最多局部补偿一次。
+        """批量提取所有 commit 组的事件，缺失组最多局部补偿一次。
 
-        保留 Python 的确定性分组，只合并模型调用；事件顺序 = 原始 group 顺序。
+        保留 Python 的确定性分组，只合并模型调用；默认一次 batch，只有 prompt 超过
+        字节预算或组数超过上限才自动拆批。事件顺序 = 原始 group 顺序。
         """
         groups = list(group_commits(commits))
         if not groups:
             return []
         template = _BATCH_PROMPT_PATH.read_text()
+        batches = pack_batches(
+            groups,
+            template,
+            self.settings.max_prompt_bytes,
+            self.settings.max_groups_per_batch,
+        )
 
+        if len(batches) == 1:
+            return self._extract_group_batch(batches[0], repo, template)
+
+        # 多批：最多两路并发（配置化），pool.map 保序。
+        workers = min(len(batches), self.settings.max_concurrent_batches)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            batch_events = list(
+                pool.map(lambda b: self._extract_group_batch(b, repo, template), batches)
+            )
+        return [event for batch in batch_events for event in batch]
+
+    def _extract_group_batch(
+        self,
+        groups: list[list[CommitDetail]],
+        repo: str,
+        template: str,
+    ) -> list[EngineeringEvent]:
         valid, missing = self._extract_valid(groups, repo, template)
         if missing:
             # 局部补偿：只重跑缺失/无效组，最多一次，不重跑已成功组。
@@ -166,7 +224,6 @@ class Extractor:
                     f"extraction incomplete: missing groups "
                     f"{[f'g_{i}' for i in still_missing]}"
                 )
-
         return [valid[i] for i in range(len(groups))]
 
     def _extract_valid(
@@ -178,7 +235,7 @@ class Extractor:
         prompt = template.replace("{groups}", _render_batch(groups))
         output = cast(
             BatchExtractionOutput,
-            self.runner.run(prompt, BatchExtractionOutput, timeout=_EXTRACTION_TIMEOUT),
+            self.runner.run(prompt, BatchExtractionOutput, timeout=self.settings.timeout_seconds),
         )
         return _validate_batch(output, groups, repo)
 

@@ -7,9 +7,11 @@ from finch.evidence.extractor import (
     Extractor,
     IncompleteBatchExtractionError,
     build_cards,
+    pack_batches,
 )
 from finch.evidence.models import Claim, ClaimConfidence, EngineeringEvent
 from finch.github.models import CommitDetail, CommitFile
+from finch.settings import ExtractionSettings
 
 
 def _event(commits, decision=ClaimConfidence.INFERRED):
@@ -135,3 +137,50 @@ def test_extract_rejects_duplicate_group_id():
     ]))
     with pytest.raises(DuplicateExtractionGroupError):
         Extractor(runner).extract([_commit("a" * 40)], repo="flingjie/FDE-Gym")
+
+
+def test_pack_batches_keeps_small_input_as_one_batch():
+    g1 = [_commit("a" * 40)]
+    g2 = [_commit("b" * 40)]
+    batches = pack_batches([g1, g2], "p {groups}", max_prompt_bytes=10**6, max_groups_per_batch=100)
+    assert len(batches) == 1
+    assert len(batches[0]) == 2
+
+
+def test_pack_batches_splits_when_over_budget():
+    g1 = [_commit("a" * 40)]
+    g2 = [_commit("b" * 40)]
+    batches = pack_batches([g1, g2], "p {groups}", max_prompt_bytes=10, max_groups_per_batch=100)
+    assert len(batches) == 2
+
+
+def test_pack_batches_splits_when_over_max_groups():
+    g1 = [_commit("a" * 40)]
+    g2 = [_commit("b" * 40)]
+    batches = pack_batches([g1, g2], "p {groups}", max_prompt_bytes=10**6, max_groups_per_batch=1)
+    assert len(batches) == 2
+
+
+def test_extract_multi_batch_preserves_order():
+    commits = [
+        _commit("a" * 40, msg="feat: add cache", fname="src/cache.py",
+                date="2026-09-01T00:00:00Z"),
+        _commit("b" * 40, msg="fix: login", fname="src/auth.py",
+                date="2026-09-03T00:00:00Z"),
+    ]
+    settings = ExtractionSettings(max_groups_per_batch=1, max_concurrent_batches=2)
+
+    class OrderingRunner:
+        def __init__(self):
+            self.calls: list[int] = []
+
+        def run(self, prompt, output_model, **kw):
+            self.calls.append(1)  # list.append 线程安全
+            if "cache" in prompt:
+                return _batch([("g_0", _event(["a" * 40]))])
+            return _batch([("g_0", _event(["b" * 40]))])
+
+    runner = OrderingRunner()
+    events = Extractor(runner, settings=settings).extract(commits, repo="flingjie/FDE-Gym")
+    assert [e.commits for e in events] == [["a" * 40], ["b" * 40]]
+    assert len(runner.calls) == 2

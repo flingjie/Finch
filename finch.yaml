@@ -71,3 +71,9 @@ llm:
   base_url: https://model-gateway.shuwenda.icu/v1
   model: deepseek-v4-pro
   # api_key 从环境变量 LLM_API_KEY 读取（见 .env），不落盘到本文件
+
+extraction:
+  max_prompt_bytes: 50000
+  max_groups_per_batch: 12
+  max_concurrent_batches: 2
+  timeout_seconds: 120

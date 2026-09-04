@@ -33,6 +33,15 @@ class LLMSettings(BaseModel):
     api_key: str = ""
 
 
+class ExtractionSettings(BaseModel):
+    """commit 提取配置（批量提取 + 按 prompt 字节自适应拆批）。"""
+
+    max_prompt_bytes: int = 50000
+    max_groups_per_batch: int = 12
+    max_concurrent_batches: int = 2
+    timeout_seconds: int = 120
+
+
 class QualityGates(BaseModel):
     max_daily_replies: int = 5
     max_daily_original_posts: int = 1
@@ -102,6 +111,7 @@ class Settings(BaseModel):
     engagement: EngagementSettings = Field(default_factory=EngagementSettings)
     interests: InterestsSettings = Field(default_factory=InterestsSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
 
 
 def load_settings(path: Path | None = None) -> Settings:
