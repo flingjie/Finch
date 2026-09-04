@@ -38,3 +38,31 @@ quality_gates:
   max_rewrite_rounds: 2
   match_top_k: 10
   timing_default: 0.3
+
+engagement:
+  enabled: true
+  schedule: every_run
+  platforms: [x, reddit]
+  max_posts_scanned: 30
+  min_candidate_score: 0.72
+  max_bookmarks: 5
+  max_reply_drafts: 3
+  max_public_replies: 2
+  per_author_daily_limit: 1
+  public_expression_requires_approval: true
+
+interests:
+  stable:
+    - agent reliability
+    - agent evals
+    - graph engineering
+    - agent harness
+  exploring:
+    - durable execution
+    - failure replay
+    - dynamic graph
+    - production agent failures
+  excluded:
+    - AI 新闻搬运
+    - 融资与估值
+    - 无实践依据的模型排名

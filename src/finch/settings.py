@@ -51,12 +51,48 @@ class TwitterSettings(BaseModel):
     blocked_authors: list[str] = Field(default_factory=list)
 
 
+class ScoringWeights(BaseModel):
+    """互动评分五维权重（执行计划 5 默认评分权重表）。"""
+
+    relevance: float = 0.25
+    novelty: float = 0.25
+    discussability: float = 0.20
+    practical_evidence: float = 0.20
+    relationship_value: float = 0.10
+
+
+class EngagementSettings(BaseModel):
+    """互动轨道配置（执行计划 5 配置设计）。"""
+
+    enabled: bool = True
+    schedule: str = "every_run"
+    platforms: list[str] = Field(default_factory=lambda: ["x", "reddit"])
+    max_posts_scanned: int = 30
+    min_candidate_score: float = 0.72
+    max_bookmarks: int = 5
+    max_reply_drafts: int = 3
+    max_public_replies: int = 2
+    per_author_daily_limit: int = 1
+    public_expression_requires_approval: bool = True
+    weights: ScoringWeights = Field(default_factory=ScoringWeights)
+
+
+class InterestsSettings(BaseModel):
+    """兴趣主题配置（稳定 / 探索 / 排除）。"""
+
+    stable: list[str] = Field(default_factory=list)
+    exploring: list[str] = Field(default_factory=list)
+    excluded: list[str] = Field(default_factory=list)
+
+
 class Settings(BaseModel):
     repositories: list[str] = Field(default_factory=list)
     repository_discovery: RepositoryDiscovery = Field(default_factory=RepositoryDiscovery)
     twitter: TwitterSettings = Field(default_factory=TwitterSettings)
     quality_gates: QualityGates = Field(default_factory=QualityGates)
     paths: Paths = Field(default_factory=Paths)
+    engagement: EngagementSettings = Field(default_factory=EngagementSettings)
+    interests: InterestsSettings = Field(default_factory=InterestsSettings)
 
 
 def load_settings(path: Path | None = None) -> Settings:
