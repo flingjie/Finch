@@ -8,8 +8,9 @@ from typing import Literal, cast
 from pydantic import BaseModel, Field
 
 from finch.content.models import DraftKind
-from finch.evidence.models import EvidenceCard
+from finch.evidence.models import EvidenceCard, MatchResult
 from finch.llm.base import StructuredInferenceRunner
+from finch.twitter.models import DiscussionCandidate
 
 
 class ContentJobsOutput(BaseModel):
@@ -102,30 +103,55 @@ class ContentJob(BaseModel):
         return False
 
 
-def define_content_jobs(
+class TopicProposal(BaseModel):
+    """plan-topics 输出的一个内容主题：主题 id、一句话标题、所属卡片与候选归属。"""
+
+    id: str
+    title: str
+    card_ids: list[str]
+    candidate_id: str | None = None
+
+
+class PlanTopicsOutput(BaseModel):
+    items: list[TopicProposal]
+
+
+def plan_content_topics(
     runner: StructuredInferenceRunner,
     cards: list[EvidenceCard],
-) -> ContentJobsOutput:
-    """
-    调用结构化推理 runner 生成 Content Job 列表。
-
-    - 加载 prompts/define-content-jobs.md
-    - 格式化 evidence cards
-    - 强制每个 job 的 author_position.confirmed = False（剥离 LLM 输出的 confirmed，
-      只有人工 `jobs confirm-position` 命令才能置 True，防止 fail-open 绕过人审门）
-    - 返回 ContentJobsOutput (items: list[ContentJob])
-    """
-    # 没有证据卡就没有可写的内容机会：直接返回空 items，避免一次无意义的 LLM 调用，
-    # 也避免模型在空输入上产出不符合 items 包装的返回。
+    match_results: list[MatchResult],
+    candidates: list[DiscussionCandidate],
+) -> PlanTopicsOutput:
+    """一次 flash 调用：把证据卡聚类成少量主题并决定 reply/original 归属。"""
     if not cards:
-        return ContentJobsOutput(items=[])
+        return PlanTopicsOutput(items=[])
+    slim_cards = [
+        {"id": c.id, "claim": c.claim, "topics": c.topics} for c in cards
+    ]
+    slim_matches = [
+        {"candidate_id": m.candidate_id, "card_ids": m.card_ids} for m in match_results
+    ]
+    slim_candidates = [{"id": c.id, "text": c.text} for c in candidates]
+    template = Path("prompts/plan-content-topics.md").read_text()
+    prompt = template.replace("{cards}", dumps(slim_cards)).replace(
+        "{matches}", dumps(slim_matches)
+    ).replace("{candidates}", dumps(slim_candidates))
+    return cast(PlanTopicsOutput, runner.run(prompt, PlanTopicsOutput))
 
-    # 用 .replace 而非 .format：prompt 里含 JSON 示例的字面大括号，会被 .format 误解析。
-    template = Path("prompts/define-content-jobs.md").read_text()
-    prompt = template.replace("{cards}", dumps([c.model_dump(mode="json") for c in cards]))
-    result = runner.run(prompt, ContentJobsOutput)
-    output = cast(ContentJobsOutput, result)
-    for job in output.items:
-        if job.author_position is not None:
-            job.author_position = job.author_position.model_copy(update={"confirmed": False})
-    return output
+
+def expand_content_job(
+    runner: StructuredInferenceRunner,
+    topic: TopicProposal,
+    cards_by_id: dict[str, EvidenceCard],
+    candidate: DiscussionCandidate | None,
+) -> ContentJob:
+    """一次 flash 调用：把单个主题展开成完整 ContentJob，并强制 confirmed=False。"""
+    cards = [cards_by_id[cid] for cid in topic.card_ids if cid in cards_by_id]
+    template = Path("prompts/expand-content-job.md").read_text()
+    prompt = template.replace("{topic}", dumps(topic.model_dump(mode="json"))).replace(
+        "{cards}", dumps([c.model_dump(mode="json") for c in cards])
+    ).replace("{candidate}", dumps(candidate.model_dump(mode="json")) if candidate else "null")
+    job = cast(ContentJob, runner.run(prompt, ContentJob))
+    if job.author_position is not None:
+        job.author_position = job.author_position.model_copy(update={"confirmed": False})
+    return job
