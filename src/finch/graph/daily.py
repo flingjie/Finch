@@ -47,11 +47,11 @@ def daily_nodes(
     """组装每日 Graph：preflight → sync → extract → collect → recall → match → draft →
     critique → brief。
 
-    MVP 单仓：extract 只对 settings.repositories[0] 用注入的 commits_by_repo。
+    提取节点对 commits_by_repo 中的所有仓库依次提取事件并合并 Evidence Cards。
     """
 
     def sync_fn() -> None:
-        for repo in settings.repositories:
+        for repo in commits_by_repo:
             CommitReader(gh, repo).sync()
 
     def collect_fn() -> list[DiscussionCandidate]:
@@ -71,16 +71,14 @@ def daily_nodes(
                 candidates.append(to_candidate(tweet, query_id=cfg.id))
         return candidates
 
-    repo = settings.repositories[0]
     jobs_repo = ContentJobRepository(store)
 
     return [
         make_preflight_node(gh, opencli),
         make_sync_node(sync_fn),
         make_extract_node(
-            repo=repo,
             extractor=extractor,
-            commits=commits_by_repo[repo],
+            commits_by_repo=commits_by_repo,
             repo_is_private=repo_is_private,
             known_commit_urls=known_commit_urls,
             cards_repo=EvidenceRepository(store),

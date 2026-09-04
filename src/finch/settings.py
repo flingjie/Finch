@@ -37,6 +37,12 @@ class QualityGates(BaseModel):
     timing_default: float = 0.3
 
 
+class RepositoryDiscovery(BaseModel):
+    enabled: bool = False
+    lookback_hours: int = 24
+    max_repos: int = 10
+
+
 class TwitterSettings(BaseModel):
     daily_limit: int = 100
     per_query_limit: int = 20
@@ -47,6 +53,7 @@ class TwitterSettings(BaseModel):
 
 class Settings(BaseModel):
     repositories: list[str] = Field(default_factory=list)
+    repository_discovery: RepositoryDiscovery = Field(default_factory=RepositoryDiscovery)
     twitter: TwitterSettings = Field(default_factory=TwitterSettings)
     quality_gates: QualityGates = Field(default_factory=QualityGates)
     paths: Paths = Field(default_factory=Paths)

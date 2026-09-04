@@ -12,6 +12,16 @@ class RepoInfo(BaseModel):
     is_private: bool
 
 
+class RepoSummary(BaseModel):
+    name_with_owner: str
+    pushed_at: datetime | None = None
+    size: int = 0
+    is_private: bool = False
+    is_fork: bool = False
+    archived: bool = False
+    disabled: bool = False
+
+
 class CommitSummary(BaseModel):
     sha: str
     message: str
@@ -48,6 +58,18 @@ def parse_repo_view(data: dict) -> RepoInfo:
         default_branch=(data.get("defaultBranchRef") or {}).get("name", "main"),
         url=data["url"],
         is_private=data.get("isPrivate", False),
+    )
+
+
+def parse_repo_summary(data: dict) -> RepoSummary:
+    return RepoSummary(
+        name_with_owner=data["full_name"],
+        pushed_at=data.get("pushed_at"),
+        size=data.get("size", 0),
+        is_private=data.get("private", False),
+        is_fork=data.get("fork", False),
+        archived=data.get("archived", False),
+        disabled=data.get("disabled", False),
     )
 
 

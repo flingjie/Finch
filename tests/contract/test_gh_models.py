@@ -7,9 +7,11 @@ from finch.github.models import (
     CommitSummary,
     PullRequest,
     RepoInfo,
+    RepoSummary,
     parse_commit_detail,
     parse_commit_summary,
     parse_pull_request,
+    parse_repo_summary,
     parse_repo_view,
 )
 
@@ -26,6 +28,25 @@ def test_parse_repo_view():
     assert r.name_with_owner == "flingjie/FDE-Gym"
     assert r.is_private is False
     assert r.default_branch == "main"
+
+
+def test_parse_repo_summary():
+    r = parse_repo_summary(
+        {
+            "full_name": "flingjie/FDE-Gym",
+            "private": False,
+            "fork": False,
+            "archived": False,
+            "disabled": False,
+            "pushed_at": "2026-09-01T07:31:52Z",
+            "size": 468,
+        }
+    )
+    assert isinstance(r, RepoSummary)
+    assert r.name_with_owner == "flingjie/FDE-Gym"
+    assert r.is_private is False
+    assert r.pushed_at is not None
+    assert r.size == 468
 
 
 def test_parse_commit_summary_list():

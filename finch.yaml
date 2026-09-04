@@ -1,5 +1,9 @@
-repositories:
-  - flingjie/FDE-Gym
+repositories: []
+
+repository_discovery:
+  enabled: true
+  lookback_hours: 24
+  max_repos: 10
 
 twitter:
   daily_limit: 100

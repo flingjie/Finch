@@ -6,6 +6,7 @@ from typing import cast
 from pydantic import BaseModel
 
 from ..evidence.extractor import Extractor, build_cards
+from ..evidence.models import EvidenceCard
 from ..evidence.safety import scan_cards
 from ..github.gh_client import GhClient
 from ..github.models import CommitDetail
@@ -41,19 +42,21 @@ def make_sync_node(sync_fn: Callable[[], None]) -> Node:
 
 def make_extract_node(
     *,
-    repo: str,
     extractor: Extractor,
-    commits: list[CommitDetail],
+    commits_by_repo: dict[str, list[CommitDetail]],
     repo_is_private: dict[str, bool],
     known_commit_urls: set[str],
     cards_repo: EvidenceRepository,
 ) -> Node:
     class ExtractNode(Node):
         def run(self, ctx: dict) -> NodeResult:
-            events = extractor.extract(commits, repo)
-            cards = build_cards(events)
-            if repo_is_private.get(repo, False):
-                cards = [c.model_copy(update={"publishable": False}) for c in cards]
+            cards: list[EvidenceCard] = []
+            for repo, commits in commits_by_repo.items():
+                events = extractor.extract(commits, repo)
+                repo_cards = build_cards(events)
+                if repo_is_private.get(repo, False):
+                    repo_cards = [c.model_copy(update={"publishable": False}) for c in repo_cards]
+                cards.extend(repo_cards)
             report = scan_cards(
                 cards,
                 repo_is_private=repo_is_private,

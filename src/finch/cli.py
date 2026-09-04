@@ -19,6 +19,7 @@ from .content.voice import (
 )
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
+from .github.discovery import resolve_repositories
 from .github.gh_client import GhClient
 from .github.models import CommitDetail
 from .graph.context import parse_items
@@ -236,14 +237,19 @@ def run_daily() -> None:
     gh = GhClient()
     opencli = OpenCliClient()
 
+    repos = resolve_repositories(settings, gh)
+    since = (
+        datetime.now(UTC) - timedelta(hours=settings.repository_discovery.lookback_hours)
+    ).isoformat()
+
     commits_by_repo: dict[str, list[CommitDetail]] = {}
     known_commit_urls: set[str] = set()
     repo_is_private: dict[str, bool] = {}
-    for repo in settings.repositories:
+    for repo in repos:
         info = gh.repo_view(repo)
         repo_is_private[repo] = info.is_private
         details = load_commit_details(
-            repo, gh, local_dirs=settings.paths.local_repos_dirs, since=_since_iso("24h")
+            repo, gh, local_dirs=settings.paths.local_repos_dirs, since=since
         )
         details = CommitReader(gh, repo).filter_noise(details)
         commits_by_repo[repo] = details

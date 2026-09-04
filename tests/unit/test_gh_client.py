@@ -33,6 +33,28 @@ def test_repo_view_parses(monkeypatch):
     assert r.is_private is False
 
 
+def test_list_user_repos_parses(monkeypatch):
+    _set(
+        json.dumps(
+            [
+                {
+                    "full_name": "flingjie/Finch",
+                    "private": False,
+                    "fork": False,
+                    "archived": False,
+                    "disabled": False,
+                    "pushed_at": "2026-09-04T06:05:12Z",
+                    "size": 468,
+                }
+            ]
+        ),
+        monkeypatch,
+    )
+    repos = GhClient().list_user_repos()
+    assert [r.name_with_owner for r in repos] == ["flingjie/Finch"]
+    assert repos[0].is_private is False
+
+
 def test_list_commits_uses_since(monkeypatch):
     captured = {}
 

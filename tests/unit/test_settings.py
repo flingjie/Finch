@@ -6,7 +6,10 @@ from finch.settings import QualityGates, load_settings
 
 def test_load_settings_defaults():
     s = load_settings(Path("finch.yaml"))
-    assert s.repositories == ["flingjie/FDE-Gym"]
+    assert s.repositories == []
+    assert s.repository_discovery.enabled is True
+    assert s.repository_discovery.lookback_hours == 24
+    assert s.repository_discovery.max_repos == 10
     assert s.twitter.daily_limit == 100
     assert s.paths.var_dir == Path("var")
 

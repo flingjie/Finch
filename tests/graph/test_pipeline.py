@@ -60,11 +60,10 @@ def test_extract_writes_cards_envelope(tmp_path, monkeypatch):
                 result=Claim(statement="tests pass", confidence=ClaimConfidence.VERIFIED),
             )]
 
-    # 工厂签名必须允许注入 extractor / known urls / repo_is_private，见 Step 3
+    # 工厂签名必须允许注入 extractor / commits_by_repo / known urls / repo_is_private，见 Step 3
     node = make_extract_node(
-        repo="flingjie/FDE-Gym",
         extractor=DummyExtractor(),
-        commits=[],  # 空 commits：DummyExtractor 仍返回 1 event（测试用）
+        commits_by_repo={"flingjie/FDE-Gym": []},  # 空 commits：DummyExtractor 仍返回 1 event
         repo_is_private={"flingjie/FDE-Gym": False},
         known_commit_urls={"https://github.com/flingjie/FDE-Gym/commit/abc123"},
         cards_repo=EvidenceRepository(store),

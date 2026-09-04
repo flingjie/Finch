@@ -10,9 +10,11 @@ from finch.github.models import (
     CommitSummary,
     PullRequest,
     RepoInfo,
+    RepoSummary,
     parse_commit_detail,
     parse_commit_summary,
     parse_pull_request,
+    parse_repo_summary,
     parse_repo_view,
 )
 
@@ -83,6 +85,21 @@ class GhClient:
         )
         assert isinstance(data, dict)
         return parse_repo_view(data)
+
+    def list_user_repos(self) -> list[RepoSummary]:
+        data = self._gh_json(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                "-H",
+                "Accept: application/vnd.github+json",
+                "user/repos?sort=pushed&direction=desc&per_page=100",
+            ],
+            timeout=60.0,
+        )
+        assert isinstance(data, list)
+        return [parse_repo_summary(item) for item in data]
 
     def list_commits(
         self, repo: str, since: str | None = None, per_page: int = 100
