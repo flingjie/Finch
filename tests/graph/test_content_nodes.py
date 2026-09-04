@@ -994,3 +994,66 @@ def test_critique_node_needs_input_via_safety_checker(tmp_path):
     assert any("safety" in w for w in result.warnings)
 
 
+def test_define_jobs_node_short_circuits_without_cards(tmp_path):
+    """Phase 0 回归：无证据卡时 define_jobs 节点不调用 runner，即使 match_results 非空。"""
+    runner = FakeJobsRunner([])  # run 被调用会返回空，但这里应当根本不被调用
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_define_jobs_node(runner),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "JOBS_DEFINED"
+    assert runner.calls == 0
+    rec = store.find_node(run.id, "define_jobs", "default")
+    assert rec is not None
+    assert json.loads(rec.output_json)["items"] == []
+
+
+def test_original_flow_confirmed_position_produces_draft(tmp_path):
+    """Phase 0 回归：有证据卡 + 已确认立场 → job 定义 → draft 产出 → 进入人工审核。"""
+    store = _store(tmp_path)
+    repo = ContentJobRepository(store)
+    # 人工 confirm-position 后 repo 中为 confirmed 版本；模型输出会被剥除 confirmed。
+    repo.upsert_job(
+        _job(job_id="job1", candidate_id="t1", position=_position(confirmed=True))
+    )
+    runner = FakeJobsRunner(
+        [_job(job_id="job1", candidate_id="t1", position=_position(confirmed=False))]
+    )
+
+    def write_reply(runner, match, candidate, cards_by_id, job):
+        assert job is not None
+        return _reply_draft().model_copy(update={"content_job_id": job.id})
+
+    def write_original(runner, cards, job):
+        raise AssertionError("original writer must not be called for a REPLY job")
+
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
+        raise AssertionError("rewrite must not be called when the draft passes")
+
+    checker = SeqChecker([_pass_check()])
+
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_define_jobs_node(runner),  # 不传 repo，避免覆盖已确认的 job
+        make_position_gate_node(jobs_repo=repo),
+        make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
+        make_critique_node(
+            CodexRunner(), rewrite, QualityGates(), checkers=[checker]
+        ),
+        make_brief_node(QualityGates(), jobs_repo=repo),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "WAITING_FOR_REVIEW"
+
+    draft_rec = store.find_node(run.id, "draft", "default")
+    assert draft_rec is not None
+    assert "d1" in draft_rec.output_json
+    assert "job1" in draft_rec.output_json
+
+

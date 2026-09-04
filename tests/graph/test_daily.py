@@ -269,3 +269,85 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
     run3 = GraphRuntime(store, build()).run(run_id=run.id)
     assert run3.state == "WAITING_FOR_REVIEW"
     assert runner.calls == calls_after_second
+
+
+def test_daily_no_evidence_completes_without_llm(tmp_path, monkeypatch):
+    """Phase 0 回归：无证据卡时整条原创图到达 COMPLETED，不进入人工审核，也不调 LLM。"""
+    import json
+
+    from finch.graph.runtime import GraphRuntime
+    from finch.settings import TwitterSettings
+
+    class FakeReader:
+        def __init__(self, gh, repo):
+            self.repo = repo
+
+        def sync(self, since=None):
+            return []
+
+    monkeypatch.setattr("finch.graph.daily.CommitReader", FakeReader)
+
+    class FakeGh:
+        def version(self):
+            return "gh 1"
+
+        def auth_status(self):
+            return {"ok": True, "exit_code": 0, "detail": "ok"}
+
+    class FakeOpen:
+        def doctor(self):
+            return {"ok": True, "exit_code": 0, "detail": "ok"}
+
+        def version(self):
+            return "opencli 1"
+
+        def search(self, query, *, product="top", limit=20):
+            return []
+
+    class EmptyExtractor:
+        def extract(self, commits, repo):
+            return []
+
+    class CountingRunner(CodexRunner):
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, prompt, output_model, **kw):
+            self.calls += 1
+            raise AssertionError(
+                f"LLM runner must not be called in the no-evidence flow "
+                f"(got {output_model.__name__})"
+            )
+
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    settings = Settings(
+        repositories=["flingjie/FDE-Gym"],
+        twitter=TwitterSettings(queries=[{"id": "q1", "text": "token bucket"}]),
+    )
+    runner = CountingRunner()
+
+    nodes = daily_nodes(
+        settings=settings,
+        store=store,
+        gh=FakeGh(),
+        opencli=FakeOpen(),
+        extractor=EmptyExtractor(),
+        runner=runner,
+        commits_by_repo={"flingjie/FDE-Gym": []},
+        known_commit_urls=set(),
+        repo_is_private={"flingjie/FDE-Gym": False},
+    )
+
+    run = GraphRuntime(store, nodes).run()
+    assert runner.calls == 0
+    assert run.state == "COMPLETED"
+
+    # 无 draft：draft 节点输出空 items，brief 判定 has_drafts=False。
+    draft_rec = store.find_node(run.id, "draft", "default")
+    assert draft_rec is not None
+    assert json.loads(draft_rec.output_json)["items"] == []
+
+    brief_rec = store.find_node(run.id, "brief", "default")
+    assert brief_rec is not None
+    assert json.loads(brief_rec.output_json)["terminal_state"] == "COMPLETED"
