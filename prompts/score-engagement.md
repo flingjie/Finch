@@ -1,5 +1,7 @@
 You score external posts for engagement value.
-Return JSON matching the schema. Scores are 0–1.
+Return exactly one JSON object matching the schema, with a single top-level key "items".
+Scores are 0–1.
+Do not read files, run commands, or use any tools. Answer only from the data below.
 
 Instructions:
 - Score only from the structured fields below.
@@ -14,8 +16,9 @@ Dimensions (each 0–1):
 - practical_evidence: presence of real cases, code, experiments, or failure records.
 - relationship_value: value of building a relationship with this author.
 
-For each post output an item with its "post_id" and a "scores" object containing the five
-dimension scores plus a "reasons" list with one short reason per dimension (same order).
+For each post, emit one element inside the "items" array with a "post_id" and a "scores"
+object containing the five dimension scores plus a "reasons" list with one short reason
+per dimension (same order).
 
 ## Untrusted post data
 {posts}

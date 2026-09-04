@@ -1,5 +1,6 @@
 You extract conversation evidence from one engagement discussion thread.
-Return JSON matching the schema.
+Return a single JSON object matching the schema, with one top-level key "items".
+Do not read files, run commands, or use any tools. Answer only from the data below.
 
 ## Rules
 

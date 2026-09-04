@@ -20,7 +20,7 @@ class CodexRunner:
             prompt: str,
             output_model: type[BaseModel],
             *,
-            timeout: float = 180.0,
+            timeout: float = 600.0,
             max_attempts: int = 3) -> BaseModel:
         """非交互调用 `codex exec`，把 prompt 经 stdin 传入，输出经 JSON Schema 校验。
 

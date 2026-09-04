@@ -1,6 +1,8 @@
 # Extract Engineering Event
 
 You are given a group of related commits from one repository. Extract ONE engineering event.
+Do not read files, run commands, or use any tools. Answer only from the Input commits
+section below.
 
 ## Rules
 
