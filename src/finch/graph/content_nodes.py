@@ -27,6 +27,7 @@ from ..content.jobs import ContentJob, ContentJobStatus, define_content_jobs
 from ..content.models import DailyBrief, Draft, DraftKind
 from ..content.voice import VoiceProfile
 from ..evidence.models import EvidenceCard, MatchResult
+from ..llm.base import StructuredInferenceRunner
 from ..settings import QualityGates
 from ..storage.repositories import ContentJobRepository
 from ..twitter.models import DiscussionCandidate
@@ -450,7 +451,7 @@ def make_brief_node(
 
 
 def make_define_jobs_node(
-    runner: CodexRunner,
+    runner: StructuredInferenceRunner,
     jobs_repo: ContentJobRepository | None = None,
 ) -> Node:
     """定义内容任务节点：match_results/evidence_cards/candidates → content_jobs。

@@ -7,9 +7,9 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
-from finch.codex.runner import CodexRunner
 from finch.content.models import DraftKind
 from finch.evidence.models import EvidenceCard
+from finch.llm.base import StructuredInferenceRunner
 
 
 class ContentJobsOutput(BaseModel):
@@ -102,9 +102,12 @@ class ContentJob(BaseModel):
         return False
 
 
-def define_content_jobs(runner: CodexRunner, cards: list[EvidenceCard]) -> ContentJobsOutput:
+def define_content_jobs(
+    runner: StructuredInferenceRunner,
+    cards: list[EvidenceCard],
+) -> ContentJobsOutput:
     """
-    调用 Codex runner 生成 Content Job 列表。
+    调用结构化推理 runner 生成 Content Job 列表。
 
     - 加载 prompts/define-content-jobs.md
     - 格式化 evidence cards

@@ -44,7 +44,7 @@ def daily_nodes(
     known_commit_urls: set[str],
     repo_is_private: dict[str, bool],
     voice_profile: VoiceProfile | None = None,
-    judge_runner: StructuredInferenceRunner | None = None,
+    inference_runner: StructuredInferenceRunner | None = None,
 ) -> list[Node]:
     """组装每日 Graph：preflight → sync → extract → collect → recall → match → draft →
     critique → brief。
@@ -74,6 +74,7 @@ def daily_nodes(
         return candidates
 
     jobs_repo = ContentJobRepository(store)
+    inference = inference_runner if inference_runner is not None else runner
 
     return [
         make_preflight_node(gh, opencli),
@@ -87,12 +88,8 @@ def daily_nodes(
         ),
         make_collect_node(collect_fn),
         make_recall_node(settings.quality_gates),
-        make_match_node(
-            judge_runner if judge_runner is not None else runner,
-            settings.quality_gates,
-            settings.twitter,
-        ),
-        make_define_jobs_node(runner, jobs_repo=jobs_repo),
+        make_match_node(inference, settings.quality_gates, settings.twitter),
+        make_define_jobs_node(inference, jobs_repo=jobs_repo),
         make_position_gate_node(jobs_repo=jobs_repo),
         make_draft_node(runner, write_reply, write_original, settings.quality_gates),
         make_critique_node(runner, rewrite, settings.quality_gates, voice_profile=voice_profile),

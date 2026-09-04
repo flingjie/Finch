@@ -344,13 +344,13 @@ def run_daily() -> None:
         store=store,
         gh=gh,
         opencli=opencli,
-        extractor=Extractor(CodexRunner()),
+        extractor=Extractor(create_runner(settings.llm) or CodexRunner()),
         runner=CodexRunner(),
         commits_by_repo=commits_by_repo,
         known_commit_urls=known_commit_urls,
         repo_is_private=repo_is_private,
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
-        judge_runner=create_runner(settings.llm),
+        inference_runner=create_runner(settings.llm),
     )
     if settings.engagement.enabled:
         # 单轮延迟以 run_dual_track（顺序执行原创+互动两条轨道）为口径。
@@ -394,13 +394,13 @@ def run_resume(run_id: str) -> None:
         store=store,
         gh=gh,
         opencli=opencli,
-        extractor=Extractor(CodexRunner()),
+        extractor=Extractor(create_runner(settings.llm) or CodexRunner()),
         runner=CodexRunner(),
         commits_by_repo=commits_by_repo,
         known_commit_urls=known_commit_urls,
         repo_is_private=repo_is_private,
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
-        judge_runner=create_runner(settings.llm),
+        inference_runner=create_runner(settings.llm),
     )
     run = replay(store, nodes, run_id)
     typer.echo(run.state)

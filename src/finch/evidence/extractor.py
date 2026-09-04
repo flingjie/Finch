@@ -1,15 +1,34 @@
-"""从 Commit 组提取 Engineering Event 并生成 Evidence Card（spec 2.2）。"""
+"""从 Commit 组批量提取 Engineering Event 并生成 Evidence Card（spec 2.2）。"""
 
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
 
-from ..codex.runner import CodexRunner
+from pydantic import BaseModel
+
 from ..github.change_grouper import group_commits
 from ..github.models import CommitDetail
+from ..llm.base import StructuredInferenceRunner
 from .models import ClaimConfidence, EngineeringEvent, EvidenceCard, Source
 
-_PROMPT_PATH = Path("prompts/extract-engineering-event.md")
+_BATCH_PROMPT_PATH = Path("prompts/extract-engineering-events-batch.md")
+_EXTRACTION_TIMEOUT = 120.0
+
+
+class ExtractedGroup(BaseModel):
+    group_id: str
+    event: EngineeringEvent
+
+
+class BatchExtractionOutput(BaseModel):
+    items: list[ExtractedGroup]
+
+
+class DuplicateExtractionGroupError(RuntimeError):
+    """批量输出包含重复 group_id。"""
+
+
+class IncompleteBatchExtractionError(RuntimeError):
+    """补偿后仍缺失 group。"""
 
 
 def _coerce_decision(event: EngineeringEvent) -> EngineeringEvent:
@@ -30,6 +49,12 @@ def _render_commits(commits: list[CommitDetail]) -> str:
                 snippet = "\n".join(f.patch.splitlines()[:10])
                 lines.append(f"    ```diff\n{snippet}\n    ```")
     return "\n".join(lines)
+
+
+def _render_batch(groups: list[list[CommitDetail]]) -> str:
+    """把全部 group 渲染为带 group_id 标题的分节文本，一次提交。"""
+    sections = [f"### Group g_{i}\n{_render_commits(group)}" for i, group in enumerate(groups)]
+    return "\n\n".join(sections)
 
 
 def _resolve_commit_shas(refs: list[str], group: list[CommitDetail]) -> list[str]:
@@ -57,37 +82,105 @@ def _resolve_commit_shas(refs: list[str], group: list[CommitDetail]) -> list[str
     return resolved
 
 
-def _extract_one(
-    group: list[CommitDetail],
+def _parse_group_index(group_id: str) -> int | None:
+    if not group_id.startswith("g_"):
+        return None
+    try:
+        return int(group_id[2:])
+    except ValueError:
+        return None
+
+
+def _finalize_event(
+    event: EngineeringEvent,
     repo: str,
-    runner: CodexRunner,
-    template: str,
+    group: list[CommitDetail],
 ) -> EngineeringEvent:
-    """对单个 commit 组跑一次 LLM 提取，并做 SHA 归一化 + decision 置信度钳制。"""
-    prompt = template.replace("{commits}", _render_commits(group))
-    event = cast(EngineeringEvent, runner.run(prompt, EngineeringEvent))
+    """补齐 repository、归一化 SHA、钳制 decision 置信度。"""
     if event.repository != repo:
         event = event.model_copy(update={"repository": repo})
     event = event.model_copy(update={"commits": _resolve_commit_shas(event.commits, group)})
     return _coerce_decision(event)
 
 
+def _validate_batch(
+    output: BatchExtractionOutput,
+    groups: list[list[CommitDetail]],
+    repo: str,
+) -> tuple[dict[int, EngineeringEvent], list[int]]:
+    """校验批量输出，返回 (按组序号的合法事件, 缺失/无效的组序号)。
+
+    - 重复 group_id → 抛 DuplicateExtractionGroupError
+    - 未知 group_id → 拒绝（忽略，不进入下游）
+    - 缺失 group_id → 进入缺失列表（由调用方补偿）
+    - 跨组/未知 SHA → 该组视为无效，进入缺失列表
+    """
+    group_shas = [{c.sha for c in group} for group in groups]
+
+    seen: set[str] = set()
+    valid: dict[int, EngineeringEvent] = {}
+    for item in output.items:
+        if item.group_id in seen:
+            raise DuplicateExtractionGroupError(
+                f"duplicate group_id in batch output: {item.group_id!r}"
+            )
+        seen.add(item.group_id)
+
+        idx = _parse_group_index(item.group_id)
+        if idx is None or idx >= len(groups):
+            continue  # 未知 group_id → 拒绝
+        event = _finalize_event(item.event, repo, groups[idx])
+        if any(sha not in group_shas[idx] for sha in event.commits):
+            continue  # 跨组/未知 SHA → 无效
+        valid[idx] = event
+
+    missing = [i for i in range(len(groups)) if i not in valid]
+    return valid, missing
+
+
 class Extractor:
-    def __init__(self, runner: CodexRunner):
+    def __init__(self, runner: StructuredInferenceRunner):
         self.runner = runner
 
     def extract(self, commits: list[CommitDetail], repo: str) -> list[EngineeringEvent]:
+        """一次性 batch 提取所有 commit 组的事件，缺失组最多局部补偿一次。
+
+        保留 Python 的确定性分组，只合并模型调用；事件顺序 = 原始 group 顺序。
+        """
         groups = list(group_commits(commits))
         if not groups:
             return []
-        template = _PROMPT_PATH.read_text()
-        if len(groups) == 1:
-            return [_extract_one(groups[0], repo, self.runner, template)]
-        # 多组并行：每组一次独立 codex 调用；`pool.map` 保序，事件顺序 = group 顺序。
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            return list(
-                pool.map(lambda g: _extract_one(g, repo, self.runner, template), groups)
-            )
+        template = _BATCH_PROMPT_PATH.read_text()
+
+        valid, missing = self._extract_valid(groups, repo, template)
+        if missing:
+            # 局部补偿：只重跑缺失/无效组，最多一次，不重跑已成功组。
+            recovery = [groups[i] for i in missing]
+            rvalid, _ = self._extract_valid(recovery, repo, template)
+            for local_i, orig_i in enumerate(missing):
+                if local_i in rvalid:
+                    valid[orig_i] = rvalid[local_i]
+            still_missing = [i for i in missing if i not in valid]
+            if still_missing:
+                raise IncompleteBatchExtractionError(
+                    f"extraction incomplete: missing groups "
+                    f"{[f'g_{i}' for i in still_missing]}"
+                )
+
+        return [valid[i] for i in range(len(groups))]
+
+    def _extract_valid(
+        self,
+        groups: list[list[CommitDetail]],
+        repo: str,
+        template: str,
+    ) -> tuple[dict[int, EngineeringEvent], list[int]]:
+        prompt = template.replace("{groups}", _render_batch(groups))
+        output = cast(
+            BatchExtractionOutput,
+            self.runner.run(prompt, BatchExtractionOutput, timeout=_EXTRACTION_TIMEOUT),
+        )
+        return _validate_batch(output, groups, repo)
 
 
 def build_cards(events: list[EngineeringEvent]) -> list[EvidenceCard]:
