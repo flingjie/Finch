@@ -781,6 +781,31 @@ def test_draft_node_caps_replies_and_originals(tmp_path):
     assert len(originals) == 1
 
 
+def test_draft_node_bounds_write_attempts_to_cap(tmp_path):
+    """cap 计尝试：即使 write 全部返回 None，写入次数也不得超出 daily cap。"""
+    jobs = [_job(job_id=f"r{i}", candidate_id="t1", source_card_ids=("ev1",)) for i in range(10)]
+    attempts: list[str] = []
+
+    def write_reply(runner, match, candidate, cards_by_id, job):
+        attempts.append(job.id)  # list.append 线程安全
+        return None
+
+    def write_original(runner, cards, job):
+        return None
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="gate", writes="ready_jobs", seed=items_payload(jobs)),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "DRAFTED"
+    # 10 个 reply job，但只应尝试写入 max_daily_replies=5 次（而非全部 10 次）
+    assert len(attempts) == 5
+
+
 def test_draft_node_routes_on_recommended_format_not_candidate(tmp_path):
     """F7: recommended_format=ORIGINAL 但 candidate_id 非空时仍写 original。"""
     job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))

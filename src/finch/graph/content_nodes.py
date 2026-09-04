@@ -92,9 +92,12 @@ def make_draft_node(
             cards_by_id = {card.id: card for card in cards}
             candidates_by_id = {candidate.id: candidate for candidate in candidates}
 
-            # Phase 1（串行确定性选择）：按原顺序做 card 子集、路由、candidate 存在性
-            # 检查，产出写任务 plan。cap 在 Phase 3 按成功数应用，保持与串行逐字段一致。
+            # Phase 1（串行确定性选择 + cap 预留）：按原顺序做 card 子集、路由、
+            # candidate 存在性检查，并为每个即将写入的 job 预留 cap 名额。cap 计
+            # 尝试而非成功——本意是 LLM 预算上限，保证写入次数绝不超出预算。
             plans: list[_DraftPlan] = []
+            reply_count = 0
+            original_count = 0
             for job in jobs:
                 job_cards = [
                     cards_by_id[cid] for cid in job.source_card_ids if cid in cards_by_id
@@ -113,8 +116,14 @@ def make_draft_node(
                     candidate = candidates_by_id.get(candidate_id)
                     if candidate is None:
                         continue
+                    if reply_count >= gates.max_daily_replies:
+                        continue
+                    reply_count += 1
                     plans.append(_DraftPlan(True, candidate, job_cards, job))
                 else:
+                    if original_count >= gates.max_daily_original_posts:
+                        continue
+                    original_count += 1
                     plans.append(_DraftPlan(False, None, job_cards, job))
 
             def _write_draft(plan: _DraftPlan) -> Draft | None:
@@ -124,28 +133,16 @@ def make_draft_node(
                 return write_original(runner, plan.job_cards, plan.job)
 
             # Phase 2（并行写入）：写任务之间无共享可变状态，`pool.map` 保序。
-            if len(plans) <= 1:
-                written = [_write_draft(p) for p in plans]
+            if not plans:
+                written: list[Draft | None] = []
+            elif len(plans) == 1:
+                written = [_write_draft(plans[0])]
             else:
-                with ThreadPoolExecutor(max_workers=len(plans)) as pool:
+                with ThreadPoolExecutor(max_workers=min(len(plans), 8)) as pool:
                     written = list(pool.map(_write_draft, plans))
 
-            # Phase 3（串行按成功数应用 cap）：保持顺序，None 让位给后续 job。
-            drafts: list[Draft] = []
-            reply_count = 0
-            original_count = 0
-            for plan, draft in zip(plans, written, strict=True):
-                if draft is None:
-                    continue
-                if plan.is_reply:
-                    if reply_count >= gates.max_daily_replies:
-                        continue
-                    reply_count += 1
-                else:
-                    if original_count >= gates.max_daily_original_posts:
-                        continue
-                    original_count += 1
-                drafts.append(draft)
+            # Phase 3（收集）：cap 已在 Phase 1 预留，按顺序丢弃 None。
+            drafts = [d for d in written if d is not None]
 
             return NodeResult(
                 status="succeeded",

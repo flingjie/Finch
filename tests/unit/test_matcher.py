@@ -34,3 +34,15 @@ def test_recall_drops_no_overlap_and_respects_top_k():
     assert out[0].candidate_id in {"a", "b"}
     assert out[0].card_ids == ["ev1"]
     assert "c" not in [x.candidate_id for x in recall(cands, cards, top_k=10)]
+
+
+def test_recall_uses_each_candidate_own_text():
+    # 两个 candidate 共用 id 但 text 不同：各自 token 应独立，不得按 id 折叠。
+    cards = [_card("ev1", "token bucket rate limiting", ["rate"])]
+    cands = [
+        _cand("dup", "token bucket for tools"),
+        _cand("dup", "banana muffin recipe"),
+    ]
+    out = recall(cands, cards, top_k=10)
+    # 相关候选保留、无关候选丢弃（错误实现会把两者折叠到同一 token 集合）
+    assert [c.candidate_id for c in out] == ["dup"]

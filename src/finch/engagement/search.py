@@ -181,11 +181,14 @@ def search_engagement_posts(
     """
     queries = build_queries(interests)
 
+    # available() 只评估一次（它可能反映运行期健康状态，两次调用会错位回放）。
+    availability = [(provider, provider.available()) for provider in providers]
+
     # 拍平 (provider, query) 搜索任务，保持 provider 主序 + query 次序；available()
     # 检查与失败注入保持串行，只有真正的 search 调用并行化。
     tasks: list[tuple[PostSearchProvider, str]] = []
-    for provider in providers:
-        if provider.available():
+    for provider, available in availability:
+        if available:
             for query in queries:
                 tasks.append((provider, query))
 
@@ -208,8 +211,8 @@ def search_engagement_posts(
     raw: list[ExternalPost] = []
     failures: list[PostSearchFailure] = []
     task_iter = iter(results)
-    for provider in providers:
-        if not provider.available():
+    for provider, available in availability:
+        if not available:
             failures.append(
                 PostSearchFailure(
                     platform=provider.platform, query=None, reason="provider not enabled"

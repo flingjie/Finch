@@ -233,3 +233,27 @@ def test_search_runs_queries_in_parallel():
 
     assert sorted(calls) == ["alpha", "beta"]
     assert [p.id for p in outcome.posts] == ["p_alpha", "p_beta"]
+
+
+def test_search_evaluates_available_once():
+    calls = {"available": 0}
+
+    class CountingProvider:
+        platform = "x"
+
+        def available(self):
+            calls["available"] += 1
+            return True
+
+        def search(self, query, *, limit):
+            return []
+
+    outcome = search_engagement_posts(
+        [CountingProvider()],
+        InterestsSettings(stable=["a", "b"]),
+        EngagementSettings(max_posts_scanned=10),
+    )
+    assert outcome.posts == []
+    assert outcome.failures == []
+    # available() 只应评估一次（两个 query 共享同一 provider 状态）
+    assert calls == {"available": 1}

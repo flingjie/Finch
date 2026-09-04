@@ -43,13 +43,13 @@ def recall(
     top_k: int,
 ) -> list[RankedCandidate]:
     """确定性召回：Jaccard>0 才保留 (candidate, card)；按最高 Jaccard 降序取 top_k。"""
-    # 预计算 token 集合，内层只做集合交并，避免对每个 (candidate, card) 重复分词。
+    # 预计算卡侧 token，内层只做集合交并；候选 token 逐 candidate 计算（用各自 text，
+    # 避免按 id 聚合导致重复 id 错用文本）。
     card_tokens_by_id = {card.id: _card_tokens(card) for card in cards}
-    candidate_tokens_by_id = {candidate.id: _tokens(candidate.text) for candidate in candidates}
 
     ranked: list[RankedCandidate] = []
     for candidate in candidates:
-        cand_tokens = candidate_tokens_by_id[candidate.id]
+        cand_tokens = _tokens(candidate.text)
         overlaps: list[tuple[float, str]] = []
         for card in cards:
             score = _jaccard(cand_tokens, card_tokens_by_id[card.id])
