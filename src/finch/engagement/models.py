@@ -58,11 +58,18 @@ class InteractionStatus(StrEnum):
 
 
 class InteractionCandidate(BaseModel):
-    """互动候选：帖子 + 评分 + 建议动作 + 草稿 + 审批状态。"""
+    """互动候选：帖子 + 评分 + 建议动作 + 草稿 + 审批状态。
+
+    ``draft`` 是纯正文字符串；``intent``/``source_summary``/``factual_risks`` 记录草稿
+    意图、所回应的帖子片段摘要与事实风险标记（执行计划 4 Phase 4）。
+    """
 
     post: ExternalPost
     score: ConversationScore
     action: InteractionAction
     draft: str | None = None
+    intent: str | None = None
+    source_summary: str | None = None
+    factual_risks: list[str] = Field(default_factory=list)
     approval_required: bool
     status: InteractionStatus = InteractionStatus.PROPOSED

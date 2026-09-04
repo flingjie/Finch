@@ -119,6 +119,9 @@ def test_interaction_candidate_default_status():
     assert candidate.status is InteractionStatus.PROPOSED
     assert candidate.draft is None
     assert candidate.approval_required is False
+    assert candidate.intent is None
+    assert candidate.source_summary is None
+    assert candidate.factual_risks == []
 
 
 def test_settings_defaults_for_engagement_and_interests():

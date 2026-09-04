@@ -4,6 +4,8 @@ import pytest
 
 from finch.codex.runner import CodexRunner
 from finch.engagement.flow import run_discovery_engagement_flow
+from finch.engagement.models import InteractionAction, InteractionCandidate
+from finch.engagement.proposals import ProposalBatchOutput, ProposalItem
 from finch.engagement.scoring import ConversationScoreInput, ScoreBatchOutput, ScoreItem
 from finch.settings import EngagementSettings, InterestsSettings, Settings
 from finch.twitter.models import Tweet
@@ -20,13 +22,22 @@ class FakeOpenCli:
 
 
 class FakeRunner(CodexRunner):
-    def __init__(self, items: list[ScoreItem] | None = None):
+    def __init__(
+        self,
+        items: list[ScoreItem] | None = None,
+        proposal_items: list[ProposalItem] | None = None,
+    ):
         self.calls = 0
         self.items = items or []
+        self.proposal_items = proposal_items or []
 
     def run(self, prompt, output_model, **kwargs):
         self.calls += 1
-        return ScoreBatchOutput(items=self.items)
+        if output_model is ScoreBatchOutput:
+            return ScoreBatchOutput(items=self.items)
+        if output_model is ProposalBatchOutput:
+            return ProposalBatchOutput(items=self.proposal_items)
+        raise AssertionError(f"unexpected output_model: {output_model}")
 
 
 def _tweet(
@@ -65,6 +76,16 @@ def _dims(**overrides) -> ConversationScoreInput:
     return ConversationScoreInput(**data)
 
 
+def _proposal(pid: str) -> ProposalItem:
+    return ProposalItem(
+        post_id=pid,
+        draft="Have you tried recording a failure replay and diffing it?",
+        intent="propose a verification method",
+        source_summary="the claim about prod reliability",
+        factual_risks=[],
+    )
+
+
 def test_empty_search_returns_empty_and_skips_llm():
     opencli = FakeOpenCli(tweets=[])
     runner = FakeRunner()
@@ -82,7 +103,10 @@ def test_empty_search_returns_empty_and_skips_llm():
 
 def test_found_posts_return_ranked_candidates_with_total_and_reasons():
     opencli = FakeOpenCli(tweets=[_tweet(id="p1")])
-    runner = FakeRunner(items=[ScoreItem(post_id="p1", scores=_dims())])
+    runner = FakeRunner(
+        items=[ScoreItem(post_id="p1", scores=_dims())],
+        proposal_items=[_proposal("p1")],
+    )
     result = run_discovery_engagement_flow(
         _settings(platforms=["x"]), opencli, runner, run_id="run-1"
     )
@@ -91,16 +115,22 @@ def test_found_posts_return_ranked_candidates_with_total_and_reasons():
     assert result.posts_found == 1
     assert len(result.candidates) == 1
     candidate = result.candidates[0]
+    assert isinstance(candidate, InteractionCandidate)
     assert candidate.post.id == "p1"
     assert candidate.score.total == pytest.approx(0.9)
     assert candidate.score.reasons == ["on topic", "debatable", "has code"]
+    assert candidate.action in (InteractionAction.DRAFT_REPLY, InteractionAction.DRAFT_QUOTE)
+    assert candidate.draft == "Have you tried recording a failure replay and diffing it?"
     assert "p1" in result.summary
 
 
 def test_failing_provider_still_yields_other_provider_posts_and_records_failures():
     # reddit 适配器未启用（available()=False），x 正常返回；flow 应保留 x 的候选并记录 reddit 失败。
     opencli = FakeOpenCli(tweets=[_tweet(id="p1")])
-    runner = FakeRunner(items=[ScoreItem(post_id="p1", scores=_dims())])
+    runner = FakeRunner(
+        items=[ScoreItem(post_id="p1", scores=_dims())],
+        proposal_items=[_proposal("p1")],
+    )
     result = run_discovery_engagement_flow(
         _settings(platforms=["x", "reddit"]), opencli, runner, run_id="run-1"
     )
