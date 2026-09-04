@@ -88,27 +88,18 @@ def test_load_commit_details_prefers_local(monkeypatch):
         def __init__(self, repo, root):
             pass
 
-        def list_commits(self, repo, since=None):
+        def list_commit_details(self, repo, since=None):
             return [
-                CommitSummary(
+                CommitDetail(
                     sha="1" * 40,
                     message="m",
                     author_date="2026-09-01T00:00:00Z",
                     html_url="u",
                     parents=[],
+                    files=[],
+                    stats={},
                 )
             ]
-
-        def commit_detail(self, repo, sha):
-            return CommitDetail(
-                sha=sha,
-                message="m",
-                author_date="2026-09-01T00:00:00Z",
-                html_url="u",
-                parents=[],
-                files=[],
-                stats={},
-            )
 
     monkeypatch.setattr(cr, "LocalRepoClient", FakeLocal)
 

@@ -494,6 +494,39 @@ def test_critique_node_emits_per_round_reports(tmp_path):
     assert reports[1]["version"]["body"] == "fixed"
 
 
+def test_critique_node_runs_checkers_in_parallel(tmp_path):
+    import threading
+
+    # 串行实现会在第一个 checker 上阻塞至 barrier 超时（BrokenBarrierError）；并行后
+    # 两个 checker 同时到达 barrier，立即放行。
+    barrier = threading.Barrier(2, timeout=5)
+
+    class BarrierChecker:
+        def __init__(self, name):
+            self.name = name
+
+        def check(self, ctx):
+            barrier.wait()
+            return _pass_check(self.name)
+
+    checkers = [BarrierChecker("c1"), BarrierChecker("c2")]
+
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
+        return draft
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="draft", writes="drafts", seed=items_payload([_reply_draft()])),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
+        Seed(name="position_gate", writes="ready_jobs", seed=items_payload([])),
+        make_critique_node(CodexRunner(), rewrite, QualityGates(), checkers=checkers),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "CRITIQUED"
+
+
 def test_define_jobs_node_produces_and_filters_jobs(tmp_path):
     good = _job(job_id="j1", candidate_id="t1", source_card_ids=("ev1",))
     bad = _job(job_id="j2", candidate_id=None, source_card_ids=("ev1", "ev_999"))
@@ -779,6 +812,42 @@ def test_draft_node_routes_on_recommended_format_not_candidate(tmp_path):
     assert len(drafts) == 1
     assert drafts[0]["kind"] == "original"
     assert calls == {"reply": 0, "original": 1}
+
+
+def test_draft_node_runs_jobs_in_parallel_and_preserves_order(tmp_path):
+    import threading
+    import time
+
+    # 串行实现会在第一个 job 上阻塞至 barrier 超时（BrokenBarrierError）；并行后两个
+    # write 同时到达 barrier。job1 故意慢于 job2，但输出顺序仍应等于计划顺序。
+    barrier = threading.Barrier(2, timeout=5)
+    jobs = [
+        _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",)),
+        _job(job_id="job2", candidate_id="t1", source_card_ids=("ev1",)),
+    ]
+
+    def write_reply(runner, match, candidate, cards_by_id, job):
+        barrier.wait()
+        if job.id == "job1":
+            time.sleep(0.05)
+        return _reply_draft().model_copy(update={"id": f"d_{job.id}"})
+
+    def write_original(runner, cards, job):
+        return _reply_draft()
+
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="gate", writes="ready_jobs", seed=items_payload(jobs)),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "DRAFTED"
+    rec = store.find_node(run.id, "draft", "default")
+    assert rec is not None
+    drafts = json.loads(rec.output_json)["items"]
+    assert [d["id"] for d in drafts] == ["d_job1", "d_job2"]
 
 
 def test_brief_renders_six_items_per_candidate(tmp_path):

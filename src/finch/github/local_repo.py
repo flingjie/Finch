@@ -10,6 +10,10 @@ from pathlib import Path
 
 from .models import CommitDetail, CommitFile, CommitSummary
 
+# 单条 commit 的 `git show`/`git log` 组合格式：`\x1e`（RS）作记录分隔、`\x1f`（US）
+# 作字段分隔。这样一次子进程即可同时拿到 summary 与 patch，且可逐条切分。
+_DETAIL_FORMAT = "%x1e%H%x1f%s%x1f%aI%x1f%P"
+
 
 def _run_git(root: Path, args: list[str], *, timeout: float = 30.0) -> str:
     proc = subprocess.run(
@@ -42,6 +46,35 @@ def normalize_remote(url: str) -> str | None:
     return value or None
 
 
+def _extract_origin_url(config_text: str) -> str | None:
+    """从 .git/config 文本提取 `[remote "origin"]` 段的 `url` 值。"""
+    section: str | None = None
+    for raw in config_text.splitlines():
+        line = raw.strip()
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip().lower()
+            continue
+        if section == 'remote "origin"' and line.startswith("url"):
+            _, sep, value = line.partition("=")
+            if sep:
+                return value.strip()
+    return None
+
+
+def _origin_from_config(root: Path) -> str | None:
+    """普通 clone（`.git` 为目录）直接读 `.git/config`，免起 git 子进程。
+
+    `.git` 为文件（worktree）或读取/解析失败返回 None，由调用方回退子进程路径。
+    """
+    git_dir = root / ".git"
+    if not git_dir.is_dir():
+        return None
+    try:
+        return _extract_origin_url((git_dir / "config").read_text())
+    except OSError:
+        return None
+
+
 def find_local_clone(repo: str, base_dirs: list[Path]) -> Path | None:
     """Find a checkout under `base_dirs` whose origin matches `owner/name`."""
     for base in base_dirs:
@@ -50,10 +83,12 @@ def find_local_clone(repo: str, base_dirs: list[Path]) -> Path | None:
         for child in base.iterdir():
             if not child.is_dir() or not (child / ".git").exists():
                 continue
-            try:
-                url = _run_git(child, ["remote", "get-url", "origin"]).strip()
-            except RuntimeError:
-                continue
+            url = _origin_from_config(child)
+            if url is None:
+                try:
+                    url = _run_git(child, ["remote", "get-url", "origin"]).strip()
+                except RuntimeError:
+                    continue
             if normalize_remote(url) == repo:
                 return child
     return None
@@ -126,6 +161,27 @@ def _parse_patch(text: str) -> list[CommitFile]:
     return files
 
 
+def _parse_detail(chunk: str, repo: str) -> CommitDetail:
+    """解析一条 commit 记录（summary 行 + patch）为 CommitDetail。
+
+    chunk 是 ``_DETAIL_FORMAT`` 输出按 ``\x1e`` 切出的一段（可带前导 ``\x1e``）：
+    首行 summary，其后为 patch。注意不能用 ``splitlines()``——它会视 ``\x1e`` 为行界。
+    """
+    if chunk.startswith("\x1e"):
+        chunk = chunk[1:]
+    summary_line, _, patch = chunk.partition("\n")
+    summary = _parse_summary(summary_line, repo)
+    files = _parse_patch(patch)
+    additions = sum(f.additions for f in files)
+    deletions = sum(f.deletions for f in files)
+    return CommitDetail(
+        **summary.model_dump(),
+        files=files,
+        stats={"total": additions + deletions, "additions": additions, "deletions": deletions},
+        patch_incomplete=any(f.patch is None for f in files),
+    )
+
+
 class LocalRepoClient:
     """Local checkout reader with the same commit surface as GhClient."""
 
@@ -141,20 +197,18 @@ class LocalRepoClient:
         return [_parse_summary(line, self.repo) for line in out.splitlines() if line]
 
     def commit_detail(self, repo: str, sha: str) -> CommitDetail:
-        summary_line = _run_git(
-            self.root, ["show", "-s", "--format=%H%x1f%s%x1f%aI%x1f%P", sha]
-        ).strip()
-        summary = _parse_summary(summary_line, self.repo)
-        patch = _run_git(self.root, ["show", "--format=", "--patch", "--find-renames", sha])
-        files = _parse_patch(patch)
-        additions = sum(f.additions for f in files)
-        deletions = sum(f.deletions for f in files)
-        return CommitDetail(
-            **summary.model_dump(),
-            files=files,
-            stats={"total": additions + deletions, "additions": additions, "deletions": deletions},
-            patch_incomplete=any(f.patch is None for f in files),
+        out = _run_git(
+            self.root, ["show", f"--format={_DETAIL_FORMAT}", "--patch", "--find-renames", sha]
         )
+        return _parse_detail(out, self.repo)
+
+    def list_commit_details(self, repo: str, since: str | None = None) -> list[CommitDetail]:
+        """一次 `git log --patch` 读全量 commit 详情（替代 2N+1 次子进程），newest-first。"""
+        args = ["log", f"--format={_DETAIL_FORMAT}", "--patch", "--find-renames"]
+        if since:
+            args.append(f"--since={since}")
+        out = _run_git(self.root, args)
+        return [_parse_detail(chunk, self.repo) for chunk in out.split("\x1e") if chunk.strip()]
 
 
 def _parse_summary(line: str, repo: str) -> CommitSummary:

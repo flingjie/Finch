@@ -285,6 +285,34 @@ class TestContentJobRepository:
         assert got is not None
         assert got.id == "job_1"
 
+    def test_upsert_jobs_batch(self, tmp_path):
+        """Test batch upsert_jobs inserts and overwrites in one transaction."""
+        store = Store(tmp_path / "db.sqlite")
+        store.init()
+        repo = ContentJobRepository(store)
+        jobs = [
+            ContentJob(
+                id=f"job_{i}",
+                source_card_ids=["card_1"],
+                candidate_id=None,
+                reader_problem=f"Problem {i}",
+                audience="Engineers",
+                intended_effect=IntendedEffect(understand="Solution"),
+                author_position=None,
+                success_criteria=[],
+                recommended_format=DraftKind.REPLY,
+                status=ContentJobStatus.READY,
+            )
+            for i in range(3)
+        ]
+        repo.upsert_jobs(jobs)
+        assert [j.id for j in repo.list_jobs()] == ["job_0", "job_1", "job_2"]
+
+        updated = [j.model_copy(update={"reader_problem": f"P{i}v2"}) for i, j in enumerate(jobs)]
+        repo.upsert_jobs(updated)
+        assert len(repo.list_jobs()) == 3
+        assert [j.reader_problem for j in repo.list_jobs()] == ["P0v2", "P1v2", "P2v2"]
+
     def test_update_existing_job(self, tmp_path):
         """Test that upsert_job updates existing job."""
         store = Store(tmp_path / "db.sqlite")

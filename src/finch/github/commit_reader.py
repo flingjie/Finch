@@ -72,7 +72,6 @@ def load_commit_details(
     local = find_local_clone(repo, local_dirs)
     if local is not None:
         client = LocalRepoClient(repo, local)
-        summaries = client.list_commits(repo, since=since)
-        return [client.commit_detail(repo, s.sha) for s in summaries]
+        return client.list_commit_details(repo, since=since)
     summaries = gh.list_commits(repo, since=since)
     return gh.list_commit_details(repo, [s.sha for s in summaries], workers=workers)

@@ -66,8 +66,7 @@ def make_extract_node(
                 return NodeResult(
                     status="failed", error_code=report.hits[0].code, retryable=False
                 )
-            for card in cards:
-                cards_repo.upsert_card(card)
+            cards_repo.upsert_cards(cards)
             return NodeResult(
                 status="succeeded", output=items_payload(cast(list[BaseModel], cards))
             )

@@ -52,6 +52,22 @@ class EvidenceRepository:
             session.merge(record)
             session.commit()
 
+    def upsert_cards(self, cards: list[EvidenceCard]) -> None:
+        """按 id 批量 merge 插入或更新（单 Session、单 commit，收紧事务粒度）。"""
+        if not cards:
+            return
+        with Session(self.store.engine) as session:
+            for card in cards:
+                session.merge(
+                    EvidenceCardRecord(
+                        id=card.id,
+                        event_id=card.event_id,
+                        payload_json=card.model_dump_json(),
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+            session.commit()
+
     def get_card(self, card_id: str) -> EvidenceCard | None:
         """按 id 获取 EvidenceCard，不存在返回 None。"""
         with Session(self.store.engine) as session:
@@ -197,13 +213,17 @@ class ReviewRepository:
 
         approve() 会用 ``revised_body=None`` 覆盖 ``rev_<id>`` 记录，因此最终决策里
         的人工修订文本已丢失；改为从追加式历史中读取最近一次 REVISE 的 revised_body。
+        直接按 draft_id 走索引查询，避免全表拉取。
         """
+        with Session(self.store.engine) as session:
+            stmt = select(ReviewHistoryRecord).where(
+                ReviewHistoryRecord.draft_id == draft_id
+            )
+            records = list(session.exec(stmt))
         revisions = [
             d
-            for d in self.list_history()
-            if d.draft_id == draft_id
-            and d.action == ReviewAction.REVISE
-            and d.revised_body is not None
+            for d in (ReviewDecision.model_validate_json(r.payload_json) for r in records)
+            if d.action == ReviewAction.REVISE and d.revised_body is not None
         ]
         if not revisions:
             return None
@@ -286,6 +306,21 @@ class ContentJobRepository:
         )
         with Session(self.store.engine) as session:
             session.merge(record)
+            session.commit()
+
+    def upsert_jobs(self, jobs: list[ContentJob]) -> None:
+        """按 id 批量 merge 插入或更新（单 Session、单 commit，收紧事务粒度）。"""
+        if not jobs:
+            return
+        with Session(self.store.engine) as session:
+            for job in jobs:
+                session.merge(
+                    ContentJobRecord(
+                        id=job.id,
+                        payload_json=job.model_dump_json(),
+                        updated_at=datetime.now(UTC),
+                    )
+                )
             session.commit()
 
     def get_job(self, job_id: str) -> ContentJob | None:

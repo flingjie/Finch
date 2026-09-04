@@ -1,6 +1,7 @@
 """确定性 Graph Runtime：顺序执行、幂等、失败与恢复。"""
 
 import json
+import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -43,8 +44,10 @@ class GraphRuntime:
                 self._persist_node(run_id, node, result)
                 final_state = GraphState.FAILED
                 break
+            start = time.perf_counter()
             result = self._safe_run(node, projected)
-            self._persist_node(run_id, node, result)
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            self._persist_node(run_id, node, result, duration_ms=duration_ms)
             if result.status == "failed":
                 final_state = (
                     GraphState.BLOCKED if result.error_code == "BLOCKED" else GraphState.FAILED
@@ -81,7 +84,9 @@ class GraphRuntime:
         except Exception as exc:  # noqa: BLE001
             return NodeResult(status="failed", retryable=True, error_code=type(exc).__name__)
 
-    def _persist_node(self, run_id: str, node: Node, result: NodeResult) -> None:
+    def _persist_node(
+        self, run_id: str, node: Node, result: NodeResult, *, duration_ms: int | None = None
+    ) -> None:
         record = NodeRecord(
             id=f"{run_id}:{node.name}:{node.idempotency_key}",
             run_id=run_id,
@@ -91,5 +96,6 @@ class GraphRuntime:
             output_json=json.dumps(result.output),
             error_code=result.error_code,
             created_at=_utcnow(),
+            duration_ms=duration_ms,
         )
         self.store.upsert_node(record)

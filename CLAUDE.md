@@ -60,6 +60,6 @@ Pipeline files: `models.py` (domain types) → `search.py` (PostSearchProvider: 
 ## Conventions
 
 - Python 3.12+; Pydantic 2 models (`StrEnum`/`Literal`/`Field`); SQLModel records store `payload_json` and upsert via `session.merge` (idempotent).
-- The runtime is synchronous — do not introduce `asyncio`/threads; fault isolation uses try/except, not `asyncio.gather`.
+- The graph runtime is sequential and deterministic — node ordering, state, retries, and fault isolation (try/except) stay single-threaded; no `asyncio.gather`. Bounded `ThreadPoolExecutor` parallelism is allowed *inside* a node for independent I/O-bound subprocess calls (codex/git/opencli), always via `pool.map` so result order matches serial exactly.
 - Bilingual (Chinese/English) docstrings are common; match the surrounding file.
 - Ruff selects `E,F,I,B,UP`; alembic migration scripts are excluded from linting.

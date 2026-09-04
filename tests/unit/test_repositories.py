@@ -36,6 +36,27 @@ def test_upsert_card_roundtrip(tmp_path):
     assert [c.id for c in repo.list_cards()] == ["ev_1"]
 
 
+def test_upsert_cards_batch_roundtrip(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = EvidenceRepository(store)
+    cards = [
+        EvidenceCard(
+            id=f"ev_{i}", event_id="evt", claim=f"c{i}",
+            sources=[], confidence=ClaimConfidence.VERIFIED, publishable=True, topics=[],
+        )
+        for i in range(3)
+    ]
+    repo.upsert_cards(cards)
+    assert [c.id for c in repo.list_cards()] == ["ev_0", "ev_1", "ev_2"]
+
+    # 覆盖：同 id 批量更新而非重复
+    updated = [c.model_copy(update={"claim": f"c{i}v2"}) for i, c in enumerate(cards)]
+    repo.upsert_cards(updated)
+    assert len(repo.list_cards()) == 3
+    assert [c.claim for c in repo.list_cards()] == ["c0v2", "c1v2", "c2v2"]
+
+
 def _draft():
     return Draft(id="d1", kind=DraftKind.REPLY, candidate_id="t1", body="hi",
                  claims=[ClaimRef(statement="x", evidence_card_id="ev_1",

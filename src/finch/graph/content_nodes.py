@@ -6,7 +6,8 @@ and position_statement on Drafts.
 
 import re
 from collections.abc import Callable
-from typing import cast
+from concurrent.futures import ThreadPoolExecutor
+from typing import NamedTuple, cast
 
 from pydantic import BaseModel
 
@@ -58,6 +59,15 @@ RewriteFn = Callable[
 ]
 
 
+class _DraftPlan(NamedTuple):
+    """draft 节点写任务：Phase 1 选择产物，Phase 2 并行写入，Phase 3 按成功数应用 cap。"""
+
+    is_reply: bool
+    candidate: DiscussionCandidate | None
+    job_cards: list[EvidenceCard]
+    job: ContentJob
+
+
 def make_draft_node(
     runner: CodexRunner,
     write_reply: WriteReplyFn,
@@ -82,12 +92,13 @@ def make_draft_node(
             cards_by_id = {card.id: card for card in cards}
             candidates_by_id = {candidate.id: candidate for candidate in candidates}
 
-            drafts: list[Draft] = []
-            reply_count = 0
-            original_count = 0
+            # Phase 1（串行确定性选择）：按原顺序做 card 子集、路由、candidate 存在性
+            # 检查，产出写任务 plan。cap 在 Phase 3 按成功数应用，保持与串行逐字段一致。
+            plans: list[_DraftPlan] = []
             for job in jobs:
-                # Build card subset from job's source_card_ids
-                job_cards = [cards_by_id[cid] for cid in job.source_card_ids if cid in cards_by_id]
+                job_cards = [
+                    cards_by_id[cid] for cid in job.source_card_ids if cid in cards_by_id
+                ]
                 if not job_cards:
                     continue
 
@@ -97,30 +108,44 @@ def make_draft_node(
                 is_reply = (
                     job.recommended_format == DraftKind.REPLY and candidate_id is not None
                 )
-
-                # 资源上限：LLM 返回无界 job/draft 列表时也不得超出预算。
                 if is_reply:
-                    if reply_count >= gates.max_daily_replies:
-                        continue
-                elif original_count >= gates.max_daily_original_posts:
-                    continue
-
-                if is_reply:
-                    if candidate_id is None:
-                        continue
+                    assert candidate_id is not None
                     candidate = candidates_by_id.get(candidate_id)
                     if candidate is None:
                         continue
-                    draft = write_reply(runner, None, candidate, cards_by_id, job)
+                    plans.append(_DraftPlan(True, candidate, job_cards, job))
                 else:
-                    draft = write_original(runner, job_cards, job)
+                    plans.append(_DraftPlan(False, None, job_cards, job))
 
-                if draft is not None:
-                    drafts.append(draft)
-                    if is_reply:
-                        reply_count += 1
-                    else:
-                        original_count += 1
+            def _write_draft(plan: _DraftPlan) -> Draft | None:
+                if plan.is_reply:
+                    assert plan.candidate is not None
+                    return write_reply(runner, None, plan.candidate, cards_by_id, plan.job)
+                return write_original(runner, plan.job_cards, plan.job)
+
+            # Phase 2（并行写入）：写任务之间无共享可变状态，`pool.map` 保序。
+            if len(plans) <= 1:
+                written = [_write_draft(p) for p in plans]
+            else:
+                with ThreadPoolExecutor(max_workers=len(plans)) as pool:
+                    written = list(pool.map(_write_draft, plans))
+
+            # Phase 3（串行按成功数应用 cap）：保持顺序，None 让位给后续 job。
+            drafts: list[Draft] = []
+            reply_count = 0
+            original_count = 0
+            for plan, draft in zip(plans, written, strict=True):
+                if draft is None:
+                    continue
+                if plan.is_reply:
+                    if reply_count >= gates.max_daily_replies:
+                        continue
+                    reply_count += 1
+                else:
+                    if original_count >= gates.max_daily_original_posts:
+                        continue
+                    original_count += 1
+                drafts.append(draft)
 
             return NodeResult(
                 status="succeeded",
@@ -154,6 +179,18 @@ def default_checker_suite(
         ActionabilityChecker(runner),
         SafetyChecker(runner),
     ]
+
+
+def _run_checks(suite: list[Checker], check_ctx: CheckContext) -> list[CheckResult]:
+    """并行执行 Critic Suite，结果顺序与串行一致（``pool.map`` 保序）。
+
+    单个 checker 退化为串行；多个 checker 时以 ``len(suite)`` 个 worker 并行，
+    各自内部状态只读（CodexRunner 每次调用独立子进程 + 临时目录），线程安全。
+    """
+    if len(suite) <= 1:
+        return [checker.check(check_ctx) for checker in suite]
+    with ThreadPoolExecutor(max_workers=len(suite)) as pool:
+        return list(pool.map(lambda checker: checker.check(check_ctx), suite))
 
 
 def make_critique_node(
@@ -212,7 +249,7 @@ def make_critique_node(
                 current = draft
                 for i in range(gates.max_rewrite_rounds + 1):
                     check_ctx = CheckContext(draft=current, cards=cards, job=job)
-                    checks = [checker.check(check_ctx) for checker in suite]
+                    checks = _run_checks(suite, check_ctx)
                     outcome = aggregate_checks(checks)
                     reports.append(
                         {
@@ -456,8 +493,7 @@ def make_define_jobs_node(
                     valid_jobs.append(job)
 
             if jobs_repo is not None:
-                for job in valid_jobs:
-                    jobs_repo.upsert_job(job)
+                jobs_repo.upsert_jobs(valid_jobs)
 
             return NodeResult(
                 status="succeeded",

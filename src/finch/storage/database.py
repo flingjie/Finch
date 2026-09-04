@@ -3,11 +3,28 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy import event
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _enable_wal(engine) -> None:
+    """在每条连接上启用 WAL + synchronous=NORMAL（synchronous 是连接级 PRAGMA）。
+
+    WAL 落库一次即可，重复设置无害；synchronous 必须在 connect 钩子里逐连接设置。
+    """
+
+    @event.listens_for(engine, "connect")
+    def _set_pragmas(dbapi_conn, _record):  # noqa: ANN001 - SQLAlchemy 回调签名
+        cursor = dbapi_conn.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cursor.close()
 
 
 class RunRecord(SQLModel, table=True):
@@ -26,6 +43,7 @@ class NodeRecord(SQLModel, table=True):
     output_json: str
     error_code: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
+    duration_ms: int | None = None
 
 
 class Store:
@@ -33,6 +51,7 @@ class Store:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(f"sqlite:///{self.db_path}")
+        _enable_wal(self.engine)
 
     def init(self) -> None:
         # Import repositories module to register EvidenceCardRecord before create_all

@@ -26,6 +26,16 @@ def test_successful_run_records_nodes(tmp_path):
     assert len(store.list_nodes(run.id)) == 2
 
 
+def test_successful_node_records_duration_ms(tmp_path):
+    store = _store(tmp_path)
+    rt = GraphRuntime(store, nodes=[NoopNode(name="a", idempotency_key="ka")])
+    run = rt.run()
+    rec = store.find_node(run.id, "a", "ka")
+    assert rec is not None
+    assert rec.duration_ms is not None
+    assert rec.duration_ms >= 0
+
+
 def test_failed_node_marks_run_failed(tmp_path):
     store = _store(tmp_path)
     rt = GraphRuntime(store, nodes=[NoopNode(name="a", idempotency_key="ka"),

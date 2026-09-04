@@ -17,8 +17,19 @@ def test_store_roundtrip_run_and_node(tmp_path):
     node = NodeRecord(id="n1", run_id="run1", node_name="noop",
                       idempotency_key="k1", status="succeeded",
                       output_json="{}", error_code=None,
-                      created_at=datetime.now(UTC))
+                      created_at=datetime.now(UTC), duration_ms=42)
     store.upsert_node(node)
     found = store.find_node("run1", "noop", "k1")
     assert found is not None
     assert found.status == "succeeded"
+    assert found.duration_ms == 42
+
+
+def test_store_enables_wal_and_normal_synchronous(tmp_path):
+    store = Store(tmp_path / "test.db")
+    store.init()
+    with store.engine.connect() as conn:
+        journal = conn.exec_driver_sql("PRAGMA journal_mode").scalar()
+        synchronous = conn.exec_driver_sql("PRAGMA synchronous").scalar()
+    assert journal == "wal"
+    assert synchronous == 1

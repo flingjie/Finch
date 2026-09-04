@@ -6,6 +6,7 @@
 """
 
 from collections.abc import Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -179,9 +180,34 @@ def search_engagement_posts(
     的 provider 也会记录一条 ``query=None`` 的失败，便于调用方感知未启用状态。
     """
     queries = build_queries(interests)
+
+    # 拍平 (provider, query) 搜索任务，保持 provider 主序 + query 次序；available()
+    # 检查与失败注入保持串行，只有真正的 search 调用并行化。
+    tasks: list[tuple[PostSearchProvider, str]] = []
+    for provider in providers:
+        if provider.available():
+            for query in queries:
+                tasks.append((provider, query))
+
+    def _search(task: tuple[PostSearchProvider, str]) -> list[ExternalPost] | PostSearchFailure:
+        provider, query = task
+        try:
+            return provider.search(query, limit=engagement.max_posts_scanned)
+        except Exception as exc:  # noqa: BLE001 - 单条失败不得中断整轮
+            return PostSearchFailure(
+                platform=provider.platform, query=query, reason=str(exc)
+            )
+
+    if len(tasks) <= 1:
+        results = [_search(task) for task in tasks]
+    else:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(_search, tasks))
+
+    # 按任务顺序回放结果，重新注入 unavailable provider 的失败。
     raw: list[ExternalPost] = []
     failures: list[PostSearchFailure] = []
-
+    task_iter = iter(results)
     for provider in providers:
         if not provider.available():
             failures.append(
@@ -190,13 +216,12 @@ def search_engagement_posts(
                 )
             )
             continue
-        for query in queries:
-            try:
-                raw.extend(provider.search(query, limit=engagement.max_posts_scanned))
-            except Exception as exc:  # noqa: BLE001 - 单条失败不得中断整轮
-                failures.append(
-                    PostSearchFailure(platform=provider.platform, query=query, reason=str(exc))
-                )
+        for _query in queries:
+            result = next(task_iter)
+            if isinstance(result, PostSearchFailure):
+                failures.append(result)
+            else:
+                raw.extend(result)
 
     cap = max(0, engagement.max_posts_scanned)
     kept = [post for post in raw if not is_excluded(post, interests.excluded)]

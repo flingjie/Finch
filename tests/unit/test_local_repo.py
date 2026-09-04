@@ -1,4 +1,5 @@
 import subprocess
+from datetime import timedelta
 
 import pytest
 
@@ -83,3 +84,29 @@ def test_commit_detail_add_delete_rename(repo):
     renamed = client.commit_detail("flingjie/FDE-Gym", by_message["rename b to c"].sha)
     assert renamed.files[0].status == "renamed"
     assert renamed.files[0].filename == "c.txt"
+
+
+def test_find_local_clone_reads_config_without_git(repo, tmp_path, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("git subprocess should not be called")
+
+    monkeypatch.setattr("finch.github.local_repo._run_git", boom)
+    assert find_local_clone("flingjie/FDE-Gym", [tmp_path]) == repo
+
+
+def test_list_commit_details_matches_per_commit(repo):
+    client = LocalRepoClient("flingjie/FDE-Gym", repo)
+    singles = [
+        client.commit_detail("flingjie/FDE-Gym", s.sha)
+        for s in client.list_commits("flingjie/FDE-Gym")
+    ]
+    bulk = client.list_commit_details("flingjie/FDE-Gym")
+    assert bulk == singles
+
+
+def test_list_commit_details_since_filters(repo):
+    client = LocalRepoClient("flingjie/FDE-Gym", repo)
+    newest = client.list_commits("flingjie/FDE-Gym")[0].author_date
+    future = (newest + timedelta(days=1)).strftime("%Y-%m-%d")
+    assert client.list_commit_details("flingjie/FDE-Gym", since=future) == []
+    assert len(client.list_commit_details("flingjie/FDE-Gym", since="2000-01-01")) == 4

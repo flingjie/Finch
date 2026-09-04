@@ -204,3 +204,32 @@ def test_skip_ids_excludes_known_posts():
     )
 
     assert [p.id for p in outcome.posts] == ["2"]
+
+
+def test_search_runs_queries_in_parallel():
+    import threading
+
+    # 串行实现会在第一个 query 上阻塞至 barrier 超时（BrokenBarrierError）；并行后两个
+    # query 同时到达 barrier。结果仍按 provider 主序 + query 次序回放。
+    barrier = threading.Barrier(2, timeout=5)
+    calls: list[str] = []
+
+    class BarrierProvider:
+        platform = "x"
+
+        def available(self):
+            return True
+
+        def search(self, query, *, limit):
+            barrier.wait()
+            calls.append(query)
+            return [_post(id=f"p_{query}", content=query, matched_topics=[query])]
+
+    outcome = search_engagement_posts(
+        [BarrierProvider()],
+        InterestsSettings(stable=["alpha", "beta"]),
+        EngagementSettings(max_posts_scanned=30),
+    )
+
+    assert sorted(calls) == ["alpha", "beta"]
+    assert [p.id for p in outcome.posts] == ["p_alpha", "p_beta"]

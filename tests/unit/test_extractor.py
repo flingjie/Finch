@@ -13,10 +13,11 @@ class FakeRunner:
         )
 
 
-def _commit(sha):
-    return CommitDetail(sha=sha, message="feat: node-ize X", author_date="2026-09-01T00:00:00Z",
+def _commit(sha, msg="feat: node-ize X", fname="src/graph/a.ts",
+            date="2026-09-01T00:00:00Z"):
+    return CommitDetail(sha=sha, message=msg, author_date=date,
                         html_url=f"https://github.com/flingjie/FDE-Gym/commit/{sha}", parents=[],
-                        files=[CommitFile(filename="src/graph/a.ts", status="modified")], stats={})
+                        files=[CommitFile(filename=fname, status="modified")], stats={})
 
 
 def test_extract_groups_and_calls_runner():
@@ -91,3 +92,35 @@ def test_extract_resolves_sha_with_message_suffix():
         commits, repo="flingjie/FDE-Gym"
     )
     assert events[0].commits == ["b" * 40]
+
+
+def test_extract_runs_groups_in_parallel():
+    import threading
+
+    # 串行实现会在第一个 group 上阻塞至 barrier 超时（BrokenBarrierError）；并行后
+    # 两个 group 同时到达 barrier，立即放行。
+    barrier = threading.Barrier(2, timeout=5)
+
+    class BarrierRunner:
+        def run(self, prompt, output_model, **kw):
+            barrier.wait()
+            statement = "cache" if "caching" in prompt else "login"
+            return EngineeringEvent(
+                id=f"evt_{statement}",
+                repository="flingjie/FDE-Gym",
+                commits=[],
+                problem=Claim(statement=statement, confidence=ClaimConfidence.VERIFIED),
+                decision=Claim(statement="d", confidence=ClaimConfidence.INFERRED),
+                result=Claim(statement="r", confidence=ClaimConfidence.VERIFIED),
+            )
+
+    # 消息/文件/时间间隔（2 天 > 90min）均不相关 → 两组
+    commits = [
+        _commit("a" * 40, msg="feat: add caching layer", fname="src/cache.py",
+                date="2026-09-01T00:00:00Z"),
+        _commit("b" * 40, msg="fix: login bug", fname="src/auth.py",
+                date="2026-09-03T00:00:00Z"),
+    ]
+    events = Extractor(BarrierRunner()).extract(commits, repo="flingjie/FDE-Gym")
+    # 事件顺序 = group 顺序（author_date 升序）
+    assert [e.problem.statement for e in events] == ["cache", "login"]

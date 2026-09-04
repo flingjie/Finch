@@ -1,5 +1,6 @@
 """从 Commit 组提取 Engineering Event 并生成 Evidence Card（spec 2.2）。"""
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
 
@@ -56,23 +57,37 @@ def _resolve_commit_shas(refs: list[str], group: list[CommitDetail]) -> list[str
     return resolved
 
 
+def _extract_one(
+    group: list[CommitDetail],
+    repo: str,
+    runner: CodexRunner,
+    template: str,
+) -> EngineeringEvent:
+    """对单个 commit 组跑一次 LLM 提取，并做 SHA 归一化 + decision 置信度钳制。"""
+    prompt = template.replace("{commits}", _render_commits(group))
+    event = cast(EngineeringEvent, runner.run(prompt, EngineeringEvent))
+    if event.repository != repo:
+        event = event.model_copy(update={"repository": repo})
+    event = event.model_copy(update={"commits": _resolve_commit_shas(event.commits, group)})
+    return _coerce_decision(event)
+
+
 class Extractor:
     def __init__(self, runner: CodexRunner):
         self.runner = runner
 
     def extract(self, commits: list[CommitDetail], repo: str) -> list[EngineeringEvent]:
-        events: list[EngineeringEvent] = []
-        for group in group_commits(commits):
-            prompt = _PROMPT_PATH.read_text().replace("{commits}", _render_commits(group))
-            event = cast(EngineeringEvent, self.runner.run(prompt, EngineeringEvent))
-            if event.repository != repo:
-                event = event.model_copy(update={"repository": repo})
-            event = event.model_copy(
-                update={"commits": _resolve_commit_shas(event.commits, group)}
+        groups = list(group_commits(commits))
+        if not groups:
+            return []
+        template = _PROMPT_PATH.read_text()
+        if len(groups) == 1:
+            return [_extract_one(groups[0], repo, self.runner, template)]
+        # 多组并行：每组一次独立 codex 调用；`pool.map` 保序，事件顺序 = group 顺序。
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            return list(
+                pool.map(lambda g: _extract_one(g, repo, self.runner, template), groups)
             )
-            event = _coerce_decision(event)
-            events.append(event)
-        return events
 
 
 def build_cards(events: list[EngineeringEvent]) -> list[EvidenceCard]:
