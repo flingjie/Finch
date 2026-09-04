@@ -112,6 +112,11 @@ def define_content_jobs(runner: CodexRunner, cards: list[EvidenceCard]) -> Conte
       只有人工 `jobs confirm-position` 命令才能置 True，防止 fail-open 绕过人审门）
     - 返回 ContentJobsOutput (items: list[ContentJob])
     """
+    # 没有证据卡就没有可写的内容机会：直接返回空 items，避免一次无意义的 LLM 调用，
+    # 也避免模型在空输入上产出不符合 items 包装的返回。
+    if not cards:
+        return ContentJobsOutput(items=[])
+
     # 用 .replace 而非 .format：prompt 里含 JSON 示例的字面大括号，会被 .format 误解析。
     template = Path("prompts/define-content-jobs.md").read_text()
     prompt = template.replace("{cards}", dumps([c.model_dump(mode="json") for c in cards]))

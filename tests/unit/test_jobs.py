@@ -1,11 +1,13 @@
 """Tests for ContentJob models and repositories (Spec §8)."""
 
+from finch.codex.runner import CodexRunner
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
     ContentJobStatus,
     IntendedEffect,
     SuccessCriterion,
+    define_content_jobs,
 )
 from finch.content.models import DraftKind
 from finch.storage.database import Store
@@ -356,3 +358,20 @@ class TestContentJobRepository:
         repo = ContentJobRepository(store)
 
         assert repo.get_job("nonexistent") is None
+
+
+class _ExplodingRunner(CodexRunner):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run(self, prompt, output_model, **kwargs):
+        self.calls += 1
+        raise AssertionError("runner must not be called when there are no evidence cards")
+
+
+def test_define_content_jobs_skips_runner_when_no_cards():
+    """没有证据卡时不调用 LLM，直接返回空 items。"""
+    runner = _ExplodingRunner()
+    output = define_content_jobs(runner, [])
+    assert output.items == []
+    assert runner.calls == 0
