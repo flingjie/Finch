@@ -1,6 +1,6 @@
 """Unit tests for finch run/jobs CLI commands."""
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from typer.testing import CliRunner
 
@@ -37,6 +37,44 @@ from finch.storage.repositories import (
 def test_run_daily_help():
     r = CliRunner().invoke(app, ["run", "daily", "--help"])
     assert r.exit_code == 0
+
+
+def test_run_daily_loads_recent_commits_only(monkeypatch, tmp_path):
+    settings = Settings(
+        repositories=["flingjie/FDE-Gym"],
+        paths=Paths(db_path=tmp_path / "finch.db"),
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    captured = {}
+
+    def fake_load_commit_details(repo, gh, *, local_dirs, since=None, workers=6):
+        captured["since"] = since
+        return []
+
+    class FakeGh:
+        def repo_view(self, repo):
+            from finch.github.models import RepoInfo
+
+            return RepoInfo(
+                name_with_owner=repo,
+                default_branch="main",
+                url="https://github.com/" + repo,
+                is_private=False,
+            )
+
+    monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
+    monkeypatch.setattr(cli, "load_commit_details", fake_load_commit_details)
+    monkeypatch.setattr(cli, "daily_nodes", lambda **kwargs: [])
+    monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
+
+    r = CliRunner().invoke(app, ["run", "daily"])
+    assert r.exit_code == 0, r.output
+    assert captured["since"] is not None
+    assert captured["since"].endswith("+00:00")
+    since = datetime.fromisoformat(captured["since"])
+    age = datetime.now(UTC) - since
+    assert timedelta(hours=23, minutes=55) <= age <= timedelta(hours=24, minutes=5)
 
 
 def test_run_weekly_renders_with_new_repos(monkeypatch, tmp_path):
