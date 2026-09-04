@@ -31,6 +31,31 @@ def _render_commits(commits: list[CommitDetail]) -> str:
     return "\n".join(lines)
 
 
+def _resolve_commit_shas(refs: list[str], group: list[CommitDetail]) -> list[str]:
+    """Map LLM-returned commit refs back to the full SHAs in the input group.
+
+    The extraction prompt only shows 8-char prefixes, so the model typically echoes
+    those, sometimes together with the commit message. Exact and unambiguous prefix
+    matches are canonicalized to full SHAs; unmatched refs are kept as-is so the
+    safety scanner can still flag hallucinations.
+    """
+    full_shas = {c.sha for c in group}
+    resolved: list[str] = []
+    for ref in refs:
+        candidate = ref.strip().split()[0] if ref.strip() else ""
+        if not candidate:
+            continue
+        if candidate in full_shas:
+            resolved.append(candidate)
+            continue
+        matches = [sha for sha in full_shas if sha.startswith(candidate)]
+        if len(matches) == 1:
+            resolved.append(matches[0])
+        else:
+            resolved.append(candidate)
+    return resolved
+
+
 class Extractor:
     def __init__(self, runner: CodexRunner):
         self.runner = runner
@@ -42,6 +67,9 @@ class Extractor:
             event = cast(EngineeringEvent, self.runner.run(prompt, EngineeringEvent))
             if event.repository != repo:
                 event = event.model_copy(update={"repository": repo})
+            event = event.model_copy(
+                update={"commits": _resolve_commit_shas(event.commits, group)}
+            )
             event = _coerce_decision(event)
             events.append(event)
         return events
