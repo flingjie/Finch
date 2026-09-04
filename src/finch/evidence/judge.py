@@ -5,11 +5,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..codex.runner import CodexRunner
 from ..twitter.models import DiscussionCandidate
-from .models import EvidenceCard, JudgeScores, RankedCandidate
+from .models import ClaimConfidence, EvidenceCard, JudgeScores, RankedCandidate
 
 _PROMPT_PATH = Path("prompts/match-discussion.md")
 
@@ -25,6 +25,50 @@ class BatchJudgeItem(BaseModel):
 
 class BatchJudgeOutput(BaseModel):
     items: list[BatchJudgeItem]
+
+
+class JudgeCandidate(BaseModel):
+    """进入 judge prompt 的精简候选：只保留评分所需字段。
+
+    timing（published_at）与 relationship_value（author_handle）都在 Python 里确定性
+    计算，因此不把 source/metrics/query_id/captured_at/url 交给模型。
+    """
+
+    id: str
+    author_handle: str
+    text: str
+
+
+class JudgeCard(BaseModel):
+    """进入 judge prompt 的精简卡：claim/confidence/topics + 简化来源类型。
+
+    来源只保留 type（commit/pr/issue/test）供 evidence_strength 参考，丢弃 URL/path；
+    publishable/event_id 不参与评分。
+    """
+
+    id: str
+    claim: str
+    confidence: ClaimConfidence
+    topics: list[str]
+    source_types: list[str] = Field(default_factory=list)
+
+
+def _to_judge_candidate(candidate: DiscussionCandidate) -> JudgeCandidate:
+    return JudgeCandidate(
+        id=candidate.id,
+        author_handle=candidate.author_handle,
+        text=candidate.text,
+    )
+
+
+def _to_judge_card(card: EvidenceCard) -> JudgeCard:
+    return JudgeCard(
+        id=card.id,
+        claim=card.claim,
+        confidence=card.confidence,
+        topics=card.topics,
+        source_types=[source.type for source in card.sources],
+    )
 
 
 def _to_json_text(models: Sequence[BaseModel]) -> str:
@@ -77,7 +121,7 @@ def judge_batch(
     selected_candidates, selected_cards = _select_judge_context(ranked, candidates, cards)
     prompt = _PROMPT_PATH.read_text().format(
         pairs=_to_json_text(ranked),
-        candidates=_to_json_text(selected_candidates),
-        cards=_to_json_text(selected_cards),
+        candidates=_to_json_text([_to_judge_candidate(c) for c in selected_candidates]),
+        cards=_to_json_text([_to_judge_card(c) for c in selected_cards]),
     )
     return cast(BatchJudgeOutput, runner.run(prompt, BatchJudgeOutput, timeout=timeout))

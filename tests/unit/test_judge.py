@@ -2,7 +2,7 @@ import pytest
 
 from finch.codex.runner import CodexRunner
 from finch.evidence.judge import BatchJudgeOutput, judge_batch
-from finch.evidence.models import ClaimConfidence, EvidenceCard, RankedCandidate
+from finch.evidence.models import ClaimConfidence, EvidenceCard, RankedCandidate, Source
 from finch.twitter.models import DiscussionCandidate
 
 
@@ -83,3 +83,33 @@ def test_judge_raises_on_unknown_card_reference():
     ranked = [RankedCandidate(candidate_id="t1", card_ids=["missing"], recall_score=0.5)]
     with pytest.raises(ValueError):
         judge_batch(r, ranked, [cand], [])
+
+
+def test_judge_prompt_slims_candidate_and_card_fields():
+    r = FakeRunner()
+    cand = DiscussionCandidate(
+        id="t1", author_handle="u", text="some tweet text",
+        url="https://x.com/u/status/1", metrics={"likes": 10}, query_id="query-abc",
+    )
+    card = EvidenceCard(
+        id="ev1", event_id="evt-xyz-123", claim="rate limit",
+        sources=[Source(type="commit", url="https://github.com/a/b/commit/1", path="src/a.ts")],
+        confidence=ClaimConfidence.VERIFIED, publishable=True, topics=["rate"],
+    )
+    ranked = [RankedCandidate(candidate_id="t1", card_ids=["ev1"], recall_score=0.5)]
+
+    judge_batch(r, ranked, [cand], [card])
+    prompt = r.last_prompt
+
+    # 保留评分所需字段（含简化后的 source type，供 evidence_strength 参考）
+    assert "some tweet text" in prompt
+    assert "rate limit" in prompt
+    assert "VERIFIED" in prompt
+    assert "commit" in prompt
+    # 丢弃不参与评分的字段：URL / metrics / query_id / event_id / source path
+    assert "https://x.com/u/status/1" not in prompt
+    assert "https://github.com/a/b/commit/1" not in prompt
+    assert "src/a.ts" not in prompt
+    assert "likes" not in prompt
+    assert "query-abc" not in prompt
+    assert "evt-xyz-123" not in prompt
