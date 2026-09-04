@@ -9,6 +9,10 @@ Finch 是一个证据驱动的 Builder 伙伴。它通过 `gh` 只读读取 GitH
 
 Finch 的每一步都落地为 Finch CLI（`finch ...`）。**Skill 只调用 Finch CLI，不复制业务逻辑。**
 
+## 执行环境
+
+Finch 的读取与生成都依赖真实网络：`gh` 读 GitHub，`opencli` 读 Twitter/X，`codex exec` 调 LLM。沙盒会阻断这些网络访问（典型报错 `connect: operation not permitted`）。运行需要读取数据的 Finch CLI（`finch github ...`、`finch twitter ...`、`finch run daily`、`finch diagnose`）时，要在主机环境执行，不要在沙盒中执行；只有不涉及网络的本地操作（如查看文件、纯本地 DB 的 `finch review list/show`）可以在沙盒中运行。
+
 ## 模式
 
 | 模式 | 行为 | CLI |
