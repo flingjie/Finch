@@ -108,6 +108,34 @@ class TestOpenCliClientSearch:
         assert "-f" in captured["argv"]
         assert "json" in captured["argv"]
 
+    def test_search_uses_background_persistent_flags(self, monkeypatch):
+        captured = {}
+
+        def fake_run(argv, timeout):
+            captured["argv"] = argv
+            return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+        monkeypatch.setattr("finch.twitter.opencli_client._run", fake_run)
+        OpenCliClient().search("hello")
+        argv = captured["argv"]
+        assert "--window" in argv
+        assert argv[argv.index("--window") + 1] == "background"
+        assert "--site-session" in argv
+        assert argv[argv.index("--site-session") + 1] == "persistent"
+
+    def test_search_honors_opencli_window_env(self, monkeypatch):
+        monkeypatch.setenv("OPENCLI_WINDOW", "foreground")
+        captured = {}
+
+        def fake_run(argv, timeout):
+            captured["argv"] = argv
+            return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+        monkeypatch.setattr("finch.twitter.opencli_client._run", fake_run)
+        OpenCliClient().search("hello")
+        argv = captured["argv"]
+        assert argv[argv.index("--window") + 1] == "foreground"
+
     def test_search_not_logged_in_raises(self, monkeypatch):
         def fake_run(argv, timeout):
             return {

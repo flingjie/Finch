@@ -1,6 +1,7 @@
 """opencli 只读封装（spec 5.3）"""
 
 import json
+import os
 
 from finch.github.gh_client import _run
 
@@ -98,10 +99,24 @@ def _parse_tweets(stdout: str) -> list[Tweet]:
     return tweets
 
 
+def _browser_flags() -> list[str]:
+    """opencli 浏览器通用选项：默认后台窗口 + 复用登录会话.
+
+    - ``--window background``：不弹到最前面抢焦点；可用 ``OPENCLI_WINDOW`` 环境变量
+      覆盖（与 opencli 自身约定一致）。
+    - ``--site-session persistent``：复用已登录的站点会话，而不是每次新开会话/窗口。
+
+    说明：Finch 的 twitter 只读命令（search/thread/bookmarks/…）策略均为 ``cookie``，
+    本身需要 Chrome 登录态（无 PUBLIC 替代），但上述 flag 可避免抢焦点与反复开窗。
+    """
+    window = os.environ.get("OPENCLI_WINDOW", "background")
+    return ["--window", window, "--site-session", "persistent"]
+
+
 def _call(argv: list[str], timeout: float = 60.0) -> list[Tweet]:
     """执行 opencli 命令并解析结果."""
     _check_allowlist(argv)
-    r = _run(argv, timeout=timeout)
+    r = _run([*argv, *_browser_flags()], timeout=timeout)
     if not r["ok"]:
         stderr = (r["stderr"] or "").strip()
         # spec 5.3: Bridge 离线/未登录/限流检测
