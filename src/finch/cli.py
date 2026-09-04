@@ -17,6 +17,7 @@ from .content.voice import (
     load_voice_profile,
     save_voice_profile,
 )
+from .engagement.flow import run_discovery_engagement_flow
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.discovery import resolve_repositories
@@ -24,6 +25,7 @@ from .github.gh_client import GhClient
 from .github.models import CommitDetail
 from .graph.context import parse_items
 from .graph.daily import daily_nodes
+from .graph.dual_track import DualTrackResult, run_dual_track
 from .graph.replay import replay
 from .graph.runtime import GraphRuntime
 from .review.feedback import FeedbackService
@@ -117,6 +119,34 @@ def _persist_run_outputs(store: Store, run_id: str) -> None:
         draft_repo = DraftRepository(store)
         for draft in drafts:
             draft_repo.upsert_draft(draft)
+
+
+def _echo_daily_brief(store: Store, run_id: str) -> None:
+    """打印一次 run 的 brief 正文（存在时），与 run_daily/run_resume 原逻辑一致。"""
+    brief_record = store.find_node(run_id, "brief", "default")
+    if brief_record is not None:
+        briefs = parse_items(json.loads(brief_record.output_json), DailyBrief)
+        if briefs:
+            typer.echo(briefs[0].body)
+
+
+def _echo_dual_track_result(result: DualTrackResult, store: Store) -> None:
+    """汇总输出双轨结果：原创轨道 state + brief（同今日），随后互动轨道 summary。"""
+    if result.original is not None:
+        typer.echo(result.original.state)
+        _persist_run_outputs(store, result.original.id)
+        _echo_daily_brief(store, result.original.id)
+    elif result.original_error is not None:
+        typer.echo(
+            f"original track error: {result.original_error.type}: {result.original_error.message}"
+        )
+    if result.engagement is not None:
+        typer.echo(result.engagement.summary)
+    elif result.engagement_error is not None:
+        typer.echo(
+            f"engagement track error: {result.engagement_error.type}: "
+            f"{result.engagement_error.message}"
+        )
 
 
 @app.command()
@@ -268,14 +298,20 @@ def run_daily() -> None:
         repo_is_private=repo_is_private,
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
     )
+    if settings.engagement.enabled:
+        result = run_dual_track(
+            original_track=lambda rid: GraphRuntime(store, nodes).run(run_id=rid),
+            engagement_track=lambda rid: run_discovery_engagement_flow(
+                settings, opencli, CodexRunner(), run_id=rid
+            ),
+        )
+        _echo_dual_track_result(result, store)
+        return
+
     run = GraphRuntime(store, nodes).run()
     typer.echo(run.state)
     _persist_run_outputs(store, run.id)
-    brief_record = store.find_node(run.id, "brief", "default")
-    if brief_record is not None:
-        briefs = parse_items(json.loads(brief_record.output_json), DailyBrief)
-        if briefs:
-            typer.echo(briefs[0].body)
+    _echo_daily_brief(store, run.id)
 
 
 @run_app.command("resume")

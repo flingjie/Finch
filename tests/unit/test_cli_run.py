@@ -23,7 +23,7 @@ from finch.content.voice import (
 )
 from finch.review.models import ReviewAction, ReviewDecision
 from finch.review.service import ReviewService
-from finch.settings import Paths, Settings
+from finch.settings import EngagementSettings, Paths, Settings
 from finch.storage.database import Store
 from finch.storage.repositories import (
     ContentJobRepository,
@@ -43,6 +43,7 @@ def test_run_daily_loads_recent_commits_only(monkeypatch, tmp_path):
     settings = Settings(
         repositories=["flingjie/FDE-Gym"],
         paths=Paths(db_path=tmp_path / "finch.db"),
+        engagement=EngagementSettings(enabled=False),
     )
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
@@ -75,6 +76,51 @@ def test_run_daily_loads_recent_commits_only(monkeypatch, tmp_path):
     since = datetime.fromisoformat(captured["since"])
     age = datetime.now(UTC) - since
     assert timedelta(hours=23, minutes=55) <= age <= timedelta(hours=24, minutes=5)
+
+
+def test_run_daily_enabled_echoes_engagement_summary(monkeypatch, tmp_path):
+    from finch.engagement.flow import EngagementRunResult
+
+    settings = Settings(
+        repositories=["flingjie/FDE-Gym"],
+        paths=Paths(db_path=tmp_path / "finch.db"),
+        engagement=EngagementSettings(enabled=True, platforms=["x"]),
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    class FakeGh:
+        def repo_view(self, repo):
+            from finch.github.models import RepoInfo
+
+            return RepoInfo(
+                name_with_owner=repo,
+                default_branch="main",
+                url="https://github.com/" + repo,
+                is_private=False,
+            )
+
+    monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
+    monkeypatch.setattr(
+        cli, "load_commit_details", lambda repo, gh, *, local_dirs, since=None, workers=6: []
+    )
+    monkeypatch.setattr(cli, "daily_nodes", lambda **kwargs: [])
+    monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
+
+    def fake_engagement_flow(settings, opencli, runner, *, run_id, skip_ids=None):
+        return EngagementRunResult(
+            run_id=run_id,
+            posts_found=0,
+            candidates=[],
+            failures=[],
+            status="empty",
+            summary="engagement: no posts found",
+        )
+
+    monkeypatch.setattr(cli, "run_discovery_engagement_flow", fake_engagement_flow)
+
+    r = CliRunner().invoke(app, ["run", "daily"])
+    assert r.exit_code == 0, r.output
+    assert "engagement: no posts found" in r.output
 
 
 def test_run_weekly_renders_with_new_repos(monkeypatch, tmp_path):
@@ -589,6 +635,7 @@ def test_run_daily_persists_versions_and_reports(monkeypatch, tmp_path):
     from finch.settings import QualityGates
 
     settings = _settings(tmp_path)
+    settings.engagement.enabled = False
     store = Store(settings.paths.db_path)
     store.init()
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
