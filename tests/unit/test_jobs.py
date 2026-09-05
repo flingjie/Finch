@@ -8,6 +8,7 @@ from finch.content.jobs import (
     IntendedEffect,
     SuccessCriterion,
     TopicProposal,
+    _render_prompt,
     expand_content_job,
     plan_content_topics,
 )
@@ -405,6 +406,22 @@ def test_plan_content_topics_skips_runner_when_no_cards():
     out = plan_content_topics(runner, [], [], [])
     assert out.items == []
     assert runner.calls == 0
+
+
+def test_render_prompt_does_not_rescan_inserted_data():
+    """单遍替换：插入数据里的 `{candidate}` 字面量不得被二次替换（prompt 注入防护）。"""
+    template = "cards: {cards}\ncandidate: {candidate}\nnote: {unknown}"
+    values = {
+        "cards": '{"claim": "we benchmarked {candidate} vs baseline"}',
+        "candidate": '{"id": "t1"}',
+    }
+    out = _render_prompt(template, values)
+    # 模板里的 {candidate} 被替换
+    assert '{"id": "t1"}' in out
+    # cards 数据里的 {candidate} 字面量原样保留，未被二次替换
+    assert 'we benchmarked {candidate} vs baseline' in out
+    # 未命中的 {unknown} 原样保留
+    assert "{unknown}" in out
 
 
 def test_expand_content_job_forces_confirmed_false():

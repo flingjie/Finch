@@ -1164,6 +1164,56 @@ def test_define_jobs_expands_in_parallel_and_preserves_order(tmp_path):
     assert [j["id"] for j in output_jobs] == ["job1", "job2"]
 
 
+def test_define_jobs_isolates_topic_expand_failure(tmp_path):
+    """单个 topic 展开失败（如 JSON 截断）被隔离，其余 topic 的合法 job 照常产出。"""
+    good = _job(job_id="j1", candidate_id="t1", source_card_ids=("ev1",))
+    bad = _job(job_id="j2", candidate_id="t1", source_card_ids=("ev1",))
+
+    class PartialFailRunner(FakeJobsRunner):
+        def run(self, prompt, output_model, **kw):
+            if output_model is ContentJob:
+                match = re.search(r'"id"\s*:\s*"(tp\d+)"', prompt)
+                if match and match.group(1) == "tp1":
+                    raise RuntimeError("boom")
+            return super().run(prompt, output_model, **kw)
+
+    runner = PartialFailRunner([good, bad])
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_define_jobs_node(runner, runner),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "JOBS_DEFINED"
+    rec = store.find_node(run.id, "define_jobs", "default")
+    assert rec is not None
+    payload = json.loads(rec.output_json)
+    assert [j["id"] for j in payload["items"]] == ["j1"]
+    assert any("expand failed" in w for w in payload.get("warnings", []))
+
+
+def test_define_jobs_dedups_duplicate_job_ids(tmp_path):
+    """重复 job id（重复/重叠主题）在去重后只保留一个，避免 upsert 冲突与下游重复列表。"""
+    dupe1 = _job(job_id="dup", candidate_id="t1", source_card_ids=("ev1",))
+    dupe2 = _job(job_id="dup", candidate_id="t1", source_card_ids=("ev1",))
+    runner = FakeJobsRunner([dupe1, dupe2])
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_define_jobs_node(runner, runner),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "JOBS_DEFINED"
+    rec = store.find_node(run.id, "define_jobs", "default")
+    assert rec is not None
+    payload = json.loads(rec.output_json)
+    assert [j["id"] for j in payload["items"]] == ["dup"]
+
+
 def test_original_flow_confirmed_position_produces_draft(tmp_path):
     """Phase 0 回归：有证据卡 + 已确认立场 → job 定义 → draft 产出 → 进入人工审核。"""
     store = _store(tmp_path)

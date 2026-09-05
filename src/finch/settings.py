@@ -31,7 +31,7 @@ class LLMNodeSettings(BaseModel):
     model: str = ""
     timeout_seconds: float = 90.0
     max_output_tokens: int | None = None
-    max_concurrency: int = 1
+    max_concurrency: int = Field(default=1, ge=1)
 
 
 class LLMSettings(BaseModel):

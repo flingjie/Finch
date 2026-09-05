@@ -1,6 +1,9 @@
 # tests/unit/test_settings.py
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from finch.settings import LLMNodeSettings, LLMSettings, QualityGates, load_settings
 
 
@@ -76,3 +79,11 @@ def test_for_node_inherits_default_model_when_node_model_blank():
     assert cfg.model == "deepseek-v4-flash"
     assert cfg.timeout_seconds == 120.0
     assert cfg.max_output_tokens == 2000
+
+
+def test_llm_node_settings_rejects_nonpositive_concurrency():
+    """max_concurrency 必须 >=1，否则 ThreadPoolExecutor(max_workers=0) 会抛 ValueError。"""
+    with pytest.raises(ValidationError):
+        LLMNodeSettings(max_concurrency=0)
+    with pytest.raises(ValidationError):
+        LLMNodeSettings(max_concurrency=-1)

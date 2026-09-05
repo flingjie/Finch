@@ -1,5 +1,6 @@
 """Content Job 模型（Spec §8）：定义内容目标与作者立场。"""
 
+import re
 from enum import StrEnum
 from json import dumps
 from pathlib import Path
@@ -110,6 +111,25 @@ class PlanTopicsOutput(BaseModel):
     items: list[TopicProposal]
 
 
+_PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
+
+
+def _render_prompt(template: str, values: dict[str, str]) -> str:
+    """单遍占位符替换：只扫描原模板一次，插入的数据不会被再次扫描。
+
+    链式 ``.replace`` 会重复扫描先前插入的不可信数据（卡片 claim / 主题标题 /
+    候选文本），一旦其中出现 ``{cards}``/``{candidate}`` 等字面量就会被二次替换，
+    造成 prompt 静默污染。这里用一次 ``re.sub`` 只替换模板里出现的占位符，
+    未命中的 ``{word}``（如 JSON 示例里的裸花括号）原样保留。
+    """
+
+    def _sub(match: re.Match[str]) -> str:
+        key = match.group(1)
+        return values.get(key, match.group(0))
+
+    return _PLACEHOLDER_RE.sub(_sub, template)
+
+
 def plan_content_topics(
     runner: StructuredInferenceRunner,
     cards: list[EvidenceCard],
@@ -127,9 +147,14 @@ def plan_content_topics(
     ]
     slim_candidates = [{"id": c.id, "text": c.text} for c in candidates]
     template = Path("prompts/plan-content-topics.md").read_text()
-    prompt = template.replace("{cards}", dumps(slim_cards)).replace(
-        "{matches}", dumps(slim_matches)
-    ).replace("{candidates}", dumps(slim_candidates))
+    prompt = _render_prompt(
+        template,
+        {
+            "cards": dumps(slim_cards),
+            "matches": dumps(slim_matches),
+            "candidates": dumps(slim_candidates),
+        },
+    )
     return cast(PlanTopicsOutput, runner.run(prompt, PlanTopicsOutput))
 
 
@@ -142,9 +167,16 @@ def expand_content_job(
     """一次 flash 调用：把单个主题展开成完整 ContentJob，并强制 confirmed=False。"""
     cards = [cards_by_id[cid] for cid in topic.card_ids if cid in cards_by_id]
     template = Path("prompts/expand-content-job.md").read_text()
-    prompt = template.replace("{topic}", dumps(topic.model_dump(mode="json"))).replace(
-        "{cards}", dumps([c.model_dump(mode="json") for c in cards])
-    ).replace("{candidate}", dumps(candidate.model_dump(mode="json")) if candidate else "null")
+    prompt = _render_prompt(
+        template,
+        {
+            "topic": dumps(topic.model_dump(mode="json")),
+            "cards": dumps([c.model_dump(mode="json") for c in cards]),
+            "candidate": (
+                dumps(candidate.model_dump(mode="json")) if candidate else "null"
+            ),
+        },
+    )
     job = cast(ContentJob, runner.run(prompt, ContentJob))
     if job.author_position is not None:
         job.author_position = job.author_position.model_copy(update={"confirmed": False})

@@ -492,9 +492,14 @@ def make_define_jobs_node(
 
             # 预过滤 topic（避免浪费 expand LLM 调用）：candidate_id 非空但不在 match
             # 中、card_ids 为空、或 card_ids 不是可用范围的子集（reply 取 match 的
-            # card_ids，original 取 all_card_ids）都会跳过。
+            # card_ids，original 取 all_card_ids）都会跳过。按 topic.id 去重，避免重复
+            # 主题展开出重复 job id。
             kept_topics: list[TopicProposal] = []
+            seen_topic_ids: set[str] = set()
             for topic in topics.items:
+                if topic.id in seen_topic_ids:
+                    continue
+                seen_topic_ids.add(topic.id)
                 if topic.candidate_id is not None:
                     match = match_by_candidate.get(topic.candidate_id)
                     if match is None:
@@ -508,30 +513,44 @@ def make_define_jobs_node(
                     continue
                 kept_topics.append(topic)
 
-            def _expand(topic: TopicProposal) -> ContentJob:
+            warnings: list[str] = []
+
+            def _expand(topic: TopicProposal) -> ContentJob | None:
                 candidate = (
                     candidates_by_id[topic.candidate_id]
                     if topic.candidate_id is not None
                     else None
                 )
-                return expand_content_job(expand_runner, topic, cards_by_id, candidate)
+                try:
+                    return expand_content_job(expand_runner, topic, cards_by_id, candidate)
+                except Exception as exc:  # noqa: BLE001
+                    # 故障隔离：单个 topic 展开失败不拖垮整个节点，其余 topic 照常产出。
+                    warnings.append(
+                        f"define_jobs: expand failed for topic {topic.id}: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    return None
 
             # 并行展开：单个 topic 串行；多个 topic 用 ``pool.map`` 保证顺序与串行一致。
             if not kept_topics:
-                jobs: list[ContentJob] = []
+                expanded: list[ContentJob | None] = []
             elif len(kept_topics) == 1:
-                jobs = [_expand(kept_topics[0])]
+                expanded = [_expand(kept_topics[0])]
             else:
                 with ThreadPoolExecutor(
                     max_workers=min(len(kept_topics), expand_concurrency)
                 ) as pool:
-                    jobs = list(pool.map(_expand, kept_topics))
+                    expanded = list(pool.map(_expand, kept_topics))
+
+            jobs = [job for job in expanded if job is not None]
 
             # Filter jobs: validate source_card_ids against the job's OWN card scope —
             # its candidate's match card_ids when candidate_id is set, otherwise the union
             # of all matched card_ids (original). A reply job carrying a card from a
             # different candidate would later be dropped, so reject it here (F5).
+            # 再按 job.id 去重，避免重复 id 在 upsert 时互相覆盖、下游处理重复列表。
             valid_jobs: list[ContentJob] = []
+            seen_job_ids: set[str] = set()
             for job in jobs:
                 if job.candidate_id is not None:
                     match = match_by_candidate.get(job.candidate_id)
@@ -540,15 +559,23 @@ def make_define_jobs_node(
                     available_ids = match.card_ids
                 else:
                     available_ids = all_card_ids
-                if job.validate_source_cards(available_ids):
-                    valid_jobs.append(job)
+                if not job.validate_source_cards(available_ids):
+                    continue
+                if job.id in seen_job_ids:
+                    continue
+                seen_job_ids.add(job.id)
+                valid_jobs.append(job)
 
             if jobs_repo is not None:
                 jobs_repo.upsert_jobs(valid_jobs)
 
+            output = items_payload(cast(list[BaseModel], valid_jobs))
+            if warnings:
+                output["warnings"] = warnings
             return NodeResult(
                 status="succeeded",
-                output=items_payload(cast(list[BaseModel], valid_jobs)),
+                output=output,
+                warnings=warnings,
             )
 
     return DefineJobsNode(
