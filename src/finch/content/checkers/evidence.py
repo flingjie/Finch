@@ -4,6 +4,10 @@
 1. 确定性部分（无需 LLM）：复用 ``validate_draft`` 做结构门禁。
    无证据 / 越界主张（claim 引用不在可用集合内的卡片、非 assertable 置信度、
    或无任何 claim）→ ``severity="hard_fail"``，不可被平均分掩盖。
+
+   置信度发布语义（计划 Task 1.2）：只有 VERIFIED / SUPPORTED / USER_CONFIRMED 是
+   assertable；INFERRED 必须带"这表明/在这次实现中/可能"等边界语言才能重写为可发布
+   主张，UNKNOWN 不得发布。二者在当前门禁下都会被判为 hard_fail。
 2. LLM 蕴含部分（可选，注入 CodexRunner 后执行）：逐条判断 claim 的 statement
    是否真的由其证据卡蕴含；失败 → ``severity="high"``（绑定有效但文字越界）。
 """

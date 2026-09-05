@@ -11,13 +11,30 @@ from finch.evidence.models import (
     MatchResult,
     RankedCandidate,
     Source,
+    sanitize_model_confidence,
 )
 
 
 def test_confidence_assertable_rules():
     assert ClaimConfidence.VERIFIED.assertable
+    assert ClaimConfidence.SUPPORTED.assertable
+    assert ClaimConfidence.USER_CONFIRMED.assertable
     assert ClaimConfidence.INFERRED.assertable is False
     assert ClaimConfidence.UNKNOWN.assertable is False
+
+
+def test_sanitize_model_confidence_downgrades_user_confirmed():
+    assert sanitize_model_confidence(ClaimConfidence.USER_CONFIRMED) is ClaimConfidence.SUPPORTED
+
+
+def test_sanitize_model_confidence_passthrough():
+    for conf in (
+        ClaimConfidence.VERIFIED,
+        ClaimConfidence.SUPPORTED,
+        ClaimConfidence.INFERRED,
+        ClaimConfidence.UNKNOWN,
+    ):
+        assert sanitize_model_confidence(conf) is conf
 
 
 def test_engineering_event_shape_matches_spec_7_1():

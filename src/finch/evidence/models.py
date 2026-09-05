@@ -7,6 +7,16 @@ from pydantic import BaseModel, Field
 
 
 class ClaimConfidence(StrEnum):
+    """证据置信度与对外表达语义（spec 7.4 / 计划 Task 1.2）。
+
+    对外表达规则：
+    - VERIFIED       可作为事实断言，必须有直接来源
+    - SUPPORTED      可作为有范围的事实陈述
+    - USER_CONFIRMED 仅人工确认后产生（模型不得自行产出）
+    - INFERRED       必须使用"这表明/在这次实现中/可能"等边界语言
+    - UNKNOWN        不得作为可发布主张
+    """
+
     VERIFIED = "VERIFIED"
     SUPPORTED = "SUPPORTED"
     INFERRED = "INFERRED"
@@ -20,6 +30,18 @@ class ClaimConfidence(StrEnum):
             ClaimConfidence.SUPPORTED,
             ClaimConfidence.USER_CONFIRMED
         }
+
+
+def sanitize_model_confidence(confidence: ClaimConfidence) -> ClaimConfidence:
+    """强制模型输出不得自行产出 USER_CONFIRMED（计划 Task 1.2 硬性要求）。
+
+    USER_CONFIRMED 仅能由人工确认产生；模型输出在反序列化后经此函数降级为 SUPPORTED
+    （仍可发布，但不再声明人工确认）。其余置信度原样返回（INFERRED/UNKNOWN 由下游
+    ``assertable`` 门禁拦截）。
+    """
+    if confidence is ClaimConfidence.USER_CONFIRMED:
+        return ClaimConfidence.SUPPORTED
+    return confidence
 
 
 class Claim(BaseModel):

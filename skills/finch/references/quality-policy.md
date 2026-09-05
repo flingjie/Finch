@@ -26,6 +26,24 @@
 
 `required` 含 `evidence_card` = 「ID ∈ 匹配集 + 蕴含 + assertable」，不是"有个字符串就算"。
 
+### 置信度语义（`ClaimConfidence`，计划 Task 1.2）
+
+| Confidence | 对外表达规则 |
+|---|---|
+| VERIFIED | 可作为事实断言，必须有直接来源 |
+| SUPPORTED | 可作为有范围的事实陈述 |
+| USER_CONFIRMED | 仅人工确认后产生 |
+| INFERRED | 必须使用"这表明/在这次实现中/可能"等边界语言 |
+| UNKNOWN | 不得作为可发布主张 |
+
+`assertable` = VERIFIED / SUPPORTED / USER_CONFIRMED；INFERRED 须先改写为带边界语言
+的陈述，UNKNOWN 不得作为可发布主张。
+
+禁止 LLM 自行产出 `USER_CONFIRMED`：加载模型输出后由 Python 强制降级
+（`evidence.models.sanitize_model_confidence`，模型产出的 `USER_CONFIRMED` → `SUPPORTED`），
+只有人工确认路径才能写入 `USER_CONFIRMED`。
+
+
 ## 安全（职责分离）
 
 **确定性 hard_fail**（`evidence/safety.py`，命中即停）：

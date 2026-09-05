@@ -12,12 +12,20 @@ from ..github.change_grouper import group_commits
 from ..github.models import CommitDetail
 from ..llm.base import StructuredInferenceRunner
 from ..settings import ExtractionSettings
-from .models import ClaimConfidence, EngineeringEvent, EvidenceCard, Source
+from .models import (
+    Claim,
+    ClaimConfidence,
+    EngineeringEvent,
+    EvidenceCard,
+    Source,
+    sanitize_model_confidence,
+)
 
 _BATCH_PROMPT_PATH = Path("prompts/extract-engineering-events-batch.md")
 
 # 缓存版本：prompt / EngineeringEvent schema / 模型策略任一变化时手动递增，使旧缓存失效。
-_CACHE_VERSION = "v1"
+# v2：新增 USER_CONFIRMED 模型输出降级（计划 Task 1.2），旧缓存可能含未降级的 USER_CONFIRMED。
+_CACHE_VERSION = "v2"
 
 
 class ExtractedGroup(BaseModel):
@@ -43,6 +51,19 @@ def _coerce_decision(event: EngineeringEvent) -> EngineeringEvent:
         decision = event.decision.model_copy(update={"confidence": ClaimConfidence.INFERRED})
         return event.model_copy(update={"decision": decision})
     return event
+
+
+def _sanitize_confidences(event: EngineeringEvent) -> EngineeringEvent:
+    """模型输出不得自行产出 USER_CONFIRMED：逐条降级为 SUPPORTED（计划 Task 1.2）。"""
+    updates: dict[str, Claim] = {}
+    for field in ("problem", "decision", "result"):
+        claim: Claim = getattr(event, field)
+        downgraded = sanitize_model_confidence(claim.confidence)
+        if downgraded is not claim.confidence:
+            updates[field] = claim.model_copy(update={"confidence": downgraded})
+    if not updates:
+        return event
+    return event.model_copy(update=updates)
 
 
 def _render_commits(commits: list[CommitDetail]) -> str:
@@ -195,10 +216,11 @@ def _finalize_event(
     repo: str,
     group: list[CommitDetail],
 ) -> EngineeringEvent:
-    """补齐 repository、归一化 SHA、钳制 decision 置信度。"""
+    """补齐 repository、归一化 SHA、降级模型产出的 USER_CONFIRMED、钳制 decision 置信度。"""
     if event.repository != repo:
         event = event.model_copy(update={"repository": repo})
     event = event.model_copy(update={"commits": _resolve_commit_shas(event.commits, group)})
+    event = _sanitize_confidences(event)
     return _coerce_decision(event)
 
 

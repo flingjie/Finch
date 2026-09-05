@@ -87,6 +87,27 @@ def test_decision_coerced_not_verified():
     assert events[0].problem.confidence is ClaimConfidence.VERIFIED
 
 
+def test_model_user_confirmed_problem_and_result_downgraded():
+    event = _event(["a" * 40]).model_copy(
+        update={
+            "problem": Claim(statement="p", confidence=ClaimConfidence.USER_CONFIRMED),
+            "result": Claim(statement="r", confidence=ClaimConfidence.USER_CONFIRMED),
+        }
+    )
+    runner = FakeRunner(_batch([("g_0", event)]))
+    events = Extractor(runner).extract([_commit("a" * 40)], repo="flingjie/FDE-Gym")
+    assert events[0].problem.confidence is ClaimConfidence.SUPPORTED
+    assert events[0].result.confidence is ClaimConfidence.SUPPORTED
+
+
+def test_model_user_confirmed_decision_coerced_to_inferred():
+    runner = FakeRunner(
+        _batch([("g_0", _event(["a" * 40], decision=ClaimConfidence.USER_CONFIRMED))])
+    )
+    events = Extractor(runner).extract([_commit("a" * 40)], repo="flingjie/FDE-Gym")
+    assert events[0].decision.confidence is ClaimConfidence.INFERRED
+
+
 def test_extract_resolves_short_commit_shas_to_full():
     commits = [_commit("a" * 40), _commit("b" * 40)]
     runner = FakeRunner(_batch([("g_0", _event(["b" * 8]))]))
