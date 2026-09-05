@@ -5,6 +5,7 @@ from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
     ContentJobStatus,
+    ContentScope,
     IntendedEffect,
     SuccessCriterion,
     TopicProposal,
@@ -99,6 +100,32 @@ class TestContentJob:
         assert ContentJobStatus.NEEDS_INPUT.value == "needs_input"
         assert ContentJobStatus.READY.value == "ready"
         assert ContentJobStatus.DO_NOT_WRITE.value == "do_not_write"
+
+    def test_content_scope_enum_values(self):
+        """Test ContentScope exposes the four scope values."""
+        assert ContentScope.GENERAL.value == "general"
+        assert ContentScope.BOUNDED_LESSON.value == "bounded_lesson"
+        assert ContentScope.BUILD_LOG.value == "build_log"
+        assert ContentScope.REPLY.value == "reply"
+
+    def test_content_job_scope_defaults(self):
+        """Test the new additive fields default to their minimal values."""
+        job = ContentJob(
+            id="job_1",
+            source_card_ids=["card_1"],
+            candidate_id=None,
+            reader_problem="Problem",
+            audience="Engineers",
+            intended_effect=IntendedEffect(understand="Solution"),
+            author_position=None,
+            success_criteria=[],
+            recommended_format=DraftKind.REPLY,
+            status=ContentJobStatus.PROPOSED,
+        )
+        assert job.core_message == ""
+        assert job.why_now == ""
+        assert job.scope == ContentScope.BOUNDED_LESSON
+        assert job.audience_evidence is None
 
     def test_basic_content_job(self):
         job = ContentJob(

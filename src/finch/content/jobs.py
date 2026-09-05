@@ -49,6 +49,15 @@ class SuccessCriterion(BaseModel):
     measurement: Literal["critic", "human", "outcome"]
 
 
+class ContentScope(StrEnum):
+    """内容可泛化范围：决定首稿采用的最小表达结构。"""
+
+    GENERAL = "general"
+    BOUNDED_LESSON = "bounded_lesson"
+    BUILD_LOG = "build_log"
+    REPLY = "reply"
+
+
 class ContentJob(BaseModel):
     """
     Content Job: define what the content must accomplish.
@@ -78,6 +87,10 @@ class ContentJob(BaseModel):
     status: ContentJobStatus
     missing_questions: list[str] = Field(default_factory=list, max_length=3)
     reject_reason: str | None = None
+    core_message: str = ""
+    why_now: str = ""
+    scope: ContentScope = ContentScope.BOUNDED_LESSON
+    audience_evidence: str | None = None
 
     def validate_source_cards(self, available_card_ids: list[str]) -> bool:
         """
