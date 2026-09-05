@@ -74,12 +74,10 @@ llm:
   nodes:
     plan_topics:
       model: deepseek-v4-flash
-      timeout_seconds: 120
-      max_output_tokens: 2000
+      timeout_seconds: 300
     expand_job:
       model: deepseek-v4-flash
-      timeout_seconds: 90
-      max_output_tokens: 1200
+      timeout_seconds: 240
       max_concurrency: 4
     critique:
       model: deepseek-v4-pro

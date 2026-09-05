@@ -13,9 +13,9 @@ from .models import ClaimConfidence, EvidenceCard, JudgeScores, RankedCandidate
 
 _PROMPT_PATH = Path("prompts/match-discussion.md")
 
-# match_evidence 是纯结构化 rerank（10 候选 × 已召回卡片），裁剪后应在几十秒内完成；
-# 用更短的超时快速失败，避免套用 codex 的 600s 默认值空等。
-_MATCH_TIMEOUT_SECONDS = 90.0
+# match_evidence 是纯结构化 rerank（10 候选 × 已召回卡片），但提示词可达 ~78KB，
+# 在共享网关上实测约 54s、偶发超过 90s。给足余量避免误伤，同时保留快速失败。
+_MATCH_TIMEOUT_SECONDS = 240.0
 
 
 class BatchJudgeItem(BaseModel):
