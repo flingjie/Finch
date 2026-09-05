@@ -31,6 +31,7 @@ from .evidence.models import EvidenceCard
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.discovery import resolve_repositories
 from .github.gh_client import GhClient
+from .github.ingestion import Ingestor
 from .github.models import CommitDetail
 from .graph.context import parse_items
 from .graph.daily import daily_nodes
@@ -46,6 +47,7 @@ from .review.weekly import render_weekly, weekly_analysis
 from .settings import load_settings
 from .storage.database import Store
 from .storage.repositories import (
+    CommitIngestionRepository,
     ContentJobRepository,
     ConversationEvidenceRepository,
     CriticReportRepository,
@@ -56,6 +58,7 @@ from .storage.repositories import (
     FeedbackRepository,
     FeedbackSnapshotRepository,
     InteractionRepository,
+    RepoCursorRepository,
     ReviewRepository,
 )
 from .twitter.normalizer import normalize_tweets
@@ -329,23 +332,24 @@ def run_daily() -> None:
     reddit_opencli = RedditOpenCliClient()
 
     repos = resolve_repositories(settings, gh)
-    since = (
-        datetime.now(UTC) - timedelta(hours=settings.repository_discovery.lookback_hours)
-    ).isoformat()
 
-    commits_by_repo: dict[str, list[CommitDetail]] = {}
-    known_commit_urls: set[str] = set()
+    ingestion_repo = CommitIngestionRepository(store)
+    cursor_repo = RepoCursorRepository(store)
+    existing_topics = {
+        topic for card in EvidenceRepository(store).list_cards() for topic in card.topics
+    }
+    groups_by_repo = Ingestor(gh, settings, ingestion_repo, cursor_repo).ingest(
+        repos, existing_topics=existing_topics
+    )
+
     repo_is_private: dict[str, bool] = {}
+    known_commit_urls: set[str] = set()
     for repo in repos:
-        info = gh.repo_view(repo)
-        repo_is_private[repo] = info.is_private
-        details = load_commit_details(
-            repo, gh, local_dirs=settings.paths.local_repos_dirs, since=since
-        )
-        details = CommitReader(gh, repo).filter_noise(details)
-        commits_by_repo[repo] = details
-        for detail in details:
-            known_commit_urls.add(f"https://github.com/{repo}/commit/{detail.sha}")
+        repo_is_private[repo] = gh.repo_view(repo).is_private
+    for repo, groups in groups_by_repo.items():
+        for group in groups:
+            for commit in group:
+                known_commit_urls.add(f"https://github.com/{repo}/commit/{commit.sha}")
 
     nodes = daily_nodes(
         settings=settings,
@@ -358,7 +362,7 @@ def run_daily() -> None:
             cache_path=settings.paths.cache_dir / "extraction_cache.json",
         ),
         runner=CodexRunner(),
-        commits_by_repo=commits_by_repo,
+        groups_by_repo=groups_by_repo,
         known_commit_urls=known_commit_urls,
         repo_is_private=repo_is_private,
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
@@ -401,7 +405,7 @@ def run_resume(run_id: str) -> None:
     opencli = OpenCliClient()
 
     # 只需重建节点依赖；已成功节点由 replay 复用，不会重新同步/收集/匹配。
-    commits_by_repo: dict[str, list[CommitDetail]] = {
+    groups_by_repo: dict[str, list[list[CommitDetail]]] = {
         repo: [] for repo in settings.repositories
     }
     known_commit_urls: set[str] = set()
@@ -418,7 +422,7 @@ def run_resume(run_id: str) -> None:
             cache_path=settings.paths.cache_dir / "extraction_cache.json",
         ),
         runner=CodexRunner(),
-        commits_by_repo=commits_by_repo,
+        groups_by_repo=groups_by_repo,
         known_commit_urls=known_commit_urls,
         repo_is_private=repo_is_private,
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),

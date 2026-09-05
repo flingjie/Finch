@@ -10,7 +10,7 @@ from finch.storage.repositories import ContentJobRepository
 from finch.twitter.opencli_client import OpenCliClient
 
 
-def test_daily_nodes_has_eleven_nodes(tmp_path):
+def test_daily_nodes_has_ten_nodes(tmp_path):
     store = Store(tmp_path / "db.sqlite")
     store.init()
     nodes = daily_nodes(
@@ -20,13 +20,12 @@ def test_daily_nodes_has_eleven_nodes(tmp_path):
         opencli=OpenCliClient(),
         extractor=Extractor(CodexRunner()),
         runner=CodexRunner(),
-        commits_by_repo={"flingjie/FDE-Gym": []},
+        groups_by_repo={"flingjie/FDE-Gym": []},
         known_commit_urls=set(),
         repo_is_private={"flingjie/FDE-Gym": False},
     )
     assert [n.name for n in nodes] == [
         "preflight",
-        "sync_commits",
         "extract_events",
         "collect_tweets",
         "recall",
@@ -37,11 +36,11 @@ def test_daily_nodes_has_eleven_nodes(tmp_path):
         "critique",
         "brief",
     ]
-    assert nodes[6].reads == ["match_results", "evidence_cards", "candidates"]
-    assert nodes[7].reads == ["content_jobs", "evidence_cards"]
-    assert nodes[8].reads == ["ready_jobs", "evidence_cards", "candidates"]
-    assert nodes[10].writes == "brief"
-    assert nodes[10].terminal_state_key == "terminal_state"
+    assert nodes[5].reads == ["match_results", "evidence_cards", "candidates"]
+    assert nodes[6].reads == ["content_jobs", "evidence_cards"]
+    assert nodes[7].reads == ["ready_jobs", "evidence_cards", "candidates"]
+    assert nodes[9].writes == "brief"
+    assert nodes[9].terminal_state_key == "terminal_state"
 
 
 def test_daily_nodes_order_and_contract(tmp_path):
@@ -54,26 +53,26 @@ def test_daily_nodes_order_and_contract(tmp_path):
         opencli=OpenCliClient(),
         extractor=Extractor(CodexRunner()),
         runner=CodexRunner(),
-        commits_by_repo={"flingjie/FDE-Gym": []},
+        groups_by_repo={"flingjie/FDE-Gym": []},
         known_commit_urls=set(),
         repo_is_private={"flingjie/FDE-Gym": False},
     )
     assert [n.name for n in nodes] == [
-        "preflight", "sync_commits", "extract_events",
+        "preflight", "extract_events",
         "collect_tweets", "recall", "match_evidence",
         "define_jobs", "position_gate", "draft", "critique", "brief",
     ]
-    assert nodes[4].reads == ["candidates", "evidence_cards"]
-    assert nodes[5].writes == "match_results"
-    assert nodes[5].reads == ["ranked_candidates", "evidence_cards", "candidates"]
-    assert nodes[6].writes == "content_jobs"
-    assert nodes[7].writes == "ready_jobs"
-    assert nodes[9].reads == [
+    assert nodes[3].reads == ["candidates", "evidence_cards"]
+    assert nodes[4].writes == "match_results"
+    assert nodes[4].reads == ["ranked_candidates", "evidence_cards", "candidates"]
+    assert nodes[5].writes == "content_jobs"
+    assert nodes[6].writes == "ready_jobs"
+    assert nodes[8].reads == [
         "drafts", "match_results", "evidence_cards", "content_jobs", "ready_jobs",
     ]
 
 
-def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
+def test_daily_runtime_full_pipeline_and_hydration(tmp_path):
     from finch.content.checkers.actionability import _ActionabilityOutput
     from finch.content.checkers.decision import _DecisionOutput
     from finch.content.checkers.evidence import _EntailmentOutput
@@ -94,15 +93,6 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
     from finch.graph.runtime import GraphRuntime
     from finch.settings import TwitterSettings
     from finch.twitter.models import Tweet
-
-    class FakeReader:
-        def __init__(self, gh, repo):
-            self.repo = repo
-
-        def sync(self, since=None):
-            return []
-
-    monkeypatch.setattr("finch.graph.daily.CommitReader", FakeReader)
 
     class FakeGh:
         def version(self):
@@ -129,7 +119,7 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
             ]
 
     class DummyExtractor:
-        def extract(self, commits, repo):
+        def extract_grouped(self, groups, repo):
             return [
                 EngineeringEvent(
                     id="evt",
@@ -246,7 +236,7 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
             opencli=FakeOpen(),
             extractor=DummyExtractor(),
             runner=runner,
-            commits_by_repo={"flingjie/FDE-Gym": []},
+            groups_by_repo={"flingjie/FDE-Gym": []},
             known_commit_urls={"https://github.com/flingjie/FDE-Gym/commit/abc123"},
             repo_is_private={"flingjie/FDE-Gym": False},
         )
@@ -279,21 +269,12 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
     assert runner.calls == calls_after_second
 
 
-def test_daily_no_evidence_completes_without_llm(tmp_path, monkeypatch):
+def test_daily_no_evidence_completes_without_llm(tmp_path):
     """Phase 0 回归：无证据卡时整条原创图到达 COMPLETED，不进入人工审核，也不调 LLM。"""
     import json
 
     from finch.graph.runtime import GraphRuntime
     from finch.settings import TwitterSettings
-
-    class FakeReader:
-        def __init__(self, gh, repo):
-            self.repo = repo
-
-        def sync(self, since=None):
-            return []
-
-    monkeypatch.setattr("finch.graph.daily.CommitReader", FakeReader)
 
     class FakeGh:
         def version(self):
@@ -313,7 +294,7 @@ def test_daily_no_evidence_completes_without_llm(tmp_path, monkeypatch):
             return []
 
     class EmptyExtractor:
-        def extract(self, commits, repo):
+        def extract_grouped(self, groups, repo):
             return []
 
     class CountingRunner(CodexRunner):
@@ -342,7 +323,7 @@ def test_daily_no_evidence_completes_without_llm(tmp_path, monkeypatch):
         opencli=FakeOpen(),
         extractor=EmptyExtractor(),
         runner=runner,
-        commits_by_repo={"flingjie/FDE-Gym": []},
+        groups_by_repo={"flingjie/FDE-Gym": []},
         known_commit_urls=set(),
         repo_is_private={"flingjie/FDE-Gym": False},
     )

@@ -2,7 +2,6 @@ from finch.graph.pipeline import (
     make_collect_node,
     make_extract_node,
     make_preflight_node,
-    make_sync_node,
 )
 from finch.graph.runtime import GraphRuntime
 from finch.storage.database import Store
@@ -45,11 +44,11 @@ def test_preflight_passes(tmp_path):
 
 def test_extract_writes_cards_envelope(tmp_path, monkeypatch):
     from finch.evidence.models import Claim, ClaimConfidence, EngineeringEvent
-    from finch.storage.repositories import EvidenceRepository
+    from finch.storage.repositories import CommitIngestionRepository, EvidenceRepository
     store = _store(tmp_path)
 
     class DummyExtractor:
-        def extract(self, commits, repo):
+        def extract_grouped(self, groups, repo):
             return [EngineeringEvent(
                 id="evt", repository=repo, commits=["abc123"],
                 problem=Claim(
@@ -60,13 +59,15 @@ def test_extract_writes_cards_envelope(tmp_path, monkeypatch):
                 result=Claim(statement="tests pass", confidence=ClaimConfidence.VERIFIED),
             )]
 
-    # 工厂签名必须允许注入 extractor / commits_by_repo / known urls / repo_is_private，见 Step 3
+    # 工厂签名必须允许注入 extractor / groups_by_repo / known urls / repo_is_private / ledger
     node = make_extract_node(
         extractor=DummyExtractor(),
-        commits_by_repo={"flingjie/FDE-Gym": []},  # 空 commits：DummyExtractor 仍返回 1 event
+        groups_by_repo={"flingjie/FDE-Gym": []},  # 空 groups：DummyExtractor 仍返回 1 event
         repo_is_private={"flingjie/FDE-Gym": False},
         known_commit_urls={"https://github.com/flingjie/FDE-Gym/commit/abc123"},
         cards_repo=EvidenceRepository(store),
+        ingestion_repo=CommitIngestionRepository(store),
+        max_extract_retries=3,
     )
     run = GraphRuntime(store, [node]).run()
     assert run.state == "EVENTS_EXTRACTED"
@@ -75,15 +76,10 @@ def test_extract_writes_cards_envelope(tmp_path, monkeypatch):
     assert EvidenceRepository(store).get_card("ev_evt_problem") is not None
 
 
-def test_sync_and_collect_states(tmp_path):
+def test_collect_state(tmp_path):
     from datetime import UTC, datetime
 
     from finch.twitter.models import DiscussionCandidate
-
-    flags = {"synced": False}
-
-    def sync_fn() -> None:
-        flags["synced"] = True
 
     def collect_fn() -> list:
         return [DiscussionCandidate(
@@ -93,10 +89,8 @@ def test_sync_and_collect_states(tmp_path):
 
     store = _store(tmp_path)
     run = GraphRuntime(store, [
-        make_sync_node(sync_fn),
         make_collect_node(collect_fn),
     ]).run()
-    assert flags["synced"] is True
     assert run.state == "TWEETS_COLLECTED"
     rec = store.find_node(run.id, "collect_tweets", "default")
     assert rec is not None

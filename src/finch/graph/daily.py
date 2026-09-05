@@ -4,13 +4,16 @@ from ..codex.runner import CodexRunner
 from ..content.voice import VoiceProfile
 from ..content.writer import rewrite, write_original, write_reply
 from ..evidence.extractor import Extractor
-from ..github.commit_reader import CommitReader
 from ..github.gh_client import GhClient
 from ..github.models import CommitDetail
 from ..llm.base import StructuredInferenceRunner
 from ..settings import Settings
 from ..storage.database import Store
-from ..storage.repositories import ContentJobRepository, EvidenceRepository
+from ..storage.repositories import (
+    CommitIngestionRepository,
+    ContentJobRepository,
+    EvidenceRepository,
+)
 from ..twitter.models import DiscussionCandidate, to_candidate
 from ..twitter.normalizer import normalize_tweets
 from ..twitter.opencli_client import OpenCliClient
@@ -29,7 +32,6 @@ from .pipeline import (
     make_collect_node,
     make_extract_node,
     make_preflight_node,
-    make_sync_node,
 )
 
 
@@ -41,22 +43,15 @@ def daily_nodes(
     opencli: OpenCliClient,
     extractor: Extractor,
     runner: CodexRunner,
-    commits_by_repo: dict[str, list[CommitDetail]],
+    groups_by_repo: dict[str, list[list[CommitDetail]]],
     known_commit_urls: set[str],
     repo_is_private: dict[str, bool],
     voice_profile: VoiceProfile | None = None,
     inference_runners: dict[str, StructuredInferenceRunner | None] | None = None,
 ) -> list[Node]:
-    """组装每日 Graph：preflight → sync → extract → collect → recall → match → draft →
-    critique → brief。
-
-    提取节点对 commits_by_repo 中的所有仓库依次提取事件并合并 Evidence Cards。
+    """组装每日 Graph：preflight → extract → collect → recall → match → draft →
+    critique → brief。提取节点对 groups_by_repo 中的预分组 group 提取事件并合并 Evidence Cards。
     """
-
-    def sync_fn() -> None:
-        for repo in commits_by_repo:
-            CommitReader(gh, repo).sync()
-
     def collect_fn() -> list[DiscussionCandidate]:
         builder = QueryBuilder(
             settings.twitter.queries, per_query_limit=settings.twitter.per_query_limit
@@ -83,13 +78,14 @@ def daily_nodes(
 
     return [
         make_preflight_node(gh, opencli),
-        make_sync_node(sync_fn),
         make_extract_node(
             extractor=extractor,
-            commits_by_repo=commits_by_repo,
+            groups_by_repo=groups_by_repo,
             repo_is_private=repo_is_private,
             known_commit_urls=known_commit_urls,
             cards_repo=EvidenceRepository(store),
+            ingestion_repo=CommitIngestionRepository(store),
+            max_extract_retries=settings.daily_budget.max_extract_retries,
         ),
         make_collect_node(collect_fn),
         make_recall_node(settings.quality_gates),

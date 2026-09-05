@@ -10,7 +10,7 @@ from ..evidence.models import EvidenceCard
 from ..evidence.safety import scan_cards
 from ..github.gh_client import GhClient
 from ..github.models import CommitDetail
-from ..storage.repositories import EvidenceRepository
+from ..storage.repositories import CommitIngestionRepository, EvidenceRepository
 from ..twitter.models import DiscussionCandidate, TwitterSourceUnavailable
 from ..twitter.opencli_client import OpenCliClient
 from .context import items_payload
@@ -31,42 +31,48 @@ def make_preflight_node(gh: GhClient, opencli: OpenCliClient) -> Node:
     return PreflightNode(name="preflight", writes="", succeeds_to="PREFLIGHT_PASSED")
 
 
-def make_sync_node(sync_fn: Callable[[], None]) -> Node:
-    class SyncNode(Node):
-        def run(self, ctx: dict) -> NodeResult:
-            sync_fn()
-            return NodeResult(status="succeeded")
-
-    return SyncNode(name="sync_commits", writes="", succeeds_to="COMMITS_SYNCED")
-
-
 def make_extract_node(
     *,
     extractor: Extractor,
-    commits_by_repo: dict[str, list[CommitDetail]],
+    groups_by_repo: dict[str, list[list[CommitDetail]]],
     repo_is_private: dict[str, bool],
     known_commit_urls: set[str],
     cards_repo: EvidenceRepository,
+    ingestion_repo: CommitIngestionRepository,
+    max_extract_retries: int,
 ) -> Node:
     class ExtractNode(Node):
         def run(self, ctx: dict) -> NodeResult:
             cards: list[EvidenceCard] = []
-            for repo, commits in commits_by_repo.items():
-                events = extractor.extract(commits, repo)
+            all_shas: dict[str, list[str]] = {}
+            for repo, groups in groups_by_repo.items():
+                shas = [c.sha for g in groups for c in g]
+                all_shas[repo] = shas
+                try:
+                    events = extractor.extract_grouped(groups, repo)
+                except Exception:  # noqa: BLE001
+                    for r, s in all_shas.items():
+                        ingestion_repo.mark_failed(r, s, max_extract_retries)
+                    raise
                 repo_cards = build_cards(events)
                 if repo_is_private.get(repo, False):
                     repo_cards = [c.model_copy(update={"publishable": False}) for c in repo_cards]
                 cards.extend(repo_cards)
+
             report = scan_cards(
                 cards,
                 repo_is_private=repo_is_private,
                 known_commit_urls=known_commit_urls,
             )
             if report.hard_fail:
+                for r, s in all_shas.items():
+                    ingestion_repo.mark_failed(r, s, max_extract_retries)
                 return NodeResult(
                     status="failed", error_code=report.hits[0].code, retryable=False
                 )
             cards_repo.upsert_cards(cards)
+            for r, s in all_shas.items():
+                ingestion_repo.mark_extracted(r, s)
             return NodeResult(
                 status="succeeded", output=items_payload(cast(list[BaseModel], cards))
             )

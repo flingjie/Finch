@@ -1,6 +1,6 @@
 """Unit tests for finch run/jobs CLI commands."""
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from typer.testing import CliRunner
 
@@ -39,7 +39,7 @@ def test_run_daily_help():
     assert r.exit_code == 0
 
 
-def test_run_daily_loads_recent_commits_only(monkeypatch, tmp_path):
+def test_run_daily_uses_ingestor(monkeypatch, tmp_path):
     settings = Settings(
         repositories=["flingjie/FDE-Gym"],
         paths=Paths(db_path=tmp_path / "finch.db"),
@@ -49,9 +49,13 @@ def test_run_daily_loads_recent_commits_only(monkeypatch, tmp_path):
 
     captured = {}
 
-    def fake_load_commit_details(repo, gh, *, local_dirs, since=None, workers=6):
-        captured["since"] = since
-        return []
+    class FakeIngestor:
+        def __init__(self, gh, settings, ingestion, cursor):
+            captured["constructed"] = True
+
+        def ingest(self, repos, existing_topics=None):
+            captured["repos"] = repos
+            return {}
 
     class FakeGh:
         def repo_view(self, repo):
@@ -65,17 +69,13 @@ def test_run_daily_loads_recent_commits_only(monkeypatch, tmp_path):
             )
 
     monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
-    monkeypatch.setattr(cli, "load_commit_details", fake_load_commit_details)
+    monkeypatch.setattr(cli, "Ingestor", FakeIngestor)
     monkeypatch.setattr(cli, "daily_nodes", lambda **kwargs: [])
     monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
 
     r = CliRunner().invoke(app, ["run", "daily"])
     assert r.exit_code == 0, r.output
-    assert captured["since"] is not None
-    assert captured["since"].endswith("+00:00")
-    since = datetime.fromisoformat(captured["since"])
-    age = datetime.now(UTC) - since
-    assert timedelta(hours=23, minutes=55) <= age <= timedelta(hours=24, minutes=5)
+    assert captured["repos"] == ["flingjie/FDE-Gym"]
 
 
 def test_run_daily_enabled_echoes_engagement_summary(monkeypatch, tmp_path):
@@ -88,6 +88,13 @@ def test_run_daily_enabled_echoes_engagement_summary(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
+    class FakeIngestor:
+        def __init__(self, gh, settings, ingestion, cursor):
+            pass
+
+        def ingest(self, repos, existing_topics=None):
+            return {}
+
     class FakeGh:
         def repo_view(self, repo):
             from finch.github.models import RepoInfo
@@ -100,9 +107,7 @@ def test_run_daily_enabled_echoes_engagement_summary(monkeypatch, tmp_path):
             )
 
     monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
-    monkeypatch.setattr(
-        cli, "load_commit_details", lambda repo, gh, *, local_dirs, since=None, workers=6: []
-    )
+    monkeypatch.setattr(cli, "Ingestor", FakeIngestor)
     monkeypatch.setattr(cli, "daily_nodes", lambda **kwargs: [])
     monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
 
@@ -110,12 +115,8 @@ def test_run_daily_enabled_echoes_engagement_summary(monkeypatch, tmp_path):
         settings, opencli, runner, *, reddit_opencli=None, run_id, skip_ids=None
     ):
         return EngagementRunResult(
-            run_id=run_id,
-            posts_found=0,
-            candidates=[],
-            failures=[],
-            status="empty",
-            summary="engagement: no posts found",
+            run_id=run_id, posts_found=0, candidates=[], failures=[],
+            status="empty", summary="engagement: no posts found",
         )
 
     monkeypatch.setattr(cli, "run_discovery_engagement_flow", fake_engagement_flow)

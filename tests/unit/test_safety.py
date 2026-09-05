@@ -59,10 +59,10 @@ def test_private_repo_content_fails_closed_at_extract(tmp_path):
     from finch.graph.pipeline import make_extract_node
     from finch.graph.runtime import GraphRuntime
     from finch.storage.database import Store
-    from finch.storage.repositories import EvidenceRepository
+    from finch.storage.repositories import CommitIngestionRepository, EvidenceRepository
 
     class DummyExtractor:
-        def extract(self, commits, repo):
+        def extract_grouped(self, groups, repo):
             return [
                 EngineeringEvent(
                     id="evt",
@@ -85,10 +85,12 @@ def test_private_repo_content_fails_closed_at_extract(tmp_path):
     store.init()
     node = make_extract_node(
         extractor=DummyExtractor(),
-        commits_by_repo={"flingjie/private-repo": []},
+        groups_by_repo={"flingjie/private-repo": []},
         repo_is_private={"flingjie/private-repo": True},
         known_commit_urls={"https://github.com/flingjie/private-repo/commit/abc123"},
         cards_repo=EvidenceRepository(store),
+        ingestion_repo=CommitIngestionRepository(store),
+        max_extract_retries=3,
     )
     run = GraphRuntime(store, [node]).run()
 
