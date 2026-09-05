@@ -1490,7 +1490,6 @@ def daily_nodes(
             _resolve("expand_job"),
             expand_concurrency=settings.llm.for_node("expand_job").max_concurrency,
             jobs_repo=jobs_repo,
-            budget=settings.daily_budget,
         ),
         make_position_gate_node(jobs_repo=jobs_repo),
         make_draft_node(runner, write_reply, write_original, settings.quality_gates),
@@ -1629,10 +1628,11 @@ git commit -m "feat(graph): wire extract node to pre-grouped ingestion and mark 
 
 **Files:**
 - Modify: `src/finch/graph/content_nodes.py`
+- Modify: `src/finch/graph/daily.py`
 - Test: `tests/unit/test_nodes.py`
 
 **Interfaces:**
-- Produces: `make_define_jobs_node(plan_runner, expand_runner, expand_concurrency=4, jobs_repo=None, budget: DailyBudget | None = None) -> Node`. When `budget` is provided, `plan_content_topics` receives the trimmed card set; `cards_by_id` still maps the full set.
+- Produces: `make_define_jobs_node(plan_runner, expand_runner, expand_concurrency=4, jobs_repo=None, budget: DailyBudget | None = None) -> Node`. When `budget` is provided, `plan_content_topics` receives the trimmed card set; `cards_by_id` still maps the full set. `daily_nodes` passes `budget=settings.daily_budget`.
 - Consumes: `select_planning_evidence` (Task 4), `DailyBudget` (Task 1).
 
 - [ ] **Step 1: Write the failing test**
@@ -1735,6 +1735,20 @@ from ..content.jobs import (
     select_planning_evidence,
     select_primary_job,
 )
+```
+
+- [ ] **Step 3b: Wire `budget` into `daily_nodes`**
+
+In `src/finch/graph/daily.py`, pass `budget=settings.daily_budget` to `make_define_jobs_node` (the call currently reads `jobs_repo=jobs_repo,`):
+
+```python
+        make_define_jobs_node(
+            _resolve("plan_topics"),
+            _resolve("expand_job"),
+            expand_concurrency=settings.llm.for_node("expand_job").max_concurrency,
+            jobs_repo=jobs_repo,
+            budget=settings.daily_budget,
+        ),
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -1876,7 +1890,7 @@ git commit -m "refactor(github): remove shared cursor sync path (replaced by ing
 - `rank_pending(items, existing_topics, settings, now)` — `items` is `list[tuple[CommitSummary, datetime]]`; `Ingestor` builds it via `CommitSummary.model_validate_json(r.payload_json)`.
 - `make_extract_node(... groups_by_repo, ingestion_repo, max_extract_retries)` matches `daily_nodes` and `pipeline.py`; `run_daily`/`run_resume` pass `groups_by_repo`.
 - `CommitIngestionRepository.mark_failed(repo, shas, max_retries)` matches the `make_extract_node` call.
-- `make_define_jobs_node(..., budget=...)` matches Task 8 and the `daily_nodes` call in Task 7.
+- `make_define_jobs_node(..., budget=...)` matches Task 8 (signature change + `daily_nodes` wiring in the same task, so no transient break).
 
 ---
 
