@@ -113,6 +113,28 @@ class GhClient:
         assert isinstance(data, list)
         return [parse_commit_summary(item) for item in data]
 
+    def list_commits_newest_first(
+        self, repo: str, *, per_page: int = 100, max_commits: int = 200
+    ) -> list[CommitSummary]:
+        """从 main 分支 HEAD 起、按新到旧分页拉取，最多 ``max_commits`` 条（有界）。"""
+        out: list[CommitSummary] = []
+        page = 1
+        while len(out) < max_commits:
+            url = f"repos/{repo}/commits?sha=main&per_page={per_page}&page={page}"
+            data = self._gh_json(
+                ["gh", "api", "-H", "Accept: application/vnd.github+json", url],
+                timeout=60.0,
+            )
+            assert isinstance(data, list)
+            if not data:
+                break
+            for item in data:
+                out.append(parse_commit_summary(item))
+            if len(data) < per_page:
+                break
+            page += 1
+        return out[:max_commits]
+
     def commit_detail(self, repo: str, sha: str) -> CommitDetail:
         data = self._gh_json(
             [
