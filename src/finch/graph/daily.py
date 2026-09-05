@@ -95,6 +95,7 @@ def daily_nodes(
             _resolve("expand_job"),
             expand_concurrency=settings.llm.for_node("expand_job").max_concurrency,
             jobs_repo=jobs_repo,
+            budget=settings.daily_budget,
         ),
         make_position_gate_node(jobs_repo=jobs_repo),
         make_draft_node(runner, write_reply, write_original, settings.quality_gates),

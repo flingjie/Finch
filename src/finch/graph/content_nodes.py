@@ -29,13 +29,14 @@ from ..content.jobs import (
     TopicProposal,
     expand_content_job,
     plan_content_topics,
+    select_planning_evidence,
     select_primary_job,
 )
 from ..content.models import DailyBrief, Draft, DraftKind, DraftWarning
 from ..content.voice import VoiceProfile
 from ..evidence.models import EvidenceCard, MatchResult
 from ..llm.base import StructuredInferenceRunner
-from ..settings import QualityGates
+from ..settings import DailyBudget, QualityGates
 from ..storage.repositories import ContentJobRepository
 from ..twitter.models import DiscussionCandidate
 from .context import items_payload, parse_items
@@ -738,6 +739,7 @@ def make_define_jobs_node(
     expand_runner: StructuredInferenceRunner,
     expand_concurrency: int = 4,
     jobs_repo: ContentJobRepository | None = None,
+    budget: DailyBudget | None = None,
 ) -> Node:
     """定义内容任务节点：match_results/evidence_cards/candidates → content_jobs。
 
@@ -765,7 +767,13 @@ def make_define_jobs_node(
             match_by_candidate = {mr.candidate_id: mr for mr in match_results}
             all_card_ids = list({cid for mr in match_results for cid in mr.card_ids})
 
-            topics = plan_content_topics(plan_runner, cards, match_results, candidates)
+            planning_cards = (
+                select_planning_evidence(cards, match_results, budget)
+                if budget is not None
+                else cards
+            )
+
+            topics = plan_content_topics(plan_runner, planning_cards, match_results, candidates)
 
             # 预过滤 topic（避免浪费 expand LLM 调用）：candidate_id 非空但不在 match
             # 中、card_ids 为空、或 card_ids 不是可用范围的子集（reply 取 match 的
