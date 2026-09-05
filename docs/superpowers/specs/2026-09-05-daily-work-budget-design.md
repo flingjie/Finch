@@ -137,7 +137,7 @@ score(group) = priority(group) + age_bonus(group)
 - `core_source`：改核心源码而非 doc/test/dep 的文件占比（filename 启发式）；
 - `churn`：Σ(additions+deletions) 与文件数（对数尺度归一）；
 - `keyword`：message 是否含 fix / refactor / performance / architecture / feat；
-- `cross_module`：distinct 顶层目录数 / 文件数；
+- `cross_module`：distinct 顶层目录数 / 3（封顶 1.0，即 ≥3 个顶层目录记满分）；
 - `novelty`：1 − max(Jaccard(group 关键词/路径 token, 既有 EvidenceCard.topics))；无历史记 1.0。
 
 `age_bonus = w_age · min(age_days / age_bonus_max_days, 1.0)`，`age = now − discovered_at`。
