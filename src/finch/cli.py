@@ -238,14 +238,6 @@ def diagnose() -> None:
     typer.echo(f"  doctor: {opencli_doctor}")
 
 
-@github_app.command("sync")
-def github_sync(repo: str = typer.Option("flingjie/FDE-Gym"), since: str | None = None) -> None:
-    """增量读取仓库 Commit 并推进游标。"""
-    reader = CommitReader(GhClient(), repo=repo)
-    commits = reader.sync(since=_since_iso(since))
-    typer.echo(f"synced {len(commits)} commits for {repo}")
-
-
 @github_app.command("reflect")
 def github_reflect(repo: str = typer.Option("flingjie/FDE-Gym"),
                    since: str = typer.Option("7d")) -> None:

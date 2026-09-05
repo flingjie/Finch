@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from finch.github import commit_reader as cr
-from finch.github.commit_reader import CommitReader, is_noise
+from finch.github.commit_reader import is_noise
 from finch.github.models import CommitDetail, CommitFile, CommitSummary
 
 
@@ -62,23 +62,6 @@ def test_not_noise_real_change():
         message="feat: node-ize orchestrator",
     )
     assert is_noise(d) is False
-
-
-def test_sync_uses_cursor_and_advances(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    calls = {}
-
-    class FakeGh:
-        def list_commits(self, repo, since, per_page=100):
-            calls["since"] = since
-            return []
-
-    r = CommitReader(FakeGh(), repo="flingjie/FDE-Gym")
-    # 首次无游标 → 用显式 since
-    r.sync(since="2026-09-01T00:00:00Z")
-    assert calls["since"] == "2026-09-01T00:00:00Z"
-    # 游标已推进，存在 cursor 文件
-    assert Path("var/cache/github_sync_state.json").exists()
 
 
 def test_load_commit_details_prefers_local(monkeypatch):

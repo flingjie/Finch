@@ -1,20 +1,14 @@
-"""增量读取 Commit 并过滤噪声（spec 12.1「Commit 游标推进」）。"""
+"""Commit 噪声过滤与详情加载（spec 12.1「Commit 游标推进」已由 ingestion ledger 取代）。"""
 
-import json
-from datetime import UTC, datetime
 from pathlib import Path
 
 from .gh_client import GhClient
 from .local_repo import LocalRepoClient, find_local_clone
-from .models import CommitDetail, CommitSummary
+from .models import CommitDetail
 
 _LOCKFILE_MARKERS = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
                      "Cargo.lock", "Gemfile.lock", "go.sum", "uv.lock")
 _FORMAT_MARKERS = ("format", "formatting", "prettier", "lint", "style", "black", "ruff")
-
-
-def _cursor_path() -> Path:
-    return Path("var/cache/github_sync_state.json")
 
 
 def is_noise(commit: CommitDetail) -> bool:
@@ -37,27 +31,8 @@ class CommitReader:
         self.gh = gh
         self.repo = repo
 
-    def sync(self, since: str | None = None) -> list[CommitSummary]:
-        if since is None:
-            since = self._load_cursor()
-        commits = self.gh.list_commits(self.repo, since=since)
-        self._save_cursor()
-        return commits
-
     def filter_noise(self, commits: list[CommitDetail]) -> list[CommitDetail]:
         return [c for c in commits if not is_noise(c)]
-
-    def _load_cursor(self) -> str:
-        path = _cursor_path()
-        if path.exists():
-            data = json.loads(path.read_text())
-            return data.get("last_synced_at") or "1970-01-01T00:00:00Z"
-        return "1970-01-01T00:00:00Z"
-
-    def _save_cursor(self) -> None:
-        path = _cursor_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"last_synced_at": datetime.now(UTC).isoformat()}))
 
 
 def load_commit_details(
