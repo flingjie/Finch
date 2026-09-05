@@ -162,3 +162,18 @@ def test_terminal_state_key_replay(tmp_path):
     assert r1.state == "WAITING_FOR_REVIEW"
     r2 = GraphRuntime(store, [node]).run(run_id=r1.id)
     assert r2.state == "WAITING_FOR_REVIEW"  # 从持久化 output 重放，非回落 succeeds_to
+
+
+def test_runtime_injects_run_id_into_context(tmp_path):
+    seen: list[str | None] = []
+
+    class RunIdProbe(Node):
+        def run(self, ctx: dict) -> NodeResult:
+            seen.append(ctx.get("run_id"))
+            return NodeResult(status="succeeded", output={})
+
+    run = GraphRuntime(
+        _store(tmp_path), [RunIdProbe(name="p", idempotency_key="k")]
+    ).run(run_id="run-abc")
+    assert run.id == "run-abc"
+    assert seen == ["run-abc"]

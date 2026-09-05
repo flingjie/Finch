@@ -3,6 +3,7 @@
 import json
 import time
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from ..storage.database import NodeRecord, RunRecord, Store
@@ -38,12 +39,14 @@ class GraphRuntime:
                     final_state = resolved
                 continue
             try:
-                projected = ctx.project(node.reads)
+                projected: dict[str, Any] = ctx.project(node.reads)
             except MissingContextError:
                 result = NodeResult(status="failed", error_code="MISSING_CONTEXT", retryable=False)
                 self._persist_node(run_id, node, result)
                 final_state = GraphState.FAILED
                 break
+            # 注入真实 run id：节点可通过 ctx["run_id"] 持久化到自身输出（如 DailyBrief）。
+            projected["run_id"] = run_id
             start = time.perf_counter()
             result = self._safe_run(node, projected)
             duration_ms = int((time.perf_counter() - start) * 1000)
