@@ -274,6 +274,48 @@ def test_do_not_write_rate(tmp_path):
     assert report.do_not_write_rate == 1 / 3
 
 
+def test_rewrite_rounds(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    drafts, reviews, feedbacks, jobs, critic = _repos(store)
+    drafts.upsert_draft(_draft("d1", content_job_id="job1"))
+    drafts.upsert_draft(_draft("d2", content_job_id="job2"))
+    drafts.upsert_draft(_draft("d3", content_job_id="job3"))
+    # 遗留草稿不参与新指标，即使有 rewrite 报告。
+    drafts.upsert_draft(_draft("legacy", content_job_id=None))
+    critic.upsert_report(
+        "d1", 0, [CheckResult(checker="specificity", passed=False, severity="high")],
+        "rewrite",
+    )
+    critic.upsert_report(
+        "d1", 1, [CheckResult(checker="specificity", passed=True, severity="low")], "pass"
+    )
+    critic.upsert_report(
+        "d2", 0, [CheckResult(checker="evidence", passed=True, severity="low")], "pass"
+    )
+    critic.upsert_report(
+        "d3", 0, [CheckResult(checker="portability", passed=False, severity="high")],
+        "rewrite",
+    )
+    critic.upsert_report(
+        "d3", 1, [CheckResult(checker="portability", passed=False, severity="high")],
+        "rewrite",
+    )
+    critic.upsert_report(
+        "d3", 2, [CheckResult(checker="evidence", passed=False, severity="hard_fail")],
+        "reject",
+    )
+    critic.upsert_report(
+        "legacy", 0, [CheckResult(checker="specificity", passed=False, severity="high")],
+        "rewrite",
+    )
+
+    report = weekly_analysis(drafts, reviews, feedbacks, jobs, critic)
+    assert report.rewrite_rounds == {"d1": 1, "d2": 0, "d3": 2}
+    assert report.rewritten_drafts == 2
+
+
+
 def test_legacy_drafts_excluded_from_new_metrics(tmp_path):
     store = Store(tmp_path / "db.sqlite")
     store.init()

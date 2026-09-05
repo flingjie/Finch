@@ -51,6 +51,10 @@ class WeeklyReport(BaseModel):
     useful_reply_rate: float | None = None
     do_not_write_rate: float = 0.0  # 信息性，无「继续/停止」判定
 
+    # ---- Task 0.2：首稿 Critic rewrite 轮数（信息性，不设门禁）----
+    rewrite_rounds: dict[str, int] = Field(default_factory=dict)  # draft_id → rewrite 轮数
+    rewritten_drafts: int = 0  # 有 >0 次 rewrite 的 eligible 草稿数
+
 
 # ---- 「继续/调整/停止」建议阈值 ----
 # 高者为优的指标；其余（generic_sentence_rate、human_correction_rate）低者为优。
@@ -128,6 +132,7 @@ def weekly_analysis(
     eligible_ids = {d.id for d in all_drafts if d.content_job_id is not None}
     jobs_by_id = {job.id: job for job in jobs.list_jobs()}
     all_reports = critic_reports.list_all_reports(since=since)
+    rewrite_rounds = _rewrite_rounds(all_reports, eligible_ids)
 
     return WeeklyReport(
         reviewed_drafts=reviewed,
@@ -149,6 +154,8 @@ def weekly_analysis(
         job_completion_rate=_job_completion_rate(outcome_by_draft, eligible_ids),
         useful_reply_rate=_useful_reply_rate(all_drafts, outcome_by_draft, eligible_ids),
         do_not_write_rate=_do_not_write_rate(list(jobs_by_id.values())),
+        rewrite_rounds=rewrite_rounds,
+        rewritten_drafts=sum(1 for n in rewrite_rounds.values() if n > 0),
     )
 
 
@@ -314,6 +321,25 @@ def _do_not_write_rate(jobs: list[ContentJob]) -> float:
     return sum(1 for j in jobs if j.status == ContentJobStatus.DO_NOT_WRITE) / len(jobs)
 
 
+def _rewrite_rounds(
+    all_reports: dict[str, list[dict]], eligible_ids: set[str]
+) -> dict[str, int]:
+    """每条 eligible 草稿的 Critic rewrite 轮数：outcome == "rewrite" 的报告数。
+
+    语义（记录以便后续读回）：critique 节点每轮跑一次检查器并持久化一份报告；
+    outcome=="rewrite" 表示该轮判定需要重写并触发一次重写，pass/reject/needs_input
+    为终态不重写。唯一例外是用尽 rewrite 预算仍失败的草稿：critique 节点在
+    ``max_rewrite_rounds`` 处停住，最后一轮报告仍是 "rewrite"，因此计数会达到
+    ``max_rewrite_rounds + 1`` —— 意为「每一轮（含最后一轮）都被判需要重写」，
+    而非多算一次重写。只统计非遗留草稿，与其余 Task 8 指标一致。
+    """
+    return {
+        draft_id: sum(1 for report in reports if report.get("outcome") == "rewrite")
+        for draft_id, reports in all_reports.items()
+        if draft_id in eligible_ids
+    }
+
+
 def _classify(metric: str, value: float) -> str:
     """把指标值映射为「继续/调整/停止」；do_not_write_rate 恒为信息性。"""
     if metric == "do_not_write_rate":
@@ -339,6 +365,9 @@ def render_weekly(report: WeeklyReport) -> str:
     if report.published_draft_ids:
         lines.append(f"- 已发布草稿: {len(report.published_draft_ids)}")
         lines.append(f"- 已发布候选: {', '.join(report.published_candidate_ids)}")
+    if report.rewrite_rounds:
+        lines.append(f"- 需要 Critic rewrite 的草稿: {report.rewritten_drafts}")
+        lines.append(f"- 各草稿 Critic rewrite 轮数: {report.rewrite_rounds}")
     lines.append("")
     lines.append("## 建议 (继续/调整/停止)")
     for metric, label in _METRIC_LABELS.items():
