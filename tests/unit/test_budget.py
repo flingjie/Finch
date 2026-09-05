@@ -86,3 +86,29 @@ def test_select_groups_prefers_source_over_docs():
     src = [_detail("s" * 40, _files("src/a.py"), message="fix: y")]
     selected = select_groups([docs, src], set(), DailyBudget(max_change_groups=1), {}, NOW)
     assert selected == [src]
+
+
+def test_select_groups_respects_prompt_bytes():
+    big = [
+        _detail(
+            "a" * 40,
+            [
+                CommitFile(
+                    filename="src/big.py", status="modified",
+                    additions=1000, deletions=1000, patch="+" + "x" * 5000,
+                )
+            ],
+        )
+    ]
+    small = [_detail("b" * 40, _files("src/small.py"))]
+    budget = DailyBudget(max_change_groups=1, max_estimated_prompt_bytes=200)
+    selected = select_groups([big, small], set(), budget, {}, NOW)
+    assert selected == [small]
+
+
+def test_select_groups_preserves_original_order_on_ties():
+    g1 = [_detail("a" * 40, _files("src/a.py"))]
+    g2 = [_detail("b" * 40, _files("src/b.py"))]
+    budget = DailyBudget(max_change_groups=1)
+    assert select_groups([g1, g2], set(), budget, {}, NOW) == [g1]
+    assert select_groups([g2, g1], set(), budget, {}, NOW) == [g2]
