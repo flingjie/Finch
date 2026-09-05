@@ -16,6 +16,7 @@ from ..twitter.normalizer import normalize_tweets
 from ..twitter.opencli_client import OpenCliClient
 from ..twitter.query_builder import QueryBuilder
 from .content_nodes import (
+    default_checker_suite,
     make_brief_node,
     make_critique_node,
     make_define_jobs_node,
@@ -44,7 +45,7 @@ def daily_nodes(
     known_commit_urls: set[str],
     repo_is_private: dict[str, bool],
     voice_profile: VoiceProfile | None = None,
-    inference_runner: StructuredInferenceRunner | None = None,
+    inference_runners: dict[str, StructuredInferenceRunner | None] | None = None,
 ) -> list[Node]:
     """组装每日 Graph：preflight → sync → extract → collect → recall → match → draft →
     critique → brief。
@@ -74,7 +75,11 @@ def daily_nodes(
         return candidates
 
     jobs_repo = ContentJobRepository(store)
-    inference = inference_runner if inference_runner is not None else runner
+
+    def _resolve(node_name: str) -> StructuredInferenceRunner:
+        if inference_runners is None:
+            return runner
+        return inference_runners.get(node_name) or runner
 
     return [
         make_preflight_node(gh, opencli),
@@ -88,10 +93,19 @@ def daily_nodes(
         ),
         make_collect_node(collect_fn),
         make_recall_node(settings.quality_gates),
-        make_match_node(inference, settings.quality_gates, settings.twitter),
-        make_define_jobs_node(inference, jobs_repo=jobs_repo),
+        make_match_node(_resolve("match_evidence"), settings.quality_gates, settings.twitter),
+        make_define_jobs_node(
+            _resolve("plan_topics"),
+            _resolve("expand_job"),
+            expand_concurrency=settings.llm.for_node("expand_job").max_concurrency,
+            jobs_repo=jobs_repo,
+        ),
         make_position_gate_node(jobs_repo=jobs_repo),
         make_draft_node(runner, write_reply, write_original, settings.quality_gates),
-        make_critique_node(runner, rewrite, settings.quality_gates, voice_profile=voice_profile),
+        make_critique_node(
+            runner, rewrite, settings.quality_gates,
+            checkers=default_checker_suite(_resolve("critique"), voice_profile),
+            voice_profile=voice_profile,
+        ),
         make_brief_node(settings.quality_gates, jobs_repo=jobs_repo),
     ]
