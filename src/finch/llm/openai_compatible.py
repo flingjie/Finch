@@ -88,6 +88,10 @@ class OpenAICompatibleRunner:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:200]
             raise RuntimeError(f"LLM request failed ({exc.code}): {detail}") from exc
+        except TimeoutError as exc:
+            # urlopen 只把 request() 的 OSError 包成 URLError；getresponse()/read()
+            # 超时会直接抛 TimeoutError（CPython http.client），必须单独接住。
+            raise RuntimeError(f"LLM request timed out after {timeout:g}s") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"LLM request failed: {exc.reason}") from exc
 

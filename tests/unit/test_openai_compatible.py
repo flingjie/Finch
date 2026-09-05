@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from pydantic import BaseModel
 
 from finch.llm.openai_compatible import OpenAICompatibleRunner
@@ -116,3 +117,33 @@ def test_runner_no_max_tokens_when_unset(monkeypatch):
     _runner().run("p", _Out)
 
     assert "max_tokens" not in json.loads(captured["request"].data)
+
+
+def test_runner_wraps_timeout_error(monkeypatch):
+    """urlopen/getresponse 的 TimeoutError 不走 URLError，必须转成 RuntimeError。"""
+
+    def fake_urlopen(request, timeout):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    with pytest.raises(RuntimeError, match="timed out after 12"):
+        _runner().run("p", _Out, timeout=12.0)
+
+
+def test_runner_wraps_timeout_during_body_read(monkeypatch):
+    class _TimeoutBody:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            raise TimeoutError("timed out")
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda request, timeout: _TimeoutBody(),
+    )
+    with pytest.raises(RuntimeError, match="timed out after 30"):
+        _runner().run("p", _Out, timeout=30.0)

@@ -235,6 +235,40 @@ def test_extract_caches_and_reuses(tmp_path):
     assert runner2.calls == 0
 
 
+def test_extract_caches_partial_when_recovery_times_out(tmp_path):
+    """首批部分成功、补偿超时后，已成功 group 必须落盘，下次只补缺失组。"""
+    cache_path = tmp_path / "cache.json"
+    commits = [
+        _commit("a" * 40, msg="feat: add cache", fname="src/cache.py",
+                date="2026-09-01T00:00:00Z"),
+        _commit("b" * 40, msg="fix: login", fname="src/auth.py",
+                date="2026-09-03T00:00:00Z"),
+    ]
+    first = _batch([("g_0", _event(["a" * 40]))])  # 缺失 g_1
+
+    class TimeoutOnRecovery:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, prompt, output_model, **kw):
+            self.calls += 1
+            if self.calls == 1:
+                return first
+            raise TimeoutError("timed out")
+
+    with pytest.raises(TimeoutError):
+        Extractor(TimeoutOnRecovery(), cache_path=cache_path).extract(
+            commits, repo="flingjie/FDE-Gym"
+        )
+
+    runner2 = FakeRunner(_batch([("g_0", _event(["b" * 40]))]))
+    events = Extractor(runner2, cache_path=cache_path).extract(
+        commits, repo="flingjie/FDE-Gym"
+    )
+    assert runner2.calls == 1
+    assert [e.commits for e in events] == [["a" * 40], ["b" * 40]]
+
+
 def test_extract_does_not_reuse_cache_for_different_group(tmp_path):
     cache_path = tmp_path / "cache.json"
     runner1 = FakeRunner(_batch([("g_0", _event(["a" * 40]))]))

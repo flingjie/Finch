@@ -15,6 +15,7 @@ def test_load_settings_defaults():
     assert s.repository_discovery.max_repos == 10
     assert s.twitter.daily_limit == 100
     assert s.paths.var_dir == Path("var")
+    assert s.extraction.timeout_seconds == 180
 
 
 def test_load_settings_creates_var_dirs(tmp_path, monkeypatch):

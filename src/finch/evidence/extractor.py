@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
@@ -149,6 +150,7 @@ class ExtractionCache:
     def __init__(self, path: Path):
         self.path = path
         self._data = self._load()
+        self._lock = threading.Lock()
 
     def _load(self) -> dict[str, str]:
         if self.path.exists():
@@ -161,7 +163,8 @@ class ExtractionCache:
         return {}
 
     def get(self, fingerprint: str) -> EngineeringEvent | None:
-        raw = self._data.get(fingerprint)
+        with self._lock:
+            raw = self._data.get(fingerprint)
         if raw is None:
             return None
         try:
@@ -170,9 +173,23 @@ class ExtractionCache:
             return None
 
     def put(self, fingerprint: str, event: EngineeringEvent) -> None:
-        self._data[fingerprint] = event.model_dump_json()
+        with self._lock:
+            self._data[fingerprint] = event.model_dump_json()
 
     def save(self) -> None:
+        with self._lock:
+            self._flush_unlocked()
+
+    def persist_many(self, items: list[tuple[str, EngineeringEvent]]) -> None:
+        """原子写入多条并落盘；补偿/并发批失败时保留已成功 group。"""
+        if not items:
+            return
+        with self._lock:
+            for fingerprint, event in items:
+                self._data[fingerprint] = event.model_dump_json()
+            self._flush_unlocked()
+
+    def _flush_unlocked(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(self._data, ensure_ascii=False, indent=2))
 
@@ -334,6 +351,21 @@ class Extractor:
             )
         return [event for batch in batch_events for event in batch]
 
+    def _persist_cached(
+        self,
+        repo: str,
+        groups: list[list[CommitDetail]],
+        events_by_idx: dict[int, EngineeringEvent],
+    ) -> None:
+        if self.cache is None or not events_by_idx:
+            return
+        self.cache.persist_many(
+            [
+                (group_fingerprint(repo, groups[i], _CACHE_VERSION), event)
+                for i, event in events_by_idx.items()
+            ]
+        )
+
     def _extract_group_batch(
         self,
         groups: list[list[CommitDetail]],
@@ -341,13 +373,18 @@ class Extractor:
         template: str,
     ) -> list[EngineeringEvent]:
         valid, missing = self._extract_valid(groups, repo, template)
+        # 补偿超时/失败不得丢掉已成功组：先落盘，下次 daily 只补 miss。
+        self._persist_cached(repo, groups, valid)
         if missing:
             # 局部补偿：只重跑缺失/无效组，最多一次，不重跑已成功组。
             recovery = [groups[i] for i in missing]
             rvalid, _ = self._extract_valid(recovery, repo, template)
+            recovered: dict[int, EngineeringEvent] = {}
             for local_i, orig_i in enumerate(missing):
                 if local_i in rvalid:
                     valid[orig_i] = rvalid[local_i]
+                    recovered[orig_i] = rvalid[local_i]
+            self._persist_cached(repo, groups, recovered)
             still_missing = [i for i in missing if i not in valid]
             if still_missing:
                 raise IncompleteBatchExtractionError(

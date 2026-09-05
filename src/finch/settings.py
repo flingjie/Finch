@@ -61,7 +61,7 @@ class ExtractionSettings(BaseModel):
     max_prompt_bytes: int = 50000
     max_groups_per_batch: int = 12
     max_concurrent_batches: int = 2
-    timeout_seconds: int = 120
+    timeout_seconds: int = 180
 
 
 class QualityGates(BaseModel):
