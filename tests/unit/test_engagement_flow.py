@@ -7,6 +7,7 @@ from finch.engagement.flow import run_discovery_engagement_flow
 from finch.engagement.models import InteractionAction, InteractionCandidate
 from finch.engagement.proposals import ProposalBatchOutput, ProposalItem
 from finch.engagement.scoring import ConversationScoreInput, ScoreBatchOutput, ScoreItem
+from finch.reddit.models import RedditPost
 from finch.settings import EngagementSettings, InterestsSettings, Settings
 from finch.twitter.models import Tweet
 
@@ -19,6 +20,16 @@ class FakeOpenCli:
     def search(self, query, *, product="top", limit=20):
         self.calls += 1
         return list(self._tweets)
+
+
+class FakeRedditOpenCli:
+    def __init__(self, posts: list[RedditPost] | None = None):
+        self._posts = posts or []
+        self.calls = 0
+
+    def search(self, query, *, sort="relevance", limit=20):
+        self.calls += 1
+        return list(self._posts)
 
 
 class FakeRunner(CodexRunner):
@@ -53,6 +64,20 @@ def _tweet(
         likes=10,
         views=100,
         url=f"https://x.com/{author}/status/{id}",
+    )
+
+
+def _reddit_post(id: str = "r1") -> RedditPost:
+    return RedditPost(
+        id=id,
+        title="How do you test agent reliability?",
+        subreddit="LocalLLaMA",
+        author="bob",
+        score=10,
+        comments=3,
+        url=f"https://www.reddit.com/r/LocalLLaMA/comments/{id}/t/",
+        created_utc=1756627200,
+        selftext="A concrete failure replay.",
     )
 
 
@@ -124,22 +149,46 @@ def test_found_posts_return_ranked_candidates_with_total_and_reasons():
     assert "p1" in result.summary
 
 
-def test_failing_provider_still_yields_other_provider_posts_and_records_failures():
-    # reddit 适配器未启用（available()=False），x 正常返回；flow 应保留 x 的候选并记录 reddit 失败。
+def test_reddit_posts_flow_through_with_x():
+    opencli = FakeOpenCli(tweets=[_tweet(id="p1")])
+    reddit = FakeRedditOpenCli(posts=[_reddit_post(id="r1")])
+    runner = FakeRunner(
+        items=[
+            ScoreItem(post_id="p1", scores=_dims()),
+            ScoreItem(post_id="r1", scores=_dims()),
+        ],
+        proposal_items=[_proposal("p1"), _proposal("r1")],
+    )
+    result = run_discovery_engagement_flow(
+        _settings(platforms=["x", "reddit"]), opencli, runner,
+        reddit_opencli=reddit, run_id="run-1",
+    )
+
+    assert result.status == "succeeded"
+    assert sorted(c.post.id for c in result.candidates) == ["p1", "r1"]
+    assert result.failures == []
+
+
+def test_reddit_failure_keeps_x_posts_and_records_failure():
+    class FailingReddit:
+        def search(self, query, *, sort="relevance", limit=20):
+            raise RuntimeError("boom")
+
     opencli = FakeOpenCli(tweets=[_tweet(id="p1")])
     runner = FakeRunner(
         items=[ScoreItem(post_id="p1", scores=_dims())],
         proposal_items=[_proposal("p1")],
     )
     result = run_discovery_engagement_flow(
-        _settings(platforms=["x", "reddit"]), opencli, runner, run_id="run-1"
+        _settings(platforms=["x", "reddit"]), opencli, runner,
+        reddit_opencli=FailingReddit(), run_id="run-1",
     )
 
     assert result.status == "succeeded"
     assert [c.post.id for c in result.candidates] == ["p1"]
     assert len(result.failures) == 1
     assert result.failures[0].platform == "reddit"
-    assert result.failures[0].reason == "provider not enabled"
+    assert "boom" in result.failures[0].reason
 
 
 def test_top_level_error_returns_failed_not_raise():

@@ -10,6 +10,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from ..codex.runner import CodexRunner
+from ..reddit.opencli_client import RedditOpenCliClient
 from ..settings import Settings
 from ..twitter.opencli_client import OpenCliClient
 from .models import ExternalPost, InteractionCandidate
@@ -43,14 +44,18 @@ class EngagementRunResult(BaseModel):
     summary: str
 
 
-def _build_providers(platforms: list[str], opencli: OpenCliClient) -> list[PostSearchProvider]:
+def _build_providers(
+    platforms: list[str],
+    opencli: OpenCliClient,
+    reddit_opencli: RedditOpenCliClient | None = None,
+) -> list[PostSearchProvider]:
     """由 ``settings.engagement.platforms`` 构造搜索适配器；未知平台忽略。"""
     providers: list[PostSearchProvider] = []
     for platform in platforms:
         if platform == "x":
             providers.append(XPostSearchProvider(opencli))
         elif platform == "reddit":
-            providers.append(RedditPostSearchProvider())
+            providers.append(RedditPostSearchProvider(reddit_opencli))
     return providers
 
 
@@ -111,6 +116,7 @@ def run_discovery_engagement_flow(
     opencli: OpenCliClient,
     runner: CodexRunner,
     *,
+    reddit_opencli: RedditOpenCliClient | None = None,
     run_id: str,
     skip_ids: set[str] | None = None,
 ) -> EngagementRunResult:
@@ -120,7 +126,7 @@ def run_discovery_engagement_flow(
     不向外抛出。空输入不会调用 LLM（``score_posts`` 已短路，这里亦不传空列表）。
     """
     engagement = settings.engagement
-    providers = _build_providers(engagement.platforms, opencli)
+    providers = _build_providers(engagement.platforms, opencli, reddit_opencli)
     try:
         outcome = search_engagement_posts(
             providers, settings.interests, engagement, skip_ids=skip_ids

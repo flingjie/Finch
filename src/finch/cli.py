@@ -38,6 +38,7 @@ from .graph.dual_track import DualTrackResult, run_dual_track
 from .graph.replay import replay
 from .graph.runtime import GraphRuntime
 from .llm.openai_compatible import create_runner
+from .reddit.opencli_client import RedditOpenCliClient
 from .review.feedback import FeedbackService
 from .review.models import OutcomeAssessment, ReviewAction, SkipReason
 from .review.service import ReviewService, build_review_package, render_review_package
@@ -325,6 +326,7 @@ def run_daily() -> None:
     store.init()
     gh = GhClient()
     opencli = OpenCliClient()
+    reddit_opencli = RedditOpenCliClient()
 
     repos = resolve_repositories(settings, gh)
     since = (
@@ -373,7 +375,8 @@ def run_daily() -> None:
         result = run_dual_track(
             original_track=lambda rid: GraphRuntime(store, nodes).run(run_id=rid),
             engagement_track=lambda rid: run_discovery_engagement_flow(
-                settings, opencli, CodexRunner(), run_id=rid
+                settings, opencli, CodexRunner(),
+                run_id=rid, reddit_opencli=reddit_opencli,
             ),
         )
         latency_ms = int((time.monotonic() - start) * 1000)
