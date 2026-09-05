@@ -15,3 +15,6 @@ var/
 
 # Secrets
 .env
+
+# Local config (copy finch.example.yaml to finch.yaml)
+finch.yaml

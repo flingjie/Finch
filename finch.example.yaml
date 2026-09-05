@@ -1,3 +1,12 @@
+# Finch example configuration.
+#
+# Copy this file to `finch.yaml` and adjust it for your setup. `finch.yaml` is
+# git-ignored so local credentials and repository lists are not committed.
+
+# List explicit repositories as `owner/name`. Leave empty to use repository_discovery.
+# repositories:
+#   - your-org/your-repo
+#   - your-org/another-repo
 repositories: []
 
 repository_discovery:
@@ -63,24 +72,24 @@ interests:
     - dynamic graph
     - production agent failures
   excluded:
-    - AI 新闻搬运
-    - 融资与估值
-    - 无实践依据的模型排名
+    - AI news
+    - funding and valuation
+    - evidence-free model rankings
 
+# api_key is read from LLM_API_KEY in .env; do not commit secrets here.
 llm:
-  base_url: https://model-gateway.shuwenda.icu/v1
-  model: deepseek-v4-flash
-  # api_key 从环境变量 LLM_API_KEY 读取（见 .env），不落盘到本文件
+  base_url: https://your-llm-gateway.example.com/v1
+  model: your-model-name
   nodes:
     plan_topics:
-      model: deepseek-v4-flash
+      model: your-model-name
       timeout_seconds: 300
     expand_job:
-      model: deepseek-v4-flash
+      model: your-model-name
       timeout_seconds: 240
       max_concurrency: 4
     critique:
-      model: deepseek-v4-pro
+      model: your-model-name
       timeout_seconds: 300
       max_output_tokens: 4096
 

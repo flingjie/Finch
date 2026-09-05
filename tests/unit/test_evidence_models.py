@@ -48,6 +48,17 @@ def test_engineering_event_shape_matches_spec_7_1():
     assert e.decision.confidence is ClaimConfidence.INFERRED
 
 
+def test_engineering_event_normalizes_topics():
+    e = EngineeringEvent(
+        id="evt_1", repository="flingjie/FDE-Gym", commits=["abc123"],
+        problem=Claim(statement="false positive", confidence=ClaimConfidence.VERIFIED),
+        decision=Claim(statement="add checks", confidence=ClaimConfidence.INFERRED),
+        result=Claim(statement="4 tests pass", confidence=ClaimConfidence.VERIFIED),
+        topics=[" Agent Harness ", "durable execution", "agent harness", "EVALS"],
+    )
+    assert e.topics == ["agent harness", "durable execution", "evals"]
+
+
 def test_evidence_card_sources():
     c = EvidenceCard(
         id="ev_1", event_id="evt_1", claim="final answer != correct execution",

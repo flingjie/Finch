@@ -8,7 +8,7 @@ from finch.settings import LLMNodeSettings, LLMSettings, QualityGates, load_sett
 
 
 def test_load_settings_defaults():
-    s = load_settings(Path("finch.yaml"))
+    s = load_settings(Path("finch.example.yaml"))
     assert s.repositories == []
     assert s.repository_discovery.enabled is True
     assert s.repository_discovery.lookback_hours == 24
@@ -27,7 +27,7 @@ def test_load_settings_creates_var_dirs(tmp_path, monkeypatch):
 
 
 def test_quality_gates_defaults_from_yaml():
-    s = load_settings(Path("finch.yaml"))
+    s = load_settings(Path("finch.example.yaml"))
     g = s.quality_gates
     assert isinstance(g, QualityGates)
     assert g.max_daily_replies == 5

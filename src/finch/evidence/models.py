@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ClaimConfidence(StrEnum):
@@ -63,6 +63,23 @@ class EngineeringEvent(BaseModel):
     decision: Claim
     result: Claim
     missing_context: list[str] = Field(default_factory=list)
+    topics: list[str] = Field(default_factory=list)
+
+    @field_validator("topics")
+    @classmethod
+    def _normalize_topics(cls, value: list[str]) -> list[str]:
+        """Normalize model-emitted topics to a small stable lowercase vocabulary."""
+        seen: set[str] = set()
+        out: list[str] = []
+        for raw in value:
+            topic = " ".join(raw.strip().lower().split())
+            if not topic or topic in seen:
+                continue
+            seen.add(topic)
+            out.append(topic)
+            if len(out) >= 5:
+                break
+        return out
 
 
 class EvidenceCard(BaseModel):

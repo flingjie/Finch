@@ -25,8 +25,8 @@ from .models import (
 _BATCH_PROMPT_PATH = Path("prompts/extract-engineering-events-batch.md")
 
 # 缓存版本：prompt / EngineeringEvent schema / 模型策略任一变化时手动递增，使旧缓存失效。
-# v2：新增 USER_CONFIRMED 模型输出降级（计划 Task 1.2），旧缓存可能含未降级的 USER_CONFIRMED。
-_CACHE_VERSION = "v2"
+# v3：EngineeringEvent 新增 topics 字段，旧缓存缺少该字段需要重新提取。
+_CACHE_VERSION = "v3"
 
 
 class ExtractedGroup(BaseModel):
@@ -419,7 +419,7 @@ def build_cards(events: list[EngineeringEvent]) -> list[EvidenceCard]:
                 sources=[Source(type="commit", url=base + c) for c in ev.commits],
                 confidence=claim.confidence,
                 publishable=True,
-                topics=[],
+                topics=ev.topics,
             ))
         cards.append(EvidenceCard(
             id=f"ev_{ev.id}_decision",
@@ -428,6 +428,6 @@ def build_cards(events: list[EngineeringEvent]) -> list[EvidenceCard]:
             sources=[Source(type="commit", url=base + c) for c in ev.commits],
             confidence=ev.decision.confidence,
             publishable=True,
-            topics=[],
+            topics=ev.topics,
         ))
     return cards

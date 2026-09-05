@@ -80,6 +80,21 @@ def test_build_cards_binds_sources_and_confidence():
     assert all(c.sources for c in cards)
 
 
+def test_build_cards_propagates_event_topics():
+    events = [
+        EngineeringEvent(
+            id="evt_1", repository="flingjie/FDE-Gym", commits=["a" * 40],
+            problem=Claim(statement="p", confidence=ClaimConfidence.VERIFIED),
+            decision=Claim(statement="d", confidence=ClaimConfidence.INFERRED),
+            result=Claim(statement="r", confidence=ClaimConfidence.VERIFIED),
+            topics=["Agent Harness", "durable execution", "agent harness"],
+        )
+    ]
+    cards = build_cards(events)
+    assert len(cards) == 3
+    assert all(c.topics == ["agent harness", "durable execution"] for c in cards)
+
+
 def test_decision_coerced_not_verified():
     runner = FakeRunner(_batch([("g_0", _event(["a" * 40], decision=ClaimConfidence.VERIFIED))]))
     events = Extractor(runner).extract([_commit("a" * 40)], repo="flingjie/FDE-Gym")
