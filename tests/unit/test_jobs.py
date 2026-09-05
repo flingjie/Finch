@@ -642,3 +642,13 @@ def test_select_planning_evidence_prefers_matched_and_publishable():
 
 def test_select_planning_evidence_empty():
     assert select_planning_evidence([], [], DailyBudget()) == []
+
+
+def test_select_planning_evidence_respects_card_cap():
+    cards = []
+    for e in range(3):
+        for label in ("problem", "decision", "result"):
+            cards.append(_card(f"ev_{e}_{label}", f"evt_{e}"))
+    budget = DailyBudget(max_planning_events=3, max_evidence_cards_for_planning=5)
+    out = select_planning_evidence(cards, [], budget)
+    assert len(out) == 5
