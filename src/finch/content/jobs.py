@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from finch.content.models import DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard, MatchResult
 from finch.llm.base import StructuredInferenceRunner
+from finch.settings import DailyBudget
 from finch.twitter.models import DiscussionCandidate
 
 
@@ -213,6 +214,44 @@ def select_primary_job(
         if i != primary_index
     ]
     return primary, deferred
+
+
+def select_planning_evidence(
+    cards: list[EvidenceCard],
+    match_results: list[MatchResult],
+    settings: DailyBudget,
+) -> list[EvidenceCard]:
+    """在 plan_topics 前裁剪证据卡：按 event 聚合、确定性排序、选 Top N event。
+
+    完整证据卡仍入库，本函数只限制本次内容规划的输入（裁剪集 ⊆ 完整集）。
+    """
+    if not cards:
+        return []
+
+    cards_by_event: dict[str, list[EvidenceCard]] = {}
+    for card in cards:
+        cards_by_event.setdefault(card.event_id, []).append(card)
+
+    matched_card_ids = {cid for mr in match_results for cid in mr.card_ids}
+    _CONF_ORDER = {
+        "VERIFIED": 4, "SUPPORTED": 3, "USER_CONFIRMED": 2, "INFERRED": 1, "UNKNOWN": 0,
+    }
+
+    def event_key(group: list[EvidenceCard]) -> tuple[int, int, int]:
+        publishable = 1 if all(c.publishable for c in group) else 0
+        matched = 1 if any(c.id in matched_card_ids for c in group) else 0
+        best_conf = max(_CONF_ORDER[c.confidence.value] for c in group)
+        return (publishable, matched, best_conf)
+
+    ranked = sorted(cards_by_event.items(), key=lambda kv: event_key(kv[1]), reverse=True)
+
+    selected: list[EvidenceCard] = []
+    for _event_id, group in ranked[: settings.max_planning_events]:
+        for card in group[:3]:  # 每 event 保留 ≤3 卡
+            if len(selected) >= settings.max_evidence_cards_for_planning:
+                return selected
+            selected.append(card)
+    return selected
 
 
 class TopicProposal(BaseModel):

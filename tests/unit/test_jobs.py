@@ -13,10 +13,17 @@ from finch.content.jobs import (
     _render_prompt,
     expand_content_job,
     plan_content_topics,
+    select_planning_evidence,
     select_primary_job,
 )
 from finch.content.models import DraftKind
-from finch.evidence.models import ClaimConfidence, EvidenceCard
+from finch.evidence.models import (
+    ClaimConfidence,
+    EvidenceCard,
+    JudgeScores,
+    MatchResult,
+)
+from finch.settings import DailyBudget
 from finch.storage.database import Store
 from finch.storage.repositories import ContentJobRepository
 
@@ -600,3 +607,38 @@ def test_expand_content_job_forces_confirmed_false():
     job = expand_content_job(_JobRunner(), topic, {"ev1": card}, None)
     assert job.author_position is not None
     assert job.author_position.confirmed is False
+
+
+def _card(cid, event_id, confidence=ClaimConfidence.VERIFIED, publishable=True):
+    return EvidenceCard(
+        id=cid, event_id=event_id, claim=f"claim {cid}", sources=[],
+        confidence=confidence, publishable=publishable, topics=["agent"],
+    )
+
+
+def test_select_planning_evidence_caps_events_and_cards():
+    cards = []
+    for e in range(20):
+        for label in ("problem", "decision", "result"):
+            cards.append(_card(f"ev_{e}_{label}", f"evt_{e}"))
+    budget = DailyBudget(max_planning_events=3, max_evidence_cards_for_planning=36)
+    out = select_planning_evidence(cards, [], budget)
+    # 每 event 3 卡，3 events → 9 卡
+    assert len(out) == 9
+    assert {c.event_id for c in out} == {"evt_0", "evt_1", "evt_2"}
+
+
+def test_select_planning_evidence_prefers_matched_and_publishable():
+    matched = _card("ev_a_problem", "evt_a")
+    unmatched = _card("ev_b_problem", "evt_b")
+    mr = MatchResult(candidate_id="c1", card_ids=["ev_a_problem"],
+                     scores=JudgeScores(relevance=0.9, evidence_strength=0.9,
+                                        incremental_value=0.9, discussability=0.9),
+                     timing=0.3, relationship_value=0.5, score=0.9)
+    budget = DailyBudget(max_planning_events=1, max_evidence_cards_for_planning=10)
+    out = select_planning_evidence([unmatched, matched], [mr], budget)
+    assert out[0].event_id == "evt_a"
+
+
+def test_select_planning_evidence_empty():
+    assert select_planning_evidence([], [], DailyBudget()) == []
