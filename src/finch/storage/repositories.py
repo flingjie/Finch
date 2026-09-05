@@ -20,6 +20,7 @@ from finch.engagement.models import (
     InteractionStatus,
 )
 from finch.evidence.models import EvidenceCard
+from finch.github.models import CommitDetail, CommitSummary
 from finch.review.models import Feedback, ReviewAction, ReviewDecision
 from finch.storage.database import Store
 
@@ -82,6 +83,155 @@ class EvidenceRepository:
             stmt = select(EvidenceCardRecord)
             records = list(session.exec(stmt))
             return [EvidenceCard.model_validate_json(r.payload_json) for r in records]
+
+
+class CommitIngestionRecord(SQLModel, table=True):
+    """commit 摄取 ledger（阶段 A）：per-SHA 增量状态。"""
+
+    repository: str = Field(primary_key=True)
+    sha: str = Field(primary_key=True)
+    status: str
+    group_id: str | None = None
+    discovered_at: datetime
+    authored_at: datetime
+    retry_count: int = 0
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class RepoCursorRecord(SQLModel, table=True):
+    """每仓库 SHA 游标（非权威优化：HEAD 等于 last_synced_sha 时跳过 list_commits）。"""
+
+    repository: str = Field(primary_key=True)
+    last_synced_sha: str | None = None
+    last_synced_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CommitIngestionRepository:
+    """commit 摄取 ledger 仓储：pending → grouped → extracted / skipped / failed。"""
+
+    PENDING = "pending"
+    GROUPED = "grouped"
+    EXTRACTED = "extracted"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def known_shas(self, repository: str) -> set[str]:
+        with Session(self.store.engine) as session:
+            stmt = select(CommitIngestionRecord.sha).where(
+                CommitIngestionRecord.repository == repository
+            )
+            return set(session.exec(stmt))
+
+    def upsert_pending(self, repository: str, summaries: list[CommitSummary]) -> None:
+        if not summaries:
+            return
+        now = datetime.now(UTC)
+        with Session(self.store.engine) as session:
+            for s in summaries:
+                session.merge(
+                    CommitIngestionRecord(
+                        repository=repository,
+                        sha=s.sha,
+                        status=self.PENDING,
+                        discovered_at=now,
+                        authored_at=s.author_date,
+                        retry_count=0,
+                        payload_json=s.model_dump_json(),
+                        updated_at=now,
+                    )
+                )
+            session.commit()
+
+    def store_detail(self, repository: str, detail: CommitDetail) -> None:
+        with Session(self.store.engine) as session:
+            record = session.get(CommitIngestionRecord, (repository, detail.sha))
+            if record is None:
+                raise KeyError((repository, detail.sha))
+            record.status = self.GROUPED
+            record.authored_at = detail.author_date
+            record.payload_json = detail.model_dump_json()
+            record.updated_at = datetime.now(UTC)
+            session.add(record)
+            session.commit()
+
+    def mark_skipped(self, repository: str, sha: str) -> None:
+        self._set_statuses(repository, [sha], self.SKIPPED)
+
+    def mark_extracted(self, repository: str, shas: list[str]) -> None:
+        self._set_statuses(repository, shas, self.EXTRACTED)
+
+    def mark_failed(self, repository: str, shas: list[str], max_retries: int) -> None:
+        with Session(self.store.engine) as session:
+            for sha in shas:
+                record = session.get(CommitIngestionRecord, (repository, sha))
+                if record is None:
+                    continue
+                record.retry_count += 1
+                record.status = (
+                    self.SKIPPED if record.retry_count >= max_retries else self.FAILED
+                )
+                record.updated_at = datetime.now(UTC)
+                session.add(record)
+            session.commit()
+
+    def list_pending(self, repository: str) -> list[CommitIngestionRecord]:
+        return self._list_by_status(repository, [self.PENDING])
+
+    def list_grouped(self, repository: str) -> list[CommitIngestionRecord]:
+        """返回可提取的 commit（含 failed，供下一轮重试）。"""
+        return self._list_by_status(repository, [self.GROUPED, self.FAILED])
+
+    def _list_by_status(
+        self, repository: str, statuses: list[str]
+    ) -> list[CommitIngestionRecord]:
+        with Session(self.store.engine) as session:
+            stmt = select(CommitIngestionRecord).where(
+                CommitIngestionRecord.repository == repository,
+                CommitIngestionRecord.status.in_(statuses),  # type: ignore[attr-defined]
+            )
+            return list(session.exec(stmt))
+
+    def _set_statuses(self, repository: str, shas: list[str], status: str) -> None:
+        if not shas:
+            return
+        with Session(self.store.engine) as session:
+            for sha in shas:
+                record = session.get(CommitIngestionRecord, (repository, sha))
+                if record is None:
+                    continue
+                record.status = status
+                record.updated_at = datetime.now(UTC)
+                session.add(record)
+            session.commit()
+
+
+class RepoCursorRepository:
+    """每仓库 SHA 游标仓储（非权威，仅用于零新 commit 快速返回）。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def get_sha(self, repository: str) -> str | None:
+        with Session(self.store.engine) as session:
+            record = session.get(RepoCursorRecord, repository)
+            return record.last_synced_sha if record is not None else None
+
+    def advance(self, repository: str, sha: str | None) -> None:
+        if sha is None:
+            return
+        with Session(self.store.engine) as session:
+            session.merge(
+                RepoCursorRecord(
+                    repository=repository,
+                    last_synced_sha=sha,
+                    last_synced_at=datetime.now(UTC),
+                )
+            )
+            session.commit()
 
 
 class DraftRecord(SQLModel, table=True):
