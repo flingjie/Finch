@@ -300,3 +300,40 @@ def test_extract_does_not_reuse_cache_for_different_group(tmp_path):
         repo="flingjie/FDE-Gym",
     )
     assert runner2.calls == 1
+
+
+def _detail(sha, msg, filename="src/a.py"):
+    return CommitDetail(
+        sha=sha, message=msg, author_date="2026-09-01T00:00:00Z",
+        html_url="u", parents=[],
+        files=[CommitFile(filename=filename, status="modified", additions=1, deletions=0)],
+        stats={},
+    )
+
+
+class _FakeRunner:
+    def __init__(self, events_by_index):
+        self.events_by_index = events_by_index
+        self.calls = 0
+
+    def run(self, prompt, model, timeout=None):
+        self.calls += 1
+        items = []
+        for i, event in self.events_by_index.items():
+            items.append({"group_id": f"g_{i}", "event": event.model_dump(mode="json")})
+        return BatchExtractionOutput(items=items)
+
+
+def test_extract_grouped_accepts_pregrouped(tmp_path):
+    event = EngineeringEvent(
+        id="evt", repository="r", commits=["a" * 40],
+        problem=Claim(statement="p", confidence=ClaimConfidence.SUPPORTED),
+        decision=Claim(statement="d", confidence=ClaimConfidence.INFERRED),
+        result=Claim(statement="r", confidence=ClaimConfidence.SUPPORTED),
+    )
+    runner = _FakeRunner({0: event})
+    extractor = Extractor(runner, cache_path=tmp_path / "cache.json")
+    groups = [[_detail("a" * 40, "feat: x")]]
+    out = extractor.extract_grouped(groups, "r")
+    assert [e.id for e in out] == ["evt"]
+    assert runner.calls == 1

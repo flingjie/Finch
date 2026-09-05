@@ -288,13 +288,16 @@ class Extractor:
         self.cache = ExtractionCache(cache_path) if cache_path is not None else None
 
     def extract(self, commits: list[CommitDetail], repo: str) -> list[EngineeringEvent]:
-        """批量提取所有 commit 组的事件，缺失组最多局部补偿一次。
+        """薄封装：先分组再委托 extract_grouped（保住 ``github reflect`` CLI）。"""
+        return self.extract_grouped(list(group_commits(commits)), repo)
 
-        保留 Python 的确定性分组，只合并模型调用；默认一次 batch，只有 prompt 超过
-        字节预算或组数超过上限才自动拆批。已缓存的 group 直接复用，只有 cache miss
-        才触发模型调用。事件顺序 = 原始 group 顺序。
+    def extract_grouped(
+        self, groups: list[list[CommitDetail]], repo: str
+    ) -> list[EngineeringEvent]:
+        """对预分组 group 批量提取事件，缺失组最多局部补偿一次（阶段 A：缓存键为内容指纹）。
+
+        事件顺序 = 输入 group 顺序。
         """
-        groups = list(group_commits(commits))
         if not groups:
             return []
         template = _BATCH_PROMPT_PATH.read_text()
