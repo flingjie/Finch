@@ -4,7 +4,14 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from finch.settings import LLMNodeSettings, LLMSettings, QualityGates, load_settings
+from finch.settings import (
+    DailyBudget,
+    DailyBudgetWeights,
+    LLMNodeSettings,
+    LLMSettings,
+    QualityGates,
+    load_settings,
+)
 
 
 def test_load_settings_defaults():
@@ -88,3 +95,26 @@ def test_llm_node_settings_rejects_nonpositive_concurrency():
         LLMNodeSettings(max_concurrency=0)
     with pytest.raises(ValidationError):
         LLMNodeSettings(max_concurrency=-1)
+
+
+def test_daily_budget_defaults():
+    s = load_settings(Path("finch.example.yaml"))
+    b = s.daily_budget
+    assert b.max_detail_fetches == 40
+    assert b.max_change_groups == 12
+    assert b.max_planning_events == 12
+    assert b.max_evidence_cards_for_planning == 36
+    assert b.max_estimated_prompt_bytes == 40000
+    assert b.age_bonus_max_days == 7
+    assert b.max_extract_retries == 3
+    w = b.sort_weights
+    assert isinstance(w, DailyBudgetWeights)
+    assert (w.core_source, w.churn, w.keyword) == (0.25, 0.20, 0.15)
+    assert (w.cross_module, w.novelty, w.age_bonus) == (0.10, 0.15, 0.15)
+
+
+def test_daily_budget_rejects_nonpositive():
+    with pytest.raises(ValidationError):
+        DailyBudget(max_change_groups=0)
+    with pytest.raises(ValidationError):
+        DailyBudget(max_extract_retries=0)

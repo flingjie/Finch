@@ -98,3 +98,19 @@ extraction:
   max_groups_per_batch: 12
   max_concurrent_batches: 2
   timeout_seconds: 180
+
+daily_budget:
+  max_detail_fetches: 40
+  max_change_groups: 12
+  max_planning_events: 12
+  max_evidence_cards_for_planning: 36
+  max_estimated_prompt_bytes: 40000
+  age_bonus_max_days: 7
+  max_extract_retries: 3
+  sort_weights:
+    core_source: 0.25
+    churn: 0.20
+    keyword: 0.15
+    cross_module: 0.10
+    novelty: 0.15
+    age_bonus: 0.15

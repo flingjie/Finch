@@ -64,6 +64,30 @@ class ExtractionSettings(BaseModel):
     timeout_seconds: int = 180
 
 
+class DailyBudgetWeights(BaseModel):
+    """select_groups 的确定性排序权重（priority + age，和为 1）。"""
+
+    core_source: float = 0.25
+    churn: float = 0.20
+    keyword: float = 0.15
+    cross_module: float = 0.10
+    novelty: float = 0.15
+    age_bonus: float = 0.15
+
+
+class DailyBudget(BaseModel):
+    """每日深度处理预算（阶段 A：有界工作量）。"""
+
+    max_detail_fetches: int = Field(default=40, ge=1)
+    max_change_groups: int = Field(default=12, ge=1)
+    max_planning_events: int = Field(default=12, ge=1)
+    max_evidence_cards_for_planning: int = Field(default=36, ge=1)
+    max_estimated_prompt_bytes: int = Field(default=40000, ge=1)
+    age_bonus_max_days: int = Field(default=7, ge=1)
+    max_extract_retries: int = Field(default=3, ge=1)
+    sort_weights: DailyBudgetWeights = Field(default_factory=DailyBudgetWeights)
+
+
 class QualityGates(BaseModel):
     max_daily_replies: int = 5
     max_daily_original_posts: int = 1
@@ -134,6 +158,7 @@ class Settings(BaseModel):
     interests: InterestsSettings = Field(default_factory=InterestsSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
+    daily_budget: DailyBudget = Field(default_factory=DailyBudget)
 
 
 def load_settings(path: Path | None = None) -> Settings:
