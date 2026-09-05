@@ -1,9 +1,15 @@
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence
 from finch.review.models import ReviewAction, SkipReason
-from finch.review.service import ReviewService, compute_diff
+from finch.review.service import (
+    ReviewService,
+    build_review_package,
+    compute_diff,
+    render_review_package,
+)
 from finch.storage.database import Store
 from finch.storage.repositories import DraftRepository, ReviewRepository
+from finch.twitter.models import DiscussionCandidate
 
 
 def _draft(id="d1", body="hi"):
@@ -80,3 +86,25 @@ def test_confirm_position_distinct_from_approve(tmp_path):
     assert got.action == ReviewAction.CONFIRM_POSITION
     assert got.voice_match == 4
     assert got.position_correct is True
+
+
+def test_render_review_package_candidate_original_post():
+    draft = _draft()
+    candidate = DiscussionCandidate(
+        id="t1", author_handle="alice", text="agents are hard", url="https://x.com/alice/1"
+    )
+    pkg = build_review_package(draft, candidate=candidate)
+    out = render_review_package(pkg)
+    assert "## Candidate" in out
+    assert "author: @alice" in out
+    assert "text: agents are hard" in out
+    assert "https://x.com/alice/1" in out
+
+
+def test_render_review_package_body_only_and_next_step():
+    pkg = build_review_package(_draft())
+    assert render_review_package(pkg, body_only=True) == "hi"
+    full = render_review_package(pkg)
+    assert "## Draft" in full
+    assert "## Next step" in full
+    assert "finch review approve d1" in full

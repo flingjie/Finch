@@ -10,7 +10,7 @@ import yaml
 
 from .codex.runner import CodexRunner
 from .content.checkers.base import CheckResult
-from .content.jobs import AuthorPosition, ContentJobStatus
+from .content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from .content.models import DailyBrief, Draft
 from .content.voice import (
     ApprovedExample,
@@ -27,6 +27,7 @@ from .engagement.metrics import (
 )
 from .engagement.models import EngagementRunStats
 from .evidence.extractor import Extractor, build_cards
+from .evidence.models import EvidenceCard
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.discovery import resolve_repositories
 from .github.gh_client import GhClient
@@ -39,7 +40,7 @@ from .graph.runtime import GraphRuntime
 from .llm.openai_compatible import create_runner
 from .review.feedback import FeedbackService
 from .review.models import OutcomeAssessment, ReviewAction, SkipReason
-from .review.service import ReviewService
+from .review.service import ReviewService, build_review_package, render_review_package
 from .review.weekly import render_weekly, weekly_analysis
 from .settings import load_settings
 from .storage.database import Store
@@ -50,6 +51,7 @@ from .storage.repositories import (
     DraftRepository,
     DraftVersionRepository,
     EngagementRunStatsRepository,
+    EvidenceRepository,
     FeedbackRepository,
     FeedbackSnapshotRepository,
     InteractionRepository,
@@ -497,14 +499,60 @@ def review_list() -> None:
         typer.echo(f"{draft.id}\t{draft.kind.value}\t{draft.body[:80]}")
 
 
+def _evidence_cards_for(store: Store, draft: Draft, job: ContentJob | None) -> list[EvidenceCard]:
+    """收集草稿的 Evidence Cards：优先 job.source_card_ids，回退 draft.claims 的卡片引用。
+
+    EvidenceRepository 无按 id 列表批量查询的方法，故用 list_cards 建索引后按顺序取回
+    （审核命令下的卡片量级很小）。返回顺序保持 source_card_ids 的原始顺序。
+    """
+    card_ids: list[str] = []
+    if job is not None:
+        card_ids.extend(job.source_card_ids)
+    for claim in draft.claims:
+        if claim.evidence_card_id not in card_ids:
+            card_ids.append(claim.evidence_card_id)
+    cards_by_id = {card.id: card for card in EvidenceRepository(store).list_cards()}
+    return [cards_by_id[cid] for cid in card_ids if cid in cards_by_id]
+
+
 @review_app.command("show")
-def review_show(draft_id: str) -> None:
-    """打印草稿全文。"""
-    draft = _review_service().show(draft_id)
+def review_show(
+    draft_id: str,
+    body_only: bool = typer.Option(False, "--body-only", help="只打印草稿正文"),  # noqa: B008
+    evidence: bool = typer.Option(False, "--evidence", help="只打印证据卡与链接"),  # noqa: B008
+    critic: bool = typer.Option(  # noqa: B008
+        False, "--critic", help="只打印 Critic 失败项、剩余风险与 rewrite 次数"
+    ),
+) -> None:
+    """打印审核包（默认）或按 flag 聚焦。
+
+    默认 Review Package 含：Content Job、作者立场、证据卡与链接、candidate 原帖、
+    草稿正文、Critic 失败项与剩余风险、rewrite 次数、可复制的下一步命令。
+    """
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    draft = DraftRepository(store).get_draft(draft_id)
     if draft is None:
         typer.echo(f"draft not found: {draft_id}")
         raise typer.Exit(code=1)
-    typer.echo(draft.body)
+    if body_only:
+        typer.echo(draft.body)
+        return
+    job = (
+        ContentJobRepository(store).get_job(draft.content_job_id)
+        if draft.content_job_id is not None
+        else None
+    )
+    package = build_review_package(
+        draft,
+        job=job,
+        evidence_cards=_evidence_cards_for(store, draft, job),
+        critic_reports=CriticReportRepository(store).list_reports(draft_id),
+        decision=ReviewRepository(store).get_review(draft_id),
+        feedback=FeedbackRepository(store).get_feedback(draft_id),
+    )
+    typer.echo(render_review_package(package, evidence_only=evidence, critic_only=critic))
 
 
 @review_app.command("approve")
@@ -590,8 +638,11 @@ def review_feedback(
     outcome: str | None = typer.Option(
         None, "--outcome", help="结果评估 JSON（OutcomeAssessment）"
     ),
+    learning: str | None = typer.Option(
+        None, "--learning", help="自由文本：这次实际学到了什么"
+    ),
 ) -> None:
-    """登记发布链接、互动数据与结果评估（outcome）。"""
+    """登记发布链接、互动数据、结果评估（outcome）与学习记录（learning）。"""
     metrics_dict: dict | None = None
     if metrics:
         metrics_dict = json.loads(metrics)
@@ -599,7 +650,11 @@ def review_feedback(
     if outcome:
         outcome_obj = OutcomeAssessment.model_validate_json(outcome)
     feedback = _feedback_service().record(
-        draft_id, published_url=url, metrics=metrics_dict, outcome=outcome_obj
+        draft_id,
+        published_url=url,
+        metrics=metrics_dict,
+        outcome=outcome_obj,
+        learning=learning,
     )
     typer.echo(f"feedback recorded: {feedback.draft_id}")
 
