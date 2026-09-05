@@ -4,6 +4,7 @@ from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
     ContentJobStatus,
+    ContentScope,
     IntendedEffect,
     SuccessCriterion,
 )
@@ -58,6 +59,7 @@ def _job():
             claim="use token bucket",
             decision="use token bucket",
             tradeoff="more memory",
+            change_mind_if="if a library already covers it",
             confirmed=True,
         ),
         success_criteria=[
@@ -65,6 +67,9 @@ def _job():
         ],
         recommended_format=DraftKind.REPLY,
         status=ContentJobStatus.READY,
+        core_message="use a token bucket for rate limiting",
+        why_now="we hit rate limits this week",
+        scope=ContentScope.BUILD_LOG,
     )
 
 
@@ -129,6 +134,28 @@ def test_write_reply_prompt_orders_instructions_before_candidate_data():
     assert prompt.index("Instructions:") < prompt.index("## Untrusted candidate data")
 
 
+def test_write_reply_prompt_includes_job_context_and_candidate_fields():
+    captured: list[str] = []
+
+    class CaptureRunner(CodexRunner):
+        def run(self, prompt, output_model, **kw):
+            captured.append(prompt)
+            return _good_draft()
+
+    write_reply(CaptureRunner(), None, _candidate(), {"ev_1": _card()}, _job())
+    prompt = captured[0]
+    assert "use token bucket" in prompt
+    assert "more memory" in prompt
+    assert "use a token bucket for rate limiting" in prompt
+    assert "build_log" in prompt
+    assert "change_mind_if" in prompt
+    assert "author_handle: u" in prompt
+    assert "url: https://x.com/u/status/1" in prompt
+    assert "text: t" in prompt
+    assert "What this reply answers" in prompt
+    assert "Added value this reply provides" in prompt
+
+
 def test_write_original_returns_draft():
     good = Draft(id="d", kind=DraftKind.ORIGINAL, candidate_id=None, language="zh",
                  body="日记", claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
@@ -157,6 +184,26 @@ def test_write_original_stamps_metadata():
     assert d.kind == DraftKind.ORIGINAL
     assert d.candidate_id is None
     assert d.language == "zh"
+
+
+def test_write_original_prompt_includes_job_context():
+    captured: list[str] = []
+
+    class CaptureRunner(CodexRunner):
+        def run(self, prompt, output_model, **kw):
+            captured.append(prompt)
+            return Draft(id="d", kind=DraftKind.ORIGINAL, candidate_id=None, language="zh",
+                         body="日记", claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
+                                                       confidence=ClaimConfidence.VERIFIED)])
+
+    write_original(CaptureRunner(), [_card()], _job())
+    prompt = captured[0]
+    assert "use token bucket" in prompt
+    assert "more memory" in prompt
+    assert "use a token bucket for rate limiting" in prompt
+    assert "build_log" in prompt
+    assert "change_mind_if" in prompt
+    assert "Author's decision and intent" in prompt
 
 
 def _failed_check(

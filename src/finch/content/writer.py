@@ -42,26 +42,60 @@ def _render_cards(cards: list[EvidenceCard]) -> str:
 
 
 def _render_job_context(job: ContentJob | None) -> str:
-    """渲染 job 的决策/取舍/预期效果，作为定向重写的显式约束；无 job 时返回空串。
+    """渲染完整 Content Job 上下文，作为首稿与定向重写的显式约束；无 job 时返回空串。
 
-    决策/取舍/预期效果正是 DecisionChecker / ActionabilityChecker 校验的对象，缺了它们
-    writer 无法修复这类失败（F2）。
+    reader_problem / audience / intended_effect / core_message / why_now / scope /
+    author_position(claim/decision/tradeoff/change_mind_if) / success_criteria
+    正是 DecisionChecker / ActionabilityChecker / PortabilityChecker 校验的对象，缺了它们
+    writer 无法在首稿直接完成 job（F2）。
     """
     if job is None:
         return ""
     position = job.author_position
-    decision = position.decision if position is not None else ""
-    tradeoff = position.tradeoff if position is not None else ""
     effect = job.intended_effect
     blocks = [
-        "## Author's decision and intent",
-        f"- decision: {decision}",
-        f"- tradeoff: {tradeoff}",
+        "## Content job context",
+        f"- reader_problem: {job.reader_problem}",
+        f"- audience: {job.audience}",
         f"- intended_effect.understand: {effect.understand}",
         f"- intended_effect.believe: {effect.believe or '(none)'}",
         f"- intended_effect.action: {effect.action or '(none)'}",
+        f"- core_message: {job.core_message or '(none)'}",
+        f"- why_now: {job.why_now or '(none)'}",
+        f"- scope: {job.scope.value}",
+        "## Author's decision and intent",
     ]
+    if position is not None:
+        blocks.extend(
+            [
+                f"- claim: {position.claim}",
+                f"- decision: {position.decision}",
+                f"- tradeoff: {position.tradeoff}",
+                f"- change_mind_if: {position.change_mind_if or '(none)'}",
+            ]
+        )
+    else:
+        blocks.append("- (no author position)")
+    blocks.append("## Success criteria")
+    if job.success_criteria:
+        blocks.extend(
+            f"- {criterion.description} (measurement: {criterion.measurement})"
+            for criterion in job.success_criteria
+        )
+    else:
+        blocks.append("- (none)")
     return "\n".join(blocks) + "\n\n"
+
+
+def _render_candidate(candidate: DiscussionCandidate) -> str:
+    """渲染候选帖的文本/作者/URL，供回复首稿明确回应对象与新增价值。"""
+    return "\n".join(
+        [
+            f"- author_handle: {candidate.author_handle}",
+            f"- url: {candidate.url}",
+            f"- text: {candidate.text}",
+        ]
+    )
 
 
 def _render_failed_checks(failed_checks: list[CheckResult]) -> str:
@@ -100,7 +134,8 @@ def write_reply(
             else []
         )
     prompt = _REPLY_PROMPT_PATH.read_text().format(
-        candidate=candidate.text,
+        job_context=_render_job_context(job),
+        candidate=_render_candidate(candidate),
         cards=_render_cards(match_cards),
     )
     draft = cast(Draft, runner.run(prompt, Draft))
@@ -131,7 +166,10 @@ def write_original(
     cards: list[EvidenceCard],
     job: ContentJob | None = None,
 ) -> Draft | None:
-    prompt = _ORIGINAL_PROMPT_PATH.read_text().format(cards=_render_cards(cards))
+    prompt = _ORIGINAL_PROMPT_PATH.read_text().format(
+        job_context=_render_job_context(job),
+        cards=_render_cards(cards),
+    )
     draft = cast(Draft, runner.run(prompt, Draft))
     if validate_draft(draft, card_ids={card.id for card in cards}):
         return None
