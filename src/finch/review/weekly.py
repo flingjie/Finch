@@ -16,6 +16,7 @@ Task 8 新增七个指标，回答「哪些内容任务有效/失败，失败发
 """
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -30,6 +31,14 @@ from finch.storage.repositories import (
     FeedbackRepository,
     ReviewRepository,
 )
+
+
+class NextWeekPlan(BaseModel):
+    """下周计划：周报三问（计划 §4.2）。"""
+
+    one_thing: str = ""       # 下周继续强化什么
+    one_experiment: str = ""  # 只验证哪一个假设
+    stop_doing: str = ""      # 明确停止什么
 
 
 class WeeklyReport(BaseModel):
@@ -55,6 +64,10 @@ class WeeklyReport(BaseModel):
     rewrite_rounds: dict[str, int] = Field(default_factory=dict)  # draft_id → rewrite 轮数
     rewritten_drafts: int = 0  # 有 >0 次 rewrite 的 eligible 草稿数
 
+    # ---- Phase 4 周报三问（计划 §4.2；由方向性指标派生，见 _build_narrative）----
+    weekly_insight: str = ""  # 本周最重要的一个发现
+    next_week: NextWeekPlan = Field(default_factory=NextWeekPlan)
+
 
 # ---- 「继续/调整/停止」建议阈值 ----
 # 高者为优的指标；其余（generic_sentence_rate、human_correction_rate）低者为优。
@@ -73,6 +86,113 @@ _METRIC_LABELS = {
     "useful_reply_rate": "有用回复率",
     "do_not_write_rate": "不写率",
 }
+
+
+# ---- Phase 4 周报三问：从方向性指标派生一个洞察 + 三个下周判断（deterministic，无 LLM）----
+_EVIDENCE_INSUFFICIENT = "evidence insufficient"
+
+# (key, 中文标签, higher_is_better)；do_not_write_rate / rewrite 轮数仅信息性，不参与三问。
+_DIRECTIONAL_METRICS: tuple[tuple[str, str, bool], ...] = tuple(
+    (key, _METRIC_LABELS[key], key in _HIGHER_IS_BETTER)
+    for key in (
+        "evidence_coverage",
+        "decision_density",
+        "generic_sentence_rate",
+        "human_correction_rate",
+        "job_completion_rate",
+        "useful_reply_rate",
+    )
+)
+
+# 最弱指标 → 一个可验证假设（one_experiment）。假设对应计划 Phase 1–3 已识别的改进点。
+_EXPERIMENT_HYPOTHESES = {
+    "evidence_coverage": "验证假设：把完整 Content Job 注入首次 Writer 提示可提高证据覆盖",
+    "decision_density": "验证假设：强制首稿包含 decision+tradeoff 可提高立场密度",
+    "generic_sentence_rate": "验证假设：按 scope 限定表达边界可降低套话率",
+    "human_correction_rate": "验证假设：审核前先展示证据置信边界可降低人工修正率",
+    "job_completion_rate": "验证假设：确定性地选出一个 primary job 可提高任务完成率",
+    "useful_reply_rate": "验证假设：回复更针对读者具体问题可提高有用回复率",
+}
+
+# 最弱指标 → 一个明确停止项（stop_doing）。
+_STOP_ACTIONS = {
+    "evidence_coverage": "停止：证据不足时不要把草稿送入审核",
+    "decision_density": "停止：发布缺少 decision/tradeoff 的草稿",
+    "generic_sentence_rate": "停止：使用无边界泛化的表达",
+    "human_correction_rate": "停止：直接采用未经确认的事实或立场",
+    "job_completion_rate": "停止：生成读者无法完成的宽泛任务",
+    "useful_reply_rate": "停止：回复没有新增价值的讨论",
+}
+
+# ---- Phase 4 Task 4.3：后续能力触发门槛（仅文档参考，不实现任何新能力/新表）----
+# 两周真实使用后，仅当满足下列条件才建设对应能力（计划 §4.3）：
+#   Message Brief 节点：Job-aware Writer 后首稿仍常缺清晰 core/hook/proof
+#   多 Content Shape：≥30 条草稿出现 ≥3 类稳定且差异明显的结构需求
+#   Shape-aware Critic：统一 checker 致 ≥20% 可用内容被误拒或无意义重写
+#   统一 Inbox：审核平均跨 ≥3 条命令，或用户反复进入错误队列
+#   行为型 Voice Profile：≥20 次人工 revise 且 ≥3 种修改行为重复出现
+#   持久化 Audience Signal：同一信号需跨 run 复用，或重复抽取成本明显
+#   Content Experiment 模型：连续 4 周有稳定 outcome 数据，手工记录已成摩擦
+
+
+@dataclass(frozen=True)
+class _MetricSignal:
+    key: str
+    label: str
+    higher_is_better: bool
+    value: float
+
+    @property
+    def health(self) -> float:
+        """健康分 0.0–1.0：把数值归一化为「越高越健康」。"""
+        return self.value if self.higher_is_better else 1.0 - self.value
+
+
+def _build_narrative(metrics: dict[str, float | None]) -> tuple[str, NextWeekPlan]:
+    """由方向性指标派生周报三问。
+
+    每个判断都引用具体指标名与数值；六个方向性指标全部无数据（分母不存在）时，
+    统一返回 ``evidence insufficient``，不臆造结论。
+    """
+    signals: list[_MetricSignal] = []
+    for key, label, higher in _DIRECTIONAL_METRICS:
+        value = metrics.get(key)
+        if value is not None:
+            signals.append(_MetricSignal(key, label, higher, value))
+
+    if not signals:
+        return _EVIDENCE_INSUFFICIENT, NextWeekPlan(
+            one_thing=_EVIDENCE_INSUFFICIENT,
+            one_experiment=_EVIDENCE_INSUFFICIENT,
+            stop_doing=_EVIDENCE_INSUFFICIENT,
+        )
+
+    strongest = max(signals, key=lambda s: s.health)
+    weakest = min(signals, key=lambda s: s.health)
+    most_extreme = max(signals, key=lambda s: abs(s.health - _HEALTHY))
+
+    if most_extreme.health >= _HEALTHY:
+        insight = f"{most_extreme.label} 是本周最强信号（{most_extreme.value:.0%}）"
+    else:
+        insight = f"{most_extreme.label} 是本周最大短板（{most_extreme.value:.0%}）"
+
+    one_thing = f"继续强化 {strongest.label}（当前 {strongest.value:.0%}）"
+    one_experiment = (
+        f"{_EXPERIMENT_HYPOTHESES[weakest.key]}"
+        f"（依据：{weakest.label} {weakest.value:.0%}）"
+    )
+    if weakest.health < _HEALTHY:
+        stop_doing = (
+            f"{_STOP_ACTIONS[weakest.key]}（依据：{weakest.label} {weakest.value:.0%}）"
+        )
+    else:
+        stop_doing = "无需停止：所有方向性指标均处于健康区间"
+
+    return insight, NextWeekPlan(
+        one_thing=one_thing,
+        one_experiment=one_experiment,
+        stop_doing=stop_doing,
+    )
 
 
 def weekly_analysis(
@@ -134,6 +254,29 @@ def weekly_analysis(
     all_reports = critic_reports.list_all_reports(since=since)
     rewrite_rounds = _rewrite_rounds(all_reports, eligible_ids)
 
+    evidence_coverage = _evidence_coverage(all_reports, eligible_ids)
+    decision_density = _decision_density(
+        all_drafts, published_by_draft, eligible_ids, jobs_by_id
+    )
+    generic_sentence_rate = _generic_sentence_rate(all_reports, eligible_ids)
+    human_correction_rate = _human_correction_rate(
+        decisions, history, eligible_ids, since
+    )
+    job_completion_rate = _job_completion_rate(outcome_by_draft, eligible_ids)
+    useful_reply_rate = _useful_reply_rate(all_drafts, outcome_by_draft, eligible_ids)
+    do_not_write_rate = _do_not_write_rate(list(jobs_by_id.values()))
+
+    weekly_insight, next_week = _build_narrative(
+        {
+            "evidence_coverage": evidence_coverage,
+            "decision_density": decision_density,
+            "generic_sentence_rate": generic_sentence_rate,
+            "human_correction_rate": human_correction_rate,
+            "job_completion_rate": job_completion_rate,
+            "useful_reply_rate": useful_reply_rate,
+        }
+    )
+
     return WeeklyReport(
         reviewed_drafts=reviewed,
         approved=approved,
@@ -143,19 +286,17 @@ def weekly_analysis(
         skip_reasons=dict(skip_reasons),
         published_draft_ids=published_ids,
         published_candidate_ids=published_cands,
-        evidence_coverage=_evidence_coverage(all_reports, eligible_ids),
-        decision_density=_decision_density(
-            all_drafts, published_by_draft, eligible_ids, jobs_by_id
-        ),
-        generic_sentence_rate=_generic_sentence_rate(all_reports, eligible_ids),
-        human_correction_rate=_human_correction_rate(
-            decisions, history, eligible_ids, since
-        ),
-        job_completion_rate=_job_completion_rate(outcome_by_draft, eligible_ids),
-        useful_reply_rate=_useful_reply_rate(all_drafts, outcome_by_draft, eligible_ids),
-        do_not_write_rate=_do_not_write_rate(list(jobs_by_id.values())),
+        evidence_coverage=evidence_coverage,
+        decision_density=decision_density,
+        generic_sentence_rate=generic_sentence_rate,
+        human_correction_rate=human_correction_rate,
+        job_completion_rate=job_completion_rate,
+        useful_reply_rate=useful_reply_rate,
+        do_not_write_rate=do_not_write_rate,
         rewrite_rounds=rewrite_rounds,
         rewritten_drafts=sum(1 for n in rewrite_rounds.values() if n > 0),
+        weekly_insight=weekly_insight,
+        next_week=next_week,
     )
 
 
@@ -355,6 +496,14 @@ def _classify(metric: str, value: float) -> str:
 def render_weekly(report: WeeklyReport) -> str:
     """把 WeeklyReport 渲染为 Markdown。"""
     lines = ["# Finch Weekly Review", ""]
+    lines.append("## 本周洞察")
+    lines.append(f"- {report.weekly_insight or _EVIDENCE_INSUFFICIENT}")
+    lines.append("")
+    lines.append("## 下周计划")
+    lines.append(f"- {report.next_week.one_thing or _EVIDENCE_INSUFFICIENT}")
+    lines.append(f"- {report.next_week.one_experiment or _EVIDENCE_INSUFFICIENT}")
+    lines.append(f"- {report.next_week.stop_doing or _EVIDENCE_INSUFFICIENT}")
+    lines.append("")
     lines.append(f"- 已审核草稿: {report.reviewed_drafts}")
     lines.append(f"- 批准: {report.approved} / 跳过: {report.skipped} / 修改次数: {report.revised}")
     lines.append(f"- 批准率: {report.approval_rate:.0%}")

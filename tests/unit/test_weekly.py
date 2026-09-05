@@ -11,7 +11,13 @@ from finch.content.jobs import (
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence
 from finch.review.models import Feedback, OutcomeAssessment, ReviewAction, ReviewDecision
-from finch.review.weekly import WeeklyReport, render_weekly, weekly_analysis
+from finch.review.weekly import (
+    NextWeekPlan,
+    WeeklyReport,
+    _build_narrative,
+    render_weekly,
+    weekly_analysis,
+)
 from finch.storage.database import Store
 from finch.storage.repositories import (
     ContentJobRepository,
@@ -415,3 +421,69 @@ def test_render_weekly_empty_metrics_show_no_data(tmp_path):
     # 无分母时不应输出误导性的「继续/停止」判定。
     assert "→ 停止" not in out
     assert "→ 继续" not in out
+
+
+def test_weekly_narrative_evidence_insufficient(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    drafts, reviews, feedbacks, jobs, critic = _repos(store)
+    report = weekly_analysis(drafts, reviews, feedbacks, jobs, critic)
+    assert report.weekly_insight == "evidence insufficient"
+    assert report.next_week.one_thing == "evidence insufficient"
+    assert report.next_week.one_experiment == "evidence insufficient"
+    assert report.next_week.stop_doing == "evidence insufficient"
+
+
+def test_build_narrative_ties_judgments_to_data():
+    insight, plan = _build_narrative({
+        "evidence_coverage": 0.9,
+        "decision_density": 0.5,
+        "generic_sentence_rate": 0.2,
+        "human_correction_rate": 0.6,
+        "job_completion_rate": 0.1,
+        "useful_reply_rate": None,
+    })
+    # 最极端偏差是 job_completion_rate（健康分 0.1，偏离 0.7 最远）。
+    assert "任务完成率" in insight
+    assert "10%" in insight
+    # 最强指标 → 继续强化。
+    assert "证据覆盖" in plan.one_thing
+    assert "90%" in plan.one_thing
+    # 最弱指标 → 一个假设 + 一个停止项，均引用指标数值。
+    assert "任务完成率" in plan.one_experiment
+    assert "10%" in plan.one_experiment
+    assert "任务完成率" in plan.stop_doing
+    assert "10%" in plan.stop_doing
+
+
+def test_build_narrative_no_stop_when_all_healthy():
+    insight, plan = _build_narrative({
+        "evidence_coverage": 0.9,
+        "decision_density": 0.8,
+        "generic_sentence_rate": 0.1,
+        "human_correction_rate": 0.2,
+        "job_completion_rate": 0.9,
+        "useful_reply_rate": 0.8,
+    })
+    assert "无需停止" in plan.stop_doing
+
+
+def test_render_weekly_includes_narrative():
+    r = WeeklyReport(
+        weekly_insight="任务完成率 是本周最大短板（10%）",
+        next_week=NextWeekPlan(
+            one_thing="继续强化 证据覆盖（当前 90%）",
+            one_experiment=(
+                "验证假设：确定性地选出一个 primary job 可提高任务完成率"
+                "（依据：任务完成率 10%）"
+            ),
+            stop_doing="停止：生成读者无法完成的宽泛任务（依据：任务完成率 10%）",
+        ),
+    )
+    out = render_weekly(r)
+    assert "## 本周洞察" in out
+    assert "## 下周计划" in out
+    assert "任务完成率 是本周最大短板（10%）" in out
+    assert "继续强化 证据覆盖（当前 90%）" in out
+    assert "验证假设：确定性地选出一个 primary job 可提高任务完成率" in out
+    assert "停止：生成读者无法完成的宽泛任务（依据：任务完成率 10%）" in out
