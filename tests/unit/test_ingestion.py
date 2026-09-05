@@ -132,9 +132,9 @@ def test_list_commits_newest_first_stops_on_short_page(monkeypatch):
     def fake_gh_json(argv, timeout=None):
         calls.append(argv)
         return [
-            {"sha": "1" * 40, "commit": {"message": "m1", "author": {"date": "2026-09-01T00:00:00Z"}},
+            {"sha": "1" * 40, "commit": {"message": "m1", "author": {"date": "2026-09-01T00:00Z"}},
              "html_url": "u", "parents": []},
-            {"sha": "2" * 40, "commit": {"message": "m2", "author": {"date": "2026-09-01T00:00:00Z"}},
+            {"sha": "2" * 40, "commit": {"message": "m2", "author": {"date": "2026-09-01T00:00Z"}},
              "html_url": "u", "parents": []},
         ]
 
