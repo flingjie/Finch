@@ -1,0 +1,84 @@
+{
+  "name": "commit_plus_discussion",
+  "kind": "reply",
+  "input": {
+    "cards": [
+      {
+        "id": "ev_discussion",
+        "event_id": "evt_discussion",
+        "claim": "a token bucket with a burst allowance smoothed our API rate limiting",
+        "confidence": "VERIFIED",
+        "publishable": true,
+        "topics": ["rate limiting", "token bucket"]
+      }
+    ],
+    "job": {
+      "id": "job_discussion",
+      "source_card_ids": ["ev_discussion"],
+      "candidate_id": "t1",
+      "reader_problem": "backend engineers argue token buckets are overkill for small services",
+      "audience": "backend engineers",
+      "intended_effect": {
+        "understand": "a bounded token bucket is worth it even at small scale",
+        "believe": null,
+        "action": "reconsider naive fixed-window rate limiting"
+      },
+      "author_position": {
+        "claim": "a small token bucket is worth it over fixed-window limiting",
+        "decision": "adopt a token bucket for the API",
+        "tradeoff": "one more dependency and slightly more code",
+        "change_mind_if": "a fixed window is provably enough for our traffic",
+        "confirmed": true
+      },
+      "success_criteria": [
+        {"id": "sc1", "description": "reply names the point it answers", "measurement": "critic"}
+      ],
+      "recommended_format": "reply",
+      "status": "ready",
+      "core_message": "a token bucket with a burst allowance fixed our rate limiting",
+      "why_now": "we hit rate-limit spikes this week",
+      "scope": "reply"
+    },
+    "candidate": {
+      "id": "t1",
+      "author_handle": "backend_guy",
+      "text": "token bucket rate limiting is overkill for most small services",
+      "url": "https://x.com/backend_guy/status/1"
+    },
+    "match": {
+      "candidate_id": "t1",
+      "card_ids": ["ev_discussion"],
+      "scores": {
+        "relevance": 0.9,
+        "evidence_strength": 0.9,
+        "incremental_value": 0.8,
+        "discussability": 0.9
+      },
+      "timing": 1.0,
+      "relationship_value": 0.6,
+      "score": 0.88
+    }
+  },
+  "output": {
+    "body": "You say token buckets are overkill for small services. In our API we hit rate-limit spikes, and a token bucket with a burst allowance smoothed them without much code.",
+    "claim": {
+      "statement": "a token bucket with a burst allowance smoothed our API rate limiting",
+      "evidence_card_id": "ev_discussion",
+      "confidence": "VERIFIED"
+    }
+  },
+  "assertions": {
+    "body_contains": ["token bucket", "rate-limit"],
+    "body_not_contains": [],
+    "prompt_contains": [
+      "author_handle: backend_guy",
+      "url: https://x.com/backend_guy/status/1",
+      "token bucket rate limiting is overkill",
+      "What this reply answers",
+      "Added value this reply provides",
+      "scope: reply",
+      "reader_problem"
+    ],
+    "prompt_not_contains": []
+  }
+}

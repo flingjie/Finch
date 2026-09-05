@@ -1,0 +1,58 @@
+{
+  "name": "inferred_result",
+  "kind": "original",
+  "input": {
+    "cards": [
+      {
+        "id": "ev_inferred",
+        "event_id": "evt_inferred",
+        "claim": "the retry change reduced p99 latency at our scale",
+        "confidence": "INFERRED",
+        "publishable": true,
+        "topics": ["latency", "retry"]
+      }
+    ],
+    "job": {
+      "id": "job_inferred",
+      "source_card_ids": ["ev_inferred"],
+      "candidate_id": null,
+      "reader_problem": "readers may read an inferred result as a measured fact",
+      "audience": "backend engineers",
+      "intended_effect": {
+        "understand": "the latency gain is inferred, not measured",
+        "believe": null,
+        "action": null
+      },
+      "author_position": {
+        "claim": "the retry change likely reduced p99 latency in this implementation",
+        "decision": "present the result as inferred, not verified",
+        "tradeoff": "less certainty until we measure with real traffic",
+        "change_mind_if": "a load test shows no latency gain",
+        "confirmed": true
+      },
+      "success_criteria": [
+        {"id": "sc1", "description": "no verified/first-person fact for an inferred result", "measurement": "critic"}
+      ],
+      "recommended_format": "original",
+      "status": "ready",
+      "core_message": "in this implementation, the retry change may reduce p99 latency",
+      "why_now": "we are about to roll out the retry change",
+      "scope": "bounded_lesson"
+    },
+    "candidate": null
+  },
+  "output": {
+    "body": "这表明，在这次实现中，重试改动可能压低了 p99 延迟。",
+    "claim": {
+      "statement": "in this implementation, the retry change may reduce p99 latency",
+      "evidence_card_id": "ev_inferred",
+      "confidence": "SUPPORTED"
+    }
+  },
+  "assertions": {
+    "body_contains": ["这表明", "在这次实现", "可能"],
+    "body_not_contains": ["已验证", "我们证实", "实测", "我亲测", "verified", "guaranteed", "definitely", "亲眼"],
+    "prompt_contains": ["INFERRED", "scope: bounded_lesson", "core_message", "why_now"],
+    "prompt_not_contains": []
+  }
+}

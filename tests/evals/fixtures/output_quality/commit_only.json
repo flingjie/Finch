@@ -1,0 +1,58 @@
+{
+  "name": "commit_only",
+  "kind": "original",
+  "input": {
+    "cards": [
+      {
+        "id": "ev_commit_only",
+        "event_id": "evt_commit_only",
+        "claim": "replaced the in-process retry queue with an exponential backoff loop",
+        "confidence": "VERIFIED",
+        "publishable": true,
+        "topics": ["retry", "resilience"]
+      }
+    ],
+    "job": {
+      "id": "job_commit_only",
+      "source_card_ids": ["ev_commit_only"],
+      "candidate_id": null,
+      "reader_problem": "readers may mistake a local change for general retry advice",
+      "audience": "backend engineers",
+      "intended_effect": {
+        "understand": "the change is bounded to this service and its current scale",
+        "believe": null,
+        "action": null
+      },
+      "author_position": {
+        "claim": "exponential backoff fixed our retry storm in this service",
+        "decision": "keep the backoff loop for this service",
+        "tradeoff": "higher tail latency while a dependency is down",
+        "change_mind_if": "a shared retry library already covers this case",
+        "confirmed": true
+      },
+      "success_criteria": [
+        {"id": "sc1", "description": "no industry-wide generalization", "measurement": "critic"}
+      ],
+      "recommended_format": "original",
+      "status": "ready",
+      "core_message": "in this service, exponential backoff fixed our retry storm",
+      "why_now": "we just shipped the change and want to log the bounded lesson",
+      "scope": "bounded_lesson"
+    },
+    "candidate": null
+  },
+  "output": {
+    "body": "在这次实现里，我们把进程内重试队列换成了指数退避循环，压住了这个服务的重试风暴。",
+    "claim": {
+      "statement": "in this implementation, exponential backoff fixed our retry storm",
+      "evidence_card_id": "ev_commit_only",
+      "confidence": "SUPPORTED"
+    }
+  },
+  "assertions": {
+    "body_contains": ["在这次实现", "这个服务"],
+    "body_not_contains": ["industry-wide", "everyone should", "best practice", "行业普遍", "一般来说", "all teams"],
+    "prompt_contains": ["core_message", "why_now", "scope: bounded_lesson", "decision", "tradeoff", "reader_problem"],
+    "prompt_not_contains": ["author_handle"]
+  }
+}
