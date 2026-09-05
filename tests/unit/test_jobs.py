@@ -6,7 +6,6 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
     IntendedEffect,
-    PlanTopicsOutput,
     SuccessCriterion,
     TopicProposal,
     expand_content_job,
@@ -399,18 +398,6 @@ class _ExplodingRunner(CodexRunner):
     def run(self, prompt, output_model, **kwargs):
         self.calls += 1
         raise AssertionError("runner must not be called when there are no evidence cards")
-
-
-class _TopicsRunner(CodexRunner):
-    def __init__(self, topics):
-        self.topics = topics
-        self.calls = 0
-
-    def run(self, prompt, output_model, **kw):
-        self.calls += 1
-        if output_model is PlanTopicsOutput:
-            return PlanTopicsOutput(items=self.topics)
-        raise AssertionError(f"unexpected output_model {output_model}")
 
 
 def test_plan_content_topics_skips_runner_when_no_cards():
