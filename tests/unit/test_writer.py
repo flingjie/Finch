@@ -322,3 +322,32 @@ def test_rewrite_without_job_omits_job_context():
     rewrite(CaptureRunner(), _good_draft(), [_failed_check()], {"ev_1": _card()})
     prompt = captured[0]
     assert "Author's decision and intent" not in prompt
+
+
+def test_write_original_downgrades_model_user_confirmed():
+    # 模型不得自行产出 USER_CONFIRMED（Task 1.2）：writer 必须降级为 SUPPORTED。
+    draft = Draft(
+        id="d", kind=DraftKind.ORIGINAL, candidate_id=None, language="zh", body="日记",
+        claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
+                         confidence=ClaimConfidence.USER_CONFIRMED)],
+    )
+    d = write_original(FakeRunner(draft), [_card()])
+    assert d is not None
+    assert d.claims[0].confidence == ClaimConfidence.SUPPORTED
+
+
+def test_write_reply_downgrades_model_user_confirmed():
+    draft = _good_draft().model_copy(update={"claims": [
+        ClaimRef(statement="x", evidence_card_id="ev_1",
+                 confidence=ClaimConfidence.USER_CONFIRMED)]})
+    d = write_reply(FakeRunner(draft), _match(), _candidate(), {"ev_1": _card()})
+    assert d is not None
+    assert d.claims[0].confidence == ClaimConfidence.SUPPORTED
+
+
+def test_rewrite_downgrades_model_user_confirmed():
+    out = Draft(id="d", kind=DraftKind.REPLY, candidate_id="t1", language="en",
+                body="fixed", claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
+                                               confidence=ClaimConfidence.USER_CONFIRMED)])
+    d = rewrite(FakeRunner(out), _good_draft(), [_failed_check()], {"ev_1": _card()})
+    assert d.claims[0].confidence == ClaimConfidence.SUPPORTED

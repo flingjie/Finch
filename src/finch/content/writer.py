@@ -11,7 +11,11 @@ from finch.content.checkers.base import CheckResult
 from finch.content.claims import validate_draft
 from finch.content.jobs import ContentJob
 from finch.content.models import Draft, DraftKind
-from finch.evidence.models import EvidenceCard, MatchResult
+from finch.evidence.models import (
+    EvidenceCard,
+    MatchResult,
+    sanitize_model_confidence,
+)
 from finch.twitter.models import DiscussionCandidate
 
 _REPLY_PROMPT_PATH = Path("prompts/draft-reply.md")
@@ -39,6 +43,26 @@ Instructions:
 
 def _render_cards(cards: list[EvidenceCard]) -> str:
     return json.dumps([card.model_dump(mode="json") for card in cards])
+
+
+def _sanitize_draft_claims(draft: Draft) -> Draft:
+    """模型输出不得自行产出 USER_CONFIRMED：逐条降级为 SUPPORTED（计划 Task 1.2）。
+
+    提取器（extractor）已对事件 claim 做同样降级，但 writer 三条路径
+    （write_reply / write_original / rewrite）各自独立调用 LLM 反序列化为 ``Draft``，
+    必须在此再拦一道，否则模型可直接把 claim 标为 USER_CONFIRMED（可发布且
+    Critic 不 hard-fail）。
+    """
+    return draft.model_copy(
+        update={
+            "claims": [
+                ref.model_copy(
+                    update={"confidence": sanitize_model_confidence(ref.confidence)}
+                )
+                for ref in draft.claims
+            ]
+        }
+    )
 
 
 def _render_job_context(job: ContentJob | None) -> str:
@@ -138,7 +162,7 @@ def write_reply(
         candidate=_render_candidate(candidate),
         cards=_render_cards(match_cards),
     )
-    draft = cast(Draft, runner.run(prompt, Draft))
+    draft = _sanitize_draft_claims(cast(Draft, runner.run(prompt, Draft)))
     if match:
         card_ids = set(match.card_ids)
     else:
@@ -170,7 +194,7 @@ def write_original(
         job_context=_render_job_context(job),
         cards=_render_cards(cards),
     )
-    draft = cast(Draft, runner.run(prompt, Draft))
+    draft = _sanitize_draft_claims(cast(Draft, runner.run(prompt, Draft)))
     if validate_draft(draft, card_ids={card.id for card in cards}):
         return None
     result = draft.model_copy(
@@ -204,7 +228,7 @@ def rewrite(
         rewrite_instructions=_render_failed_checks(failed_checks),
         cards=_render_cards(cards),
     )
-    out = cast(Draft, runner.run(prompt, Draft))
+    out = _sanitize_draft_claims(cast(Draft, runner.run(prompt, Draft)))
     return out.model_copy(
         update={
             "id": draft.id,
