@@ -106,7 +106,7 @@ def test_run_daily_enabled_echoes_engagement_summary(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "daily_nodes", lambda **kwargs: [])
     monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
 
-    def fake_engagement_flow(settings, opencli, runner, *, run_id, skip_ids=None):
+    def fake_engagement_flow(settings, opencli, runner, *, reddit_opencli=None, run_id, skip_ids=None):
         return EngagementRunResult(
             run_id=run_id,
             posts_found=0,
