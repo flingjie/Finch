@@ -13,12 +13,6 @@ from finch.llm.base import StructuredInferenceRunner
 from finch.twitter.models import DiscussionCandidate
 
 
-class ContentJobsOutput(BaseModel):
-    """define-content-jobs prompt 的输出：ContentJob 列表。"""
-
-    items: list["ContentJob"]
-
-
 class ContentJobStatus(StrEnum):
     """Content Job 状态枚举。"""
 
