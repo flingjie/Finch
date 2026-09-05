@@ -118,3 +118,8 @@ def test_daily_budget_rejects_nonpositive():
         DailyBudget(max_change_groups=0)
     with pytest.raises(ValidationError):
         DailyBudget(max_extract_retries=0)
+
+
+def test_extraction_global_concurrency_default():
+    s = load_settings(Path("finch.example.yaml"))
+    assert s.extraction.global_max_concurrency == 4

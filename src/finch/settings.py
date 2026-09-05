@@ -56,11 +56,12 @@ class LLMSettings(BaseModel):
 
 
 class ExtractionSettings(BaseModel):
-    """commit 提取配置（批量提取 + 按 prompt 字节自适应拆批）。"""
+    """commit 提取配置（批量提取 + 按 prompt 字节自适应拆批 + 全局 LLM 并发上限）。"""
 
     max_prompt_bytes: int = 50000
     max_groups_per_batch: int = 12
     max_concurrent_batches: int = 2
+    global_max_concurrency: int = Field(default=4, ge=1)
     timeout_seconds: int = 180
 
 

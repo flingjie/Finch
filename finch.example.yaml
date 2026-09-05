@@ -97,6 +97,7 @@ extraction:
   max_prompt_bytes: 50000
   max_groups_per_batch: 12
   max_concurrent_batches: 2
+  global_max_concurrency: 4
   timeout_seconds: 180
 
 daily_budget:
