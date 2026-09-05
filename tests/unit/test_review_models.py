@@ -112,3 +112,16 @@ def test_feedback_outcome_persistence_roundtrip():
     assert loaded.outcome is not None
     assert loaded.outcome.job_completed == "yes"
     assert loaded.outcome.useful_reply_count == 4
+
+
+def test_feedback_learning_default_none():
+    f = Feedback(draft_id="d1", recorded_at=datetime(2026, 1, 1))
+    assert f.learning is None
+
+
+def test_feedback_learning_json_roundtrip():
+    # learning 随整份 Feedback JSON 持久化往返（无新表/迁移，复用 payload_json 路径）
+    f = Feedback(draft_id="d1", recorded_at=datetime(2026, 1, 1),
+                 learning="首稿缺 decision 时 Critic 会补写，需把 job 注入首稿")
+    loaded = Feedback.model_validate_json(f.model_dump_json())
+    assert loaded.learning == "首稿缺 decision 时 Critic 会补写，需把 job 注入首稿"

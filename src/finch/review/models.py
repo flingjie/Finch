@@ -59,3 +59,4 @@ class Feedback(BaseModel):
     interaction_metrics: dict = Field(default_factory=dict)
     recorded_at: datetime
     outcome: OutcomeAssessment | None = None
+    learning: str | None = None  # 自由文本：这次实际学到了什么（计划 §4.2 Task 4.1）
