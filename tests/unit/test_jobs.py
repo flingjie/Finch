@@ -6,12 +6,14 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
     ContentScope,
+    DeferredJob,
     IntendedEffect,
     SuccessCriterion,
     TopicProposal,
     _render_prompt,
     expand_content_job,
     plan_content_topics,
+    select_primary_job,
 )
 from finch.content.models import DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard
@@ -417,6 +419,131 @@ class TestContentJobRepository:
         repo = ContentJobRepository(store)
 
         assert repo.get_job("nonexistent") is None
+
+
+def _primary_job(
+    job_id="j",
+    candidate_id=None,
+    status=ContentJobStatus.READY,
+    confirmed=True,
+    decision="decide",
+    tradeoff="trade",
+    why_now="",
+    source_card_ids=("c1",),
+):
+    """构造用于 select_primary_job 测试的最小 ContentJob。"""
+    return ContentJob(
+        id=job_id,
+        source_card_ids=list(source_card_ids),
+        candidate_id=candidate_id,
+        reader_problem="problem",
+        audience="engineers",
+        intended_effect=IntendedEffect(understand="u"),
+        author_position=AuthorPosition(
+            claim="claim", decision=decision, tradeoff=tradeoff, confirmed=confirmed
+        ),
+        success_criteria=[],
+        recommended_format=DraftKind.ORIGINAL,
+        status=status,
+        why_now=why_now,
+    )
+
+
+def _primary_card(card_id="c1", confidence=ClaimConfidence.VERIFIED):
+    """构造用于 select_primary_job 证据占比测试的最小 EvidenceCard。"""
+    return EvidenceCard(
+        id=card_id,
+        event_id="e",
+        claim="claim",
+        sources=[],
+        confidence=confidence,
+        publishable=True,
+        topics=[],
+    )
+
+
+class TestSelectPrimaryJob:
+    """Test deterministic primary job selection (plan §2.3)."""
+
+    def test_empty_returns_none(self):
+        primary, deferred = select_primary_job([])
+        assert primary is None
+        assert deferred == []
+
+    def test_single_job_is_primary(self):
+        job = _primary_job(job_id="only")
+        primary, deferred = select_primary_job([job])
+        assert primary is job
+        assert deferred == []
+
+    def test_ready_confirmed_beats_unconfirmed(self):
+        ready = _primary_job(job_id="a", status=ContentJobStatus.READY, confirmed=True)
+        unconfirmed = _primary_job(
+            job_id="b", status=ContentJobStatus.NEEDS_INPUT, confirmed=False
+        )
+        primary, deferred = select_primary_job([ready, unconfirmed])
+        assert primary is ready
+        assert [d.job.id for d in deferred] == ["b"]
+
+    def test_candidate_context_beats_original(self):
+        with_candidate = _primary_job(job_id="a", candidate_id="t1")
+        original = _primary_job(job_id="b", candidate_id=None)
+        primary, deferred = select_primary_job([original, with_candidate])
+        assert primary is with_candidate
+        assert [d.job.id for d in deferred] == ["b"]
+
+    def test_higher_evidence_ratio_wins(self):
+        strong = _primary_job(job_id="a", candidate_id="t1", source_card_ids=("c1",))
+        weak = _primary_job(job_id="b", candidate_id="t1", source_card_ids=("c2",))
+        cards = {
+            "c1": _primary_card("c1", ClaimConfidence.VERIFIED),
+            "c2": _primary_card("c2", ClaimConfidence.INFERRED),
+        }
+        primary, _ = select_primary_job([weak, strong], cards_by_id=cards)
+        assert primary is strong
+
+    def test_complete_decision_tradeoff_beats_incomplete(self):
+        complete = _primary_job(job_id="a", candidate_id="t1", decision="d", tradeoff="t")
+        incomplete = _primary_job(
+            job_id="b", candidate_id="t1", decision="", tradeoff=""
+        )
+        primary, deferred = select_primary_job([incomplete, complete])
+        assert primary is complete
+        assert deferred[0].reason == "incomplete decision/tradeoff"
+
+    def test_why_now_beats_missing(self):
+        with_why = _primary_job(job_id="a", candidate_id="t1", why_now="shipping now")
+        without_why = _primary_job(job_id="b", candidate_id="t1", why_now="")
+        primary, deferred = select_primary_job([without_why, with_why])
+        assert primary is with_why
+        assert deferred[0].reason == "missing why-now"
+
+    def test_tie_break_uses_stable_input_order(self):
+        a = _primary_job(job_id="a", candidate_id="t1", why_now="now")
+        b = _primary_job(job_id="b", candidate_id="t1", why_now="now")
+        primary_ab, _ = select_primary_job([a, b])
+        assert primary_ab is a
+        primary_ba, _ = select_primary_job([b, a])
+        assert primary_ba is b
+
+    def test_deferred_is_not_mutated_or_dropped(self):
+        a = _primary_job(job_id="a", candidate_id="t1")
+        b = _primary_job(job_id="b", candidate_id=None)
+        primary, deferred = select_primary_job([a, b])
+        assert primary is a
+        assert len(deferred) == 1
+        d = deferred[0]
+        assert isinstance(d, DeferredJob)
+        assert d.job is b
+        # 未被删除、未被永久 do_not_write：原状态保持 READY。
+        assert b.status == ContentJobStatus.READY
+        assert d.job.status == ContentJobStatus.READY
+
+    def test_reason_is_plain_string_not_decimal_score(self):
+        a = _primary_job(job_id="a", candidate_id="t1")
+        b = _primary_job(job_id="b", candidate_id=None)
+        _, deferred = select_primary_job([a, b])
+        assert deferred[0].reason == "no external discussion context"
 
 
 class _ExplodingRunner(CodexRunner):

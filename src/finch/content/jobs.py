@@ -9,7 +9,7 @@ from typing import Literal, cast
 from pydantic import BaseModel, Field
 
 from finch.content.models import DraftKind
-from finch.evidence.models import EvidenceCard, MatchResult
+from finch.evidence.models import ClaimConfidence, EvidenceCard, MatchResult
 from finch.llm.base import StructuredInferenceRunner
 from finch.twitter.models import DiscussionCandidate
 
@@ -109,6 +109,110 @@ class ContentJob(BaseModel):
         if not self.author_position.decision or not self.author_position.tradeoff:
             return True
         return False
+
+
+class DeferredJob(BaseModel):
+    """未当选 primary 的 ContentJob 及其「not now」延期理由。
+
+    延期 ≠ 删除、≠ 永久 do_not_write：``job`` 保留原内容（含 author_position），
+    仅附带一个可读的延期理由，供下游 brief 展示「NOT NOW」并保留恢复能力。
+    """
+
+    job: ContentJob
+    reason: str
+
+
+_STRONG_CONFIDENCE = {ClaimConfidence.VERIFIED, ClaimConfidence.SUPPORTED}
+
+# 与 _substantive_key 返回的前五维一一对应（不含稳定序 tie-break）。
+_DEFER_LABELS = (
+    "position not confirmed or not ready",
+    "no external discussion context",
+    "lower verified/supported evidence ratio",
+    "incomplete decision/tradeoff",
+    "missing why-now",
+)
+
+
+def _evidence_ratio(job: ContentJob, cards_by_id: dict[str, EvidenceCard]) -> float:
+    """source cards 中 VERIFIED/SUPPORTED 的占比（无卡记 0.0）。
+
+    仅用于内部确定性排序，绝不作为主观小数评分对外展示。
+    """
+    cards = [cards_by_id[cid] for cid in job.source_card_ids if cid in cards_by_id]
+    if not cards:
+        return 0.0
+    strong = sum(1 for card in cards if card.confidence in _STRONG_CONFIDENCE)
+    return strong / len(cards)
+
+
+def _substantive_key(
+    job: ContentJob, cards_by_id: dict[str, EvidenceCard]
+) -> tuple[bool, bool, float, bool, bool]:
+    """§2.3 排序主键的前五维（不含「原始稳定顺序」tie-break）。"""
+    position = job.author_position
+    confirmed = position is not None and position.confirmed
+    has_decision_tradeoff = (
+        position is not None
+        and bool(position.decision)
+        and bool(position.tradeoff)
+    )
+    return (
+        job.status == ContentJobStatus.READY and confirmed,
+        job.candidate_id is not None,
+        _evidence_ratio(job, cards_by_id),
+        has_decision_tradeoff,
+        bool(job.why_now),
+    )
+
+
+def _defer_reason(
+    job: ContentJob, primary: ContentJob, cards_by_id: dict[str, EvidenceCard]
+) -> str:
+    """延期理由：按排序顺序找到第一个弱于 primary 的维度，只输出可读文案。"""
+    job_key = _substantive_key(job, cards_by_id)
+    primary_key = _substantive_key(primary, cards_by_id)
+    for job_value, primary_value, label in zip(
+        job_key, primary_key, _DEFER_LABELS, strict=True
+    ):
+        if job_value != primary_value:
+            return label
+    return "same priority as primary (tie-break by stable order)"
+
+
+def select_primary_job(
+    jobs: list[ContentJob],
+    cards_by_id: dict[str, EvidenceCard] | None = None,
+) -> tuple[ContentJob | None, list[DeferredJob]]:
+    """确定性选出单个 primary job（纯函数，无 LLM 节点，无小数主观评分）。
+
+    排序顺序（计划 §2.3）：
+    1. ``status`` 为 READY 且 ``author_position.confirmed``；
+    2. 有 candidate / 外部讨论上下文（``candidate_id`` 非空）；
+    3. source cards 中 VERIFIED/SUPPORTED 占比更高；
+    4. ``decision`` 与 ``tradeoff`` 均非空；
+    5. ``why_now`` 非空；
+    6. 原始稳定顺序（输入顺序）作为 tie-break。
+
+    ``cards_by_id`` 用于第 3 维证据占比；缺省时该维对所有 job 持平，仍按其余
+    维度确定性排序。返回 ``(primary, deferred)``；未选中的 job 只记录为
+    :class:`DeferredJob`（not now），不删除、不永久 do_not_write。调用方应只
+    传入非 ``DO_NOT_WRITE`` 的 job（被拒 job 由调用方单独剔除）。
+    """
+    if not jobs:
+        return None, []
+    cards = cards_by_id or {}
+    primary_index = max(
+        range(len(jobs)),
+        key=lambda i: (*_substantive_key(jobs[i], cards), -i),
+    )
+    primary = jobs[primary_index]
+    deferred = [
+        DeferredJob(job=jobs[i], reason=_defer_reason(jobs[i], primary, cards))
+        for i in range(len(jobs))
+        if i != primary_index
+    ]
+    return primary, deferred
 
 
 class TopicProposal(BaseModel):
