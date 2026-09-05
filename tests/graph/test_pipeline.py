@@ -95,3 +95,51 @@ def test_collect_state(tmp_path):
     rec = store.find_node(run.id, "collect_tweets", "default")
     assert rec is not None
     assert "t1" in rec.output_json
+
+
+def test_make_extract_node_parallel_preserves_card_order(tmp_path):
+    from finch.evidence.models import Claim, ClaimConfidence, EngineeringEvent
+    from finch.github.models import CommitDetail
+    from finch.storage.repositories import CommitIngestionRepository, EvidenceRepository
+
+    calls = []
+
+    class FakeExtractor:
+        def extract_grouped(self, groups, repo):
+            calls.append(repo)
+            return [EngineeringEvent(
+                id=f"evt_{repo}", repository=repo, commits=[groups[0][0].sha],
+                problem=Claim(statement="p", confidence=ClaimConfidence.SUPPORTED),
+                decision=Claim(statement="d", confidence=ClaimConfidence.INFERRED),
+                result=Claim(statement="r", confidence=ClaimConfidence.SUPPORTED),
+            )]
+
+    def _detail(sha):
+        return CommitDetail(sha=sha, message="feat: x", author_date="2026-09-01T00:00:00Z",
+                            html_url="u", parents=[], files=[])
+
+    store = _store(tmp_path)
+    sha_a = "a" * 40
+    sha_b = "b" * 40
+    groups_by_repo = {
+        "a/x": [[_detail(sha_a)]],
+        "b/y": [[_detail(sha_b)]],
+    }
+    node = make_extract_node(
+        extractor=FakeExtractor(),
+        groups_by_repo=groups_by_repo,
+        repo_is_private={},
+        known_commit_urls={
+            f"https://github.com/a/x/commit/{sha_a}",
+            f"https://github.com/b/y/commit/{sha_b}",
+        },
+        cards_repo=EvidenceRepository(store),
+        ingestion_repo=CommitIngestionRepository(store),
+        max_extract_retries=3,
+    )
+    result = node.run({})
+    assert result.status == "succeeded"
+    assert sorted(calls) == ["a/x", "b/y"]
+    # 卡序 = repo 序：a/x 的卡在前。
+    ids = [c["id"] for c in result.output["items"]]
+    assert ids[0].startswith("ev_evt_a/x")

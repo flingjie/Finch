@@ -286,6 +286,7 @@ class Extractor:
         self.runner = runner
         self.settings = settings or ExtractionSettings()
         self.cache = ExtractionCache(cache_path) if cache_path is not None else None
+        self._llm_semaphore = threading.Semaphore(self.settings.global_max_concurrency)
 
     def extract(self, commits: list[CommitDetail], repo: str) -> list[EngineeringEvent]:
         """薄封装：先分组再委托 extract_grouped（保住 ``github reflect`` CLI）。"""
@@ -403,10 +404,13 @@ class Extractor:
         template: str,
     ) -> tuple[dict[int, EngineeringEvent], list[int]]:
         prompt = template.replace("{groups}", _render_batch(groups))
-        output = cast(
-            BatchExtractionOutput,
-            self.runner.run(prompt, BatchExtractionOutput, timeout=self.settings.timeout_seconds),
-        )
+        with self._llm_semaphore:
+            output = cast(
+                BatchExtractionOutput,
+                self.runner.run(
+                    prompt, BatchExtractionOutput, timeout=self.settings.timeout_seconds
+                ),
+            )
         return _validate_batch(output, groups, repo)
 
 

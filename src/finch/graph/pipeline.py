@@ -1,6 +1,7 @@
 """每日 Graph 节点 1–4：preflight / sync / extract / collect（Phase 4 Task B4）。"""
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import cast
 
 from pydantic import BaseModel
@@ -43,21 +44,32 @@ def make_extract_node(
 ) -> Node:
     class ExtractNode(Node):
         def run(self, ctx: dict) -> NodeResult:
-            cards: list[EvidenceCard] = []
-            all_shas: dict[str, list[str]] = {}
-            for repo, groups in groups_by_repo.items():
-                shas = [c.sha for g in groups for c in g]
-                all_shas[repo] = shas
-                try:
-                    events = extractor.extract_grouped(groups, repo)
-                except Exception:  # noqa: BLE001
-                    for r, s in all_shas.items():
-                        ingestion_repo.mark_failed(r, s, max_extract_retries)
-                    raise
+            all_shas = {
+                repo: [c.sha for g in groups for c in g]
+                for repo, groups in groups_by_repo.items()
+            }
+            repo_items = list(groups_by_repo.items())
+
+            def _extract_one(repo: str, groups: list[list[CommitDetail]]) -> list[EvidenceCard]:
+                events = extractor.extract_grouped(groups, repo)
                 repo_cards = build_cards(events)
                 if repo_is_private.get(repo, False):
                     repo_cards = [c.model_copy(update={"publishable": False}) for c in repo_cards]
-                cards.extend(repo_cards)
+                return repo_cards
+
+            try:
+                if len(repo_items) == 1:
+                    cards = _extract_one(*repo_items[0])
+                else:
+                    with ThreadPoolExecutor(max_workers=min(len(repo_items), 3)) as pool:
+                        cards_by_repo = list(
+                            pool.map(lambda kv: _extract_one(kv[0], kv[1]), repo_items)
+                        )
+                    cards = [c for repo_cards in cards_by_repo for c in repo_cards]
+            except Exception:  # noqa: BLE001
+                for r, s in all_shas.items():
+                    ingestion_repo.mark_failed(r, s, max_extract_retries)
+                raise
 
             report = scan_cards(
                 cards,

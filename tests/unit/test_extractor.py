@@ -337,3 +337,29 @@ def test_extract_grouped_accepts_pregrouped(tmp_path):
     out = extractor.extract_grouped(groups, "r")
     assert [e.id for e in out] == ["evt"]
     assert runner.calls == 1
+
+
+def test_extractor_semaphore_caps_concurrent_llm_calls(tmp_path):
+    import threading
+    import time
+
+    lock = threading.Lock()
+    state = {"active": 0, "max_active": 0}
+
+    class BlockingRunner:
+        def run(self, prompt, model, timeout=None):
+            with lock:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            time.sleep(0.05)
+            with lock:
+                state["active"] -= 1
+            return BatchExtractionOutput(items=[])
+
+    settings = ExtractionSettings(global_max_concurrency=1, max_groups_per_batch=1)
+    extractor = Extractor(BlockingRunner(), settings=settings, cache_path=tmp_path / "c.json")
+    # 两个 group 各自成批 → 若 semaphore 生效，并发不会超过 1。
+    groups = [[_detail("a" * 40, "feat: one")], [_detail("b" * 40, "feat: two")]]
+    with pytest.raises(IncompleteBatchExtractionError):
+        extractor.extract_grouped(groups, "r")
+    assert state["max_active"] <= 1
