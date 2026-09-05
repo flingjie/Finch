@@ -1,8 +1,7 @@
 """外部帖子搜索适配器（执行计划 Phase 2）。
 
-提供统一的同步 ``PostSearchProvider`` 接口，当前接入 X/Twitter（复用现有 OpenCLI 只读封装），
-并为 Reddit 保留占位实现（返回明确的未启用状态）。查询由兴趣配置生成，排除词与去重在
-搜索完成后本地执行，最终按 ``max_posts_scanned`` 截断。
+提供统一的同步 ``PostSearchProvider`` 接口，接入 X/Twitter 与 Reddit（均复用 OpenCLI 只读封装）。
+查询由兴趣配置生成，排除词与去重在搜索完成后本地执行，最终按 ``max_posts_scanned`` 截断。
 """
 
 from collections.abc import Iterable, Sequence
@@ -10,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Protocol
 
+from finch.reddit.models import RedditPost
+from finch.reddit.opencli_client import RedditOpenCliClient
 from finch.twitter.models import Tweet
 from finch.twitter.opencli_client import OpenCliClient
 
@@ -92,15 +93,46 @@ class XPostSearchProvider:
 
 
 class RedditPostSearchProvider:
-    """Reddit 搜索适配器占位：尚无稳定访问方式，保留接口并返回明确的未启用状态。"""
+    """Reddit 搜索适配器：包装 ``RedditOpenCliClient.search`` 并规范化为 ``ExternalPost``。
+
+    ``created_utc`` 无法解析的帖子会被跳过（不伪造时间）；正文为标题 + 截断 selftext，
+    ``metrics`` 使用 Reddit 语义键（upvotes / comments）。
+    """
 
     platform: Platform = "reddit"
 
+    def __init__(self, client: RedditOpenCliClient | None = None) -> None:
+        self._client = client or RedditOpenCliClient()
+
     def available(self) -> bool:
-        return False
+        return True
 
     def search(self, query: str, *, limit: int) -> list[ExternalPost]:
-        raise ProviderUnavailableError("Reddit search provider is not enabled")
+        posts = self._client.search(query, limit=limit)
+        result: list[ExternalPost] = []
+        for post in posts:
+            external = _reddit_to_external_post(post, topic=query)
+            if external is not None:
+                result.append(external)
+        return result
+
+
+def _reddit_to_external_post(post: RedditPost, *, topic: str) -> ExternalPost | None:
+    """将 RedditPost 映射为 ExternalPost；时间无法解析时返回 None（禁止伪造时间）。"""
+    published_at = post.published_at()
+    if published_at is None:
+        return None
+    return ExternalPost(
+        id=post.id,
+        platform="reddit",
+        url=post.url,
+        author_id=post.author,
+        author_name=post.author,
+        content=post.content(),
+        published_at=published_at,
+        metrics={"upvotes": post.score, "comments": post.comments},
+        matched_topics=[topic],
+    )
 
 
 def _to_external_post(tweet: Tweet, *, topic: str) -> ExternalPost | None:

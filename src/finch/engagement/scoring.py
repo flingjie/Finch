@@ -26,7 +26,7 @@ _PROMPT_PATH = Path("prompts/score-engagement.md")
 _REPOST_PREFIXES = ("rt @", "rt@", "repost", "转", "转发")
 
 # 热度信号提取用的常见指标键（仅作排序 tiebreaker）。
-_POPULARITY_KEYS = ("likes", "favorites", "replies", "reposts", "retweets", "comments")
+_POPULARITY_KEYS = ("likes", "favorites", "replies", "reposts", "retweets", "comments", "upvotes")
 
 
 class ConversationScoreInput(BaseModel):

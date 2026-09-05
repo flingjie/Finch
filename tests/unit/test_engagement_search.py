@@ -2,8 +2,6 @@
 
 from datetime import UTC, datetime
 
-import pytest
-
 from finch.engagement.models import ExternalPost
 from finch.engagement.search import (
     ProviderUnavailableError,
@@ -14,6 +12,7 @@ from finch.engagement.search import (
     is_excluded,
     search_engagement_posts,
 )
+from finch.reddit.models import RedditPost
 from finch.settings import EngagementSettings, InterestsSettings
 from finch.twitter.models import Tweet
 
@@ -92,12 +91,45 @@ def test_x_provider_skips_tweet_without_parseable_time():
     assert provider.search("q", limit=5) == []
 
 
-def test_reddit_provider_reports_unavailable():
-    provider = RedditPostSearchProvider()
-    assert provider.platform == "reddit"
-    assert provider.available() is False
-    with pytest.raises(ProviderUnavailableError):
-        provider.search("query", limit=5)
+def test_reddit_provider_maps_post_to_external_post():
+    class FakeRedditClient:
+        def search(self, query, *, sort="relevance", limit=20):
+            return [
+                RedditPost(
+                    id="1abc23",
+                    title="How do you test agent reliability?",
+                    subreddit="LocalLLaMA",
+                    author="alice",
+                    score=128,
+                    comments=34,
+                    url="https://www.reddit.com/r/LocalLLaMA/comments/1abc23/t/",
+                    created_utc=1756627200,
+                    selftext="We run a failure replay harness.",
+                )
+            ]
+
+    provider = RedditPostSearchProvider(client=FakeRedditClient())
+    posts = provider.search("agent reliability", limit=5)
+
+    assert len(posts) == 1
+    post = posts[0]
+    assert post.platform == "reddit"
+    assert post.id == "1abc23"
+    assert post.author_id == "alice"
+    assert post.author_name == "alice"
+    assert post.content.startswith("How do you test agent reliability?")
+    assert post.published_at == datetime(2025, 8, 31, 8, 0, tzinfo=UTC)
+    assert post.metrics == {"upvotes": 128, "comments": 34}
+    assert post.matched_topics == ["agent reliability"]
+
+
+def test_reddit_provider_skips_post_without_parseable_time():
+    class FakeRedditClient:
+        def search(self, query, *, sort="relevance", limit=20):
+            return [RedditPost(id="bad", title="t", author="a", url="u", created_utc="bad")]
+
+    provider = RedditPostSearchProvider(client=FakeRedditClient())
+    assert provider.search("q", limit=5) == []
 
 
 def test_build_queries_from_stable_and_exploring():
