@@ -18,6 +18,14 @@ def _detail(sha, files, message="feat: x"):
     )
 
 
+def _summary(sha, message="feat: x", when=None):
+    return CommitSummary(
+        sha=sha, message=message,
+        author_date=when or datetime(2026, 9, 1, tzinfo=UTC),
+        html_url="u", parents=[],
+    )
+
+
 class _FakeGh:
     def __init__(self, summaries, details_by_sha):
         self.summaries = summaries
@@ -143,3 +151,52 @@ def test_list_commits_newest_first_stops_on_short_page(monkeypatch):
     out = gh.list_commits_newest_first("r", per_page=100, max_commits=200)
     assert [s.sha for s in out] == ["1" * 40, "2" * 40]
     assert len(calls) == 1  # 短页 → 不再请求下一页
+
+
+def test_mark_group_ids_roundtrip(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = CommitIngestionRepository(store)
+    repo.upsert_pending(REPO, [_summary("a" * 40), _summary("b" * 40)])
+    repo.store_detail(REPO, _detail("a" * 40,
+                                    [CommitFile(filename="src/a.py", status="modified",
+                                                additions=1, deletions=0)]))
+    repo.store_detail(REPO, _detail("b" * 40,
+                                    [CommitFile(filename="src/b.py", status="modified",
+                                                additions=1, deletions=0)]))
+    repo.mark_group_ids(REPO, [("a" * 40, "g1"), ("b" * 40, "g1")])
+    grouped = repo.list_grouped(REPO)
+    assert {r.group_id for r in grouped} == {"g1"}
+
+
+def test_assign_group_ids_freezes_assigned_and_groups_new(tmp_path):
+    from finch.github.ingestion import assign_group_ids
+
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = CommitIngestionRepository(store)
+    # 已分配（模拟 backlog）: a 与 b 同组 g1
+    repo.upsert_pending(REPO, [_summary("a" * 40), _summary("b" * 40), _summary("c" * 40)])
+    repo.store_detail(REPO, _detail("a" * 40,
+                                    [CommitFile(filename="src/a.py", status="modified",
+                                                additions=1, deletions=0)],
+                                    message="feat: a"))
+    repo.store_detail(REPO, _detail("b" * 40,
+                                    [CommitFile(filename="src/b.py", status="modified",
+                                                additions=1, deletions=0)],
+                                    message="feat: b"))
+    repo.store_detail(REPO, _detail("c" * 40,
+                                    [CommitFile(filename="src/c.py", status="modified",
+                                                additions=1, deletions=0)],
+                                    message="feat: c"))
+    repo.mark_group_ids(REPO, [("a" * 40, "g1"), ("b" * 40, "g1")])
+
+    records = repo.list_grouped(REPO)
+    # c 未分配（group_id None），a/b 已分配
+    groups = assign_group_ids(records)
+    # a/b 冻结在 g1；c 新建一组（group_id = c.sha）
+    assert "g1" in groups
+    assert len(groups["g1"]) == 2
+    new_gid = "c" * 40
+    assert new_gid in groups
+    assert len(groups[new_gid]) == 1

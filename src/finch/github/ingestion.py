@@ -4,7 +4,11 @@ from datetime import UTC, datetime, timedelta
 
 from ..evidence.budget import rank_pending, select_groups
 from ..settings import Settings
-from ..storage.repositories import CommitIngestionRepository, RepoCursorRepository
+from ..storage.repositories import (
+    CommitIngestionRecord,
+    CommitIngestionRepository,
+    RepoCursorRepository,
+)
 from .change_grouper import group_commits
 from .commit_reader import is_noise
 from .gh_client import GhClient
@@ -15,6 +19,36 @@ from .models import CommitDetail, CommitSummary
 def _as_utc(dt: datetime) -> datetime:
     """SQLite 往返丢失 tzinfo；补回 UTC，使 ``now`` 与 ``discovered_at`` 可相减。"""
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+def assign_group_ids(
+    records: list[CommitIngestionRecord],
+) -> dict[str, list[CommitIngestionRecord]]:
+    """append-only 分组：已分配（group_id 非空）冻结；未分配经 ``group_commits`` 分组，
+    新组 group_id = 首 commit sha（author 顺序最早）。返回 group_id -> records。"""
+    assigned: dict[str, list[CommitIngestionRecord]] = {}
+    unassigned: list[CommitIngestionRecord] = []
+    for r in records:
+        if r.group_id is not None:
+            assigned.setdefault(r.group_id, []).append(r)
+        else:
+            unassigned.append(r)
+    if not unassigned:
+        return assigned
+
+    details_by_sha = {
+        r.sha: CommitDetail.model_validate_json(r.payload_json) for r in unassigned
+    }
+    ordered = sorted(unassigned, key=lambda r: details_by_sha[r.sha].author_date)
+    new_groups = group_commits([details_by_sha[r.sha] for r in ordered])
+    record_by_sha = {r.sha: r for r in unassigned}
+    for group in new_groups:
+        gid = group[0].sha
+        for detail in group:
+            record = record_by_sha[detail.sha]
+            record.group_id = gid
+            assigned.setdefault(gid, []).append(record)
+    return assigned
 
 
 class Ingestor:
@@ -65,11 +99,22 @@ class Ingestor:
             else:
                 self.ingestion.store_detail(repo, detail)
 
-        # 3) 段 2：分组 + 选出本轮提取预算
+        # 3) 段 2：append-only 分组（冻结已分配、只给新 commit 分组）+ 选出本轮提取预算
         grouped = self.ingestion.list_grouped(repo)
-        details = [CommitDetail.model_validate_json(r.payload_json) for r in grouped]
-        discovered = {r.sha: _as_utc(r.discovered_at) for r in grouped}
-        groups = list(group_commits(details))
+        groups_by_id = assign_group_ids(grouped)
+        self.ingestion.mark_group_ids(
+            repo,
+            [(r.sha, gid) for gid, members in groups_by_id.items() for r in members],
+        )
+        groups = [
+            [CommitDetail.model_validate_json(r.payload_json) for r in members]
+            for members in groups_by_id.values()
+        ]
+        discovered = {
+            r.sha: _as_utc(r.discovered_at)
+            for members in groups_by_id.values()
+            for r in members
+        }
         return select_groups(groups, existing_topics, budget, discovered, now)
 
     def _discover(self, repo: str, known: set[str]) -> list[CommitSummary]:

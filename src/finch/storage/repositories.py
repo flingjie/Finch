@@ -178,6 +178,20 @@ class CommitIngestionRepository:
                 session.add(record)
             session.commit()
 
+    def mark_group_ids(self, repository: str, assignments: list[tuple[str, str]]) -> None:
+        """持久化 commit 的 group_id（append-only 分组，幂等：重复写同值无害）。"""
+        if not assignments:
+            return
+        with Session(self.store.engine) as session:
+            for sha, group_id in assignments:
+                record = session.get(CommitIngestionRecord, (repository, sha))
+                if record is None:
+                    continue
+                record.group_id = group_id
+                record.updated_at = datetime.now(UTC)
+                session.add(record)
+            session.commit()
+
     def list_pending(self, repository: str) -> list[CommitIngestionRecord]:
         return self._list_by_status(repository, [self.PENDING])
 
