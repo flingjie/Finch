@@ -1,4 +1,4 @@
-from finch.content.models import ClaimRef, DailyBrief, Draft, DraftKind
+from finch.content.models import ClaimRef, DailyBrief, Draft, DraftKind, DraftWarning
 from finch.evidence.models import ClaimConfidence
 
 
@@ -43,3 +43,11 @@ def test_draft_has_new_fields():
 def test_daily_brief_shape():
     b = DailyBrief(run_id="r", has_drafts=True, reply_count=1, body="# brief")
     assert b.reply_count == 1
+
+
+def test_draft_warning_binds_to_draft():
+    """Task 3.4：DraftWarning 把警告归属到具体草稿，而非全局列表。"""
+    w = DraftWarning(draft_id="d1", checker="evidence", message="unsupported claim")
+    assert w.draft_id == "d1"
+    assert w.checker == "evidence"
+    assert w.message == "unsupported claim"

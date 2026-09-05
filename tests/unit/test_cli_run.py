@@ -581,6 +581,8 @@ def test_run_resume_echoes_state_and_brief(monkeypatch, tmp_path):
             Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
             Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
             Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
+            Seed(name="collect_tweets", writes="candidates", seed=items_payload([])),
+            Seed(name="position_gate", writes="ready_jobs", seed=items_payload([])),
             make_brief_node(QualityGates()),
         ]
 
@@ -590,7 +592,8 @@ def test_run_resume_echoes_state_and_brief(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["run", "resume", run.id])
     assert r.exit_code == 0, r.output
     assert "WAITING_FOR_REVIEW" in r.output
-    assert "草稿正文：hi" in r.output
+    assert "## 7. 草稿正文" in r.output
+    assert "hi" in r.output
 
 
 def test_persist_critique_reports_helper(tmp_path):
@@ -710,6 +713,7 @@ def test_run_resume_persists_drafts_and_reports(monkeypatch, tmp_path):
             Seed(name="draft", writes="drafts", seed=items_payload([draft])),
             Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
             Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
+            Seed(name="collect_tweets", writes="candidates", seed=items_payload([])),
             Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
             Seed(name="position_gate", writes="ready_jobs", seed=items_payload([])),
             make_critique_node(

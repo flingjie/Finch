@@ -14,7 +14,7 @@ from finch.content.jobs import (
     SuccessCriterion,
     TopicProposal,
 )
-from finch.content.models import ClaimRef, Draft, DraftKind
+from finch.content.models import ClaimRef, Draft, DraftKind, DraftWarning
 from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
 from finch.graph.content_nodes import (
     default_checker_suite,
@@ -47,15 +47,42 @@ class Seed(Node):
         return NodeResult(status="succeeded", output=self.seed)
 
 
+def _brief_seeds(
+    *,
+    drafts: dict | None = None,
+    jobs: dict | None = None,
+    cards: dict | None = None,
+    candidates: dict | None = None,
+    matches: dict | None = None,
+    gate: dict | None = None,
+) -> list[Node]:
+    """brief 节点上游全部 reads 的 Seed（Task 3.1 新增 ready_jobs/candidates/match_results）。"""
+    return [
+        Seed(name="draft", writes="drafts", seed=drafts or items_payload([])),
+        Seed(name="match_evidence", writes="match_results", seed=matches or items_payload([])),
+        Seed(name="define_jobs", writes="content_jobs", seed=jobs or items_payload([])),
+        Seed(name="extract_events", writes="evidence_cards", seed=cards or items_payload([])),
+        Seed(name="collect_tweets", writes="candidates", seed=candidates or items_payload([])),
+        Seed(name="position_gate", writes="ready_jobs", seed=gate or items_payload([])),
+    ]
+
+
+def _run_brief(tmp_path, nodes):
+    """跑 GraphRuntime 到 brief，返回 (run, brief payload dict)。"""
+    store = _store(tmp_path)
+    run = GraphRuntime(store, nodes).run()
+    rec = store.find_node(run.id, "brief", "default")
+    assert rec is not None
+    return run, json.loads(rec.output_json)
+
+
+def _brief_body(payload) -> str:
+    return payload["items"][0]["body"]
+
+
 def test_brief_node_terminal_state(tmp_path):
     # 无稿 → COMPLETED
-    nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
-        make_brief_node(QualityGates()),
-    ]
+    nodes = [*_brief_seeds(), make_brief_node(QualityGates())]
     run = GraphRuntime(_store(tmp_path), nodes).run()
     assert run.state == "COMPLETED"
 
@@ -64,13 +91,7 @@ def test_brief_node_waiting_when_drafts(tmp_path):
     from finch.content.models import Draft, DraftKind
 
     d = Draft(id="d", kind=DraftKind.REPLY, candidate_id="t", body="hi", claims=[])
-    nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([d])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
-        make_brief_node(QualityGates()),
-    ]
+    nodes = [*_brief_seeds(drafts=items_payload([d])), make_brief_node(QualityGates())]
     run = GraphRuntime(_store(tmp_path), nodes).run()
     assert run.state == "WAITING_FOR_REVIEW"
 
@@ -440,6 +461,34 @@ def test_critique_node_drops_hard_fail_draft(tmp_path):
     assert calls == {"rewrite": 0}
 
 
+def test_critique_node_emits_draft_warnings(tmp_path):
+    """Task 3.4：critique 输出结构化 draft_warnings（draft_id/checker/message 绑定）。"""
+    checker = SeqChecker(
+        [
+            _failed_check(
+                checker="evidence",
+                severity="hard_fail",
+                locations=("claim[0]",),
+                issue="unsupported claim",
+                instruction="re-bind the claim",
+            )
+        ]
+    )
+
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
+        return draft
+
+    store = _store(tmp_path)
+    run = GraphRuntime(store, _critique_nodes(rewrite, checker)).run()
+    rec = store.find_node(run.id, "critique", "default")
+    assert rec is not None
+    payload = json.loads(rec.output_json)
+    draft_warnings = [DraftWarning.model_validate(w) for w in payload["draft_warnings"]]
+    assert [w.draft_id for w in draft_warnings] == ["d1"]
+    assert draft_warnings[0].checker == "evidence"
+    assert "rejected by evidence" in draft_warnings[0].message
+
+
 def test_critique_node_stops_on_needs_input():
     checker = SeqChecker(
         [
@@ -607,7 +656,8 @@ def test_position_gate_empty_decision_needs_input():
     assert result.status == "needs_input"
 
 
-def test_position_gate_mixed_routes_ready_and_unready():
+def test_position_gate_only_primary_blocks():
+    """Task 2.4：只有 primary job 可阻塞；其余 job 保存为 deferred，不触发 needs_input。"""
     node = make_position_gate_node()
     ready = _job(job_id="j1", candidate_id="t1", position=_position(confirmed=True))
     unconfirmed = _job(job_id="j2", candidate_id=None, position=_position(confirmed=False))
@@ -617,9 +667,11 @@ def test_position_gate_mixed_routes_ready_and_unready():
     result = node.run(
         {"content_jobs": items_payload([ready, unconfirmed, do_not_write])}
     )
-    assert result.status == "needs_input"
-    # only the unready job is reported; DO_NOT_WRITE and ready jobs are excluded
-    assert [j["id"] for j in result.output["items"]] == ["j2"]
+    # 只有 primary（j1，已确认）进入 ready_jobs。
+    assert result.status == "succeeded"
+    assert [j["id"] for j in result.output["items"]] == ["j1"]
+    # j2 被 deferred（not now），j3（DO_NOT_WRITE）不参与选择、也不出现在 deferred。
+    assert [d["job_id"] for d in result.output["deferred"]] == ["j2"]
 
 
 def test_position_gate_resume_proceeds_once_confirmed(tmp_path):
@@ -769,6 +821,81 @@ def test_position_gate_falls_back_to_context_when_repo_missing(tmp_path):
     assert result.status == "needs_input"
 
 
+def test_position_gate_asks_at_most_three_questions():
+    """Task 2.4：primary 缺立场时只问 missing_questions（模型已限 ≤3 个）。"""
+    node = make_position_gate_node()
+    job = _job(job_id="j1", position=_position(confirmed=False)).model_copy(
+        update={"missing_questions": ["q1", "q2", "q3"]}
+    )
+    result = node.run({"content_jobs": items_payload([job])})
+    assert result.status == "needs_input"
+    assert result.output["questions"] == ["q1", "q2", "q3"]
+    assert [j["id"] for j in result.output["items"]] == ["j1"]
+
+
+def test_position_gate_falls_back_once_after_reject(tmp_path):
+    """用户拒绝 primary 后，确定性选择下一个 job（一次递补）。"""
+    store = _store(tmp_path)
+    repo = ContentJobRepository(store)
+    rejected = _job(
+        job_id="A", candidate_id="t1", position=None, status=ContentJobStatus.DO_NOT_WRITE
+    )
+    fallback = _job(job_id="B", candidate_id="t1", position=_position(confirmed=False))
+    repo.upsert_job(rejected)
+    repo.upsert_job(fallback)
+
+    node = make_position_gate_node(jobs_repo=repo)
+    result = node.run({"content_jobs": items_payload([rejected, fallback])})
+    assert result.status == "needs_input"
+    assert [j["id"] for j in result.output["items"]] == ["B"]
+
+
+def test_position_gate_stops_after_one_fallback(tmp_path):
+    """primary 与一次递补都被拒后，不再提议第三个 job（避免无限循环）。"""
+    store = _store(tmp_path)
+    repo = ContentJobRepository(store)
+    rejected_a = _job(
+        job_id="A", candidate_id="t1", position=None, status=ContentJobStatus.DO_NOT_WRITE
+    )
+    rejected_b = _job(
+        job_id="B", candidate_id="t1", position=None, status=ContentJobStatus.DO_NOT_WRITE
+    )
+    active = _job(job_id="C", candidate_id=None, position=_position(confirmed=False))
+    for job in (rejected_a, rejected_b, active):
+        repo.upsert_job(job)
+
+    node = make_position_gate_node(jobs_repo=repo)
+    result = node.run(
+        {"content_jobs": items_payload([rejected_a, rejected_b, active])}
+    )
+    assert result.status == "succeeded"
+    assert result.output["items"] == []
+    assert [d["job_id"] for d in result.output["deferred"]] == ["C"]
+
+
+def test_position_gate_defers_others_and_persists_proposed(tmp_path):
+    """其余 ready job 被 deferred 并以 PROPOSED 保存（不删除、不 do_not_write）。"""
+    store = _store(tmp_path)
+    repo = ContentJobRepository(store)
+    primary = _job(job_id="p", candidate_id="t1", position=_position(confirmed=True))
+    secondary = _job(job_id="s", candidate_id=None, position=_position(confirmed=True))
+    repo.upsert_job(primary)
+    repo.upsert_job(secondary)
+
+    node = make_position_gate_node(jobs_repo=repo)
+    result = node.run({"content_jobs": items_payload([primary, secondary])})
+    assert result.status == "succeeded"
+    assert [j["id"] for j in result.output["items"]] == ["p"]
+    assert [d["job_id"] for d in result.output["deferred"]] == ["s"]
+
+    # secondary 被保存为 proposed（not now，可恢复），而非 do_not_write。
+    saved = repo.get_job("s")
+    assert saved is not None
+    assert saved.status == ContentJobStatus.PROPOSED
+    # primary 状态不变。
+    assert repo.get_job("p").status == ContentJobStatus.READY
+
+
 def test_draft_node_caps_replies_and_originals(tmp_path):
     """资源上限：replies ≤ max_daily_replies，originals ≤ max_daily_original_posts。"""
     jobs = [_job(job_id=f"r{i}", candidate_id="t1", source_card_ids=("ev1",)) for i in range(6)]
@@ -894,56 +1021,134 @@ def test_draft_node_runs_jobs_in_parallel_and_preserves_order(tmp_path):
     assert [d["id"] for d in drafts] == ["d_job1", "d_job2"]
 
 
-def test_brief_renders_six_items_per_candidate(tmp_path):
-    """D10: Daily Brief 每个候选渲染 Spec §7 的 6 项。"""
-    job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))
+def test_brief_body_follows_decision_first_order(tmp_path):
+    """Task 3.1：Daily Brief 按计划 §3.1 的 10 段固定顺序渲染。"""
+    job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",)).model_copy(
+        update={
+            "core_message": "token bucket 是限制速率的最简方案",
+            "why_now": "团队正在处理 agent 循环超时",
+        }
+    )
     draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
 
-    store = _store(tmp_path)
     nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([draft])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([job])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        *_brief_seeds(
+            drafts=items_payload([draft]),
+            jobs=items_payload([job]),
+            cards=items_payload([_card()]),
+            candidates=items_payload([_candidate()]),
+            matches=items_payload([_match()]),
+            gate=items_payload([job]),
+        ),
         make_brief_node(QualityGates()),
     ]
-    run = GraphRuntime(store, nodes).run()
-    assert run.state == "WAITING_FOR_REVIEW"
-    rec = store.find_node(run.id, "brief", "default")
-    assert rec is not None
-    briefs = json.loads(rec.output_json)["items"]
-    assert briefs
-    body = briefs[0]["body"]
-    for marker in (
-        "要完成的工作",
-        "目标读者与期望动作",
-        "证据来源",
-        "核心判断与取舍",
-        "Critic 未解决风险",
-        "推荐动作",
-    ):
-        assert marker in body, marker
-    assert "readers don't know how to rate limit" in body
-    assert "backend engineers" in body
-    assert "token bucket rate limiting" in body
+    _, payload = _run_brief(tmp_path, nodes)
+    body = _brief_body(payload)
+
+    headers = [
+        "## 1. 今日结论",
+        "## 2. 今日首选",
+        "## 3. 为什么值得说",
+        "## 4. 作者判断与取舍",
+        "## 5. 工程证据与讨论上下文",
+        "## 6. 未解决风险",
+        "## 7. 草稿正文",
+        "## 8. 命令",
+        "## 9. NOT NOW",
+        "## 10. 本轮漏斗和轨道失败",
+    ]
+    positions = [body.index(h) for h in headers]
+    assert positions == sorted(positions)
+    assert "token bucket 是限制速率的最简方案" in body
+    assert "团队正在处理 agent 循环超时" in body
     assert "use token bucket" in body
     assert "more memory" in body
+    assert "token bucket rate limiting" in body
+    assert "finch review approve" in body
 
 
-def test_brief_recommended_action_uses_fresh_job_from_repo(tmp_path):
-    """F1: brief 从 repo 取 fresh job，resume 后已确认的 job 不再提示「确认观点」。"""
+def test_brief_primary_and_not_now_from_gate(tmp_path):
+    """Task 3.1：今日首选来自 gate primary；NOT NOW 列出 deferred job 与理由。"""
+    primary = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",)).model_copy(
+        update={"core_message": "首选主题"}
+    )
+    deferred_job = _job(job_id="job2", candidate_id=None, source_card_ids=("ev1",))
+    draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
+    gate = items_payload([primary])
+    gate["deferred"] = [{"job_id": "job2", "reason": "no external discussion context"}]
+
+    nodes = [
+        *_brief_seeds(
+            drafts=items_payload([draft]),
+            jobs=items_payload([primary, deferred_job]),
+            cards=items_payload([_card()]),
+            candidates=items_payload([_candidate()]),
+            matches=items_payload([_match()]),
+            gate=gate,
+        ),
+        make_brief_node(QualityGates()),
+    ]
+    _, payload = _run_brief(tmp_path, nodes)
+    body = _brief_body(payload)
+
+    assert "首选主题" in body
+    not_now = body.split("## 9. NOT NOW", 1)[1].split("## 10.", 1)[0]
+    assert "job2" in not_now
+    assert "no external discussion context" in not_now
+
+
+def test_brief_empty_result_explains_no_good_candidate(tmp_path):
+    """Golden Case（Phase 0 延后项）：无草稿时 Brief 给出具体「不建议写」原因而非空白。"""
+    rejected = _job(job_id="job1", status=ContentJobStatus.DO_NOT_WRITE, position=None).model_copy(
+        update={"reject_reason": "not useful right now"}
+    )
+    nodes = [
+        *_brief_seeds(
+            jobs=items_payload([rejected]),
+            cards=items_payload([_card()]),
+            candidates=items_payload([_candidate()]),
+            matches=items_payload([_match()]),
+        ),
+        make_brief_node(QualityGates()),
+    ]
+    _, payload = _run_brief(tmp_path, nodes)
+    body = _brief_body(payload)
+
+    assert "今日没有建议发布的内容" in body
+    assert "不建议写原因" in body
+    assert "not useful right now" in body
+    assert "提取证据卡：1 张" in body
+    assert "收集讨论：1 条" in body
+    assert "生成 jobs：1 个" in body
+    assert "产出草稿：0 篇" in body
+
+
+def test_brief_uses_fresh_job_from_repo(tmp_path):
+    """F1：brief 从 repo 取 fresh job，resume 后采纳用户 confirm-position 的编辑。"""
     store = _store(tmp_path)
     repo = ContentJobRepository(store)
-    confirmed = _job(job_id="job1", candidate_id="t1", position=_position(confirmed=True))
-    stale = _job(job_id="job1", candidate_id="t1", position=_position(confirmed=False))
-    repo.upsert_job(confirmed)
+    fresh = _job(
+        job_id="job1",
+        candidate_id="t1",
+        position=_position(decision="fresh decision", confirmed=True),
+    )
+    stale = _job(
+        job_id="job1",
+        candidate_id="t1",
+        position=_position(decision="stale decision", confirmed=False),
+    )
+    repo.upsert_job(fresh)
     draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
 
     nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([draft])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([stale])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        *_brief_seeds(
+            drafts=items_payload([draft]),
+            jobs=items_payload([stale]),
+            cards=items_payload([_card()]),
+            candidates=items_payload([_candidate()]),
+            matches=items_payload([_match()]),
+            gate=items_payload([stale]),
+        ),
         make_brief_node(QualityGates(), jobs_repo=repo),
     ]
     run = GraphRuntime(store, nodes).run()
@@ -951,120 +1156,155 @@ def test_brief_recommended_action_uses_fresh_job_from_repo(tmp_path):
     rec = store.find_node(run.id, "brief", "default")
     assert rec is not None
     body = json.loads(rec.output_json)["items"][0]["body"]
-    assert "待人工审核（发布需手动）" in body
-    assert "确认观点" not in body
-
-
-def test_brief_recommended_action_needs_input_when_unconfirmed(tmp_path):
-    """F1: 未确认（needs_input）的 job 仍提示「确认观点」。"""
-    store = _store(tmp_path)
-    repo = ContentJobRepository(store)
-    unconfirmed = _job(job_id="job1", candidate_id="t1", position=_position(confirmed=False))
-    repo.upsert_job(unconfirmed)
-    draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
-
-    nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([draft])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([unconfirmed])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        make_brief_node(QualityGates(), jobs_repo=repo),
-    ]
-    run = GraphRuntime(store, nodes).run()
-    rec = store.find_node(run.id, "brief", "default")
-    assert rec is not None
-    body = json.loads(rec.output_json)["items"][0]["body"]
-    assert "确认观点" in body
+    assert "fresh decision" in body
+    assert "stale decision" not in body
 
 
 def test_brief_falls_back_to_context_job_when_repo_missing(tmp_path):
-    """F1: repo 查不到 job 时回退到 context 里的 job。"""
+    """F1：repo 查不到 job 时回退到 context（gate/ready_jobs）里的 job。"""
     store = _store(tmp_path)
     repo = ContentJobRepository(store)
-    confirmed = _job(job_id="job1", candidate_id="t1", position=_position(confirmed=True))
+    context_job = _job(
+        job_id="job1",
+        candidate_id="t1",
+        position=_position(decision="context decision", confirmed=True),
+    )
     draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
 
     nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([draft])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([confirmed])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        *_brief_seeds(
+            drafts=items_payload([draft]),
+            jobs=items_payload([context_job]),
+            cards=items_payload([_card()]),
+            candidates=items_payload([_candidate()]),
+            matches=items_payload([_match()]),
+            gate=items_payload([context_job]),
+        ),
         make_brief_node(QualityGates(), jobs_repo=repo),
     ]
     run = GraphRuntime(store, nodes).run()
     rec = store.find_node(run.id, "brief", "default")
     assert rec is not None
     body = json.loads(rec.output_json)["items"][0]["body"]
-    assert "待人工审核（发布需手动）" in body
+    assert "context decision" in body
 
 
 def test_brief_renders_critic_warnings_from_persisted_output(tmp_path):
-    """F2: brief 从 persisted critique 输出读取 warnings 渲染第 5 项。"""
+    """Task 3.4：brief 从 critique 输出的结构化 draft_warnings 渲染「未解决风险」。"""
     job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))
     draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
     drafts_payload = items_payload([draft])
-    drafts_payload["warnings"] = [f"draft {draft.id}: failed critique after 2 rewrites"]
+    drafts_payload["draft_warnings"] = [
+        DraftWarning(
+            draft_id=draft.id, checker="critique", message="failed critique after 2 rewrites"
+        ).model_dump(mode="json")
+    ]
 
-    store = _store(tmp_path)
     nodes = [
-        Seed(name="draft", writes="drafts", seed=drafts_payload),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([job])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        *_brief_seeds(
+            drafts=drafts_payload,
+            jobs=items_payload([job]),
+            cards=items_payload([_card()]),
+            candidates=items_payload([_candidate()]),
+            matches=items_payload([_match()]),
+            gate=items_payload([job]),
+        ),
         make_brief_node(QualityGates()),
     ]
-    run = GraphRuntime(store, nodes).run()
-    rec = store.find_node(run.id, "brief", "default")
-    assert rec is not None
-    body = json.loads(rec.output_json)["items"][0]["body"]
+    _, payload = _run_brief(tmp_path, nodes)
+    body = _brief_body(payload)
     assert "failed critique after 2 rewrites" in body
 
 
 def test_brief_renders_none_when_no_critic_warnings(tmp_path):
-    """F2: 无 warnings 时第 5 项渲染「无」。"""
+    """无未解决风险时「未解决风险」段渲染「无」。"""
     job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))
     draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
 
-    store = _store(tmp_path)
     nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([draft])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([job])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        *_brief_seeds(
+            drafts=items_payload([draft]),
+            jobs=items_payload([job]),
+            cards=items_payload([_card()]),
+            candidates=items_payload([_candidate()]),
+            matches=items_payload([_match()]),
+            gate=items_payload([job]),
+        ),
         make_brief_node(QualityGates()),
     ]
-    run = GraphRuntime(store, nodes).run()
-    rec = store.find_node(run.id, "brief", "default")
-    assert rec is not None
-    body = json.loads(rec.output_json)["items"][0]["body"]
-    assert "Critic 未解决风险：无" in body
+    _, payload = _run_brief(tmp_path, nodes)
+    body = _brief_body(payload)
+    assert "## 6. 未解决风险\n无" in body
 
 
-def test_brief_does_not_prefix_match_draft_ids(tmp_path):
-    """F6: draft 1 的 brief 不应继承 draft 10 的 warning。"""
+def test_brief_binds_warnings_to_draft(tmp_path):
+    """Task 3.4：警告按 draft_id 归属，绝不作为全局列表出现在每个候选上。"""
     draft_1 = _reply_draft().model_copy(update={"id": "1"})
     draft_10 = _reply_draft().model_copy(update={"id": "10"})
     drafts_payload = items_payload([draft_1, draft_10])
-    drafts_payload["warnings"] = ["draft 10: rejected by evidence (claim[0])"]
+    drafts_payload["draft_warnings"] = [
+        DraftWarning(
+            draft_id="10", checker="evidence", message="rejected by evidence (claim[0])"
+        ).model_dump(mode="json")
+    ]
 
-    store = _store(tmp_path)
     nodes = [
-        Seed(name="draft", writes="drafts", seed=drafts_payload),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        *_brief_seeds(
+            drafts=drafts_payload,
+            cards=items_payload([_card()]),
+            matches=items_payload([_match()]),
+        ),
         make_brief_node(QualityGates()),
     ]
-    run = GraphRuntime(store, nodes).run()
-    rec = store.find_node(run.id, "brief", "default")
-    assert rec is not None
-    briefs = json.loads(rec.output_json)["items"]
-    assert len(briefs) == 1
-    sections = briefs[0]["body"].split("## 候选 ")
-    block_1 = next(s for s in sections if s.startswith("1\n"))
-    block_10 = next(s for s in sections if s.startswith("10\n"))
-    assert "rejected by evidence" not in block_1
-    assert "rejected by evidence" in block_10
+    _, payload = _run_brief(tmp_path, nodes)
+    body = _brief_body(payload)
+    # primary = draft "1"；其「未解决风险」段不得出现 draft "10" 的警告。
+    assert "## 6. 未解决风险\n无" in body
+    # draft "10" 的警告只出现在其自身区块。
+    assert "rejected by evidence" in body.split("[草稿 10]", 1)[1]
+
+
+def test_brief_legacy_string_warnings_still_render(tmp_path):
+    """向后兼容：旧版 ``warnings`` 字符串仍被解析并绑定到所属草稿。"""
+    draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
+    drafts_payload = items_payload([draft])
+    drafts_payload["warnings"] = [f"draft {draft.id}: failed critique after 2 rewrites"]
+    job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))
+
+    nodes = [
+        *_brief_seeds(
+            drafts=drafts_payload,
+            jobs=items_payload([job]),
+            cards=items_payload([_card()]),
+            candidates=items_payload([_candidate()]),
+            matches=items_payload([_match()]),
+            gate=items_payload([job]),
+        ),
+        make_brief_node(QualityGates()),
+    ]
+    _, payload = _run_brief(tmp_path, nodes)
+    body = _brief_body(payload)
+    assert "failed critique after 2 rewrites" in body
+
+
+def test_brief_uses_real_run_id(tmp_path):
+    """Task 3.1：brief 使用 node context 提供的真实 run id，而非硬编码 "daily"。"""
+    draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
+    job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))
+    node = make_brief_node(QualityGates())
+    result = node.run(
+        {
+            "run_id": "abc-123",
+            "drafts": items_payload([draft]),
+            "content_jobs": items_payload([job]),
+            "evidence_cards": items_payload([_card()]),
+            "ready_jobs": items_payload([job]),
+            "candidates": items_payload([_candidate()]),
+            "match_results": items_payload([_match()]),
+        }
+    )
+    assert result.status == "succeeded"
+    assert result.output["items"][0]["run_id"] == "abc-123"
 
 
 def test_default_checker_suite_has_eight_checkers():
