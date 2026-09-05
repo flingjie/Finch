@@ -10,8 +10,8 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
-from finch.codex.runner import CodexRunner
 from finch.content.checkers.base import CheckContext, Checker, CheckResult, split_sentences
+from finch.llm.base import StructuredInferenceRunner
 
 _MECHANICAL_OPENERS = (
     "first,",
@@ -74,7 +74,7 @@ class StructureChecker(Checker):
 
     name: str = "structure"
 
-    def __init__(self, runner: CodexRunner | None = None):
+    def __init__(self, runner: StructuredInferenceRunner | None = None):
         self._runner = runner
 
     def check(self, ctx: CheckContext) -> CheckResult:

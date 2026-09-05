@@ -13,29 +13,40 @@ import urllib.request
 from pydantic import BaseModel
 
 from ..codex.structured_output import StructuredOutputError, load_json, parse_checked
-from ..settings import LLMSettings
+from ..settings import LLMNodeSettings, LLMSettings
 
 
 class OpenAICompatibleRunner:
     """调用任意 OpenAI 兼容 ``/chat/completions`` 端点（OpenAI / DeepSeek / 网关等）。"""
 
-    def __init__(self, base_url: str, api_key: str, model: str) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        *,
+        timeout: float = 90.0,
+        max_tokens: int | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        self.timeout = timeout
+        self.max_tokens = max_tokens
 
     def run(
         self,
         prompt: str,
         output_model: type[BaseModel],
         *,
-        timeout: float = 90.0,
+        timeout: float | None = None,
         max_attempts: int = 2,
     ) -> BaseModel:
+        effective_timeout = self.timeout if timeout is None else timeout
         last_error: Exception | None = None
         for _ in range(max_attempts):
             try:
-                return self._run_once(prompt, output_model, timeout=timeout)
+                return self._run_once(prompt, output_model, timeout=effective_timeout)
             except (json.JSONDecodeError, StructuredOutputError) as exc:
                 last_error = exc
         raise StructuredOutputError(
@@ -45,25 +56,26 @@ class OpenAICompatibleRunner:
 
     def _run_once(self, prompt: str, output_model: type[BaseModel], *, timeout: float) -> BaseModel:
         schema = json.dumps(output_model.model_json_schema())
-        payload = json.dumps(
-            {
-                "model": self.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a structured-output engine. Return only valid JSON "
-                            f"matching this JSON Schema:\n{schema}"
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0,
-            }
-        ).encode("utf-8")
+        payload: dict = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a structured-output engine. Return only valid JSON "
+                        f"matching this JSON Schema:\n{schema}"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0,
+        }
+        if self.max_tokens is not None:
+            payload["max_tokens"] = self.max_tokens
+        payload_bytes = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
-            data=payload,
+            data=payload_bytes,
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_key}",
@@ -93,11 +105,20 @@ class OpenAICompatibleRunner:
         return parse_checked(load_json(content), output_model)
 
 
-def create_runner(llm: LLMSettings) -> OpenAICompatibleRunner | None:
+def create_runner(llm: LLMSettings, node_name: str | None = None) -> OpenAICompatibleRunner | None:
     """从配置构建 OpenAI 兼容 runner；未配置或缺 api_key 时返回 None（调用方回退 CodexRunner）。"""
-    if not llm.base_url or not llm.model:
+    if not llm.base_url:
         return None
     api_key = os.environ.get("LLM_API_KEY") or llm.api_key
     if not api_key:
         return None
-    return OpenAICompatibleRunner(base_url=llm.base_url, api_key=api_key, model=llm.model)
+    node = llm.for_node(node_name) if node_name else LLMNodeSettings(model=llm.model)
+    if not node.model:
+        return None
+    return OpenAICompatibleRunner(
+        base_url=llm.base_url,
+        api_key=api_key,
+        model=node.model,
+        timeout=node.timeout_seconds,
+        max_tokens=node.max_output_tokens,
+    )

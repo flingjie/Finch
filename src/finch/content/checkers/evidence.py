@@ -13,11 +13,11 @@ from typing import cast
 
 from pydantic import BaseModel, Field
 
-from finch.codex.runner import CodexRunner
 from finch.content.checkers.base import CheckContext, Checker, CheckResult
 from finch.content.claims import validate_draft
 from finch.content.models import Draft
 from finch.evidence.models import EvidenceCard
+from finch.llm.base import StructuredInferenceRunner
 
 # 复用 critic.py 的 entailment 概念（entailment_failed），输出为逐条失败的
 # statement 字符串；这里按 statement 反查 claim 下标以给出精确 location。
@@ -114,7 +114,7 @@ class EvidenceChecker(Checker):
 
     name: str = "evidence"
 
-    def __init__(self, runner: CodexRunner | None = None):
+    def __init__(self, runner: StructuredInferenceRunner | None = None):
         self._runner = runner
 
     def check(self, ctx: CheckContext) -> CheckResult:

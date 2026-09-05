@@ -69,8 +69,22 @@ interests:
 
 llm:
   base_url: https://model-gateway.shuwenda.icu/v1
-  model: deepseek-v4-pro
+  model: deepseek-v4-flash
   # api_key 从环境变量 LLM_API_KEY 读取（见 .env），不落盘到本文件
+  nodes:
+    plan_topics:
+      model: deepseek-v4-flash
+      timeout_seconds: 120
+      max_output_tokens: 2000
+    expand_job:
+      model: deepseek-v4-flash
+      timeout_seconds: 90
+      max_output_tokens: 1200
+      max_concurrency: 4
+    critique:
+      model: deepseek-v4-pro
+      timeout_seconds: 300
+      max_output_tokens: 4096
 
 extraction:
   max_prompt_bytes: 50000

@@ -358,7 +358,12 @@ def run_daily() -> None:
         known_commit_urls=known_commit_urls,
         repo_is_private=repo_is_private,
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
-        inference_runner=create_runner(settings.llm),
+        inference_runners={
+            "match_evidence": create_runner(settings.llm, "match_evidence"),
+            "plan_topics": create_runner(settings.llm, "plan_topics"),
+            "expand_job": create_runner(settings.llm, "expand_job"),
+            "critique": create_runner(settings.llm, "critique"),
+        },
     )
     if settings.engagement.enabled:
         # 单轮延迟以 run_dual_track（顺序执行原创+互动两条轨道）为口径。
@@ -412,7 +417,12 @@ def run_resume(run_id: str) -> None:
         known_commit_urls=known_commit_urls,
         repo_is_private=repo_is_private,
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
-        inference_runner=create_runner(settings.llm),
+        inference_runners={
+            "match_evidence": create_runner(settings.llm, "match_evidence"),
+            "plan_topics": create_runner(settings.llm, "plan_topics"),
+            "expand_job": create_runner(settings.llm, "expand_job"),
+            "critique": create_runner(settings.llm, "critique"),
+        },
     )
     run = replay(store, nodes, run_id)
     typer.echo(run.state)

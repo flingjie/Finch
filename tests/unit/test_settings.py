@@ -1,7 +1,7 @@
 # tests/unit/test_settings.py
 from pathlib import Path
 
-from finch.settings import QualityGates, load_settings
+from finch.settings import LLMNodeSettings, LLMSettings, QualityGates, load_settings
 
 
 def test_load_settings_defaults():
@@ -43,3 +43,36 @@ def test_quality_gates_defaults_without_file(tmp_path, monkeypatch):
     s = load_settings(tmp_path / "missing.yaml")
     assert s.quality_gates.match_top_k == 10
     assert s.twitter.blocked_authors == []
+
+
+def test_for_node_returns_default_model_when_no_node():
+    llm = LLMSettings(model="deepseek-v4-flash")
+    cfg = llm.for_node("define_jobs")
+    assert cfg.model == "deepseek-v4-flash"
+    assert cfg.timeout_seconds == 90.0
+    assert cfg.max_output_tokens is None
+    assert cfg.max_concurrency == 1
+
+
+def test_for_node_merges_node_over_default():
+    llm = LLMSettings(
+        model="deepseek-v4-flash",
+        nodes={"critique": LLMNodeSettings(
+            model="deepseek-v4-pro", timeout_seconds=300.0, max_output_tokens=4096,
+        )},
+    )
+    cfg = llm.for_node("critique")
+    assert cfg.model == "deepseek-v4-pro"
+    assert cfg.timeout_seconds == 300.0
+    assert cfg.max_output_tokens == 4096
+
+
+def test_for_node_inherits_default_model_when_node_model_blank():
+    llm = LLMSettings(
+        model="deepseek-v4-flash",
+        nodes={"plan_topics": LLMNodeSettings(timeout_seconds=120.0, max_output_tokens=2000)},
+    )
+    cfg = llm.for_node("plan_topics")
+    assert cfg.model == "deepseek-v4-flash"
+    assert cfg.timeout_seconds == 120.0
+    assert cfg.max_output_tokens == 2000

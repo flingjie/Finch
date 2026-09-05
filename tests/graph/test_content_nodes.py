@@ -1,16 +1,18 @@
 """Writer/Critic/Daily Brief 节点 7–9 测试（Phase 5 Task F6）。"""
 
 import json
+import re
 
 from finch.codex.runner import CodexRunner
 from finch.content.checkers.base import CheckResult
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
-    ContentJobsOutput,
     ContentJobStatus,
     IntendedEffect,
+    PlanTopicsOutput,
     SuccessCriterion,
+    TopicProposal,
 )
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
@@ -162,7 +164,24 @@ class FakeJobsRunner(CodexRunner):
 
     def run(self, prompt, output_model, **kw):
         self.calls += 1
-        return ContentJobsOutput(items=self.jobs)
+        if output_model is PlanTopicsOutput:
+            # Phase 1（plan）：每个 job 对应一个主题，主题 id 由 fake 控制为 tp0..tpN。
+            return PlanTopicsOutput(
+                items=[
+                    TopicProposal(
+                        id=f"tp{i}",
+                        title="",
+                        card_ids=list(j.source_card_ids),
+                        candidate_id=j.candidate_id,
+                    )
+                    for i, j in enumerate(self.jobs)
+                ]
+            )
+        if output_model is ContentJob:
+            # Phase 2（expand）：expand_content_job 把主题 JSON 嵌进 prompt，解析出 tpN。
+            match = re.search(r'"id"\s*:\s*"(tp\d+)"', prompt)
+            return self.jobs[int(match.group(1)[2:])]
+        raise AssertionError(f"unexpected output_model {output_model}")
 
 
 def test_draft_node_writes_reply_and_original(tmp_path):
@@ -537,7 +556,7 @@ def test_define_jobs_node_produces_and_filters_jobs(tmp_path):
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner),
+        make_define_jobs_node(runner, runner),
     ]
     run = GraphRuntime(store, nodes).run()
     assert run.state == "JOBS_DEFINED"
@@ -545,7 +564,7 @@ def test_define_jobs_node_produces_and_filters_jobs(tmp_path):
     assert rec is not None
     assert "j1" in rec.output_json
     assert "j2" not in rec.output_json
-    assert runner.calls == 1
+    assert runner.calls == 2  # 1 plan + 1 expand（bad 主题在预过滤阶段即被剔除）
 
 
 def test_position_gate_ready_when_confirmed():
@@ -651,7 +670,7 @@ def test_define_jobs_strips_model_confirmed_so_gate_needs_input(tmp_path):
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner, jobs_repo=repo),
+        make_define_jobs_node(runner, runner, jobs_repo=repo),
         make_position_gate_node(jobs_repo=repo),
     ]
     run = GraphRuntime(store, nodes).run()
@@ -669,7 +688,7 @@ def test_define_jobs_rejects_job_with_unknown_candidate(tmp_path):
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner),
+        make_define_jobs_node(runner, runner),
     ]
     run = GraphRuntime(store, nodes).run()
     assert run.state == "JOBS_DEFINED"
@@ -695,7 +714,7 @@ def test_define_jobs_rejects_cards_outside_own_candidate(tmp_path):
         Seed(name="extract_events", writes="evidence_cards",
              seed=items_payload([_card(), card2])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner),
+        make_define_jobs_node(runner, runner),
     ]
     run = GraphRuntime(store, nodes).run()
     assert run.state == "JOBS_DEFINED"
@@ -716,7 +735,7 @@ def test_define_jobs_upserts_into_repo(tmp_path):
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner, jobs_repo=repo),
+        make_define_jobs_node(runner, runner, jobs_repo=repo),
     ]
     GraphRuntime(store, nodes).run()
     got = repo.get_job("j1")
@@ -1096,7 +1115,7 @@ def test_define_jobs_node_short_circuits_without_cards(tmp_path):
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner),
+        make_define_jobs_node(runner, runner),
     ]
     run = GraphRuntime(store, nodes).run()
     assert run.state == "JOBS_DEFINED"
@@ -1104,6 +1123,45 @@ def test_define_jobs_node_short_circuits_without_cards(tmp_path):
     rec = store.find_node(run.id, "define_jobs", "default")
     assert rec is not None
     assert json.loads(rec.output_json)["items"] == []
+
+
+def test_define_jobs_expands_in_parallel_and_preserves_order(tmp_path):
+    import threading
+    import time
+
+    # 串行实现会在第一个 expand 上阻塞至 barrier 超时（BrokenBarrierError）；并行后两个
+    # expand 同时到达 barrier。job1 故意慢于 job2，但输出顺序仍应等于 plan 顺序。
+    barrier = threading.Barrier(2, timeout=5)
+    jobs = [
+        _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",)),
+        _job(job_id="job2", candidate_id="t1", source_card_ids=("ev1",)),
+    ]
+
+    class BarrierJobsRunner(FakeJobsRunner):
+        def run(self, prompt, output_model, **kw):
+            if output_model is ContentJob:
+                barrier.wait()
+                match = re.search(r'"id"\s*:\s*"(tp\d+)"', prompt)
+                idx = int(match.group(1)[2:])
+                if idx == 0:
+                    time.sleep(0.05)
+                return self.jobs[idx]
+            return super().run(prompt, output_model, **kw)
+
+    runner = BarrierJobsRunner(jobs)
+    store = _store(tmp_path)
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_define_jobs_node(runner, runner),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "JOBS_DEFINED"
+    rec = store.find_node(run.id, "define_jobs", "default")
+    assert rec is not None
+    output_jobs = json.loads(rec.output_json)["items"]
+    assert [j["id"] for j in output_jobs] == ["job1", "job2"]
 
 
 def test_original_flow_confirmed_position_produces_draft(tmp_path):
@@ -1134,7 +1192,7 @@ def test_original_flow_confirmed_position_produces_draft(tmp_path):
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner),  # 不传 repo，避免覆盖已确认的 job
+        make_define_jobs_node(runner, runner),  # 不传 repo，避免覆盖已确认的 job
         make_position_gate_node(jobs_repo=repo),
         make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
         make_critique_node(

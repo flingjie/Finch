@@ -25,12 +25,34 @@ class Paths(BaseModel):
         return self
 
 
+class LLMNodeSettings(BaseModel):
+    """单个 LLM 节点的模型/超时/输出上限/并发覆盖。"""
+
+    model: str = ""
+    timeout_seconds: float = 90.0
+    max_output_tokens: int | None = None
+    max_concurrency: int = 1
+
+
 class LLMSettings(BaseModel):
     """OpenAI 兼容 LLM 配置（base_url + model；api_key 优先读环境变量 LLM_API_KEY）。"""
 
     base_url: str = ""
     model: str = ""
     api_key: str = ""
+    nodes: dict[str, LLMNodeSettings] = Field(default_factory=dict)
+
+    def for_node(self, name: str) -> LLMNodeSettings:
+        """按节点名解析合并后的节点配置；未配置时回退到默认模型。"""
+        node = self.nodes.get(name)
+        if node is None:
+            return LLMNodeSettings(model=self.model)
+        return LLMNodeSettings(
+            model=node.model or self.model,
+            timeout_seconds=node.timeout_seconds,
+            max_output_tokens=node.max_output_tokens,
+            max_concurrency=node.max_concurrency,
+        )
 
 
 class ExtractionSettings(BaseModel):

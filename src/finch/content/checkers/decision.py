@@ -8,8 +8,8 @@ from typing import cast
 
 from pydantic import BaseModel, Field
 
-from finch.codex.runner import CodexRunner
 from finch.content.checkers.base import CheckContext, Checker, CheckResult
+from finch.llm.base import StructuredInferenceRunner
 
 _DECISION_PROMPT = """\
 You are the Finch decision checker. You verify that a draft expresses the author's confirmed
@@ -50,7 +50,7 @@ class DecisionChecker(Checker):
 
     name: str = "decision"
 
-    def __init__(self, runner: CodexRunner | None = None):
+    def __init__(self, runner: StructuredInferenceRunner | None = None):
         self._runner = runner
 
     def check(self, ctx: CheckContext) -> CheckResult:

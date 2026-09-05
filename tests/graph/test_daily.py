@@ -82,10 +82,11 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
     from finch.content.jobs import (
         AuthorPosition,
         ContentJob,
-        ContentJobsOutput,
         ContentJobStatus,
         IntendedEffect,
+        PlanTopicsOutput,
         SuccessCriterion,
+        TopicProposal,
     )
     from finch.content.models import ClaimRef, Draft, DraftKind
     from finch.evidence.judge import BatchJudgeItem, BatchJudgeOutput
@@ -163,33 +164,40 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path, monkeypatch):
                         )
                     ]
                 )
-            if output_model is ContentJobsOutput:
-                return ContentJobsOutput(
+            if output_model is PlanTopicsOutput:
+                return PlanTopicsOutput(
                     items=[
-                        ContentJob(
-                            id="job1",
-                            source_card_ids=["ev_evt_problem"],
+                        TopicProposal(
+                            id="tp1",
+                            title="",
+                            card_ids=["ev_evt_problem"],
                             candidate_id="t1",
-                            reader_problem="readers don't know how to rate limit",
-                            audience="backend engineers",
-                            intended_effect=IntendedEffect(
-                                understand="token bucket rate limiting"
-                            ),
-                            author_position=AuthorPosition(
-                                claim="use token bucket",
-                                decision="use token bucket",
-                                tradeoff="more memory",
-                                confirmed=False,
-                            ),
-                            success_criteria=[
-                                SuccessCriterion(
-                                    id="c1", description="critic passes", measurement="critic"
-                                )
-                            ],
-                            recommended_format=DraftKind.REPLY,
-                            status=ContentJobStatus.READY,
                         )
                     ]
+                )
+            if output_model is ContentJob:
+                return ContentJob(
+                    id="job1",
+                    source_card_ids=["ev_evt_problem"],
+                    candidate_id="t1",
+                    reader_problem="readers don't know how to rate limit",
+                    audience="backend engineers",
+                    intended_effect=IntendedEffect(
+                        understand="token bucket rate limiting"
+                    ),
+                    author_position=AuthorPosition(
+                        claim="use token bucket",
+                        decision="use token bucket",
+                        tradeoff="more memory",
+                        confirmed=False,
+                    ),
+                    success_criteria=[
+                        SuccessCriterion(
+                            id="c1", description="critic passes", measurement="critic"
+                        )
+                    ],
+                    recommended_format=DraftKind.REPLY,
+                    status=ContentJobStatus.READY,
                 )
             if output_model is _EntailmentOutput:
                 return _EntailmentOutput(entailment_failed=[])

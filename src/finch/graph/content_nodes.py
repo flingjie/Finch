@@ -23,7 +23,13 @@ from ..content.checkers.specificity import SpecificityChecker
 from ..content.checkers.structure import StructureChecker
 from ..content.checkers.voice import VoiceChecker
 from ..content.claims import validate_draft
-from ..content.jobs import ContentJob, ContentJobStatus, define_content_jobs
+from ..content.jobs import (
+    ContentJob,
+    ContentJobStatus,
+    TopicProposal,
+    expand_content_job,
+    plan_content_topics,
+)
 from ..content.models import DailyBrief, Draft, DraftKind
 from ..content.voice import VoiceProfile
 from ..evidence.models import EvidenceCard, MatchResult
@@ -159,7 +165,7 @@ def make_draft_node(
 
 
 def default_checker_suite(
-    runner: CodexRunner,
+    runner: StructuredInferenceRunner | None,
     voice_profile: VoiceProfile | None = None,
 ) -> list[Checker]:
     """Critic Suite 默认检查器套件（Task 6）：现有 4 个 + 新增 4 个 = 8 个。
@@ -451,12 +457,15 @@ def make_brief_node(
 
 
 def make_define_jobs_node(
-    runner: StructuredInferenceRunner,
+    plan_runner: StructuredInferenceRunner,
+    expand_runner: StructuredInferenceRunner,
+    expand_concurrency: int = 4,
     jobs_repo: ContentJobRepository | None = None,
 ) -> Node:
     """定义内容任务节点：match_results/evidence_cards/candidates → content_jobs。
 
-    通过 Codex runner 调用 define_content_jobs prompt 生成 ContentJob 列表。
+    两阶段：先 ``plan_content_topics`` 一次性把证据卡聚类成主题，再并行
+    ``expand_content_job`` 把每个主题展开成完整 ContentJob（``pool.map`` 保序）。
     对每个 job 验证：
     - source_card_ids 是该 job 自身卡片范围的子集：candidate_id 非空时取该候选
       match 的 card_ids；candidate_id 为空（original）时取全部 matched card_ids 的并集
@@ -468,18 +477,62 @@ def make_define_jobs_node(
         def run(self, ctx: dict) -> NodeResult:
             match_results = parse_items(ctx["match_results"], MatchResult)
             cards = parse_items(ctx["evidence_cards"], EvidenceCard)
+            candidates = parse_items(ctx["candidates"], DiscussionCandidate)
 
-            # Pass all cards to the LLM for job generation
-            jobs_output = define_content_jobs(runner, cards)
+            # 无卡短路：绝不调用 runner（保留「无卡不调用 LLM」语义）。
+            if not cards:
+                return NodeResult(status="succeeded", output=items_payload([]))
+
+            cards_by_id = {card.id: card for card in cards}
+            candidates_by_id = {candidate.id: candidate for candidate in candidates}
+            match_by_candidate = {mr.candidate_id: mr for mr in match_results}
+            all_card_ids = list({cid for mr in match_results for cid in mr.card_ids})
+
+            topics = plan_content_topics(plan_runner, cards, match_results, candidates)
+
+            # 预过滤 topic（避免浪费 expand LLM 调用）：candidate_id 非空但不在 match
+            # 中、card_ids 为空、或 card_ids 不是可用范围的子集（reply 取 match 的
+            # card_ids，original 取 all_card_ids）都会跳过。
+            kept_topics: list[TopicProposal] = []
+            for topic in topics.items:
+                if topic.candidate_id is not None:
+                    match = match_by_candidate.get(topic.candidate_id)
+                    if match is None:
+                        continue
+                    available_ids = match.card_ids
+                else:
+                    available_ids = all_card_ids
+                if not topic.card_ids:
+                    continue
+                if not set(topic.card_ids).issubset(set(available_ids)):
+                    continue
+                kept_topics.append(topic)
+
+            def _expand(topic: TopicProposal) -> ContentJob:
+                candidate = (
+                    candidates_by_id[topic.candidate_id]
+                    if topic.candidate_id is not None
+                    else None
+                )
+                return expand_content_job(expand_runner, topic, cards_by_id, candidate)
+
+            # 并行展开：单个 topic 串行；多个 topic 用 ``pool.map`` 保证顺序与串行一致。
+            if not kept_topics:
+                jobs: list[ContentJob] = []
+            elif len(kept_topics) == 1:
+                jobs = [_expand(kept_topics[0])]
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=min(len(kept_topics), expand_concurrency)
+                ) as pool:
+                    jobs = list(pool.map(_expand, kept_topics))
 
             # Filter jobs: validate source_card_ids against the job's OWN card scope —
             # its candidate's match card_ids when candidate_id is set, otherwise the union
             # of all matched card_ids (original). A reply job carrying a card from a
             # different candidate would later be dropped, so reject it here (F5).
-            match_by_candidate = {mr.candidate_id: mr for mr in match_results}
-            all_card_ids = list({cid for mr in match_results for cid in mr.card_ids})
             valid_jobs: list[ContentJob] = []
-            for job in jobs_output.items:
+            for job in jobs:
                 if job.candidate_id is not None:
                     match = match_by_candidate.get(job.candidate_id)
                     if match is None:

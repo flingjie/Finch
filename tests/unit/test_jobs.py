@@ -7,9 +7,12 @@ from finch.content.jobs import (
     ContentJobStatus,
     IntendedEffect,
     SuccessCriterion,
-    define_content_jobs,
+    TopicProposal,
+    expand_content_job,
+    plan_content_topics,
 )
 from finch.content.models import DraftKind
+from finch.evidence.models import ClaimConfidence, EvidenceCard
 from finch.storage.database import Store
 from finch.storage.repositories import ContentJobRepository
 
@@ -397,9 +400,32 @@ class _ExplodingRunner(CodexRunner):
         raise AssertionError("runner must not be called when there are no evidence cards")
 
 
-def test_define_content_jobs_skips_runner_when_no_cards():
-    """没有证据卡时不调用 LLM，直接返回空 items。"""
+def test_plan_content_topics_skips_runner_when_no_cards():
     runner = _ExplodingRunner()
-    output = define_content_jobs(runner, [])
-    assert output.items == []
+    out = plan_content_topics(runner, [], [], [])
+    assert out.items == []
     assert runner.calls == 0
+
+
+def test_expand_content_job_forces_confirmed_false():
+    class _JobRunner(CodexRunner):
+        def run(self, prompt, output_model, **kw):
+            return ContentJob(
+                id="job1", source_card_ids=["ev1"], candidate_id="t1",
+                reader_problem="r", audience="a",
+                intended_effect=IntendedEffect(understand="u"),
+                author_position=AuthorPosition(
+                    claim="c", decision="d", tradeoff="t", confirmed=True,
+                ),
+                success_criteria=[], recommended_format=DraftKind.REPLY,
+                status=ContentJobStatus.READY,
+            )
+
+    topic = TopicProposal(id="tp1", title="t", card_ids=["ev1"], candidate_id="t1")
+    card = EvidenceCard(
+        id="ev1", event_id="e", claim="token bucket", sources=[],
+        confidence=ClaimConfidence.VERIFIED, publishable=True, topics=["rate"],
+    )
+    job = expand_content_job(_JobRunner(), topic, {"ev1": card}, None)
+    assert job.author_position is not None
+    assert job.author_position.confirmed is False
