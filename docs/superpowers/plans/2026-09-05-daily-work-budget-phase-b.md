@@ -23,7 +23,7 @@ Spec §7 says "cache key changes from `group_fingerprint` to `group_id`". This p
 
 ---
 
-### Task B1: `global_max_concurrency` config
+### Task 1: `global_max_concurrency` config
 
 **Files:**
 - Modify: `src/finch/settings.py`
@@ -88,7 +88,7 @@ git commit -m "feat(settings): add global_max_concurrency to extraction config"
 
 ---
 
-### Task B2: Cross-repo parallel extraction + global semaphore
+### Task 2: Cross-repo parallel extraction + global semaphore
 
 **Files:**
 - Modify: `src/finch/evidence/extractor.py`
@@ -295,7 +295,7 @@ git commit -m "feat(extract): cross-repo parallel extraction with global LLM sem
 
 ---
 
-### Task B3: Append-only grouping + durable group_id
+### Task 3: Append-only grouping + durable group_id
 
 **Files:**
 - Modify: `src/finch/storage/repositories.py`
@@ -460,9 +460,9 @@ git commit -m "feat(github): append-only grouping with durable group_id"
 ## Self-Review
 
 **Spec coverage (Phase B):**
-- §8 cross-repo parallel + global semaphore → Task B2.
-- §7 sealed/append-only groups → Task B3 (grouping frozen; cache stability achieved via fingerprint, see recorded deviation).
-- §11 `global_max_concurrency` config → Task B1.
+- §8 cross-repo parallel + global semaphore → Task 2.
+- §7 sealed/append-only groups → Task 3 (grouping frozen; cache stability achieved via fingerprint, see recorded deviation).
+- §11 `global_max_concurrency` config → Task 1.
 
 **Placeholder scan:** none — each step has concrete code.
 
