@@ -225,6 +225,7 @@ def test_scenario_1_strong_evidence_and_confirmed_position_routes_to_ready(tmp_p
     store = _store(tmp_path)
     nodes = [
         Seed(name="define_jobs", writes="content_jobs", seed=items_payload([_job()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         make_position_gate_node(),
     ]
     run = GraphRuntime(store, nodes).run()
@@ -244,6 +245,7 @@ def test_scenario_2_strong_evidence_without_confirmed_position_needs_input(tmp_p
             writes="content_jobs",
             seed=items_payload([_job(position=_position(confirmed=False))]),
         ),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         make_position_gate_node(),
     ]
     run = GraphRuntime(store, nodes).run()
@@ -260,6 +262,7 @@ def test_scenario_3_do_not_write_is_silently_skipped(tmp_path):
     store = _store(tmp_path)
     nodes = [
         Seed(name="define_jobs", writes="content_jobs", seed=items_payload([job])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         make_position_gate_node(),
     ]
     run = GraphRuntime(store, nodes).run()

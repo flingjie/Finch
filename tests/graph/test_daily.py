@@ -38,7 +38,7 @@ def test_daily_nodes_has_eleven_nodes(tmp_path):
         "brief",
     ]
     assert nodes[6].reads == ["match_results", "evidence_cards", "candidates"]
-    assert nodes[7].reads == ["content_jobs"]
+    assert nodes[7].reads == ["content_jobs", "evidence_cards"]
     assert nodes[8].reads == ["ready_jobs", "evidence_cards", "candidates"]
     assert nodes[10].writes == "brief"
     assert nodes[10].terminal_state_key == "terminal_state"

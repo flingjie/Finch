@@ -882,6 +882,8 @@ def make_position_gate_node(
     class PositionGateNode(Node):
         def run(self, ctx: dict) -> NodeResult:
             context_jobs = parse_items(ctx["content_jobs"], ContentJob)
+            cards = parse_items(ctx.get("evidence_cards", {}), EvidenceCard)
+            cards_by_id = {card.id: card for card in cards}
 
             # 取 repo 里的最新版本（resume 路径），回退到 context。
             jobs: list[ContentJob] = []
@@ -893,13 +895,18 @@ def make_position_gate_node(
                         job = fresh
                 jobs.append(job)
 
-            rejected = [
-                job for job in jobs if job.status == ContentJobStatus.DO_NOT_WRITE
-            ]
             active = [job for job in jobs if job.status != ContentJobStatus.DO_NOT_WRITE]
+            # 只有「用户拒绝」的 job（DO_NOT_WRITE 且带 reject_reason）计入递补额度；
+            # 模型自行判定 do_not_write（无 reject_reason）不占用「递补一次」，否则
+            # 首日两个模型 do_not_write 主题就会误停剩余可写 job。
+            user_rejected = [
+                job
+                for job in jobs
+                if job.status == ContentJobStatus.DO_NOT_WRITE and job.reject_reason
+            ]
 
-            # 最多递补一次：primary 与其一次递补都被拒绝后停止提议，避免无限循环。
-            if len(rejected) > 1:
+            # 最多递补一次：primary 与其一次递补都被用户拒绝后停止提议，避免无限循环。
+            if len(user_rejected) > 1:
                 output = items_payload([])
                 output["deferred"] = [
                     {"job_id": job.id, "reason": "fallback exhausted"}
@@ -911,7 +918,7 @@ def make_position_gate_node(
                     warnings=["position gate stopped after one fallback"],
                 )
 
-            primary, deferred = select_primary_job(active)
+            primary, deferred = select_primary_job(active, cards_by_id=cards_by_id)
 
             output = items_payload([])
             if deferred:
@@ -953,7 +960,7 @@ def make_position_gate_node(
 
     return PositionGateNode(
         name="position_gate",
-        reads=["content_jobs"],
+        reads=["content_jobs", "evidence_cards"],
         writes="ready_jobs",
         succeeds_to="POSITIONS_READY",
     )

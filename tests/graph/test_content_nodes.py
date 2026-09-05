@@ -682,6 +682,7 @@ def test_position_gate_resume_proceeds_once_confirmed(tmp_path):
     def nodes():
         return [
             Seed(name="define_jobs", writes="content_jobs", seed=items_payload([unconfirmed])),
+            Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
             make_position_gate_node(),
             Seed(name="draft", writes="drafts", seed=items_payload([]), succeeds_to="DRAFTED"),
         ]
@@ -839,7 +840,7 @@ def test_position_gate_falls_back_once_after_reject(tmp_path):
     repo = ContentJobRepository(store)
     rejected = _job(
         job_id="A", candidate_id="t1", position=None, status=ContentJobStatus.DO_NOT_WRITE
-    )
+    ).model_copy(update={"reject_reason": "not now"})
     fallback = _job(job_id="B", candidate_id="t1", position=_position(confirmed=False))
     repo.upsert_job(rejected)
     repo.upsert_job(fallback)
@@ -856,10 +857,10 @@ def test_position_gate_stops_after_one_fallback(tmp_path):
     repo = ContentJobRepository(store)
     rejected_a = _job(
         job_id="A", candidate_id="t1", position=None, status=ContentJobStatus.DO_NOT_WRITE
-    )
+    ).model_copy(update={"reject_reason": "not now"})
     rejected_b = _job(
         job_id="B", candidate_id="t1", position=None, status=ContentJobStatus.DO_NOT_WRITE
-    )
+    ).model_copy(update={"reject_reason": "still not now"})
     active = _job(job_id="C", candidate_id=None, position=_position(confirmed=False))
     for job in (rejected_a, rejected_b, active):
         repo.upsert_job(job)
@@ -871,6 +872,47 @@ def test_position_gate_stops_after_one_fallback(tmp_path):
     assert result.status == "succeeded"
     assert result.output["items"] == []
     assert [d["job_id"] for d in result.output["deferred"]] == ["C"]
+
+
+def test_position_gate_model_do_not_write_does_not_exhaust_fallback():
+    """两个模型 DO_NOT_WRITE（无 reject_reason）不占用「递补一次」额度，剩余 READY 仍被提议。"""
+    node = make_position_gate_node()
+    dw1 = _job(
+        job_id="dw1", candidate_id=None, position=None, status=ContentJobStatus.DO_NOT_WRITE
+    )
+    dw2 = _job(
+        job_id="dw2", candidate_id=None, position=None, status=ContentJobStatus.DO_NOT_WRITE
+    )
+    active = _job(job_id="j1", candidate_id=None, position=_position(confirmed=False))
+    result = node.run({"content_jobs": items_payload([dw1, dw2, active])})
+    assert result.status == "needs_input"
+    assert [j["id"] for j in result.output["items"]] == ["j1"]
+
+
+def test_position_gate_evidence_ratio_breaks_tie():
+    """两 job 其余维度相同、仅证据占比不同：VERIFIED/SUPPORTED 占比高者当选 primary。"""
+    node = make_position_gate_node()
+    weak_card = _card().model_copy(
+        update={"id": "ev_weak", "confidence": ClaimConfidence.UNKNOWN}
+    )
+    strong_card = _card().model_copy(
+        update={"id": "ev_strong", "confidence": ClaimConfidence.VERIFIED}
+    )
+    weak = _job(
+        job_id="weak", candidate_id=None, source_card_ids=("ev_weak",),
+        position=_position(confirmed=False),
+    )
+    strong = _job(
+        job_id="strong", candidate_id=None, source_card_ids=("ev_strong",),
+        position=_position(confirmed=False),
+    )
+    # 故意把 weak 放前面：若忽略证据占比，稳定顺序会让 weak 胜出。
+    result = node.run({
+        "content_jobs": items_payload([weak, strong]),
+        "evidence_cards": items_payload([weak_card, strong_card]),
+    })
+    assert result.status == "needs_input"
+    assert [j["id"] for j in result.output["items"]] == ["strong"]
 
 
 def test_position_gate_defers_others_and_persists_proposed(tmp_path):
