@@ -128,6 +128,133 @@ def test_run_daily_enabled_echoes_engagement_summary(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["run", "daily"])
     assert r.exit_code == 0, r.output
     assert "engagement: no posts found" in r.output
+    assert "已完成" in r.output
+
+
+def test_run_daily_non_interactive_compact_on_needs_input(monkeypatch, tmp_path):
+    """原创轨道停在 NEEDS_INPUT 时，非 TTY 输出紧凑结果而非阻塞。"""
+    settings = Settings(
+        repositories=["flingjie/FDE-Gym"],
+        paths=Paths(db_path=tmp_path / "finch.db"),
+        engagement=EngagementSettings(enabled=False),
+    )
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    class FakeIngestor:
+        def __init__(self, gh, settings, ingestion, cursor):
+            pass
+
+        def ingest(self, repos, existing_topics=None):
+            return {}
+
+    class FakeGh:
+        def repo_view(self, repo):
+            from finch.github.models import RepoInfo
+
+            return RepoInfo(name_with_owner=repo, default_branch="main",
+                            url="https://github.com/" + repo, is_private=False)
+
+    from finch.graph.events import NodeResult
+    from finch.graph.nodes import Node
+
+    class BlockingGate(Node):
+        def run(self, ctx):
+            from finch.gate.models import InputRequest, ProposedPosition
+
+            request = InputRequest(
+                run_id=ctx.get("run_id", ""), job_id="j1", topic="t",
+                proposed_position=ProposedPosition(claim="c", decision="d", tradeoff="t"),
+            )
+            return NodeResult(
+                status="needs_input", output={"input_request": request.model_dump(mode="json")},
+            )
+
+    def build_nodes(**kw):
+        return [BlockingGate(name="position_gate", reads=[], writes="ready_jobs")]
+
+    monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
+    monkeypatch.setattr(cli, "Ingestor", FakeIngestor)
+    monkeypatch.setattr(cli, "daily_nodes", build_nodes)
+    monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
+
+    r = CliRunner().invoke(app, ["run", "daily", "--non-interactive"])
+    assert r.exit_code == 0, r.output
+    assert "Daily 分析完成" in r.output
+    assert "uv run finch run resolve --confirm" in r.output
+
+
+def test_run_daily_interactive_auto_resumes(monkeypatch, tmp_path):
+    """TTY 交互：Enter 确认后自动恢复并输出今日产出。"""
+    settings = Settings(
+        repositories=["flingjie/FDE-Gym"],
+        paths=Paths(db_path=tmp_path / "finch.db"),
+        engagement=EngagementSettings(enabled=False),
+    )
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    class FakeIngestor:
+        def __init__(self, gh, settings, ingestion, cursor):
+            pass
+
+        def ingest(self, repos, existing_topics=None):
+            return {}
+
+    class FakeGh:
+        def repo_view(self, repo):
+            from finch.github.models import RepoInfo
+
+            return RepoInfo(name_with_owner=repo, default_branch="main",
+                            url="https://github.com/" + repo, is_private=False)
+
+    from finch.gate.models import InputRequest, ProposedPosition
+    from finch.graph.events import NodeResult
+    from finch.graph.nodes import Node
+
+    class BlockingGate(Node):
+        def run(self, ctx):
+            request = InputRequest(
+                run_id=ctx.get("run_id", ""), job_id="j1", topic="t",
+                proposed_position=ProposedPosition(claim="c", decision="d", tradeoff="t"),
+            )
+            return NodeResult(
+                status="needs_input", output={"input_request": request.model_dump(mode="json")},
+            )
+
+    class DoneGate(Node):
+        def run(self, ctx):
+            return NodeResult(status="succeeded", output={}, succeeds_to="COMPLETED")
+
+    def build_nodes(**kw):
+        return [BlockingGate(name="position_gate", reads=[], writes="ready_jobs")]
+
+    monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
+    monkeypatch.setattr(cli, "Ingestor", FakeIngestor)
+    monkeypatch.setattr(cli, "daily_nodes", build_nodes)
+    monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
+
+    # 第一次 run 停在 NEEDS_INPUT；确认后 replay 应继续到 COMPLETED。
+    # 为让 replay 复用节点，position_gate 需读 repo 的最新 job；这里用空 job 列表模拟
+    # 一个已确认立场的 world：直接 monkeypatch resolve_input 无副作用、replay 走 DoneGate。
+    monkeypatch.setattr(
+        cli, "resolve_input",
+        lambda request, action, **kw: "confirmed",
+    )
+    def fake_resume(store, nodes, run_id, *, verbose=False):
+        from finch.storage.database import RunRecord
+
+        store.upsert_run(RunRecord(id=run_id, state="COMPLETED"))
+        return store.get_run(run_id)
+
+    monkeypatch.setattr(cli, "_resume_and_echo", fake_resume)
+
+    r = CliRunner().invoke(app, ["run", "daily", "--interactive"], input="\n")
+    assert r.exit_code == 0, r.output
+    assert "已确认你的立场" in r.output
+    assert "今日产出" in r.output
 
 
 def test_run_weekly_renders_with_new_repos(monkeypatch, tmp_path):

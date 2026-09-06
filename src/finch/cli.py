@@ -37,8 +37,10 @@ from .gate.interactive import edit_position_inline, select_action
 from .gate.models import InputAction, InputRequest, ProposedPosition
 from .gate.render import (
     render_compact_resolve,
+    render_daily_summary,
     render_outcome,
     render_position_diff,
+    render_produced,
     state_label,
 )
 from .gate.resolve import parse_position_yaml, position_yaml, resolve_input
@@ -174,7 +176,7 @@ def _echo_daily_brief(store: Store, run_id: str) -> None:
 def _echo_dual_track_result(result: DualTrackResult, store: Store) -> None:
     """汇总输出双轨结果：原创轨道 state + brief（同今日），随后互动轨道 summary。"""
     if result.original is not None:
-        typer.echo(result.original.state)
+        typer.echo(state_label(result.original.state))
         _persist_run_outputs(store, result.original.id)
         _echo_daily_brief(store, result.original.id)
     elif result.original_error is not None:
@@ -188,6 +190,85 @@ def _echo_dual_track_result(result: DualTrackResult, store: Store) -> None:
             f"engagement track error: {result.engagement_error.type}: "
             f"{result.engagement_error.message}"
         )
+
+
+def _original_draft_count(store: Store, run_id: str) -> int:
+    """读 draft 节点输出，统计本次 run 生成的原创草稿数。"""
+    record = store.find_node(run_id, "draft", "default")
+    if record is None or not record.output_json:
+        return 0
+    return len(parse_items(json.loads(record.output_json), Draft))
+
+
+def _finish_daily(
+    store: Store,
+    nodes: list[Node],
+    run_id: str,
+    *,
+    engagement_drafts: int,
+    posts_found: int | None,
+    use_interactive: bool,
+    verbose: bool,
+) -> None:
+    """run 停在 NEEDS_INPUT 时的收尾：TTY 进交互循环自动恢复，非 TTY 输出紧凑结果。"""
+    request = _read_input_request(store, run_id)
+    if not use_interactive:
+        typer.echo(
+            render_daily_summary(
+                posts_found=posts_found,
+                engagement_drafts=engagement_drafts,
+                pending_original=1,
+            )
+        )
+        typer.echo("")
+        typer.echo(render_compact_resolve(request, engagement_drafts=engagement_drafts))
+        return
+
+    jobs_repo = ContentJobRepository(store)
+    approvals_repo = PositionApprovalRepository(store)
+    while True:
+        typer.echo(
+            render_daily_summary(
+                posts_found=posts_found,
+                engagement_drafts=engagement_drafts,
+                pending_original=1,
+            )
+        )
+        typer.echo("")
+        cards = _cards_for(request, store)
+        action = select_action(request, cards)
+        if action is None:
+            typer.echo(render_outcome(None))
+            return
+        edited: ProposedPosition | None = None
+        skip_reason: str | None = None
+        if action is InputAction.EDIT:
+            edited = edit_position_inline(request.proposed_position)
+        elif action is InputAction.SKIP:
+            skip_reason = typer.prompt("跳过理由", default="not_now")
+        try:
+            resolve_input(
+                request,
+                action,
+                jobs_repo=jobs_repo,
+                approvals_repo=approvals_repo,
+                edited_position=edited,
+                skip_reason=skip_reason,
+            )
+        except ValueError as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1) from exc
+        typer.echo(render_outcome(action))
+        run = _resume_and_echo(store, nodes, run_id, verbose=verbose)
+        if run.state != GraphState.NEEDS_INPUT.value:
+            typer.echo(
+                render_produced(
+                    engagement_drafts=engagement_drafts,
+                    original_drafts=_original_draft_count(store, run_id),
+                )
+            )
+            return
+        request = _read_input_request(store, run_id)
 
 
 def _persist_engagement_candidates(result: DualTrackResult, store: Store) -> None:
@@ -333,8 +414,16 @@ def twitter_diagnose() -> None:
 
 
 @run_app.command("daily")
-def run_daily() -> None:
+def run_daily(
+    interactive: bool = typer.Option(False, "--interactive", help="强制交互选择器"),  # noqa: B008
+    non_interactive: bool = typer.Option(False, "--non-interactive", help="强制紧凑输出"),  # noqa: B008
+    verbose: bool = typer.Option(False, "--verbose", help="显示内部状态与 run_id"),  # noqa: B008
+) -> None:
     """运行每日 Graph：同步 commit → 提取证据卡 → 收集推文 → 匹配证据 → 撰写与审查草稿。"""
+    if interactive and non_interactive:
+        typer.echo("--interactive 与 --non-interactive 互斥")
+        raise typer.Exit(code=1)
+
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -384,8 +473,10 @@ def run_daily() -> None:
             "critique": create_runner(settings.llm, "critique"),
         },
     )
+
+    use_interactive = interactive or (not non_interactive and sys.stdout.isatty())
+
     if settings.engagement.enabled:
-        # 单轮延迟以 run_dual_track（并发执行原创+互动两条轨道）为口径。
         start = time.monotonic()
         result = run_dual_track(
             original_track=lambda rid: GraphRuntime(store, nodes).run(run_id=rid),
@@ -395,13 +486,50 @@ def run_daily() -> None:
             ),
         )
         latency_ms = int((time.monotonic() - start) * 1000)
-        _echo_dual_track_result(result, store)
         _persist_engagement_candidates(result, store)
         _persist_engagement_run_stats(result, store, latency_ms=latency_ms)
+
+        engagement = result.engagement
+        engagement_drafts = sum(
+            1 for c in (engagement.candidates if engagement else []) if c.draft is not None
+        )
+        posts_found = engagement.posts_found if engagement else 0
+
+        original = result.original
+        if (
+            original is not None
+            and original.state == GraphState.NEEDS_INPUT.value
+            and not result.original_failed
+        ):
+            _finish_daily(
+                store,
+                nodes,
+                original.id,
+                engagement_drafts=engagement_drafts,
+                posts_found=posts_found,
+                use_interactive=use_interactive,
+                verbose=verbose,
+            )
+            return
+
+        _echo_dual_track_result(result, store)
         return
 
     run = GraphRuntime(store, nodes).run()
-    typer.echo(run.state)
+    if run.state == GraphState.NEEDS_INPUT.value:
+        _finish_daily(
+            store,
+            nodes,
+            run.id,
+            engagement_drafts=0,
+            posts_found=None,
+            use_interactive=use_interactive,
+            verbose=verbose,
+        )
+        return
+    typer.echo(state_label(run.state))
+    if verbose:
+        typer.echo(f"[internal] state={run.state} run_id={run.id}")
     _persist_run_outputs(store, run.id)
     _echo_daily_brief(store, run.id)
 
