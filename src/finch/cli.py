@@ -13,6 +13,8 @@ from typing import cast
 import typer
 import yaml
 
+from .author.reconcile import reconcile
+from .author.sync import sync_posts, verify_account
 from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
 from .content.checkers.base import CheckResult
@@ -114,7 +116,41 @@ app.add_typer(voice_app, name="voice")
 engagement_app = typer.Typer(help="Review engagement candidates (human-in-the-loop)")
 app.add_typer(engagement_app, name="engagement")
 
+author_app = typer.Typer(help="Author account sync + publication reconcile (read-only)")
+app.add_typer(author_app, name="author")
+
 app.add_typer(dev_app, name="dev")
+
+
+@author_app.command("sync")
+def author_sync(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """同步作者账号发帖并确定性匹配已批准草稿。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    client = OpenCliClient()
+    total_synced = 0
+    for cfg in settings.author_accounts:
+        if not cfg.enabled:
+            continue
+        account = verify_account(cfg, client, store)
+        total_synced += sync_posts(
+            account, client, store, lookback_days=cfg.history_lookback_days
+        )
+    result = reconcile(store)
+    payload = {
+        "synced": total_synced,
+        "linked": [link.model_dump(mode="json") for link in result.linked],
+        "needs_manual": result.needs_manual,
+        "awaiting": result.awaiting,
+    }
+    if as_json:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(
+            f"synced={total_synced} linked={len(result.linked)} "
+            f"awaiting={len(result.awaiting)}"
+        )
 
 
 def _since_iso(since: str | None) -> str | None:

@@ -26,7 +26,7 @@ from finch.gate.models import InputRequest, ProposedPosition
 from finch.graph.state import GraphState
 from finch.review.models import ReviewAction, ReviewDecision
 from finch.review.service import ReviewService
-from finch.settings import EngagementSettings, Paths, Settings
+from finch.settings import AuthorAccountConfig, EngagementSettings, Paths, Settings
 from finch.storage.database import Store
 from finch.storage.repositories import (
     ContentJobRepository,
@@ -1258,6 +1258,22 @@ def test_run_daily_json(monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
     assert '"status"' in r.output and '"run_id"' in r.output
     assert '"n_review"' in r.output and '"n_engagement_drafts"' in r.output
+
+
+def test_author_sync_json(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    settings.author_accounts = [AuthorAccountConfig(handle="test", enabled=True)]
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "verify_account", lambda cfg, client, store: object())
+    monkeypatch.setattr(cli, "sync_posts", lambda acc, client, store, **kw: 3)
+    monkeypatch.setattr(cli, "reconcile", lambda store: type("R", (), {
+        "linked": [], "needs_manual": [], "awaiting": [],
+    })())
+    r = CliRunner().invoke(app, ["author", "sync", "--json"])
+    assert r.exit_code == 0, r.output
+    assert '"synced": 3' in r.output
 
 
 def test_decide_accept(monkeypatch, tmp_path):
