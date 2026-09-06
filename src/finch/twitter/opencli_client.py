@@ -3,6 +3,8 @@
 import json
 import os
 
+from finch.author.client import decode_author_post
+from finch.author.models import AuthorPost
 from finch.github.gh_client import _run
 from finch.opencli import run_opencli
 
@@ -193,3 +195,21 @@ class OpenCliClient:
         ]
         tweets = _call(argv, timeout=30.0)
         return tweets[0] if tweets else None
+
+    def whoami(self) -> dict:
+        """读取当前登录账号（stable user_id + handle）。"""
+        argv = ["opencli", "twitter", "whoami", "-f", "json"]
+        tweets = _call(argv, timeout=30.0)
+        if not tweets:
+            raise TwitterSourceUnavailable("whoami returned no data")
+        t = tweets[0]
+        return {"user_id": t.id, "handle": t.author}
+
+    def user_posts(self, handle: str, *, limit: int = 200) -> list[AuthorPost]:
+        """读取某用户自己发布的帖子（original/reply/quote）。"""
+        argv = [
+            "opencli", "twitter", "tweets", handle,
+            "--limit", str(limit), "-f", "json",
+        ]
+        tweets = _call(argv, timeout=60.0)
+        return [decode_author_post("x", handle, t.model_dump(mode="json")) for t in tweets]

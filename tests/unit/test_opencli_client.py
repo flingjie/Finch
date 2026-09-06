@@ -244,3 +244,63 @@ class TestOpenCliClientProfile:
         monkeypatch.setattr("finch.twitter.opencli_client._run", fake_run)
         client = OpenCliClient()
         assert client.profile("alice") is None
+
+
+class TestOpenCliClientWhoami:
+    def test_whoami_returns_id_and_handle(self, monkeypatch):
+        def fake_run(argv, timeout):
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": json.dumps([
+                    {"id": "123456", "author": "flingjie", "text": "whoami", "url": "u"},
+                ]),
+                "stderr": "",
+            }
+
+        monkeypatch.setattr("finch.twitter.opencli_client._run", fake_run)
+        client = OpenCliClient()
+        assert client.whoami() == {"user_id": "123456", "handle": "flingjie"}
+
+    def test_whoami_empty_raises(self, monkeypatch):
+        def fake_run(argv, timeout):
+            return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+        monkeypatch.setattr("finch.twitter.opencli_client._run", fake_run)
+        client = OpenCliClient()
+        with pytest.raises(TwitterSourceUnavailable):
+            client.whoami()
+
+
+class TestOpenCliClientUserPosts:
+    def test_user_posts_returns_author_posts(self, monkeypatch):
+        def fake_run(argv, timeout):
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": json.dumps([
+                    {"id": "1", "author": "flingjie", "text": "hello", "url": "u", "likes": 3},
+                ]),
+                "stderr": "",
+            }
+
+        monkeypatch.setattr("finch.twitter.opencli_client._run", fake_run)
+        client = OpenCliClient()
+        posts = client.user_posts("flingjie")
+        assert len(posts) == 1
+        assert posts[0].remote_post_id == "1"
+        assert posts[0].author_account_id == "flingjie"
+
+    def test_user_posts_passes_limit(self, monkeypatch):
+        captured = {}
+
+        def fake_run(argv, timeout):
+            captured["argv"] = argv
+            return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+        monkeypatch.setattr("finch.twitter.opencli_client._run", fake_run)
+        client = OpenCliClient()
+        client.user_posts("flingjie", limit=50)
+        assert captured["argv"][3] == "flingjie"
+        assert "--limit" in captured["argv"]
+        assert "50" in captured["argv"]
