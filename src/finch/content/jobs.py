@@ -1,5 +1,6 @@
 """Content Job 模型（Spec §8）：定义内容目标与作者立场。"""
 
+import hashlib
 import re
 from enum import StrEnum
 from json import dumps
@@ -40,6 +41,23 @@ class AuthorPosition(BaseModel):
     tradeoff: str
     change_mind_if: str | None = None
     confirmed: bool = False
+
+
+def position_fingerprint(position: AuthorPosition) -> str:
+    """返回 AuthorPosition 的确定性指纹（不含 ``confirmed``）。
+
+    指纹只覆盖内容字段（claim/decision/tradeoff/change_mind_if），因此同一立场
+    跨天以新 job_id 重生成时，只要内容逐字一致即可复用确认。
+    """
+    raw = "\n".join(
+        [
+            position.claim,
+            position.decision,
+            position.tradeoff,
+            position.change_mind_if or "",
+        ]
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class SuccessCriterion(BaseModel):

@@ -13,6 +13,7 @@ from finch.content.jobs import (
     _render_prompt,
     expand_content_job,
     plan_content_topics,
+    position_fingerprint,
     select_planning_evidence,
     select_primary_job,
 )
@@ -74,6 +75,23 @@ class TestAuthorPosition:
         )
         assert pos.change_mind_if is None
         assert pos.confirmed is False
+
+
+def test_position_fingerprint_is_deterministic():
+    p = AuthorPosition(claim="c", decision="d", tradeoff="t")
+    assert position_fingerprint(p) == position_fingerprint(p)
+
+
+def test_position_fingerprint_ignores_confirmed():
+    a = AuthorPosition(claim="c", decision="d", tradeoff="t", confirmed=False)
+    b = AuthorPosition(claim="c", decision="d", tradeoff="t", confirmed=True)
+    assert position_fingerprint(a) == position_fingerprint(b)
+
+
+def test_position_fingerprint_changes_with_change_mind_if():
+    a = AuthorPosition(claim="c", decision="d", tradeoff="t", change_mind_if="x")
+    b = AuthorPosition(claim="c", decision="d", tradeoff="t", change_mind_if="y")
+    assert position_fingerprint(a) != position_fingerprint(b)
 
 
 class TestSuccessCriterion:
