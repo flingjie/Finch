@@ -340,3 +340,77 @@ def test_daily_no_evidence_completes_without_llm(tmp_path):
     brief_rec = store.find_node(run.id, "brief", "default")
     assert brief_rec is not None
     assert json.loads(brief_rec.output_json)["terminal_state"] == "COMPLETED"
+
+
+def test_position_gate_reuses_prior_approval(tmp_path):
+    """P2 复用门：daily_nodes 装配的 position_gate 读回已批准 fingerprint 并复用确认。"""
+    from finch.content.jobs import (
+        AuthorPosition,
+        ContentJob,
+        ContentJobStatus,
+        IntendedEffect,
+        SuccessCriterion,
+        position_fingerprint,
+    )
+    from finch.content.models import DraftKind
+    from finch.graph.context import items_payload
+    from finch.storage.repositories import PositionApprovalRepository
+
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+
+    position = AuthorPosition(
+        claim="use token bucket",
+        decision="use token bucket",
+        tradeoff="more memory",
+        confirmed=False,
+    )
+    job = ContentJob(
+        id="job1",
+        source_card_ids=["ev1"],
+        candidate_id=None,
+        reader_problem="readers don't know how to rate limit",
+        audience="backend engineers",
+        intended_effect=IntendedEffect(understand="token bucket rate limiting"),
+        author_position=position,
+        success_criteria=[
+            SuccessCriterion(id="c1", description="critic passes", measurement="critic")
+        ],
+        recommended_format=DraftKind.REPLY,
+        status=ContentJobStatus.READY,
+    )
+    jobs_repo = ContentJobRepository(store)
+    jobs_repo.upsert_job(job)
+
+    approvals_repo = PositionApprovalRepository(store)
+    approvals_repo.approve(position_fingerprint(position), "job1")
+
+    nodes = daily_nodes(
+        settings=Settings(repositories=["flingjie/FDE-Gym"]),
+        store=store,
+        gh=GhClient(),
+        opencli=OpenCliClient(),
+        extractor=Extractor(CodexRunner()),
+        runner=CodexRunner(),
+        groups_by_repo={"flingjie/FDE-Gym": []},
+        known_commit_urls=set(),
+        repo_is_private={"flingjie/FDE-Gym": False},
+    )
+    gate = next(n for n in nodes if n.name == "position_gate")
+
+    result = gate.run(
+        {
+            "content_jobs": items_payload([job]),
+            "evidence_cards": items_payload([]),
+        }
+    )
+
+    assert result.status == "succeeded"
+    assert "reused_approval" in result.output
+    items = result.output["items"]
+    assert len(items) == 1
+    assert items[0]["author_position"]["confirmed"] is True
+
+    refreshed = jobs_repo.get_job("job1")
+    assert refreshed is not None and refreshed.author_position is not None
+    assert refreshed.author_position.confirmed is True

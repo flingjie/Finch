@@ -94,6 +94,12 @@ def test_position_fingerprint_changes_with_change_mind_if():
     assert position_fingerprint(a) != position_fingerprint(b)
 
 
+def test_position_fingerprint_distinguishes_newline_boundaries():
+    a = AuthorPosition(claim="a\nb", decision="c", tradeoff="t")
+    b = AuthorPosition(claim="a", decision="b\nc", tradeoff="t")
+    assert position_fingerprint(a) != position_fingerprint(b)
+
+
 class TestSuccessCriterion:
     """Test SuccessCriterion model."""
 

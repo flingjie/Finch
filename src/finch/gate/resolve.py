@@ -33,7 +33,7 @@ def position_yaml(position: ProposedPosition) -> str:
 
 
 def parse_position_yaml(text: str) -> ProposedPosition:
-    """从 YAML 文本解析立场；非法输入抛 ValueError。"""
+    """从 YAML 文本解析立场；非 mapping 抛 ValueError，格式非法抛 yaml.YAMLError。"""
     data = yaml.safe_load(text)
     if not isinstance(data, dict):
         raise ValueError("position file is not a YAML mapping")

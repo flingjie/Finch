@@ -158,7 +158,7 @@ def _persist_run_outputs(store: Store, run_id: str) -> None:
 def _echo_daily_brief(store: Store, run_id: str) -> None:
     """打印一次 run 的 brief 正文（存在时），与 run_daily/run_resume 原逻辑一致。"""
     brief_record = store.find_node(run_id, "brief", "default")
-    if brief_record is not None:
+    if brief_record is not None and brief_record.output_json:
         briefs = parse_items(json.loads(brief_record.output_json), DailyBrief)
         if briefs:
             typer.echo(briefs[0].body)
@@ -532,6 +532,10 @@ def run_resolve(
     flags = [confirm, edit, skip, stop, file is not None]
     if sum(1 for f in flags if f) > 1:
         typer.echo("choose exactly one of --confirm/--edit/--file/--skip/--stop")
+        raise typer.Exit(code=1)
+
+    if reason is not None and not skip:
+        typer.echo("--reason requires --skip")
         raise typer.Exit(code=1)
 
     if as_json:

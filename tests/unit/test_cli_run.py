@@ -801,6 +801,20 @@ def test_run_resolve_confirm_resumes(monkeypatch, tmp_path):
     assert resumed["run_id"] == "r1"
 
 
+def test_run_resolve_reason_without_skip_errors(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
+    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid: None)
+
+    r = CliRunner().invoke(app, ["run", "resolve", "--reason", "not now"])
+    assert r.exit_code == 1
+    assert "--reason requires --skip" in r.output
+
+
 def test_run_resolve_skip_marks_job(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     store = Store(settings.paths.db_path)

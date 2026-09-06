@@ -49,7 +49,7 @@ def position_fingerprint(position: AuthorPosition) -> str:
     指纹只覆盖内容字段（claim/decision/tradeoff/change_mind_if），因此同一立场
     跨天以新 job_id 重生成时，只要内容逐字一致即可复用确认。
     """
-    raw = "\n".join(
+    raw = dumps(
         [
             position.claim,
             position.decision,
