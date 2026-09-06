@@ -29,6 +29,7 @@ def sync_posts(account: AuthorAccount, client, store: Store, *, lookback_days: i
     posts = client.user_posts(account.handle)
     new_count = 0
     for post in posts:
+        post = post.model_copy(update={"author_account_id": account.user_id})
         if repo.get(account.platform, post.remote_post_id) is not None:
             continue
         repo.save(post)

@@ -4,7 +4,7 @@ from finch.author.models import AuthorPost
 from finch.author.sync import sync_posts, verify_account
 from finch.settings import AuthorAccountConfig
 from finch.storage.database import Store
-from finch.storage.repositories import AuthorPostRepository
+from finch.storage.repositories import AuthorPostRepository, AuthorSyncCursorRepository
 
 
 class _FakeClient:
@@ -34,7 +34,7 @@ def test_sync_posts_idempotent_and_cursor(tmp_path):
     store = Store(tmp_path / "finch.db")
     store.init()
     client = _FakeClient({"user_id": "1", "handle": "flingjie"}, [
-        AuthorPost(platform="x", remote_post_id="p1", author_account_id="1",
+        AuthorPost(platform="x", remote_post_id="p1", author_account_id="flingjie",
                    kind="original", body="a", url="u", published_at=datetime.now(UTC)),
     ])
     acc = verify_account(AuthorAccountConfig(handle="flingjie"), client, store)
@@ -43,3 +43,7 @@ def test_sync_posts_idempotent_and_cursor(tmp_path):
     n2 = sync_posts(acc, client, store, lookback_days=90)
     assert n1 == 1 and n2 == 0  # 幂等
     assert len(AuthorPostRepository(store).list()) == 1
+    cursor = AuthorSyncCursorRepository(store).get("x", "1")
+    assert cursor is not None and cursor.last_seen is not None
+    saved = AuthorPostRepository(store).list()[0]
+    assert saved.author_account_id == "1"  # 稳定 user_id，非 handle
