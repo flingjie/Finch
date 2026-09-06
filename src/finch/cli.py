@@ -1,6 +1,9 @@
 """Finch CLI（spec 10）。"""
 
 import json
+import os
+import subprocess
+import tempfile
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -29,6 +32,9 @@ from .engagement.metrics import (
 from .engagement.models import EngagementRunStats
 from .evidence.extractor import Extractor, build_cards
 from .evidence.models import EvidenceCard
+from .gate.models import InputAction, InputRequest, ProposedPosition
+from .gate.render import render_evidence, render_input_request, render_position_diff
+from .gate.resolve import parse_position_yaml, position_yaml, resolve_input
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.discovery import resolve_repositories
 from .github.gh_client import GhClient
@@ -40,6 +46,7 @@ from .graph.dual_track import DualTrackResult, run_dual_track
 from .graph.nodes import Node
 from .graph.replay import replay
 from .graph.runtime import GraphRuntime
+from .graph.state import GraphState
 from .llm.openai_compatible import create_runner
 from .reddit.opencli_client import RedditOpenCliClient
 from .review.feedback import FeedbackService
@@ -60,6 +67,7 @@ from .storage.repositories import (
     FeedbackRepository,
     FeedbackSnapshotRepository,
     InteractionRepository,
+    PositionApprovalRepository,
     RepoCursorRepository,
     ReviewRepository,
 )
@@ -391,6 +399,53 @@ def run_daily() -> None:
     _echo_daily_brief(store, run.id)
 
 
+_ACTION_BY_CHOICE = {
+    "1": InputAction.CONFIRM,
+    "2": InputAction.EDIT,
+    "3": InputAction.SKIP,
+    "4": InputAction.STOP,
+}
+
+
+def _latest_needs_input_run_id(store: Store) -> str | None:
+    record = store.find_latest_run(GraphState.NEEDS_INPUT.value)
+    return record.id if record is not None else None
+
+
+def _read_input_request(store: Store, run_id: str) -> InputRequest:
+    record = store.find_node(run_id, "position_gate", "default")
+    if record is None or not record.output_json:
+        raise ValueError(f"run {run_id} has no position_gate output")
+    raw = json.loads(record.output_json).get("input_request")
+    if raw is None:
+        raise ValueError(f"run {run_id} has no pending input_request")
+    return InputRequest.model_validate(raw)
+
+
+def _cards_for(request: InputRequest, store: Store) -> list[EvidenceCard]:
+    cards_by_id = {card.id: card for card in EvidenceRepository(store).list_cards()}
+    return [cards_by_id[cid] for cid in request.evidence_card_ids if cid in cards_by_id]
+
+
+def _open_editor(prefill: str) -> str:
+    """在 $VISUAL/$EDITOR（回退 vi）中打开预填内容，返回编辑后的文本。"""
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+    ) as tmp:
+        tmp.write(prefill)
+        tmp_path = tmp.name
+    try:
+        subprocess.run([editor, tmp_path], check=True)
+        return Path(tmp_path).read_text(encoding="utf-8")
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def _edit_position(proposed: ProposedPosition) -> ProposedPosition:
+    return parse_position_yaml(_open_editor(position_yaml(proposed)))
+
+
 def _resume_nodes(settings: Settings, store: Store) -> list[Node]:
     """run_resume 与 resolve 共用：空 groups 的 daily_nodes 装配。"""
     gh = GhClient()
@@ -441,6 +496,100 @@ def run_resume(run_id: str) -> None:
     store.init()
     nodes = _resume_nodes(settings, store)
     _resume_and_echo(store, nodes, run_id)
+
+
+@run_app.command("resolve")
+def run_resolve(
+    run_id: str | None = typer.Argument(None, help="run id（缺省取最近 NEEDS_INPUT 的 run）"),
+    confirm: bool = typer.Option(False, "--confirm", help="确认并继续"),  # noqa: B008
+    edit: bool = typer.Option(False, "--edit", help="打开预填编辑器修改立场"),  # noqa: B008
+    file: Path | None = typer.Option(None, "--file", help="从 YAML 文件读取立场"),  # noqa: B008
+    skip: bool = typer.Option(False, "--skip", help="跳过当前主题，尝试下一个"),  # noqa: B008
+    reason: str | None = typer.Option(None, "--reason", help="--skip 的拒绝理由"),  # noqa: B008
+    stop: bool = typer.Option(False, "--stop", help="结束今天的原创轨道"),  # noqa: B008
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON（供 Skill/Agent）"),  # noqa: B008
+) -> None:
+    """处理当前阻塞点（author position confirmation），完成后自动 resume。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+
+    resolved_run_id = run_id or _latest_needs_input_run_id(store)
+    if resolved_run_id is None:
+        typer.echo("no run awaiting input")
+        raise typer.Exit(code=1)
+    try:
+        request = _read_input_request(store, resolved_run_id)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    flags = [confirm, edit, skip, stop, file is not None]
+    if sum(1 for f in flags if f) > 1:
+        typer.echo("choose exactly one of --confirm/--edit/--file/--skip/--stop")
+        raise typer.Exit(code=1)
+
+    if as_json:
+        if any(flags):
+            typer.echo("--json 不能与动作 flag 同时使用")
+            raise typer.Exit(code=1)
+        typer.echo(request.model_dump_json(indent=2))
+        return
+
+    jobs_repo = ContentJobRepository(store)
+    approvals_repo = PositionApprovalRepository(store)
+    cards = _cards_for(request, store)
+
+    action: InputAction
+    edited: ProposedPosition | None = None
+    skip_reason: str | None = reason
+
+    if confirm:
+        action = InputAction.CONFIRM
+    elif edit:
+        action = InputAction.EDIT
+        edited = _edit_position(request.proposed_position)
+        typer.echo(render_position_diff(request.proposed_position, edited))
+    elif file is not None:
+        action = InputAction.EDIT
+        edited = parse_position_yaml(file.read_text())
+        typer.echo(render_position_diff(request.proposed_position, edited))
+    elif skip:
+        action = InputAction.SKIP
+    elif stop:
+        action = InputAction.STOP
+    else:
+        typer.echo(render_input_request(request, cards))
+        choice = typer.prompt("请选择", default="1")
+        if choice == "5":
+            typer.echo(render_evidence(cards))
+            return
+        if choice not in _ACTION_BY_CHOICE:
+            typer.echo("invalid choice")
+            raise typer.Exit(code=1)
+        action = _ACTION_BY_CHOICE[choice]
+        if action is InputAction.EDIT:
+            edited = _edit_position(request.proposed_position)
+            typer.echo(render_position_diff(request.proposed_position, edited))
+        elif action is InputAction.SKIP:
+            skip_reason = typer.prompt("跳过理由", default="not_now")
+
+    try:
+        summary = resolve_input(
+            request,
+            action,
+            jobs_repo=jobs_repo,
+            approvals_repo=approvals_repo,
+            edited_position=edited,
+            skip_reason=skip_reason,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    typer.echo(summary)
+
+    nodes = _resume_nodes(settings, store)
+    _resume_and_echo(store, nodes, resolved_run_id)
 
 
 @run_app.command("weekly")

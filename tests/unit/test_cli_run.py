@@ -13,6 +13,7 @@ from finch.content.jobs import (
     ContentJobStatus,
     IntendedEffect,
     SuccessCriterion,
+    position_fingerprint,
 )
 from finch.content.models import Draft, DraftKind
 from finch.content.voice import (
@@ -21,6 +22,8 @@ from finch.content.voice import (
     load_voice_profile,
     save_voice_profile,
 )
+from finch.gate.models import InputRequest, ProposedPosition
+from finch.graph.state import GraphState
 from finch.review.models import ReviewAction, ReviewDecision
 from finch.review.service import ReviewService
 from finch.settings import EngagementSettings, Paths, Settings
@@ -30,6 +33,7 @@ from finch.storage.repositories import (
     CriticReportRepository,
     DraftRepository,
     DraftVersionRepository,
+    PositionApprovalRepository,
     ReviewRepository,
 )
 
@@ -738,3 +742,93 @@ def test_run_resume_persists_drafts_and_reports(monkeypatch, tmp_path):
     reports = CriticReportRepository(store).list_reports("d1")
     assert len(reports) == 1
     assert reports[0]["outcome"] == "pass"
+
+
+def _seed_needs_input(store, *, run_id="r1", job_id="job1"):
+    from finch.storage.database import NodeRecord, RunRecord
+
+    repo = ContentJobRepository(store)
+    repo.upsert_job(_job(job_id=job_id, author_position=AuthorPosition(
+        claim="c", decision="d", tradeoff="t",
+    )))
+    store.upsert_run(RunRecord(id=run_id, state=GraphState.NEEDS_INPUT.value))
+    request = InputRequest(
+        run_id=run_id, job_id=job_id, topic="t",
+        proposed_position=ProposedPosition(claim="c", decision="d", tradeoff="t"),
+        evidence_card_ids=["ev1"],
+    )
+    # 等价 position_gate 已跑完停在 needs_input：直接落一条节点记录。
+    store.upsert_node(NodeRecord(
+        id=f"{run_id}:position_gate:default", run_id=run_id, node_name="position_gate",
+        idempotency_key="default", status="needs_input",
+        output_json=json.dumps({"input_request": request.model_dump(mode="json")}),
+    ))
+    return request
+
+
+def test_run_resolve_json_fetches_input_request(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    request = _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["run", "resolve", "--json"])
+    assert r.exit_code == 0, r.output
+    assert request.job_id in r.output
+    assert "author_position_confirmation" in r.output
+
+
+def test_run_resolve_confirm_resumes(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    request = _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    resumed = {}
+    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
+    monkeypatch.setattr(
+        cli, "_resume_and_echo", lambda st, nodes, rid: resumed.setdefault("run_id", rid)
+    )
+
+    r = CliRunner().invoke(app, ["run", "resolve", "--confirm"])
+    assert r.exit_code == 0, r.output
+    assert "confirmed" in r.output
+    assert ContentJobRepository(store).get_job(request.job_id).author_position.confirmed is True
+    approved = AuthorPosition(claim="c", decision="d", tradeoff="t")
+    assert PositionApprovalRepository(store).find_active(position_fingerprint(approved)) is not None
+    assert resumed["run_id"] == "r1"
+
+
+def test_run_resolve_skip_marks_job(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    request = _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
+    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid: None)
+
+    r = CliRunner().invoke(app, ["run", "resolve", "--skip", "--reason", "not now"])
+    assert r.exit_code == 0, r.output
+    job = ContentJobRepository(store).get_job(request.job_id)
+    assert job.status.value == "do_not_write"
+    assert job.reject_reason == "not now"
+
+
+def test_run_resolve_file_edits(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    request = _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
+    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid: None)
+
+    answers = tmp_path / "p.yaml"
+    answers.write_text("claim: new\ndecision: d\ntradeoff: t\n")
+    r = CliRunner().invoke(app, ["run", "resolve", "--file", str(answers)])
+    assert r.exit_code == 0, r.output
+    assert ContentJobRepository(store).get_job(request.job_id).author_position.claim == "new"
+
