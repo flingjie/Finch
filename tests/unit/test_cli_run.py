@@ -1229,6 +1229,37 @@ def test_run_daily_interactive_non_interactive_conflict(monkeypatch, tmp_path):
     assert "互斥" in r.output
 
 
+def test_run_daily_json(monkeypatch, tmp_path):
+    settings = Settings(
+        repositories=["flingjie/FDE-Gym"],
+        paths=Paths(db_path=tmp_path / "finch.db"),
+        engagement=EngagementSettings(enabled=False),
+    )
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    class FakeIngestor:
+        def __init__(self, gh, settings, ingestion, cursor): pass
+        def ingest(self, repos, existing_topics=None): return {}
+
+    class FakeGh:
+        def repo_view(self, repo):
+            from finch.github.models import RepoInfo
+            return RepoInfo(name_with_owner=repo, default_branch="main",
+                            url="https://github.com/" + repo, is_private=False)
+
+    monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
+    monkeypatch.setattr(cli, "Ingestor", FakeIngestor)
+    monkeypatch.setattr(cli, "daily_nodes", lambda **kw: [])
+    monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
+
+    r = CliRunner().invoke(app, ["run", "daily", "--json"])
+    assert r.exit_code == 0, r.output
+    assert '"status"' in r.output and '"run_id"' in r.output
+    assert '"n_review"' in r.output and '"n_engagement_drafts"' in r.output
+
+
 def test_decide_accept(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     store = Store(settings.paths.db_path)

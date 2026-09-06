@@ -293,6 +293,25 @@ def _persist_engagement_candidates(result: DualTrackResult, store: Store) -> Non
         repo.upsert(candidate, run_id=engagement.run_id)
 
 
+def _daily_json_summary(store: Store, run_id: str, *, engagement_drafts: int) -> str:
+    decided = {
+        rec.job_id for rec in DecisionRecordRepository(store).list()
+        if rec.action in {DecisionAction.ACCEPT, DecisionAction.SKIP}
+    }
+    drafts = [d for d in DraftRepository(store).list_drafts() if d.content_job_id]
+    n_review = sum(1 for d in drafts if d.content_job_id not in decided)
+    return json.dumps(
+        {
+            "run_id": run_id,
+            "status": "review_required" if n_review else "completed",
+            "n_review": n_review,
+            "n_engagement_drafts": engagement_drafts,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 def _persist_engagement_run_stats(
     result: DualTrackResult, store: Store, *, latency_ms: int
 ) -> None:
@@ -427,6 +446,7 @@ def run_daily(
     interactive: bool = typer.Option(False, "--interactive", help="强制交互选择器"),  # noqa: B008
     non_interactive: bool = typer.Option(False, "--non-interactive", help="强制紧凑输出"),  # noqa: B008
     verbose: bool = typer.Option(False, "--verbose", help="显示内部状态与 run_id"),  # noqa: B008
+    as_json: bool = typer.Option(False, "--json", help="输出结构化 JSON 摘要"),  # noqa: B008
 ) -> None:
     """运行每日 Graph：同步 commit → 提取证据卡 → 收集推文 → 匹配证据 → 撰写与审查草稿。"""
     if interactive and non_interactive:
@@ -504,6 +524,15 @@ def run_daily(
         )
         posts_found = engagement.posts_found if engagement else 0
 
+        if as_json:
+            run_id = (
+                result.original.id if result.original is not None else result.run_id
+            )
+            typer.echo(
+                _daily_json_summary(store, run_id, engagement_drafts=engagement_drafts)
+            )
+            return
+
         original = result.original
         if (
             original is not None
@@ -525,6 +554,9 @@ def run_daily(
         return
 
     run = GraphRuntime(store, nodes).run()
+    if as_json:
+        typer.echo(_daily_json_summary(store, run.id, engagement_drafts=0))
+        return
     if run.state == GraphState.NEEDS_INPUT.value:
         _finish_daily(
             store,
