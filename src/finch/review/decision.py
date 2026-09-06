@@ -3,13 +3,18 @@
 import hashlib
 from datetime import UTC, datetime
 
+from finch.codex.runner import CodexRunner
+from finch.content.critic import critique
 from finch.content.jobs import ContentJobStatus, PositionSource, position_fingerprint
+from finch.content.writer import rewrite_with_instruction
 from finch.review.models import (
     DecisionAction,
     DecisionRecord,
     ReviewAction,
     ReviewDecision,
 )
+from finch.review.service import compute_diff
+from finch.settings import QualityGates
 from finch.storage.repositories import (
     ContentJobRepository,
     DecisionRecordRepository,
@@ -85,6 +90,57 @@ class DecisionService:
         )
         self.decisions.save(record)
         return record
+
+    def revise(
+        self,
+        job_id: str,
+        instruction: str,
+        *,
+        runner: CodexRunner,
+        cards_by_id: dict,
+        gates: QualityGates | None,
+    ) -> dict:
+        """按 NL 指令重写 + 重跑 Critic + 持久化修订正文，返回 {new_body, diff, critic}。
+
+        ``revise`` 不写 ACCEPT 记录；它把修订正文落库（``upsert_draft``），
+        使后续 ``accept`` 的 ``approved_content_hash`` 绑定到最新正文。
+        """
+        job, draft = self._require_job_and_draft(job_id)
+        new_draft = rewrite_with_instruction(runner, draft, instruction, cards_by_id, job)
+        critic = critique(runner, new_draft, cards_by_id)
+        diff = compute_diff(draft.body, new_draft.body)
+
+        self.drafts.upsert_draft(new_draft)
+        self.reviews.save_review(
+            ReviewDecision(
+                id=f"rev_{draft.id}", draft_id=draft.id,
+                action=ReviewAction.REVISE, revised_body=new_draft.body, diff=diff,
+                decided_at=datetime.now(UTC),
+            )
+        )
+        fingerprint = (
+            position_fingerprint(job.author_position) if job.author_position else ""
+        )
+        self.decisions.save(
+            DecisionRecord(
+                id=f"dec_{job_id}", job_id=job_id, draft_id=draft.id,
+                action=DecisionAction.REVISE,
+                position_source=(
+                    job.author_position.position_source
+                    if job.author_position and job.author_position.position_source
+                    else PositionSource.INFERRED
+                ),
+                position_fingerprint=fingerprint,
+                approved_content_hash=content_hash(new_draft.body),
+                revised_body=new_draft.body, diff=diff,
+                decided_at=datetime.now(UTC),
+            )
+        )
+        return {
+            "new_body": new_draft.body,
+            "diff": diff,
+            "critic": critic.model_dump(mode="json"),
+        }
 
     def skip(self, job_id: str, reason: str) -> DecisionRecord:
         job, draft = self._require_job_and_draft(job_id)
