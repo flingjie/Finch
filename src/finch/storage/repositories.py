@@ -9,6 +9,13 @@ from uuid import uuid4
 
 from sqlmodel import Field, Session, SQLModel, col, select
 
+from finch.author.models import (
+    AuthorAccount,
+    AuthorPost,
+    AuthorSyncCursor,
+    PublicationIntent,
+    PublicationLink,
+)
 from finch.content.checkers.base import CheckResult
 from finch.content.jobs import ContentJob
 from finch.content.models import Draft
@@ -1006,3 +1013,205 @@ class PositionApprovalRepository:
             record.updated_at = datetime.now(UTC)
             session.merge(record)
             session.commit()
+
+
+class AuthorAccountRecord(SQLModel, table=True):
+    """AuthorAccount 持久化模型（P0：已验证作者账号）。"""
+
+    id: str = Field(primary_key=True)  # f"acct:{platform}:{user_id}"
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class AuthorAccountRepository:
+    """作者账号仓储（P0）：按 platform:user_id 主键 merge（幂等）。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def save(self, account: AuthorAccount) -> None:
+        """按 ``acct:{platform}:{user_id}`` merge 插入或更新（幂等）。"""
+        record = AuthorAccountRecord(
+            id=f"acct:{account.platform}:{account.user_id}",
+            payload_json=account.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def get(self, platform: str, user_id: str) -> AuthorAccount | None:
+        """按 platform:user_id 获取账号，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            record = session.get(AuthorAccountRecord, f"acct:{platform}:{user_id}")
+            if record is None:
+                return None
+            return AuthorAccount.model_validate_json(record.payload_json)
+
+    def list(self) -> list[AuthorAccount]:
+        """列出全部已验证作者账号。"""
+        with Session(self.store.engine) as session:
+            records = list(session.exec(select(AuthorAccountRecord)))
+            return [AuthorAccount.model_validate_json(r.payload_json) for r in records]
+
+
+class AuthorPostRecord(SQLModel, table=True):
+    """AuthorPost 持久化模型（P0：作者发布的一条帖子）。"""
+
+    id: str = Field(primary_key=True)  # f"post:{platform}:{remote_post_id}"
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class AuthorPostRepository:
+    """作者帖子仓储（P0）：按 platform:remote_post_id 主键 merge（幂等）。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def save(self, post: AuthorPost) -> None:
+        """按 ``post:{platform}:{remote_post_id}`` merge 插入或更新（幂等）。"""
+        record = AuthorPostRecord(
+            id=f"post:{post.platform}:{post.remote_post_id}",
+            payload_json=post.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def get(self, platform: str, remote_post_id: str) -> AuthorPost | None:
+        """按 platform:remote_post_id 获取帖子，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            record = session.get(AuthorPostRecord, f"post:{platform}:{remote_post_id}")
+            if record is None:
+                return None
+            return AuthorPost.model_validate_json(record.payload_json)
+
+    def list(self) -> list[AuthorPost]:
+        """列出全部作者帖子。"""
+        with Session(self.store.engine) as session:
+            records = list(session.exec(select(AuthorPostRecord)))
+            return [AuthorPost.model_validate_json(r.payload_json) for r in records]
+
+
+class PublicationIntentRecord(SQLModel, table=True):
+    """PublicationIntent 持久化模型（P0：批准时保存的期待发布记录）。"""
+
+    id: str = Field(primary_key=True)  # f"intent:{source_id}"
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PublicationIntentRepository:
+    """发布意图仓储（P0）：按 source_id 主键 merge（幂等）。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def save(self, intent: PublicationIntent) -> None:
+        """按 ``intent:{source_id}`` merge 插入或更新（幂等）。"""
+        record = PublicationIntentRecord(
+            id=f"intent:{intent.source_id}",
+            payload_json=intent.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def get(self, source_id: str) -> PublicationIntent | None:
+        """按 source_id 获取发布意图，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            record = session.get(PublicationIntentRecord, f"intent:{source_id}")
+            if record is None:
+                return None
+            return PublicationIntent.model_validate_json(record.payload_json)
+
+    def list(self) -> list[PublicationIntent]:
+        """列出全部发布意图。"""
+        with Session(self.store.engine) as session:
+            records = list(session.exec(select(PublicationIntentRecord)))
+            return [PublicationIntent.model_validate_json(r.payload_json) for r in records]
+
+
+class PublicationLinkRecord(SQLModel, table=True):
+    """PublicationLink 持久化模型（P0：确定性匹配结果）。"""
+
+    id: str = Field(primary_key=True)  # f"link:{source_id}"
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PublicationLinkRepository:
+    """发布关联仓储（P0）：按 source_id 主键 merge（幂等）。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def save(self, link: PublicationLink) -> None:
+        """按 ``link:{source_id}`` merge 插入或更新（幂等）。"""
+        record = PublicationLinkRecord(
+            id=f"link:{link.source_id}",
+            payload_json=link.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def get(self, source_id: str) -> PublicationLink | None:
+        """按 source_id 获取匹配结果，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            record = session.get(PublicationLinkRecord, f"link:{source_id}")
+            if record is None:
+                return None
+            return PublicationLink.model_validate_json(record.payload_json)
+
+    def list(self) -> list[PublicationLink]:
+        """列出全部匹配结果。"""
+        with Session(self.store.engine) as session:
+            records = list(session.exec(select(PublicationLinkRecord)))
+            return [PublicationLink.model_validate_json(r.payload_json) for r in records]
+
+
+class AuthorSyncCursorRecord(SQLModel, table=True):
+    """AuthorSyncCursor 持久化模型（P0：同步水位）。"""
+
+    id: str = Field(primary_key=True)  # f"cursor:{platform}:{author_account_id}"
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class AuthorSyncCursorRepository:
+    """同步游标仓储（P0）：按 platform:author_account_id 主键 merge（幂等）。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def save(self, cursor: AuthorSyncCursor) -> None:
+        """按 ``cursor:{platform}:{author_account_id}`` merge 插入或更新（幂等）。"""
+        record = AuthorSyncCursorRecord(
+            id=f"cursor:{cursor.platform}:{cursor.author_account_id}",
+            payload_json=cursor.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def get(self, platform: str, author_account_id: str) -> AuthorSyncCursor | None:
+        """按 platform:author_account_id 获取游标，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            record = session.get(
+                AuthorSyncCursorRecord, f"cursor:{platform}:{author_account_id}"
+            )
+            if record is None:
+                return None
+            return AuthorSyncCursor.model_validate_json(record.payload_json)
+
+    def list(self) -> list[AuthorSyncCursor]:
+        """列出全部同步游标。"""
+        with Session(self.store.engine) as session:
+            records = list(session.exec(select(AuthorSyncCursorRecord)))
+            return [AuthorSyncCursor.model_validate_json(r.payload_json) for r in records]

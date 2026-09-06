@@ -26,6 +26,11 @@ ALL_TABLES = {
     "draftversionrecord",
     "criticreportrecord",
     "decisionrecordrecord",
+    "authoraccountrecord",
+    "authorpostrecord",
+    "publicationintentrecord",
+    "publicationlinkrecord",
+    "authorsynccursorrecord",
 }
 
 
