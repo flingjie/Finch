@@ -436,7 +436,12 @@ def _open_editor(prefill: str) -> str:
         tmp.write(prefill)
         tmp_path = tmp.name
     try:
-        subprocess.run([editor, tmp_path], check=True)
+        try:
+            subprocess.run([editor, tmp_path], check=True)
+        except subprocess.CalledProcessError as exc:
+            raise ValueError(f"editor exited with an error: {editor}") from exc
+        except OSError as exc:
+            raise ValueError(f"editor not found or failed to launch: {editor}") from exc
         return Path(tmp_path).read_text(encoding="utf-8")
     finally:
         Path(tmp_path).unlink(missing_ok=True)
@@ -544,35 +549,39 @@ def run_resolve(
     edited: ProposedPosition | None = None
     skip_reason: str | None = reason
 
-    if confirm:
-        action = InputAction.CONFIRM
-    elif edit:
-        action = InputAction.EDIT
-        edited = _edit_position(request.proposed_position)
-        typer.echo(render_position_diff(request.proposed_position, edited))
-    elif file is not None:
-        action = InputAction.EDIT
-        edited = parse_position_yaml(file.read_text())
-        typer.echo(render_position_diff(request.proposed_position, edited))
-    elif skip:
-        action = InputAction.SKIP
-    elif stop:
-        action = InputAction.STOP
-    else:
-        typer.echo(render_input_request(request, cards))
-        choice = typer.prompt("请选择", default="1")
-        if choice == "5":
-            typer.echo(render_evidence(cards))
-            return
-        if choice not in _ACTION_BY_CHOICE:
-            typer.echo("invalid choice")
-            raise typer.Exit(code=1)
-        action = _ACTION_BY_CHOICE[choice]
-        if action is InputAction.EDIT:
+    try:
+        if confirm:
+            action = InputAction.CONFIRM
+        elif edit:
+            action = InputAction.EDIT
             edited = _edit_position(request.proposed_position)
             typer.echo(render_position_diff(request.proposed_position, edited))
-        elif action is InputAction.SKIP:
-            skip_reason = typer.prompt("跳过理由", default="not_now")
+        elif file is not None:
+            action = InputAction.EDIT
+            edited = parse_position_yaml(file.read_text())
+            typer.echo(render_position_diff(request.proposed_position, edited))
+        elif skip:
+            action = InputAction.SKIP
+        elif stop:
+            action = InputAction.STOP
+        else:
+            typer.echo(render_input_request(request, cards))
+            choice = typer.prompt("请选择", default="1")
+            if choice == "5":
+                typer.echo(render_evidence(cards))
+                return
+            if choice not in _ACTION_BY_CHOICE:
+                typer.echo("invalid choice")
+                raise typer.Exit(code=1)
+            action = _ACTION_BY_CHOICE[choice]
+            if action is InputAction.EDIT:
+                edited = _edit_position(request.proposed_position)
+                typer.echo(render_position_diff(request.proposed_position, edited))
+            elif action is InputAction.SKIP:
+                skip_reason = typer.prompt("跳过理由", default="not_now")
+    except (ValueError, OSError, yaml.YAMLError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
 
     try:
         summary = resolve_input(

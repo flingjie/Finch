@@ -832,3 +832,35 @@ def test_run_resolve_file_edits(monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
     assert ContentJobRepository(store).get_job(request.job_id).author_position.claim == "new"
 
+
+def test_run_resolve_file_missing_clean_error(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
+    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid: None)
+
+    r = CliRunner().invoke(app, ["run", "resolve", "--file", str(tmp_path / "nope.yaml")])
+    assert r.exit_code == 1, r.output
+    # 干净错误：typer.Exit(1) 在 CliRunner 中以 SystemExit(1) 呈现（而非 None），
+    # 不变的保证是「单行错误 + exit 1」——即输出里没有未捕获 traceback。
+    assert "Traceback" not in r.output
+
+
+def test_run_resolve_file_malformed_clean_error(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
+    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid: None)
+
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(": bad yaml: [")
+    r = CliRunner().invoke(app, ["run", "resolve", "--file", str(bad)])
+    assert r.exit_code == 1, r.output
+    assert "Traceback" not in r.output
+
