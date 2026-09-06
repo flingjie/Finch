@@ -8,6 +8,7 @@ from finch.content.jobs import (
     ContentScope,
     DeferredJob,
     IntendedEffect,
+    PlanTopicsOutput,
     SuccessCriterion,
     TopicProposal,
     _render_prompt,
@@ -27,6 +28,7 @@ from finch.evidence.models import (
 from finch.settings import DailyBudget
 from finch.storage.database import Store
 from finch.storage.repositories import ContentJobRepository
+from finch.twitter.models import DiscussionCandidate
 
 
 class TestIntendedEffect:
@@ -591,6 +593,52 @@ def test_plan_content_topics_skips_runner_when_no_cards():
     out = plan_content_topics(runner, [], [], [])
     assert out.items == []
     assert runner.calls == 0
+
+
+def test_plan_content_topics_truncates_candidate_text():
+    class _CaptureRunner(CodexRunner):
+        prompt: str = ""
+
+        def run(self, prompt, output_model, **kw):
+            self.prompt = prompt
+            return PlanTopicsOutput(items=[])
+
+    long_text = "PREFIX_" + "A" * 5000 + "_SUFFIX"
+    candidate = DiscussionCandidate(
+        id="t1",
+        source="twitter",
+        author_handle="a",
+        text=long_text,
+        url="https://x.com/t1",
+    )
+    card = EvidenceCard(
+        id="ev1",
+        event_id="evt1",
+        claim="claim ev1",
+        sources=[],
+        confidence=ClaimConfidence.VERIFIED,
+        publishable=True,
+        topics=["agent"],
+    )
+    match = MatchResult(
+        candidate_id="t1",
+        card_ids=["ev1"],
+        scores=JudgeScores(
+            relevance=0.9,
+            evidence_strength=0.9,
+            incremental_value=0.9,
+            discussability=0.9,
+        ),
+        timing=0.3,
+        relationship_value=0.5,
+        score=0.9,
+    )
+    runner = _CaptureRunner()
+
+    plan_content_topics(runner, [card], [match], [candidate])
+
+    assert "PREFIX_" in runner.prompt
+    assert "_SUFFIX" not in runner.prompt
 
 
 def test_render_prompt_does_not_rescan_inserted_data():

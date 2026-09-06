@@ -287,6 +287,10 @@ class PlanTopicsOutput(BaseModel):
 
 _PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 
+# plan_topics 会把全部讨论候选的完整文本塞进同一个 prompt；部分 thread 可达数万字符，
+# 直接突破上游模型输入上限（如 262144 字符）。聚类只需识别讨论主题，截断足够且安全。
+_MAX_PLAN_CANDIDATE_TEXT_CHARS = 2000
+
 
 def _render_prompt(template: str, values: dict[str, str]) -> str:
     """单遍占位符替换：只扫描原模板一次，插入的数据不会被再次扫描。
@@ -319,7 +323,10 @@ def plan_content_topics(
     slim_matches = [
         {"candidate_id": m.candidate_id, "card_ids": m.card_ids} for m in match_results
     ]
-    slim_candidates = [{"id": c.id, "text": c.text} for c in candidates]
+    slim_candidates = [
+        {"id": c.id, "text": c.text[:_MAX_PLAN_CANDIDATE_TEXT_CHARS]}
+        for c in candidates
+    ]
     template = Path("prompts/plan-content-topics.md").read_text()
     prompt = _render_prompt(
         template,
