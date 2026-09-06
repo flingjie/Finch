@@ -29,6 +29,7 @@ from ..content.jobs import (
     TopicProposal,
     expand_content_job,
     plan_content_topics,
+    position_fingerprint,
     select_planning_evidence,
     select_primary_job,
 )
@@ -38,7 +39,7 @@ from ..evidence.models import EvidenceCard, MatchResult
 from ..gate.models import InputRequest, ProposedPosition
 from ..llm.base import StructuredInferenceRunner
 from ..settings import DailyBudget, QualityGates
-from ..storage.repositories import ContentJobRepository
+from ..storage.repositories import ContentJobRepository, PositionApprovalRepository
 from ..twitter.models import DiscussionCandidate
 from .context import items_payload, parse_items
 from .events import NodeResult
@@ -874,6 +875,7 @@ def make_define_jobs_node(
 
 def make_position_gate_node(
     jobs_repo: ContentJobRepository | None = None,
+    approvals_repo: PositionApprovalRepository | None = None,
 ) -> Node:
     """位置确认门：确定性选出唯一 primary，只有 primary 可阻塞内容生成。
 
@@ -957,6 +959,24 @@ def make_position_gate_node(
             if ready:
                 output["items"] = [primary.model_dump(mode="json")]
                 return NodeResult(status="succeeded", output=output)
+
+            # 复用门禁（P2）：立场逐字一致、未被撤销、且作者未写出「什么会改变判断」→ 复用确认。
+            if (
+                approvals_repo is not None
+                and jobs_repo is not None
+                and position is not None
+                and bool(position.decision)
+                and bool(position.tradeoff)
+            ):
+                fingerprint = position_fingerprint(position)
+                approval = approvals_repo.find_active(fingerprint)
+                if approval is not None and not position.change_mind_if:
+                    confirmed_pos = position.model_copy(update={"confirmed": True})
+                    confirmed_job = primary.model_copy(update={"author_position": confirmed_pos})
+                    jobs_repo.upsert_job(confirmed_job)
+                    output["items"] = [confirmed_job.model_dump(mode="json")]
+                    output["reused_approval"] = fingerprint
+                    return NodeResult(status="succeeded", output=output)
 
             # primary 缺已确认立场：只问最多 3 个问题，并附带结构化 input_request。
             pos = primary.author_position

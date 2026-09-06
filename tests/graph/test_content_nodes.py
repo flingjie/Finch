@@ -13,6 +13,7 @@ from finch.content.jobs import (
     PlanTopicsOutput,
     SuccessCriterion,
     TopicProposal,
+    position_fingerprint,
 )
 from finch.content.models import ClaimRef, Draft, DraftKind, DraftWarning
 from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
@@ -30,7 +31,7 @@ from finch.graph.nodes import Node
 from finch.graph.runtime import GraphRuntime
 from finch.settings import QualityGates
 from finch.storage.database import NodeRecord, Store
-from finch.storage.repositories import ContentJobRepository
+from finch.storage.repositories import ContentJobRepository, PositionApprovalRepository
 from finch.twitter.models import DiscussionCandidate
 
 
@@ -1554,5 +1555,50 @@ def test_original_flow_confirmed_position_produces_draft(tmp_path):
     assert draft_rec is not None
     assert "d1" in draft_rec.output_json
     assert "job1" in draft_rec.output_json
+
+
+def test_position_gate_reuses_approved_position(tmp_path):
+    store = _store(tmp_path)
+    jobs_repo = ContentJobRepository(store)
+    approvals = PositionApprovalRepository(store)
+    job = _job(job_id="j1", position=_position(confirmed=False))
+    jobs_repo.upsert_job(job)
+    approvals.approve(position_fingerprint(job.author_position), "j1")
+
+    node = make_position_gate_node(jobs_repo=jobs_repo, approvals_repo=approvals)
+    result = node.run({"content_jobs": items_payload([job]), "run_id": "r1"})
+    assert result.status == "succeeded"
+    assert result.output["reused_approval"] == position_fingerprint(job.author_position)
+    assert ContentJobRepository(store).get_job("j1").author_position.confirmed is True
+
+
+def test_position_gate_reasks_when_change_mind_if_set(tmp_path):
+    store = _store(tmp_path)
+    jobs_repo = ContentJobRepository(store)
+    approvals = PositionApprovalRepository(store)
+    pos = AuthorPosition(
+        claim="c", decision="d", tradeoff="t", change_mind_if="x", confirmed=False
+    )
+    job = _job(job_id="j1", position=pos)
+    jobs_repo.upsert_job(job)
+    approvals.approve(position_fingerprint(pos), "j1")
+
+    node = make_position_gate_node(jobs_repo=jobs_repo, approvals_repo=approvals)
+    result = node.run({"content_jobs": items_payload([job])})
+    assert result.status == "needs_input"
+
+
+def test_position_gate_reasks_when_revoked(tmp_path):
+    store = _store(tmp_path)
+    jobs_repo = ContentJobRepository(store)
+    approvals = PositionApprovalRepository(store)
+    job = _job(job_id="j1", position=_position(confirmed=False))
+    jobs_repo.upsert_job(job)
+    approvals.approve(position_fingerprint(job.author_position), "j1")
+    approvals.revoke(position_fingerprint(job.author_position))
+
+    node = make_position_gate_node(jobs_repo=jobs_repo, approvals_repo=approvals)
+    result = node.run({"content_jobs": items_payload([job])})
+    assert result.status == "needs_input"
 
 
