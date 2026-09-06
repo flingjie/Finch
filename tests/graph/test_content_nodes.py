@@ -657,11 +657,13 @@ def test_position_gate_missing_position_needs_input():
 
 
 def test_position_gate_empty_decision_needs_input():
+    """回归：confirmed=True 但 decision 为空也必须 needs_input，不得通过门禁出草稿。"""
     node = make_position_gate_node()
-    job = _job(job_id="j1", position=_position(decision="", confirmed=False))
+    job = _job(job_id="j1", position=_position(decision="", confirmed=True))
     result = node.run({"content_jobs": items_payload([job])})
     assert result.status == "needs_input"
     assert result.output["must_ask"] == ["position_incomplete"]
+    assert [j["id"] for j in result.output["items"]] == ["j1"]
 
 
 def test_position_gate_only_primary_blocks():

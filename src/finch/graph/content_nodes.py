@@ -957,10 +957,40 @@ def make_position_gate_node(
                 and bool(position.tradeoff)
             )
 
+            # 立场不完整：无法起草，仍阻塞 + must_ask 信号。
+            # 该检查必须先于复用门禁与 confirmed 放行：confirm-position 可置
+            # confirmed=True 而不校验 decision/tradeoff 完整性，否则空立场会
+            # 绕过 needs_input 直接出草稿。
+            if not has_decision_tradeoff:
+                pos = primary.author_position
+                output["items"] = [primary.model_dump(mode="json")]
+                output["questions"] = list(primary.missing_questions)[:3]
+                output["must_ask"] = ["position_incomplete"]
+                output["input_request"] = InputRequest(
+                    run_id=ctx.get("run_id", ""),
+                    job_id=primary.id,
+                    topic=primary.core_message or primary.reader_problem,
+                    why_now=primary.why_now,
+                    proposed_position=ProposedPosition(
+                        claim=(pos.claim if pos else ""),
+                        decision=(pos.decision if pos else ""),
+                        tradeoff=(pos.tradeoff if pos else ""),
+                        change_mind_if=(pos.change_mind_if if pos else None),
+                    ),
+                    evidence_card_ids=list(primary.source_card_ids),
+                    questions=list(primary.missing_questions)[:3],
+                ).model_dump(mode="json")
+                return NodeResult(
+                    status="needs_input",
+                    output=output,
+                    warnings=[f"primary job {primary.id} needs a confirmed position"],
+                )
+
             # 复用门禁（P2）：逐字一致 + 未撤销 + 无 change_mind_if → 复用确认（REUSED）。
+            # has_decision_tradeoff 为真已在上方保证；position is not None 由该条件推导，
+            # 此处保留判断以满足类型检查并保护 fingerprint 调用。
             if (
-                has_decision_tradeoff
-                and approvals_repo is not None
+                approvals_repo is not None
                 and jobs_repo is not None
                 and position is not None
             ):
@@ -981,43 +1011,17 @@ def make_position_gate_node(
                 output["items"] = [primary.model_dump(mode="json")]
                 return NodeResult(status="succeeded", output=output)
 
-            if has_decision_tradeoff:
-                # 可推断但未确认：非阻塞，标记 INFERRED 后通过（生成候选草稿）。
-                assert position is not None
-                inferred_pos = position.model_copy(
-                    update={"position_source": PositionSource.INFERRED}
-                )
-                inferred_job = primary.model_copy(update={"author_position": inferred_pos})
-                if jobs_repo is not None:
-                    jobs_repo.upsert_job(inferred_job)
-                output["items"] = [inferred_job.model_dump(mode="json")]
-                output["inferred_position"] = True
-                return NodeResult(status="succeeded", output=output)
-
-            # 立场不完整：无法起草，仍阻塞 + must_ask 信号。
-            pos = primary.author_position
-            output["items"] = [primary.model_dump(mode="json")]
-            output["questions"] = list(primary.missing_questions)[:3]
-            output["must_ask"] = ["position_incomplete"]
-            output["input_request"] = InputRequest(
-                run_id=ctx.get("run_id", ""),
-                job_id=primary.id,
-                topic=primary.core_message or primary.reader_problem,
-                why_now=primary.why_now,
-                proposed_position=ProposedPosition(
-                    claim=(pos.claim if pos else ""),
-                    decision=(pos.decision if pos else ""),
-                    tradeoff=(pos.tradeoff if pos else ""),
-                    change_mind_if=(pos.change_mind_if if pos else None),
-                ),
-                evidence_card_ids=list(primary.source_card_ids),
-                questions=list(primary.missing_questions)[:3],
-            ).model_dump(mode="json")
-            return NodeResult(
-                status="needs_input",
-                output=output,
-                warnings=[f"primary job {primary.id} needs a confirmed position"],
+            # 可推断但未确认：非阻塞，标记 INFERRED 后通过（生成候选草稿）。
+            assert position is not None
+            inferred_pos = position.model_copy(
+                update={"position_source": PositionSource.INFERRED}
             )
+            inferred_job = primary.model_copy(update={"author_position": inferred_pos})
+            if jobs_repo is not None:
+                jobs_repo.upsert_job(inferred_job)
+            output["items"] = [inferred_job.model_dump(mode="json")]
+            output["inferred_position"] = True
+            return NodeResult(status="succeeded", output=output)
 
     return PositionGateNode(
         name="position_gate",
