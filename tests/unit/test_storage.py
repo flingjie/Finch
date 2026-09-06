@@ -25,6 +25,20 @@ def test_store_roundtrip_run_and_node(tmp_path):
     assert found.duration_ms == 42
 
 
+def test_find_latest_run_returns_most_recent_by_state(tmp_path):
+    from finch.storage.database import RunRecord
+
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    store.upsert_run(RunRecord(id="r1", state="NEEDS_INPUT"))
+    store.upsert_run(RunRecord(id="r2", state="COMPLETED"))
+    store.upsert_run(RunRecord(id="r3", state="NEEDS_INPUT"))
+
+    assert store.find_latest_run("NEEDS_INPUT").id == "r3"
+    assert store.find_latest_run("COMPLETED").id == "r2"
+    assert store.find_latest_run("FAILED") is None
+
+
 def test_store_enables_wal_and_normal_synchronous(tmp_path):
     store = Store(tmp_path / "test.db")
     store.init()

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import event
-from sqlmodel import Field, Session, SQLModel, create_engine, select
+from sqlmodel import Field, Session, SQLModel, col, create_engine, select
 
 
 def _utcnow() -> datetime:
@@ -67,6 +67,17 @@ class Store:
     def get_run(self, run_id: str) -> RunRecord | None:
         with Session(self.engine) as session:
             return session.get(RunRecord, run_id)
+
+    def find_latest_run(self, state: str) -> RunRecord | None:
+        """返回指定 state 下最近更新的 run；无则返回 None。"""
+        with Session(self.engine) as session:
+            stmt = (
+                select(RunRecord)
+                .where(RunRecord.state == state)
+                .order_by(col(RunRecord.updated_at).desc())
+                .limit(1)
+            )
+            return session.exec(stmt).first()
 
     def upsert_node(self, record: NodeRecord) -> None:
         """插入或更新节点记录（恢复/重放时同键覆盖，避免主键冲突）。"""
