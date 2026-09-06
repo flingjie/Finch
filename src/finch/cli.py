@@ -1,10 +1,7 @@
 """Finch CLI（spec 10）。"""
 
 import json
-import os
-import subprocess
 import sys
-import tempfile
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,7 +16,6 @@ from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
 from .content.checkers.aggregate import AggregateOutcome
 from .content.checkers.base import CheckResult
-from .content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from .content.models import DailyBrief, Draft, DraftKind
 from .content.voice import (
     ApprovedExample,
@@ -29,33 +25,23 @@ from .content.voice import (
 )
 from .dev.cli import dev_app
 from .engagement.flow import run_discovery_engagement_flow
-from .engagement.metrics import (
-    compute_metrics,
-    render_metrics,
-    render_run_stats,
-    summarize_run_stats,
-)
-from .engagement.models import EngagementRunStats
+from .engagement.models import EngagementRunStats, InteractionCandidate
 from .evidence.extractor import Extractor, build_cards
 from .evidence.models import EvidenceCard
 from .gate.interactive import edit_position_inline, select_action
 from .gate.models import InputAction, InputRequest, ProposedPosition
 from .gate.render import (
-    build_ask_reasons,
-    build_risks,
     render_compact_resolve,
     render_daily_summary,
     render_outcome,
-    render_position_diff,
     render_produced,
     state_label,
 )
-from .gate.resolve import parse_position_yaml, position_yaml, resolve_input
+from .gate.resolve import resolve_input
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.discovery import resolve_repositories
 from .github.gh_client import GhClient
 from .github.ingestion import Ingestor
-from .github.models import CommitDetail
 from .graph.context import parse_items
 from .graph.daily import daily_nodes
 from .graph.dual_track import DualTrackResult, run_dual_track
@@ -73,20 +59,19 @@ from .idea.service import (
     run_idea_critic,
     write_idea,
 )
+from .inbox.models import DecisionAction, DecisionRecord
+from .inbox.service import InboxDecisionService, next_item
+from .learn.service import FeedbackService
 from .llm.openai_compatible import create_runner
 from .reddit.opencli_client import RedditOpenCliClient
-from .review.decision import DecisionService
-from .review.feedback import FeedbackService
-from .review.models import DecisionAction, OutcomeAssessment, ReviewAction, SkipReason
-from .review.service import ReviewService, build_review_package, render_review_package
+from .review.models import OutcomeAssessment, ReviewAction
 from .review.weekly import render_weekly, weekly_analysis
-from .settings import Settings, load_settings
+from .settings import load_settings
 from .storage.database import RunRecord, Store
 from .storage.repositories import (
     AuthorPostRepository,
     CommitIngestionRepository,
     ContentJobRepository,
-    ConversationEvidenceRepository,
     CriticReportRepository,
     DecisionRecordRepository,
     DraftRepository,
@@ -94,7 +79,6 @@ from .storage.repositories import (
     EngagementRunStatsRepository,
     EvidenceRepository,
     FeedbackRepository,
-    FeedbackSnapshotRepository,
     InteractionRepository,
     PositionApprovalRepository,
     PublicationIntentRepository,
@@ -114,20 +98,8 @@ app.add_typer(github_app, name="github")
 twitter_app = typer.Typer(help="Twitter 搜索与读取")
 app.add_typer(twitter_app, name="twitter")
 
-run_app = typer.Typer(help="Run graph pipelines")
-app.add_typer(run_app, name="run")
-
-review_app = typer.Typer(help="Review drafts")
-app.add_typer(review_app, name="review")
-
-jobs_app = typer.Typer(help="Inspect and answer Content Jobs (human-in-the-loop)")
-app.add_typer(jobs_app, name="jobs")
-
 voice_app = typer.Typer(help="Manage the author voice profile (local, no auto-publish)")
 app.add_typer(voice_app, name="voice")
-
-engagement_app = typer.Typer(help="Review engagement candidates (human-in-the-loop)")
-app.add_typer(engagement_app, name="engagement")
 
 author_app = typer.Typer(help="Author account sync + publication reconcile (read-only)")
 app.add_typer(author_app, name="author")
@@ -501,7 +473,7 @@ def twitter_diagnose() -> None:
         typer.echo(f"search probe: failed ({type(exc).__name__}: {exc})")
 
 
-@run_app.command("daily")
+@app.command("daily")
 def run_daily(
     interactive: bool = typer.Option(False, "--interactive", help="强制交互选择器"),  # noqa: B008
     non_interactive: bool = typer.Option(False, "--non-interactive", help="强制紧凑输出"),  # noqa: B008
@@ -635,11 +607,6 @@ def run_daily(
     _echo_daily_brief(store, run.id)
 
 
-def _latest_needs_input_run_id(store: Store) -> str | None:
-    record = store.find_latest_run(GraphState.NEEDS_INPUT.value)
-    return record.id if record is not None else None
-
-
 def _mark_stopped(store: Store, run_id: str) -> None:
     """把 run 标记为 STOPPED（用户保存进度并退出 / 结束原创轨道）。"""
     store.upsert_run(
@@ -662,64 +629,6 @@ def _cards_for(request: InputRequest, store: Store) -> list[EvidenceCard]:
     return [cards_by_id[cid] for cid in request.evidence_card_ids if cid in cards_by_id]
 
 
-def _open_editor(prefill: str) -> str:
-    """在 $VISUAL/$EDITOR（回退 vi）中打开预填内容，返回编辑后的文本。"""
-    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
-    ) as tmp:
-        tmp.write(prefill)
-        tmp_path = tmp.name
-    try:
-        try:
-            subprocess.run([editor, tmp_path], check=True)
-        except subprocess.CalledProcessError as exc:
-            raise ValueError(f"editor exited with an error: {editor}") from exc
-        except OSError as exc:
-            raise ValueError(f"editor not found or failed to launch: {editor}") from exc
-        return Path(tmp_path).read_text(encoding="utf-8")
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
-
-
-def _edit_position(proposed: ProposedPosition) -> ProposedPosition:
-    return parse_position_yaml(_open_editor(position_yaml(proposed)))
-
-
-def _resume_nodes(settings: Settings, store: Store) -> list[Node]:
-    """run_resume 与 resolve 共用：空 groups 的 daily_nodes 装配。"""
-    gh = GhClient()
-    opencli = OpenCliClient()
-    groups_by_repo: dict[str, list[list[CommitDetail]]] = {
-        repo: [] for repo in settings.repositories
-    }
-    known_commit_urls: set[str] = set()
-    repo_is_private = {repo: False for repo in settings.repositories}
-
-    return daily_nodes(
-        settings=settings,
-        store=store,
-        gh=gh,
-        opencli=opencli,
-        extractor=Extractor(
-            create_runner(settings.llm) or CodexRunner(),
-            settings=settings.extraction,
-            cache_path=settings.paths.cache_dir / "extraction_cache.json",
-        ),
-        runner=CodexRunner(),
-        groups_by_repo=groups_by_repo,
-        known_commit_urls=known_commit_urls,
-        repo_is_private=repo_is_private,
-        voice_profile=load_voice_profile(settings.paths.voice_profile_path),
-        inference_runners={
-            "match_evidence": create_runner(settings.llm, "match_evidence"),
-            "plan_topics": create_runner(settings.llm, "plan_topics"),
-            "expand_job": create_runner(settings.llm, "expand_job"),
-            "critique": create_runner(settings.llm, "critique"),
-        },
-    )
-
-
 def _resume_and_echo(
     store: Store, nodes: list[Node], run_id: str, *, verbose: bool = False
 ) -> RunRecord:
@@ -733,137 +642,7 @@ def _resume_and_echo(
     return run
 
 
-@run_app.command("resume")
-def run_resume(run_id: str) -> None:
-    """从 run-id 恢复：复用已完成节点，从 position_gate 继续（读取用户最新 job 编辑）。"""
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    nodes = _resume_nodes(settings, store)
-    _resume_and_echo(store, nodes, run_id)
-
-
-@run_app.command("resolve")
-def run_resolve(
-    run_id: str | None = typer.Argument(None, help="run id（缺省取最近 NEEDS_INPUT 的 run）"),
-    confirm: bool = typer.Option(False, "--confirm", help="确认并继续"),  # noqa: B008
-    edit: bool = typer.Option(False, "--edit", help="逐字段编辑立场并继续"),  # noqa: B008
-    edit_editor: bool = typer.Option(False, "--edit-editor", help="用 $EDITOR 编辑立场并继续"),  # noqa: B008
-    file: Path | None = typer.Option(None, "--file", help="从 YAML 文件读取立场"),  # noqa: B008
-    skip: bool = typer.Option(False, "--skip", help="跳过当前主题，尝试下一个"),  # noqa: B008
-    reason: str | None = typer.Option(None, "--reason", help="--skip 的拒绝理由"),  # noqa: B008
-    stop: bool = typer.Option(False, "--stop", help="结束今天的原创轨道"),  # noqa: B008
-    as_json: bool = typer.Option(False, "--json", help="输出 JSON（供 Skill/Agent）"),  # noqa: B008
-    interactive: bool = typer.Option(False, "--interactive", help="强制交互选择器"),  # noqa: B008
-    non_interactive: bool = typer.Option(False, "--non-interactive", help="强制紧凑输出"),  # noqa: B008
-    verbose: bool = typer.Option(False, "--verbose", help="显示内部状态与 run_id"),  # noqa: B008
-) -> None:
-    """处理当前阻塞点（author position confirmation），完成后自动 resume。"""
-    if interactive and non_interactive:
-        typer.echo("--interactive 与 --non-interactive 互斥")
-        raise typer.Exit(code=1)
-
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-
-    resolved_run_id = run_id or _latest_needs_input_run_id(store)
-    if resolved_run_id is None:
-        typer.echo("no run awaiting input")
-        raise typer.Exit(code=1)
-    try:
-        request = _read_input_request(store, resolved_run_id)
-    except ValueError as exc:
-        typer.echo(str(exc))
-        raise typer.Exit(code=1) from exc
-
-    flags = [confirm, edit, edit_editor, skip, stop, file is not None]
-    if sum(1 for f in flags if f) > 1:
-        typer.echo("choose exactly one of --confirm/--edit/--edit-editor/--file/--skip/--stop")
-        raise typer.Exit(code=1)
-
-    if reason is not None and not skip:
-        typer.echo("--reason requires --skip")
-        raise typer.Exit(code=1)
-
-    if as_json:
-        if any(flags):
-            typer.echo("--json 不能与动作 flag 同时使用")
-            raise typer.Exit(code=1)
-        typer.echo(request.model_dump_json(indent=2))
-        return
-
-    jobs_repo = ContentJobRepository(store)
-    approvals_repo = PositionApprovalRepository(store)
-    cards = _cards_for(request, store)
-
-    action: InputAction | None
-    edited: ProposedPosition | None = None
-    skip_reason: str | None = reason
-
-    use_interactive = interactive or (not non_interactive and sys.stdout.isatty())
-
-    try:
-        if confirm:
-            action = InputAction.CONFIRM
-        elif edit:
-            action = InputAction.EDIT
-            edited = edit_position_inline(request.proposed_position)
-        elif edit_editor:
-            action = InputAction.EDIT
-            edited = _edit_position(request.proposed_position)
-            typer.echo(render_position_diff(request.proposed_position, edited))
-        elif file is not None:
-            action = InputAction.EDIT
-            edited = parse_position_yaml(file.read_text())
-            typer.echo(render_position_diff(request.proposed_position, edited))
-        elif skip:
-            action = InputAction.SKIP
-        elif stop:
-            action = InputAction.STOP
-        elif use_interactive:
-            action = select_action(request, cards)
-            if action is None:
-                typer.echo(render_outcome(None))
-                _mark_stopped(store, resolved_run_id)
-                return
-            if action is InputAction.EDIT:
-                edited = edit_position_inline(request.proposed_position)
-            elif action is InputAction.SKIP:
-                skip_reason = typer.prompt("跳过理由", default="not_now")
-        else:
-            typer.echo(render_compact_resolve(request))
-            raise typer.Exit(code=0)
-    except (ValueError, OSError, yaml.YAMLError) as exc:
-        typer.echo(str(exc))
-        raise typer.Exit(code=1) from exc
-
-    try:
-        summary = resolve_input(
-            request,
-            action,
-            jobs_repo=jobs_repo,
-            approvals_repo=approvals_repo,
-            edited_position=edited,
-            skip_reason=skip_reason,
-        )
-    except ValueError as exc:
-        typer.echo(str(exc))
-        raise typer.Exit(code=1) from exc
-    typer.echo(render_outcome(action))
-    if action is InputAction.STOP:
-        _mark_stopped(store, resolved_run_id)
-        if verbose:
-            typer.echo(f"[internal] state={GraphState.STOPPED.value} run_id={resolved_run_id}")
-        return
-    if verbose:
-        typer.echo(f"[internal] resolve={summary}")
-
-    nodes = _resume_nodes(settings, store)
-    _resume_and_echo(store, nodes, resolved_run_id, verbose=verbose)
-
-
-@run_app.command("weekly")
+@app.command("weekly")
 def run_weekly() -> None:
     """周复盘：汇总最近 7 天的批准率、修改/跳过原因、内容效果指标与已发布候选。"""
     settings = load_settings()
@@ -881,413 +660,9 @@ def run_weekly() -> None:
     typer.echo(render_weekly(report))
 
 
-def _review_service() -> ReviewService:
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    return ReviewService(DraftRepository(store), ReviewRepository(store))
-
-
-def _feedback_service() -> FeedbackService:
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    return FeedbackService(FeedbackRepository(store))
-
-
-def _jobs_repo() -> ContentJobRepository:
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    return ContentJobRepository(store)
-
-
-def _engagement_repo() -> InteractionRepository:
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    return InteractionRepository(store)
-
-
 def _voice_profile_path() -> Path:
     settings = load_settings()
     return settings.paths.voice_profile_path
-
-
-@review_app.command("list")
-def review_list() -> None:
-    """列出 pending 草稿（id + kind + 正文前 80 字符）。"""
-    service = _review_service()
-    drafts = service.list_pending()
-    if not drafts:
-        typer.echo("no pending drafts")
-        return
-    for draft in drafts:
-        typer.echo(f"{draft.id}\t{draft.kind.value}\t{draft.body[:80]}")
-
-
-def _evidence_cards_for(store: Store, draft: Draft, job: ContentJob | None) -> list[EvidenceCard]:
-    """收集草稿的 Evidence Cards：优先 job.source_card_ids，回退 draft.claims 的卡片引用。
-
-    EvidenceRepository 无按 id 列表批量查询的方法，故用 list_cards 建索引后按顺序取回
-    （审核命令下的卡片量级很小）。返回顺序保持 source_card_ids 的原始顺序。
-    """
-    card_ids: list[str] = []
-    if job is not None:
-        card_ids.extend(job.source_card_ids)
-    for claim in draft.claims:
-        if claim.evidence_card_id not in card_ids:
-            card_ids.append(claim.evidence_card_id)
-    cards_by_id = {card.id: card for card in EvidenceRepository(store).list_cards()}
-    return [cards_by_id[cid] for cid in card_ids if cid in cards_by_id]
-
-
-@review_app.command("show")
-def review_show(
-    draft_id: str,
-    body_only: bool = typer.Option(False, "--body-only", help="只打印草稿正文"),  # noqa: B008
-    evidence: bool = typer.Option(False, "--evidence", help="只打印证据卡与链接"),  # noqa: B008
-    critic: bool = typer.Option(  # noqa: B008
-        False, "--critic", help="只打印 Critic 失败项、剩余风险与 rewrite 次数"
-    ),
-) -> None:
-    """打印审核包（默认）或按 flag 聚焦。
-
-    默认 Review Package 含：Content Job、作者立场、证据卡与链接、candidate 原帖、
-    草稿正文、Critic 失败项与剩余风险、rewrite 次数、可复制的下一步命令。
-    """
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    draft = DraftRepository(store).get_draft(draft_id)
-    if draft is None:
-        typer.echo(f"draft not found: {draft_id}")
-        raise typer.Exit(code=1)
-    if body_only:
-        typer.echo(draft.body)
-        return
-    job = (
-        ContentJobRepository(store).get_job(draft.content_job_id)
-        if draft.content_job_id is not None
-        else None
-    )
-    package = build_review_package(
-        draft,
-        job=job,
-        evidence_cards=_evidence_cards_for(store, draft, job),
-        critic_reports=CriticReportRepository(store).list_reports(draft_id),
-        decision=ReviewRepository(store).get_review(draft_id),
-        feedback=FeedbackRepository(store).get_feedback(draft_id),
-    )
-    typer.echo(render_review_package(package, evidence_only=evidence, critic_only=critic))
-
-
-@review_app.command("approve")
-def review_approve(draft_id: str) -> None:
-    """批准草稿（可重放）。"""
-    service = _review_service()
-    try:
-        decision = service.approve(draft_id)
-    except KeyError:
-        typer.echo(f"draft not found: {draft_id}")
-        raise typer.Exit(code=1) from None
-    typer.echo(f"approved {decision.draft_id}")
-
-
-@review_app.command("revise")
-def review_revise(
-    draft_id: str,
-    path: Path = typer.Option(..., "--file", help="修订后的 Markdown 文件"),  # noqa: B008
-) -> None:
-    """保存修订正文与 diff（不自动发布）。"""
-    service = _review_service()
-    try:
-        decision = service.revise(draft_id, path.read_text())
-    except KeyError:
-        typer.echo(f"draft not found: {draft_id}")
-        raise typer.Exit(code=1) from None
-    typer.echo(f"revised {decision.draft_id}")
-    if decision.diff:
-        typer.echo(decision.diff)
-
-
-@review_app.command("skip")
-def review_skip(
-    draft_id: str,
-    reason: SkipReason = typer.Option(..., "--reason", help="跳过理由"),  # noqa: B008
-) -> None:
-    """跳过草稿并记录理由。"""
-    service = _review_service()
-    try:
-        decision = service.skip(draft_id, reason)
-    except KeyError:
-        typer.echo(f"draft not found: {draft_id}")
-        raise typer.Exit(code=1) from None
-    typer.echo(f"skipped {decision.draft_id} ({decision.reason})")
-
-
-@review_app.command("confirm-position")
-def review_confirm_position(
-    draft_id: str,
-    voice_match: int = typer.Option(..., "--voice-match", help="语气匹配度 0-5"),  # noqa: B008
-    position_correct: bool | None = typer.Option(  # noqa: B008
-        None, "--position-correct", help="立场是否正确"
-    ),
-    job_clear: bool | None = typer.Option(  # noqa: B008
-        None, "--job-clear", help="job 是否清晰"
-    ),
-) -> None:
-    """记录立场确认与 voice_match（独立于 approve/skip）。"""
-    if not 0 <= voice_match <= 5:
-        typer.echo(f"voice_match must be 0-5: {voice_match}")
-        raise typer.Exit(code=1)
-    service = _review_service()
-    try:
-        decision = service.confirm_position(
-            draft_id,
-            voice_match=voice_match,
-            position_correct=position_correct,
-            job_clear=job_clear,
-        )
-    except KeyError:
-        typer.echo(f"draft not found: {draft_id}")
-        raise typer.Exit(code=1) from None
-    typer.echo(
-        f"position confirmed {decision.draft_id} (voice_match={decision.voice_match})"
-    )
-
-
-@review_app.command("feedback")
-def review_feedback(
-    draft_id: str,
-    url: str | None = typer.Option(None, "--url", help="发布链接"),
-    metrics: str | None = typer.Option(None, "--metrics", help="互动数据 JSON"),
-    outcome: str | None = typer.Option(
-        None, "--outcome", help="结果评估 JSON（OutcomeAssessment）"
-    ),
-    learning: str | None = typer.Option(
-        None, "--learning", help="自由文本：这次实际学到了什么"
-    ),
-) -> None:
-    """登记发布链接、互动数据、结果评估（outcome）与学习记录（learning）。"""
-    metrics_dict: dict | None = None
-    if metrics:
-        metrics_dict = json.loads(metrics)
-    outcome_obj: OutcomeAssessment | None = None
-    if outcome:
-        outcome_obj = OutcomeAssessment.model_validate_json(outcome)
-    feedback = _feedback_service().record(
-        draft_id,
-        published_url=url,
-        metrics=metrics_dict,
-        outcome=outcome_obj,
-        learning=learning,
-    )
-    typer.echo(f"feedback recorded: {feedback.draft_id}")
-
-
-@jobs_app.command("list")
-def jobs_list(
-    status: ContentJobStatus | None = typer.Option(None, "--status", help="按状态过滤"),  # noqa: B008
-) -> None:
-    """列出 Content Jobs（可按状态过滤）。"""
-    jobs = _jobs_repo().list_jobs()
-    if status is not None:
-        jobs = [job for job in jobs if job.status == status]
-    if not jobs:
-        typer.echo("no jobs")
-        return
-    for job in jobs:
-        typer.echo(f"{job.id}\t{job.status.value}\t{job.reader_problem[:60]}")
-
-
-@jobs_app.command("show")
-def jobs_show(job_id: str) -> None:
-    """打印单个 Content Job 详情。"""
-    job = _jobs_repo().get_job(job_id)
-    if job is None:
-        typer.echo(f"job not found: {job_id}")
-        raise typer.Exit(code=1)
-    effect = job.intended_effect
-    typer.echo(f"id: {job.id}")
-    typer.echo(f"status: {job.status.value}")
-    typer.echo(f"reader_problem: {job.reader_problem}")
-    typer.echo(f"audience: {job.audience}")
-    typer.echo(
-        f"intended_effect: understand={effect.understand}; "
-        f"believe={effect.believe or ''}; action={effect.action or ''}"
-    )
-    typer.echo(
-        f"author_position: "
-        f"{job.author_position.model_dump_json() if job.author_position else 'none'}"
-    )
-    typer.echo(f"missing_questions: {json.dumps(job.missing_questions)}")
-    typer.echo(f"source_card_ids: {json.dumps(job.source_card_ids)}")
-    if job.reject_reason:
-        typer.echo(f"reject_reason: {job.reject_reason}")
-
-
-@jobs_app.command("answer")
-def jobs_answer(
-    job_id: str,
-    path: Path = typer.Option(..., "--file", help="author_position 字段的 YAML 文件"),  # noqa: B008
-) -> None:
-    """从 YAML 读取 author_position 字段并写入 job（confirmed 保持 False）。"""
-    repo = _jobs_repo()
-    job = repo.get_job(job_id)
-    if job is None:
-        typer.echo(f"job not found: {job_id}")
-        raise typer.Exit(code=1)
-    data = yaml.safe_load(path.read_text())
-    if not isinstance(data, dict) or not data:
-        typer.echo("answers file is empty or not a YAML mapping")
-        raise typer.Exit(code=1)
-    missing = [k for k in ("decision", "tradeoff", "claim") if not data.get(k)]
-    if missing:
-        typer.echo(f"answers missing required field(s): {', '.join(missing)}")
-        raise typer.Exit(code=1)
-    try:
-        position = AuthorPosition(**data)
-    except Exception as exc:  # noqa: BLE001
-        typer.echo(f"invalid answers: {exc}")
-        raise typer.Exit(code=1) from None
-    position.confirmed = False
-    repo.upsert_job(job.model_copy(update={"author_position": position}))
-    typer.echo(f"answered {job_id}")
-
-
-@jobs_app.command("confirm-position")
-def jobs_confirm_position(job_id: str) -> None:
-    """确认作者立场（独立于最终发布批准）。"""
-    repo = _jobs_repo()
-    job = repo.get_job(job_id)
-    if job is None:
-        typer.echo(f"job not found: {job_id}")
-        raise typer.Exit(code=1)
-    if job.author_position is None:
-        typer.echo(f"job has no author_position: {job_id}")
-        raise typer.Exit(code=1)
-    position = job.author_position.model_copy(update={"confirmed": True})
-    repo.upsert_job(job.model_copy(update={"author_position": position}))
-    typer.echo(f"confirmed {job_id}")
-
-
-@jobs_app.command("reject")
-def jobs_reject(
-    job_id: str,
-    reason: str = typer.Option(..., "--reason", help="拒绝理由"),  # noqa: B008
-) -> None:
-    """标记 job 为 DO_NOT_WRITE 并记录理由。"""
-    repo = _jobs_repo()
-    job = repo.get_job(job_id)
-    if job is None:
-        typer.echo(f"job not found: {job_id}")
-        raise typer.Exit(code=1)
-    updated = job.model_copy(
-        update={"status": ContentJobStatus.DO_NOT_WRITE, "reject_reason": reason}
-    )
-    repo.upsert_job(updated)
-    typer.echo(f"rejected {job_id}")
-
-
-@engagement_app.command("list")
-def engagement_list() -> None:
-    """列出 pending 互动候选（id + action + 帖子 url/摘要）。"""
-    candidates = _engagement_repo().list_pending()
-    if not candidates:
-        typer.echo("no pending candidates")
-        return
-    for candidate in candidates:
-        snippet = " ".join(candidate.post.content.split())[:60]
-        typer.echo(f"{candidate.id}\t{candidate.action.value}\t{candidate.post.url} — {snippet}")
-
-
-@engagement_app.command("show")
-def engagement_show(candidate_id: str) -> None:
-    """打印候选全文：原帖 + 作者 + 五维评分与理由 + 动作 + 完整草稿 + intent + 事实风险。"""
-    candidate = _engagement_repo().get(candidate_id)
-    if candidate is None:
-        typer.echo(f"candidate not found: {candidate_id}")
-        raise typer.Exit(code=1)
-    score = candidate.score
-    typer.echo(f"id: {candidate.id}")
-    typer.echo(f"status: {candidate.status.value}")
-    typer.echo(f"action: {candidate.action.value}")
-    typer.echo(f"approval_required: {candidate.approval_required}")
-    typer.echo(f"post: {candidate.post.url}")
-    typer.echo(f"author: @{candidate.post.author_name} ({candidate.post.author_id})")
-    typer.echo(f"post_content: {candidate.post.content}")
-    typer.echo(
-        f"score: relevance={score.relevance:.3f} novelty={score.novelty:.3f} "
-        f"discussability={score.discussability:.3f} "
-        f"practical_evidence={score.practical_evidence:.3f} "
-        f"relationship_value={score.relationship_value:.3f} total={score.total:.3f}"
-    )
-    typer.echo(f"score_reasons: {', '.join(score.reasons)}")
-    typer.echo(f"draft: {candidate.draft or '(none)'}")
-    if candidate.revised_draft:
-        typer.echo(f"revised_draft: {candidate.revised_draft}")
-    typer.echo(f"intent: {candidate.intent or '(none)'}")
-    typer.echo(f"source_summary: {candidate.source_summary or '(none)'}")
-    typer.echo(f"factual_risks: {json.dumps(candidate.factual_risks)}")
-    if candidate.reject_reason:
-        typer.echo(f"reject_reason: {candidate.reject_reason}")
-
-
-@engagement_app.command("approve")
-def engagement_approve(candidate_id: str) -> None:
-    """批准候选（PROPOSED→APPROVED，幂等）。"""
-    repo = _engagement_repo()
-    try:
-        repo.approve(candidate_id)
-    except KeyError:
-        typer.echo(f"candidate not found: {candidate_id}")
-        raise typer.Exit(code=1) from None
-    typer.echo(f"approved {candidate_id}")
-
-
-@engagement_app.command("reject")
-def engagement_reject(
-    candidate_id: str,
-    reason: str = typer.Option(..., "--reason", help="拒绝理由"),  # noqa: B008
-) -> None:
-    """拒绝候选并记录理由（→ REJECTED）。"""
-    repo = _engagement_repo()
-    try:
-        repo.reject(candidate_id, reason)
-    except KeyError:
-        typer.echo(f"candidate not found: {candidate_id}")
-        raise typer.Exit(code=1) from None
-    typer.echo(f"rejected {candidate_id}")
-
-
-@engagement_app.command("edit")
-def engagement_edit(
-    candidate_id: str,
-    path: Path = typer.Option(..., "--file", help="人工修订后的草稿文件"),  # noqa: B008
-) -> None:
-    """保存人工修订草稿到 revised_draft（不自动批准、不改变发布权限）。"""
-    repo = _engagement_repo()
-    if repo.get(candidate_id) is None:
-        typer.echo(f"candidate not found: {candidate_id}")
-        raise typer.Exit(code=1)
-    repo.edit(candidate_id, path.read_text())
-    typer.echo(f"edited {candidate_id}")
-
-
-@engagement_app.command("metrics")
-def engagement_metrics() -> None:
-    """汇总互动质量指标与运行级计数（质量优先，不优化互动数量）。"""
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    interactions = InteractionRepository(store).list_all()
-    feedback = FeedbackSnapshotRepository(store).list_all()
-    evidence = ConversationEvidenceRepository(store).list_all()
-    metrics = compute_metrics(interactions, feedback, evidence)
-    typer.echo(render_metrics(metrics))
-    stats = EngagementRunStatsRepository(store).list_all()
-    typer.echo(render_run_stats(summarize_run_stats(stats)))
 
 
 @voice_app.command("show")
@@ -1370,54 +745,45 @@ def voice_reject_example(
 
 @app.command("decide")
 def decide(
-    item_id: str = typer.Argument(..., help="primary ContentJob id"),
-    action: str = typer.Option(..., "--action", help="accept|revise|skip"),
+    item_id: str = typer.Argument(..., help="待决策项 id（job_id 或 candidate id）"),
+    action: str = typer.Option(..., "--action", help="accept|skip|revise"),
     reason: str = typer.Option(None, "--reason", help="--action skip 的拒绝理由"),
-    instruction: str | None = typer.Option(
-        None, "--instruction", help="--action revise 的自然语言指令"
-    ),
+    instruction: str | None = typer.Option(None, "--instruction", help="--action revise 的指令"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """单一决策点：accept 同时确认立场 + 批准草稿；skip 标记 DO_NOT_WRITE。"""
+    """单一决策点：accept 确认立场+批准；skip 标记不写；revise 按指令重写。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
-    svc = DecisionService(
+    svc = InboxDecisionService(
         jobs=ContentJobRepository(store),
         drafts=DraftRepository(store),
-        approvals=PositionApprovalRepository(store),
-        reviews=ReviewRepository(store),
         decisions=DecisionRecordRepository(store),
         publication_intents=PublicationIntentRepository(store),
+        interactions=InteractionRepository(store),
     )
     try:
         action_enum = DecisionAction(action)
     except ValueError as exc:
         typer.echo(f"invalid --action: {action}")
         raise typer.Exit(code=1) from exc
-    record = None
-    result = None
+    result: DecisionRecord | InteractionCandidate | dict | None = None
     try:
         if action_enum is DecisionAction.ACCEPT:
-            record = svc.accept(item_id)
+            result = svc.accept(item_id)
         elif action_enum is DecisionAction.SKIP:
             if not reason:
                 typer.echo("--action skip requires --reason")
                 raise typer.Exit(code=1)
-            record = svc.skip(item_id, reason)
-        elif action_enum is DecisionAction.REVISE:
+            result = svc.skip(item_id, reason)
+        else:
             if not instruction:
                 typer.echo("--action revise requires --instruction")
                 raise typer.Exit(code=1)
-            cards_by_id = {
-                c.id: c for c in EvidenceRepository(store).list_cards()
-            }
+            cards_by_id = {c.id: c for c in EvidenceRepository(store).list_cards()}
             runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
             try:
-                result = svc.revise(
-                    item_id, instruction,
-                    runner=runner, cards_by_id=cards_by_id, gates=settings.quality_gates,
-                )
+                result = svc.revise(item_id, instruction, runner=runner, cards_by_id=cards_by_id)
             except (RuntimeError, StructuredOutputError) as exc:
                 typer.echo(
                     json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False)
@@ -1426,79 +792,50 @@ def decide(
     except (KeyError, ValueError) as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
+    assert result is not None
     if as_json:
-        if record is not None:
-            typer.echo(record.model_dump_json(indent=2))
-        else:
+        if isinstance(result, dict):
             typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
-    else:
-        if record is not None:
-            typer.echo(record.action.value)
         else:
-            assert result is not None
+            typer.echo(result.model_dump_json(indent=2))
+    else:
+        if isinstance(result, dict):
             typer.echo(result["new_body"])
+        elif isinstance(result, DecisionRecord):
+            typer.echo(result.action.value)
+        else:
+            typer.echo(result.status.value)
 
 
 @app.command("next")
-def next_item(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
-    """返回下一个待决策卡（primary ContentJob + 其草稿），无则 status=none。"""
+def next_cmd(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """返回下一个待决策卡（原创 + 互动），无则 status=none。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
-
-    decided_job_ids = {
-        rec.job_id for rec in DecisionRecordRepository(store).list()
-        if rec.action in {DecisionAction.ACCEPT, DecisionAction.SKIP}
-    }
-    drafts = [d for d in DraftRepository(store).list_drafts() if d.content_job_id]
-    pending = [d for d in drafts if d.content_job_id not in decided_job_ids]
-    if not pending:
-        payload: dict[str, object] = {"status": "none"}
-    else:
-        draft = pending[0]
-        job_id = draft.content_job_id
-        assert job_id is not None  # filtered by the list comprehension above
-        job = ContentJobRepository(store).get_job(job_id)
-        cards_by_id = {c.id: c for c in EvidenceRepository(store).list_cards()}
-        evidence = [
-            {"id": cid, "claim": cards_by_id[cid].claim}
-            for cid in (job.source_card_ids if job else []) if cid in cards_by_id
-        ]
-        pos = job.author_position if job else None
-        critic_reports = CriticReportRepository(store).list_reports(draft.id)
-        ask_reasons = build_ask_reasons(job, critic_reports)
-        payload = {
-            "status": "review_required",
-            "job_id": job.id if job else job_id,
-            "topic": (job.core_message or job.reader_problem) if job else "",
-            "why_now": job.why_now if job else "",
-            "position": {
-                "claim": pos.claim if pos else "",
-                "decision": pos.decision if pos else "",
-                "tradeoff": pos.tradeoff if pos else "",
-                "source": (
-                    pos.position_source.value if pos and pos.position_source else "inferred"
-                ),
-            },
-            "evidence": evidence,
-            "draft": draft.body,
-            "draft_id": draft.id,
-            "must_ask": bool(ask_reasons),
-            "ask_reasons": ask_reasons,
-            "risks": build_risks(critic_reports),
-        }
+    payload = next_item(
+        jobs=ContentJobRepository(store),
+        drafts=DraftRepository(store),
+        decisions=DecisionRecordRepository(store),
+        interactions=InteractionRepository(store),
+        cards=EvidenceRepository(store),
+    )
     if as_json:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        typer.echo(payload.get("topic") or payload.get("status", "none"))
+        if payload.get("status") == "none":
+            typer.echo("no pending items")
+        else:
+            typer.echo(payload.get("topic") or payload.get("id", ""))
 
 
-@app.command()
-def idea(
+@app.command("draft")
+@app.command("idea", hidden=True)
+def draft(
     text: str = typer.Argument(..., help="想法或片段"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),  # noqa: B008
 ) -> None:
-    """判断一个想法能否发，能发时生成样稿进入 Review。"""
+    """判断一个想法能否发，能发时生成样稿进入收件箱。"""
     if not text.strip():
         typer.echo("idea text is empty")
         raise typer.Exit(code=1)
@@ -1591,9 +928,9 @@ def _echo_idea(assessment: IdeaAssessment, as_json: bool) -> None:
         if assessment.sample:
             typer.echo(f"\n样稿\n{assessment.sample}")
         if assessment.draft_id:
-            typer.echo(f"\n采用：finch review approve {assessment.draft_id}")
-            typer.echo(f"修改：finch review revise {assessment.draft_id} --file <path>")
-            typer.echo(f"跳过：finch review skip {assessment.draft_id} --reason not_now")
+            typer.echo(f"\n采用：finch decide {assessment.draft_id} --action accept")
+            typer.echo(f"修改：finch decide {assessment.draft_id} --action revise")
+            typer.echo(f"跳过：finch decide {assessment.draft_id} --action skip --reason not_now")
     else:
         typer.echo("暂时不适合发。")
         typer.echo(f"\n原因\n{assessment.reason}")
@@ -1606,6 +943,29 @@ def _echo_idea_error(exc: Exception, as_json: bool) -> None:
         typer.echo(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False))
     else:
         typer.echo(f"idea failed: {exc}")
+
+
+@app.command("learn")
+def learn(
+    draft_id: str = typer.Argument(..., help="草稿 id"),
+    url: str | None = typer.Option(None, "--url", help="发布链接"),
+    metrics: str | None = typer.Option(None, "--metrics", help="互动数据 JSON"),
+    outcome: str | None = typer.Option(None, "--outcome", help="结果评估 JSON"),
+    learning: str | None = typer.Option(None, "--learning", help="学习记录"),
+) -> None:
+    """登记发布链接、互动数据、结果评估与学习记录。"""
+    metrics_dict: dict | None = json.loads(metrics) if metrics else None
+    outcome_obj: OutcomeAssessment | None = (
+        OutcomeAssessment.model_validate_json(outcome) if outcome else None
+    )
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    feedback = FeedbackService(FeedbackRepository(store)).record(
+        draft_id, published_url=url, metrics=metrics_dict,
+        outcome=outcome_obj, learning=learning,
+    )
+    typer.echo(f"feedback recorded: {feedback.draft_id}")
 
 
 if __name__ == "__main__":

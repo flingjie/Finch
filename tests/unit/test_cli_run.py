@@ -1,4 +1,4 @@
-"""Unit tests for finch run/jobs CLI commands."""
+"""Unit tests for finch daily/weekly/decide/next/voice/author CLI commands."""
 import json
 from datetime import UTC, datetime
 
@@ -13,7 +13,6 @@ from finch.content.jobs import (
     ContentJobStatus,
     IntendedEffect,
     SuccessCriterion,
-    position_fingerprint,
 )
 from finch.content.models import Draft, DraftKind
 from finch.content.voice import (
@@ -31,19 +30,20 @@ from finch.storage.database import Store
 from finch.storage.repositories import (
     ContentJobRepository,
     CriticReportRepository,
+    DecisionRecordRepository,
     DraftRepository,
     DraftVersionRepository,
-    PositionApprovalRepository,
+    PublicationIntentRepository,
     ReviewRepository,
 )
 
 
-def test_run_daily_help():
-    r = CliRunner().invoke(app, ["run", "daily", "--help"])
+def test_daily_help():
+    r = CliRunner().invoke(app, ["daily", "--help"])
     assert r.exit_code == 0
 
 
-def test_run_daily_uses_ingestor(monkeypatch, tmp_path):
+def test_daily_uses_ingestor(monkeypatch, tmp_path):
     settings = Settings(
         repositories=["flingjie/FDE-Gym"],
         paths=Paths(db_path=tmp_path / "finch.db"),
@@ -77,12 +77,12 @@ def test_run_daily_uses_ingestor(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "daily_nodes", lambda **kwargs: [])
     monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
 
-    r = CliRunner().invoke(app, ["run", "daily"])
+    r = CliRunner().invoke(app, ["daily"])
     assert r.exit_code == 0, r.output
     assert captured["repos"] == ["flingjie/FDE-Gym"]
 
 
-def test_run_daily_enabled_echoes_engagement_summary(monkeypatch, tmp_path):
+def test_daily_enabled_echoes_engagement_summary(monkeypatch, tmp_path):
     from finch.engagement.flow import EngagementRunResult
 
     settings = Settings(
@@ -125,14 +125,13 @@ def test_run_daily_enabled_echoes_engagement_summary(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli, "run_discovery_engagement_flow", fake_engagement_flow)
 
-    r = CliRunner().invoke(app, ["run", "daily"])
+    r = CliRunner().invoke(app, ["daily"])
     assert r.exit_code == 0, r.output
     assert "engagement: no posts found" in r.output
     assert "已完成" in r.output
 
 
-def test_run_daily_non_interactive_compact_on_needs_input(monkeypatch, tmp_path):
-    """原创轨道停在 NEEDS_INPUT 时，非 TTY 输出紧凑结果而非阻塞。"""
+def test_daily_non_interactive_compact_on_needs_input(monkeypatch, tmp_path):
     settings = Settings(
         repositories=["flingjie/FDE-Gym"],
         paths=Paths(db_path=tmp_path / "finch.db"),
@@ -161,8 +160,6 @@ def test_run_daily_non_interactive_compact_on_needs_input(monkeypatch, tmp_path)
 
     class BlockingGate(Node):
         def run(self, ctx):
-            from finch.gate.models import InputRequest, ProposedPosition
-
             request = InputRequest(
                 run_id=ctx.get("run_id", ""), job_id="j1", topic="t",
                 proposed_position=ProposedPosition(claim="c", decision="d", tradeoff="t"),
@@ -179,14 +176,12 @@ def test_run_daily_non_interactive_compact_on_needs_input(monkeypatch, tmp_path)
     monkeypatch.setattr(cli, "daily_nodes", build_nodes)
     monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
 
-    r = CliRunner().invoke(app, ["run", "daily", "--non-interactive"])
+    r = CliRunner().invoke(app, ["daily", "--non-interactive"])
     assert r.exit_code == 0, r.output
     assert "Daily 分析完成" in r.output
-    assert "uv run finch run resolve --confirm" in r.output
 
 
-def test_run_daily_interactive_auto_resumes(monkeypatch, tmp_path):
-    """TTY 交互：Enter 确认后自动恢复并输出今日产出。"""
+def test_daily_interactive_auto_resumes(monkeypatch, tmp_path):
     settings = Settings(
         repositories=["flingjie/FDE-Gym"],
         paths=Paths(db_path=tmp_path / "finch.db"),
@@ -210,7 +205,6 @@ def test_run_daily_interactive_auto_resumes(monkeypatch, tmp_path):
             return RepoInfo(name_with_owner=repo, default_branch="main",
                             url="https://github.com/" + repo, is_private=False)
 
-    from finch.gate.models import InputRequest, ProposedPosition
     from finch.graph.events import NodeResult
     from finch.graph.nodes import Node
 
@@ -224,10 +218,6 @@ def test_run_daily_interactive_auto_resumes(monkeypatch, tmp_path):
                 status="needs_input", output={"input_request": request.model_dump(mode="json")},
             )
 
-    class DoneGate(Node):
-        def run(self, ctx):
-            return NodeResult(status="succeeded", output={}, succeeds_to="COMPLETED")
-
     def build_nodes(**kw):
         return [BlockingGate(name="position_gate", reads=[], writes="ready_jobs")]
 
@@ -236,13 +226,11 @@ def test_run_daily_interactive_auto_resumes(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "daily_nodes", build_nodes)
     monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
 
-    # 第一次 run 停在 NEEDS_INPUT；确认后 replay 应继续到 COMPLETED。
-    # 为让 replay 复用节点，position_gate 需读 repo 的最新 job；这里用空 job 列表模拟
-    # 一个已确认立场的 world：直接 monkeypatch resolve_input 无副作用、replay 走 DoneGate。
     monkeypatch.setattr(
         cli, "resolve_input",
         lambda request, action, **kw: "confirmed",
     )
+
     def fake_resume(store, nodes, run_id, *, verbose=False):
         from finch.storage.database import RunRecord
 
@@ -251,14 +239,13 @@ def test_run_daily_interactive_auto_resumes(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli, "_resume_and_echo", fake_resume)
 
-    r = CliRunner().invoke(app, ["run", "daily", "--interactive"], input="\n")
+    r = CliRunner().invoke(app, ["daily", "--interactive"], input="\n")
     assert r.exit_code == 0, r.output
     assert "已确认你的立场" in r.output
     assert "今日产出" in r.output
 
 
-def test_run_daily_interactive_quit_marks_stopped(monkeypatch, tmp_path):
-    """TTY 交互：[q] 保存进度并退出应把 run 标记为 STOPPED，而不是停在 NEEDS_INPUT。"""
+def test_daily_interactive_quit_marks_stopped(monkeypatch, tmp_path):
     settings = Settings(
         repositories=["flingjie/FDE-Gym"],
         paths=Paths(db_path=tmp_path / "finch.db"),
@@ -282,7 +269,6 @@ def test_run_daily_interactive_quit_marks_stopped(monkeypatch, tmp_path):
             return RepoInfo(name_with_owner=repo, default_branch="main",
                             url="https://github.com/" + repo, is_private=False)
 
-    from finch.gate.models import InputRequest, ProposedPosition
     from finch.graph.events import NodeResult
     from finch.graph.nodes import Node
 
@@ -304,19 +290,19 @@ def test_run_daily_interactive_quit_marks_stopped(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
 
-    r = CliRunner().invoke(app, ["run", "daily", "--interactive"], input="q\n")
+    r = CliRunner().invoke(app, ["daily", "--interactive"], input="q\n")
     assert r.exit_code == 0, r.output
     assert "已保存进度并退出" in r.output
     assert store.find_latest_run(GraphState.STOPPED.value) is not None
 
 
-def test_run_weekly_renders_with_new_repos(monkeypatch, tmp_path):
+def test_weekly_renders(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     store = Store(settings.paths.db_path)
     store.init()
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
-    r = CliRunner().invoke(app, ["run", "weekly"])
+    r = CliRunner().invoke(app, ["weekly"])
     assert r.exit_code == 0, r.output
     assert "Finch Weekly Review" in r.output
     assert "建议" in r.output
@@ -343,169 +329,6 @@ def _job(job_id="job1", candidate_id=None, **overrides):
     )
     kw.update(overrides)
     return ContentJob(**kw)
-
-
-def test_jobs_subcommands_exist():
-    r = CliRunner()
-    for cmd in ["list", "show", "answer", "confirm-position", "reject"]:
-        res = r.invoke(app, ["jobs", cmd, "--help"])
-        assert res.exit_code == 0, cmd
-
-
-def test_jobs_list_and_filter(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    repo = ContentJobRepository(store)
-    repo.upsert_job(_job(job_id="job1"))
-    repo.upsert_job(_job(job_id="job2", status=ContentJobStatus.DO_NOT_WRITE))
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["jobs", "list"])
-    assert r.exit_code == 0, r.output
-    assert "job1" in r.output and "job2" in r.output
-
-    r = CliRunner().invoke(app, ["jobs", "list", "--status", "do_not_write"])
-    assert r.exit_code == 0, r.output
-    assert "job2" in r.output and "job1" not in r.output
-
-
-def test_jobs_show(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    repo = ContentJobRepository(store)
-    repo.upsert_job(_job(job_id="job1"))
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["jobs", "show", "job1"])
-    assert r.exit_code == 0, r.output
-    assert "readers don't know how to rate limit" in r.output
-    assert "backend engineers" in r.output
-
-
-def test_jobs_answer_sets_position_unconfirmed(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    repo = ContentJobRepository(store)
-    repo.upsert_job(_job(job_id="job1"))
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    answers = tmp_path / "answers.yaml"
-    answers.write_text(
-        "claim: use token bucket\n"
-        "decision: use token bucket\n"
-        "tradeoff: more memory\n"
-    )
-    r = CliRunner().invoke(app, ["jobs", "answer", "job1", "--file", str(answers)])
-    assert r.exit_code == 0, r.output
-    job = repo.get_job("job1")
-    assert job is not None and job.author_position is not None
-    assert job.author_position.decision == "use token bucket"
-    assert job.author_position.tradeoff == "more memory"
-    assert job.author_position.confirmed is False
-
-
-def test_jobs_answer_idempotent_single_record(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    repo = ContentJobRepository(store)
-    repo.upsert_job(_job(job_id="job1"))
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    answers = tmp_path / "answers.yaml"
-    answers.write_text(
-        "claim: use token bucket\n"
-        "decision: use token bucket\n"
-        "tradeoff: more memory\n"
-    )
-    for _ in range(2):
-        r = CliRunner().invoke(app, ["jobs", "answer", "job1", "--file", str(answers)])
-        assert r.exit_code == 0, r.output
-    jobs = repo.list_jobs()
-    assert len(jobs) == 1
-    assert jobs[0].author_position is not None
-    assert jobs[0].author_position.decision == "use token bucket"
-
-
-def test_jobs_answer_rejects_empty_yaml(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    repo = ContentJobRepository(store)
-    repo.upsert_job(_job(job_id="job1"))
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    answers = tmp_path / "answers.yaml"
-    answers.write_text("")
-    r = CliRunner().invoke(app, ["jobs", "answer", "job1", "--file", str(answers)])
-    assert r.exit_code == 1
-    assert "empty" in r.output
-    # No default empty position is silently created.
-    job = repo.get_job("job1")
-    assert job is not None and job.author_position is None
-
-
-def test_jobs_answer_rejects_missing_required_fields(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    repo = ContentJobRepository(store)
-    repo.upsert_job(_job(job_id="job1"))
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    answers = tmp_path / "answers.yaml"
-    answers.write_text("claim: use token bucket\n")
-    r = CliRunner().invoke(app, ["jobs", "answer", "job1", "--file", str(answers)])
-    assert r.exit_code == 1
-    assert "missing required" in r.output
-    job = repo.get_job("job1")
-    assert job is not None and job.author_position is None
-
-
-def test_jobs_confirm_position_sets_confirmed(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    repo = ContentJobRepository(store)
-    repo.upsert_job(
-        _job(
-            job_id="job1",
-            author_position=AuthorPosition(
-                claim="use token bucket", decision="use token bucket", tradeoff="more memory"
-            ),
-        )
-    )
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["jobs", "confirm-position", "job1"])
-    assert r.exit_code == 0, r.output
-    job = repo.get_job("job1")
-    assert job is not None and job.author_position is not None
-    assert job.author_position.confirmed is True
-
-
-def test_jobs_reject_sets_do_not_write_and_reason(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    repo = ContentJobRepository(store)
-    repo.upsert_job(_job(job_id="job1"))
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["jobs", "reject", "job1", "--reason", "not useful right now"])
-    assert r.exit_code == 0, r.output
-    job = repo.get_job("job1")
-    assert job is not None
-    assert job.status == ContentJobStatus.DO_NOT_WRITE
-    assert job.reject_reason == "not useful right now"
-
-
-def test_run_resume_help():
-    r = CliRunner().invoke(app, ["run", "resume", "--help"])
-    assert r.exit_code == 0
 
 
 def _voice_settings(tmp_path):
@@ -565,8 +388,6 @@ def test_voice_approve_example_uses_revised_body_and_dedupes(monkeypatch, tmp_pa
     store = Store(settings.paths.db_path)
     store.init()
     _seed_draft(store, "d1", "original ai draft body")
-    # 走真实 revise → approve 路径：approve 会用 revised_body=None 覆盖最终决策，
-    # 人工修订文本只能从追加式历史里读回（F3）。
     svc = ReviewService(DraftRepository(store), ReviewRepository(store))
     svc.revise("d1", "human revised body")
     svc.approve("d1")
@@ -578,7 +399,6 @@ def test_voice_approve_example_uses_revised_body_and_dedupes(monkeypatch, tmp_pa
     profile = load_voice_profile(settings.paths.voice_profile_path)
     assert len(profile.approved_examples) == 1
     assert profile.approved_examples[0].id == "d1"
-    # 人工修改文本优先于原始 AI 草稿
     assert profile.approved_examples[0].text == "human revised body"
 
     r = CliRunner().invoke(app, ["voice", "approve-example", "d1"])
@@ -735,54 +555,6 @@ def test_voice_reject_example_removes_from_approved(monkeypatch, tmp_path):
     assert not any(ex.id == "d8" for ex in profile.approved_examples)
 
 
-
-def test_run_resume_echoes_state_and_brief(monkeypatch, tmp_path):
-    from finch.content.models import Draft
-    from finch.graph.content_nodes import make_brief_node
-    from finch.graph.context import items_payload
-    from finch.graph.events import NodeResult
-    from finch.graph.nodes import Node
-    from finch.graph.runtime import GraphRuntime
-    from finch.settings import QualityGates
-
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    class Seed(Node):
-        model_config = {"extra": "allow"}
-
-        def run(self, ctx):
-            return NodeResult(status="succeeded", output=self.seed)
-
-    def build_nodes(**kw):
-        return [
-            Seed(
-                name="draft",
-                writes="drafts",
-                seed=items_payload(
-                    [Draft(id="d1", kind=DraftKind.REPLY, candidate_id="t", body="hi", claims=[])]
-                ),
-            ),
-            Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
-            Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
-            Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
-            Seed(name="collect_tweets", writes="candidates", seed=items_payload([])),
-            Seed(name="position_gate", writes="ready_jobs", seed=items_payload([])),
-            make_brief_node(QualityGates()),
-        ]
-
-    monkeypatch.setattr(cli, "daily_nodes", build_nodes)
-    run = GraphRuntime(store, build_nodes()).run()
-
-    r = CliRunner().invoke(app, ["run", "resume", run.id])
-    assert r.exit_code == 0, r.output
-    assert "WAITING_FOR_REVIEW" in r.output
-    assert "## 7. 草稿正文" in r.output
-    assert "hi" in r.output
-
-
 def test_persist_critique_reports_helper(tmp_path):
     from finch.cli import persist_critique_reports
 
@@ -816,7 +588,7 @@ def test_persist_critique_reports_helper(tmp_path):
     assert reports[0]["checks"][0]["checker"] == "specificity"
 
 
-def test_run_daily_persists_versions_and_reports(monkeypatch, tmp_path):
+def test_daily_persists_versions_and_reports(monkeypatch, tmp_path):
     from finch.codex.runner import CodexRunner
     from finch.graph.content_nodes import make_critique_node
     from finch.graph.context import items_payload
@@ -857,7 +629,7 @@ def test_run_daily_persists_versions_and_reports(monkeypatch, tmp_path):
         ]
 
     monkeypatch.setattr(cli, "daily_nodes", build_nodes)
-    r = CliRunner().invoke(app, ["run", "daily"])
+    r = CliRunner().invoke(app, ["daily"])
     assert r.exit_code == 0, r.output
 
     versions = DraftVersionRepository(store).list_versions("d1")
@@ -867,369 +639,7 @@ def test_run_daily_persists_versions_and_reports(monkeypatch, tmp_path):
     assert reports[0]["outcome"] == "pass"
 
 
-def test_run_resume_persists_drafts_and_reports(monkeypatch, tmp_path):
-    from finch.codex.runner import CodexRunner
-    from finch.graph.content_nodes import make_brief_node, make_critique_node
-    from finch.graph.context import items_payload
-    from finch.graph.events import NodeResult
-    from finch.graph.nodes import Node
-    from finch.graph.runtime import GraphRuntime
-    from finch.settings import QualityGates
-
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    class Seed(Node):
-        model_config = {"extra": "allow"}
-
-        def run(self, ctx):
-            return NodeResult(status="succeeded", output=self.seed)
-
-    class PassChecker:
-        name = "pass"
-
-        def check(self, ctx):
-            return CheckResult(checker="pass", passed=True, severity="low")
-
-    draft = Draft(id="d1", kind=DraftKind.ORIGINAL, candidate_id=None, body="hi", claims=[])
-
-    def build_nodes(**kw):
-        return [
-            Seed(name="draft", writes="drafts", seed=items_payload([draft])),
-            Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
-            Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
-            Seed(name="collect_tweets", writes="candidates", seed=items_payload([])),
-            Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
-            Seed(name="position_gate", writes="ready_jobs", seed=items_payload([])),
-            make_critique_node(
-                CodexRunner(), lambda *a, **k: draft, QualityGates(), checkers=[PassChecker()]
-            ),
-            make_brief_node(QualityGates()),
-        ]
-
-    monkeypatch.setattr(cli, "daily_nodes", build_nodes)
-    # 第一次直接跑 runtime（不经 CLI），只落节点记录、不持久化草稿/报告。
-    run = GraphRuntime(store, build_nodes()).run()
-    assert DraftRepository(store).get_draft("d1") is None
-    assert CriticReportRepository(store).list_reports("d1") == []
-
-    # resume 复用已完成节点，并应把草稿 + 报告补齐（F1）。
-    r = CliRunner().invoke(app, ["run", "resume", run.id])
-    assert r.exit_code == 0, r.output
-    assert DraftRepository(store).get_draft("d1") is not None
-    reports = CriticReportRepository(store).list_reports("d1")
-    assert len(reports) == 1
-    assert reports[0]["outcome"] == "pass"
-
-
-def _seed_needs_input(store, *, run_id="r1", job_id="job1"):
-    from finch.storage.database import NodeRecord, RunRecord
-
-    repo = ContentJobRepository(store)
-    repo.upsert_job(_job(job_id=job_id, author_position=AuthorPosition(
-        claim="c", decision="d", tradeoff="t",
-    )))
-    store.upsert_run(RunRecord(id=run_id, state=GraphState.NEEDS_INPUT.value))
-    request = InputRequest(
-        run_id=run_id, job_id=job_id, topic="t",
-        proposed_position=ProposedPosition(claim="c", decision="d", tradeoff="t"),
-        evidence_card_ids=["ev1"],
-    )
-    # 等价 position_gate 已跑完停在 needs_input：直接落一条节点记录。
-    store.upsert_node(NodeRecord(
-        id=f"{run_id}:position_gate:default", run_id=run_id, node_name="position_gate",
-        idempotency_key="default", status="needs_input",
-        output_json=json.dumps({"input_request": request.model_dump(mode="json")}),
-    ))
-    return request
-
-
-def test_run_resolve_json_fetches_input_request(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    request = _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--json"])
-    assert r.exit_code == 0, r.output
-    assert request.job_id in r.output
-    assert "author_position_confirmation" in r.output
-
-
-def test_run_resolve_confirm_resumes(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    request = _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    resumed = {}
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-    monkeypatch.setattr(
-        cli, "_resume_and_echo", lambda st, nodes, rid, **kw: resumed.setdefault("run_id", rid)
-    )
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--confirm"])
-    assert r.exit_code == 0, r.output
-    assert "已确认你的立场" in r.output
-    assert ContentJobRepository(store).get_job(request.job_id).author_position.confirmed is True
-    approved = AuthorPosition(claim="c", decision="d", tradeoff="t")
-    assert PositionApprovalRepository(store).find_active(position_fingerprint(approved)) is not None
-    assert resumed["run_id"] == "r1"
-
-
-def test_run_resolve_reason_without_skip_errors(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid, **kw: None)
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--reason", "not now"])
-    assert r.exit_code == 1
-    assert "--reason requires --skip" in r.output
-
-
-def test_run_resolve_skip_marks_job(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    request = _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid, **kw: None)
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--skip", "--reason", "not now"])
-    assert r.exit_code == 0, r.output
-    job = ContentJobRepository(store).get_job(request.job_id)
-    assert job.status.value == "do_not_write"
-    assert job.reject_reason == "not now"
-
-
-def test_run_resolve_stop_marks_run_stopped(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    request = _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-
-    resumed = []
-    monkeypatch.setattr(
-        cli, "_resume_and_echo", lambda st, nodes, rid, **kw: resumed.append(rid)
-    )
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--stop"])
-    assert r.exit_code == 0, r.output
-    assert "已保存并退出" in r.output
-    assert resumed == []
-    assert store.get_run("r1").state == GraphState.STOPPED.value
-    assert (
-        ContentJobRepository(store).get_job(request.job_id).status
-        == ContentJobStatus.DO_NOT_WRITE
-    )
-
-
-def test_run_resolve_file_edits(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    request = _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid, **kw: None)
-
-    answers = tmp_path / "p.yaml"
-    answers.write_text("claim: new\ndecision: d\ntradeoff: t\n")
-    r = CliRunner().invoke(app, ["run", "resolve", "--file", str(answers)])
-    assert r.exit_code == 0, r.output
-    assert ContentJobRepository(store).get_job(request.job_id).author_position.claim == "new"
-
-
-def test_run_resolve_file_missing_clean_error(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid, **kw: None)
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--file", str(tmp_path / "nope.yaml")])
-    assert r.exit_code == 1, r.output
-    # 干净错误：域错误经 typer.Exit(1) 呈现为 SystemExit；
-    # 修复前会以 FileNotFoundError 出现在 r.exception。
-    assert isinstance(r.exception, SystemExit), repr(r.exception)
-    assert "No such file" in r.output
-
-
-def test_run_resolve_file_malformed_clean_error(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid, **kw: None)
-
-    bad = tmp_path / "bad.yaml"
-    bad.write_text(": bad: [")
-    r = CliRunner().invoke(app, ["run", "resolve", "--file", str(bad)])
-    assert r.exit_code == 1, r.output
-    assert isinstance(r.exception, SystemExit), repr(r.exception)
-    assert r.output.strip()  # 单行错误确实被 echo（非空）
-
-
-def test_run_resolve_edit_applies(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    request = _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid, **kw: None)
-    monkeypatch.setattr(
-        cli, "edit_position_inline",
-        lambda proposed: ProposedPosition(claim="edited", decision="d", tradeoff="t"),
-    )
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--edit"])
-    assert r.exit_code == 0, r.output
-    job = ContentJobRepository(store).get_job(request.job_id)
-    assert job.author_position.claim == "edited"
-    assert job.author_position.confirmed is True
-
-
-def test_run_resolve_interactive_confirm(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    request = _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-
-    resumed = {}
-    monkeypatch.setattr(
-        cli, "_resume_and_echo", lambda st, nodes, rid, **kw: resumed.setdefault("run_id", rid)
-    )
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--interactive"], input="\n")
-    assert r.exit_code == 0, r.output
-    assert "已确认你的立场" in r.output
-    assert ContentJobRepository(store).get_job(request.job_id).author_position.confirmed is True
-    assert resumed["run_id"] == "r1"
-
-
-def test_run_resolve_interactive_show_evidence_returns_without_resume(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-
-    resumed = []
-    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid, **kw: resumed.append(rid))
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--interactive"], input="d\nq\n")
-    assert r.exit_code == 0, r.output
-    assert "无证据" in r.output  # render_evidence 空卡片
-    assert resumed == []  # q 直接 return，不 resume
-
-
-def test_run_resolve_interactive_quit_marks_stopped(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-
-    resumed = []
-    monkeypatch.setattr(
-        cli, "_resume_and_echo", lambda st, nodes, rid, **kw: resumed.append(rid)
-    )
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--interactive"], input="q\n")
-    assert r.exit_code == 0, r.output
-    assert "已保存进度并退出" in r.output
-    assert resumed == []
-    assert store.get_run("r1").state == GraphState.STOPPED.value
-
-
-def test_run_resolve_interactive_invalid_choice(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid, **kw: None)
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--interactive"], input="x\nq\n")
-    assert r.exit_code == 0, r.output
-    assert "无效选择" in r.output
-
-
-def test_run_resolve_edit_editor_applies(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    request = _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
-    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid, **kw: None)
-    monkeypatch.setattr(
-        cli, "_edit_position",
-        lambda proposed: ProposedPosition(claim="edited", decision="d", tradeoff="t"),
-    )
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--edit-editor"])
-    assert r.exit_code == 0, r.output
-    assert ContentJobRepository(store).get_job(request.job_id).author_position.claim == "edited"
-
-
-def test_run_resolve_non_interactive_compact(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--non-interactive"])
-    assert r.exit_code == 0, r.output
-    assert "Daily 分析完成" in r.output
-    assert "uv run finch run resolve --confirm" in r.output
-
-
-def test_run_resolve_interactive_non_interactive_conflict(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_needs_input(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["run", "resolve", "--interactive", "--non-interactive"])
-    assert r.exit_code == 1
-    assert "互斥" in r.output
-
-
-def test_run_daily_interactive_non_interactive_conflict(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    r = CliRunner().invoke(app, ["run", "daily", "--interactive", "--non-interactive"])
-    assert r.exit_code == 1
-    assert "互斥" in r.output
-
-
-def test_run_daily_json(monkeypatch, tmp_path):
+def test_daily_json(monkeypatch, tmp_path):
     settings = Settings(
         repositories=["flingjie/FDE-Gym"],
         paths=Paths(db_path=tmp_path / "finch.db"),
@@ -1240,12 +650,16 @@ def test_run_daily_json(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     class FakeIngestor:
-        def __init__(self, gh, settings, ingestion, cursor): pass
-        def ingest(self, repos, existing_topics=None): return {}
+        def __init__(self, gh, settings, ingestion, cursor):
+            pass
+
+        def ingest(self, repos, existing_topics=None):
+            return {}
 
     class FakeGh:
         def repo_view(self, repo):
             from finch.github.models import RepoInfo
+
             return RepoInfo(name_with_owner=repo, default_branch="main",
                             url="https://github.com/" + repo, is_private=False)
 
@@ -1254,10 +668,20 @@ def test_run_daily_json(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "daily_nodes", lambda **kw: [])
     monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
 
-    r = CliRunner().invoke(app, ["run", "daily", "--json"])
+    r = CliRunner().invoke(app, ["daily", "--json"])
     assert r.exit_code == 0, r.output
     assert '"status"' in r.output and '"run_id"' in r.output
     assert '"n_review"' in r.output and '"n_engagement_drafts"' in r.output
+
+
+def test_daily_interactive_non_interactive_conflict(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    r = CliRunner().invoke(app, ["daily", "--interactive", "--non-interactive"])
+    assert r.exit_code == 1
+    assert "互斥" in r.output
 
 
 def test_author_sync_json(monkeypatch, tmp_path):
@@ -1292,7 +716,7 @@ def test_author_sync_error_is_clean(monkeypatch, tmp_path):
     assert isinstance(r.exception, SystemExit), repr(r.exception)
     assert "mismatch" in r.output
     assert "Traceback" not in r.output
-    assert r.output.count("\n") <= 1  # 单行干净错误，非 traceback
+    assert r.output.count("\n") <= 1
 
 
 def test_decide_accept(monkeypatch, tmp_path):
@@ -1300,7 +724,6 @@ def test_decide_accept(monkeypatch, tmp_path):
     store = Store(settings.paths.db_path)
     store.init()
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    # 种子 job + draft
     ContentJobRepository(store).upsert_job(
         _job(job_id="j1", author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"))
     )
@@ -1310,7 +733,9 @@ def test_decide_accept(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["decide", "j1", "--action", "accept", "--json"])
     assert r.exit_code == 0, r.output
     assert '"action": "accept"' in r.output
-    assert ContentJobRepository(store).get_job("j1").author_position.confirmed is True
+    record = DecisionRecordRepository(store).get("j1")
+    assert record is not None and record.action.value == "accept"
+    assert PublicationIntentRepository(store).get("d1") is not None
 
 
 def test_decide_skip(monkeypatch, tmp_path):
@@ -1329,6 +754,7 @@ def test_decide_skip(monkeypatch, tmp_path):
     )
     assert r.exit_code == 0, r.output
     assert ContentJobRepository(store).get_job("j1").status.value == "do_not_write"
+    assert DecisionRecordRepository(store).get("j1").action.value == "skip"
 
 
 def test_decide_revise(monkeypatch, tmp_path):
@@ -1343,17 +769,14 @@ def test_decide_revise(monkeypatch, tmp_path):
         Draft(id="d1", kind=DraftKind.ORIGINAL, body="b", content_job_id="j1")
     )
 
-    class _FakeDecisionService:
-        def __init__(self, revise):
-            self._revise = revise
+    class _FakeInboxDecisionService:
+        def __init__(self, **kwargs):
+            pass
 
-        def revise(self, job_id, instruction, *, runner, cards_by_id, gates):
-            return self._revise
+        def revise(self, item_id, instruction, *, runner, cards_by_id):
+            return {"new_body": "v2", "diff": "", "critic": {}}
 
-    monkeypatch.setattr(
-        cli, "DecisionService",
-        lambda **kw: _FakeDecisionService(revise={"new_body": "v2", "diff": "", "critic": {}}),
-    )
+    monkeypatch.setattr(cli, "InboxDecisionService", lambda **kw: _FakeInboxDecisionService())
     r = CliRunner().invoke(
         app, ["decide", "j1", "--action", "revise", "--instruction", "语气弱一点", "--json"]
     )
@@ -1373,14 +796,14 @@ def test_decide_revise_codex_error_emits_structured_json(monkeypatch, tmp_path):
         Draft(id="d1", kind=DraftKind.ORIGINAL, body="b", content_job_id="j1")
     )
 
-    class _FailingDecisionService:
+    class _FailingInboxDecisionService:
         def __init__(self, **kwargs):
             pass
 
-        def revise(self, job_id, instruction, *, runner, cards_by_id, gates):
+        def revise(self, item_id, instruction, *, runner, cards_by_id):
             raise RuntimeError("codex exec failed")
 
-    monkeypatch.setattr(cli, "DecisionService", lambda **kw: _FailingDecisionService())
+    monkeypatch.setattr(cli, "InboxDecisionService", lambda **kw: _FailingInboxDecisionService())
     r = CliRunner().invoke(
         app, ["decide", "j1", "--action", "revise", "--instruction", "语气弱一点", "--json"]
     )
@@ -1407,11 +830,13 @@ def test_next_json_returns_card(monkeypatch, tmp_path):
     )
     r = CliRunner().invoke(app, ["next", "--json"])
     assert r.exit_code == 0, r.output
-    assert '"job_id": "j1"' in r.output
-    assert "topic here" in r.output
-    assert '"must_ask": false' in r.output
-    assert '"ask_reasons": []' in r.output
-    assert '"risks": []' in r.output
+    payload = json.loads(r.output)
+    assert payload["status"] == "review_required"
+    assert payload["job_id"] == "j1"
+    assert payload["track"] == "original"
+    assert payload["draft"] == "body"
+    assert payload["must_ask"] is False
+    assert payload["ask_reasons"] == []
 
 
 def test_next_json_none(monkeypatch, tmp_path):

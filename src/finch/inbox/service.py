@@ -21,6 +21,7 @@ from finch.storage.repositories import (
     ContentJobRepository,
     DecisionRecordRepository,
     DraftRepository,
+    EvidenceRepository,
     InteractionRepository,
     PublicationIntentRepository,
 )
@@ -303,3 +304,55 @@ class InboxDecisionService:
             "diff": _diff(draft.body, new_draft.body),
             "critic": critic.model_dump(mode="json"),
         }
+
+
+def _original_ask(job: ContentJob) -> tuple[bool, list[str]]:
+    """立场不完整 → must_ask（Graph 不停，问题放到卡上）。"""
+    position = job.author_position
+    if position is None or not position.decision or not position.tradeoff:
+        return True, ["position_incomplete"]
+    return False, []
+
+
+def next_item(
+    *,
+    jobs: ContentJobRepository,
+    drafts: DraftRepository,
+    decisions: DecisionRecordRepository,
+    interactions: InteractionRepository,
+    cards: EvidenceRepository,
+) -> dict:
+    """组装收件箱并返回第一条待决策卡（JSON 载荷），空则 {"status": "none"}。"""
+    decided_job_ids = {
+        r.job_id
+        for r in decisions.list()
+        if r.action in {DecisionAction.ACCEPT, DecisionAction.SKIP}
+    }
+    cards_by_id = {c.id: c for c in cards.list_cards()}
+    items: list[InboxItem] = []
+    for draft in drafts.list_drafts():
+        if not draft.content_job_id or draft.content_job_id in decided_job_ids:
+            continue
+        job = jobs.get_job(draft.content_job_id)
+        if job is None:
+            continue
+        must_ask, ask_reasons = _original_ask(job)
+        items.append(
+            build_original_item(
+                job, draft, cards_by_id=cards_by_id,
+                must_ask=must_ask, ask_reasons=ask_reasons, risks=[],
+            )
+        )
+    for candidate in interactions.list_pending():
+        if candidate.draft or candidate.revised_draft:
+            items.append(build_engagement_item(candidate))
+
+    first = select_next(items)
+    if first is None:
+        return {"status": "none"}
+    payload = first.model_dump(mode="json")
+    payload["status"] = "review_required"
+    if first.track == InboxTrack.ORIGINAL:
+        payload["job_id"] = first.id  # 兼容旧客户端
+        payload["topic"] = first.position.get("decision") if first.position else first.id
+    return payload
