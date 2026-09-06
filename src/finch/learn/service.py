@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from finch.review.models import Feedback, OutcomeAssessment
+from finch.learn.models import Feedback, OutcomeAssessment
 from finch.storage.repositories import FeedbackRepository
 
 

@@ -1,0 +1,60 @@
+{
+  "skill_name": "sticky-message",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Agent Engineering 包括 Harness Engineering、Loop Engineering 和 Graph Engineering。帮我写个介绍。",
+      "expected_output": "Does NOT just rewrite the three nouns. Diagnoses it as a classification not a point, extracts a core belief (e.g. Agent 的问题通常不是不会思考，而是不会稳定工作), then uses Harness/Loop/Graph as explanation tools under that one core, not as three things to memorize.",
+      "files": [],
+      "assertions": [
+        {"name": "Diagnosis not rewrite", "description": "Identifies the source is a classification/taxonomy, not a point"},
+        {"name": "Single core extracted", "description": "Produces one core belief that the three concepts then serve"},
+        {"name": "Not three nouns reworded", "description": "Does not output three prettier nouns; Harness/Loop/Graph become explanations, not the message"}
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "我要表达：Harness Engineering 是 Agent Engineering 的重要部分。它负责给 Agent 提供工具、环境、权限、上下文和工作空间。帮我润色。",
+      "expected_output": "Does not polish the sentence as-is. Finds the counterintuitive core (很多 Agent 的失败其实和模型无关), surfaces the current belief (Agent 做不好是因为模型不够聪明), and produces a gap + concrete failure chain rather than restating '工具/环境/权限/上下文/工作空间'.",
+      "files": [],
+      "assertions": [
+        {"name": "Not polished as-is", "description": "Refuses to merely restate the feature list in smoother words"},
+        {"name": "Cognitive gap found", "description": "States the current belief and contradicts it"},
+        {"name": "Concrete over abstract", "description": "Replaces the noun list with an observable failure scenario"}
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "我们的产品提供无缝的 AI 编排能力，让企业轻松管理所有智能体。帮我写个一句式定位。",
+      "expected_output": "Flags '无缝编排能力' and '轻松管理' as empty abstractions; produces a concrete scenario (a real task, failure, or consequence) instead of another abstract noun, and a one-liner that names a user problem.",
+      "files": [],
+      "assertions": [
+        {"name": "Abstraction flagged", "description": "Identifies the capability nouns as non-concrete"},
+        {"name": "Concrete scenario", "description": "Provides an observable situation, not a prettier abstract phrase"},
+        {"name": "User problem named", "description": "The one-liner connects to a real consequence or pain, not a feature"}
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "帮我给这个产品做一套对外传播的 message：一个 AI Agent 调试平台，能回放执行过程、定位失败原因。",
+      "expected_output": "Produces the full message pyramid: core statement + hook + one-liner + shareable + concrete example + a usage recommendation mapping versions to channels (homepage/talk/social/demo), NOT a single slogan.",
+      "files": [],
+      "assertions": [
+        {"name": "Pyramid not slogan", "description": "Outputs multiple message forms, not one catchphrase"},
+        {"name": "Usage recommendation", "description": "Maps each version to a channel or context"},
+        {"name": "Core survives compression", "description": "The core statement is a single sentence the rest all derive from"}
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "这句帮我改得专业一点：'我们的 Agent 有时候会跑偏。'",
+      "expected_output": "Does NOT just swap in jargon. Pushes back on the framing: asks/identifies what the audience believes and what the real consequence is, then rebuilds a core + hook that is concrete and matters, rather than masking the plain truth with technical vocabulary.",
+      "files": [],
+      "assertions": [
+        {"name": "Does not jargon-mask", "description": "Refuses to 'sound more professional' by swapping in abstract terms"},
+        {"name": "Rediscovers core", "description": "Treats the plain sentence as evidence of a core to extract, not a surface to polish"},
+        {"name": "Gap or reason-to-care present", "description": "Output names a belief to challenge or a consequence the audience cares about"}
+      ]
+    }
+  ]
+}

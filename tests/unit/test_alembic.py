@@ -19,8 +19,6 @@ ALL_TABLES = {
     "noderecord",
     "evidencecardrecord",
     "draftrecord",
-    "reviewrecord",
-    "reviewhistoryrecord",
     "feedbackrecord",
     "contentjobrecord",
     "draftversionrecord",

@@ -23,13 +23,14 @@ from pydantic import BaseModel, Field
 
 from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.content.models import Draft
-from finch.review.models import Feedback, ReviewAction, ReviewDecision, SkipReason
+from finch.inbox.models import DecisionAction, DecisionRecord, SkipReason
+from finch.learn.models import Feedback
 from finch.storage.repositories import (
     ContentJobRepository,
     CriticReportRepository,
+    DecisionRecordRepository,
     DraftRepository,
     FeedbackRepository,
-    ReviewRepository,
 )
 
 
@@ -197,41 +198,35 @@ def _build_narrative(metrics: dict[str, float | None]) -> tuple[str, NextWeekPla
 
 def weekly_analysis(
     drafts: DraftRepository,
-    reviews: ReviewRepository,
+    decisions: DecisionRecordRepository,
     feedbacks: FeedbackRepository,
     jobs: ContentJobRepository,
     critic_reports: CriticReportRepository,
     *,
     since: datetime | None = None,
 ) -> WeeklyReport:
-    """汇总 `since`（含）之后的审核与反馈数据；`since` 为 None 则汇总全部。
-
-    批准率分母是「已审核草稿」数（approved+revised+skipped），不含待审草稿，
-    否则待审会被误记为「未批准」而压低批准率。
-    """
+    """汇总 `since`（含）之后的决策与反馈数据；`since` 为 None 则汇总全部。"""
     all_drafts = drafts.list_drafts()
-    history = reviews.list_history()
-    decisions: dict[str, ReviewDecision] = {}
-    for r in reviews.list_reviews():
-        if r.action == ReviewAction.CONFIRM_POSITION:
-            continue  # 立场确认独立于最终 approve/skip，不参与批准率
+    records = decisions.list()
+    latest: dict[str, DecisionRecord] = {}
+    for r in records:
         if since is not None and r.decided_at < since:
             continue
-        decisions[r.draft_id] = r
+        latest[r.draft_id] = r  # keyed by draft_id（与 eligible_ids 对齐）
 
-    approved = sum(1 for r in decisions.values() if r.action == ReviewAction.APPROVE)
-    skipped = sum(1 for r in decisions.values() if r.action == ReviewAction.SKIP)
-    reviewed = len(decisions)
-    # 「修改次数」来自追加式历史：revise 后被 approve 也不丢，能反映「频繁修改」。
+    approved = sum(1 for r in latest.values() if r.action == DecisionAction.ACCEPT)
+    skipped = sum(1 for r in latest.values() if r.action == DecisionAction.SKIP)
+    reviewed = len(latest)
     revised = sum(
         1
-        for r in history
-        if r.action == ReviewAction.REVISE and (since is None or r.decided_at >= since)
+        for r in records
+        if r.action == DecisionAction.REVISE and (since is None or r.decided_at >= since)
     )
+    jobs_by_id = {job.id: job for job in jobs.list_jobs()}
     skip_reasons = Counter(
-        r.reason or "unknown"
-        for r in decisions.values()
-        if r.action == ReviewAction.SKIP
+        jobs_by_id[r.job_id].reject_reason or "unknown"
+        for r in latest.values()
+        if r.action == DecisionAction.SKIP and r.job_id in jobs_by_id
     )
 
     # 一次批量拉取 Feedback，避免逐草稿 get_feedback 的 N+1 查询。
@@ -250,7 +245,6 @@ def weekly_analysis(
 
     # ---- Task 8 新指标：只统计非遗留草稿 ----
     eligible_ids = {d.id for d in all_drafts if d.content_job_id is not None}
-    jobs_by_id = {job.id: job for job in jobs.list_jobs()}
     all_reports = critic_reports.list_all_reports(since=since)
     rewrite_rounds = _rewrite_rounds(all_reports, eligible_ids)
 
@@ -260,7 +254,7 @@ def weekly_analysis(
     )
     generic_sentence_rate = _generic_sentence_rate(all_reports, eligible_ids)
     human_correction_rate = _human_correction_rate(
-        decisions, history, eligible_ids, since
+        latest, records, eligible_ids, jobs_by_id, since
     )
     job_completion_rate = _job_completion_rate(outcome_by_draft, eligible_ids)
     useful_reply_rate = _useful_reply_rate(all_drafts, outcome_by_draft, eligible_ids)
@@ -386,33 +380,36 @@ def _generic_sentence_rate(
 
 
 def _human_correction_rate(
-    decisions: dict[str, ReviewDecision],
-    history: list[ReviewDecision],
+    latest: dict[str, DecisionRecord],
+    records: list[DecisionRecord],
     eligible_ids: set[str],
+    jobs_by_id: dict[str, ContentJob],
     since: datetime | None,
 ) -> float | None:
     """人工修正率：已审非遗留草稿中，需人工改事实/立场的占比。
 
-    修正 = 存在 REVISE 历史事件，或最终 skip 且 reason in {fact_error, no_clear_position}。
+    修正 = 存在 REVISE 决策，或最终 skip 且 reject_reason in {fact_error, no_clear_position}。
     无已审非遗留草稿（无分母）时返回 None。
     """
-    reviewed_ids = {draft_id for draft_id in decisions if draft_id in eligible_ids}
+    reviewed_ids = {draft_id for draft_id in latest if draft_id in eligible_ids}
     if not reviewed_ids:
         return None
     revised_ids = {
-        h.draft_id
-        for h in history
-        if h.action == ReviewAction.REVISE
-        and h.draft_id in eligible_ids
-        and (since is None or h.decided_at >= since)
+        r.draft_id
+        for r in records
+        if r.action == DecisionAction.REVISE
+        and r.draft_id in eligible_ids
+        and (since is None or r.decided_at >= since)
     }
-    fact_skip_ids = {
-        draft_id
-        for draft_id, d in decisions.items()
-        if draft_id in eligible_ids
-        and d.action == ReviewAction.SKIP
-        and d.reason in {SkipReason.FACT_ERROR.value, SkipReason.NO_CLEAR_POSITION.value}
-    }
+    fact_skip_ids: set[str] = set()
+    for r in latest.values():
+        if r.draft_id not in eligible_ids or r.action != DecisionAction.SKIP:
+            continue
+        job = jobs_by_id.get(r.job_id)
+        if job is not None and job.reject_reason in {
+            SkipReason.FACT_ERROR.value, SkipReason.NO_CLEAR_POSITION.value
+        }:
+            fact_skip_ids.add(r.draft_id)
     return len(revised_ids | fact_skip_ids) / len(reviewed_ids)
 
 

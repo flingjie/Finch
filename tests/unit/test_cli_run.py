@@ -12,6 +12,7 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
     IntendedEffect,
+    PositionSource,
     SuccessCriterion,
 )
 from finch.content.models import Draft, DraftKind
@@ -23,8 +24,7 @@ from finch.content.voice import (
 )
 from finch.gate.models import InputRequest, ProposedPosition
 from finch.graph.state import GraphState
-from finch.review.models import ReviewAction, ReviewDecision
-from finch.review.service import ReviewService
+from finch.inbox.models import DecisionAction, DecisionRecord
 from finch.settings import AuthorAccountConfig, EngagementSettings, Paths, Settings
 from finch.storage.database import Store
 from finch.storage.repositories import (
@@ -34,7 +34,6 @@ from finch.storage.repositories import (
     DraftRepository,
     DraftVersionRepository,
     PublicationIntentRepository,
-    ReviewRepository,
 )
 
 
@@ -362,24 +361,19 @@ def test_voice_show_prints_profile(monkeypatch, tmp_path):
     assert "avoid_phrases" in r.output
 
 
-def _approve_decision(draft_id, voice_match=4, revised_body=None):
-    return ReviewDecision(
-        id=f"rev_{draft_id}",
-        draft_id=draft_id,
-        action=ReviewAction.APPROVE,
-        revised_body=revised_body,
-        voice_match=voice_match,
-        decided_at=datetime.now(UTC),
-    )
-
-
-def _confirm_decision(draft_id, voice_match=4):
-    return ReviewDecision(
-        id=f"confirm_{draft_id}",
-        draft_id=draft_id,
-        action=ReviewAction.CONFIRM_POSITION,
-        voice_match=voice_match,
-        decided_at=datetime.now(UTC),
+def _seed_accept_decision(store, draft_id, *, revised_body=None):
+    DecisionRecordRepository(store).save(
+        DecisionRecord(
+            id=f"dec_job_{draft_id}",
+            job_id=f"job_{draft_id}",
+            draft_id=draft_id,
+            action=DecisionAction.ACCEPT,
+            position_source=PositionSource.HUMAN_CONFIRMED,
+            position_fingerprint="",
+            approved_content_hash="h",
+            revised_body=revised_body,
+            decided_at=datetime.now(UTC),
+        )
     )
 
 
@@ -388,10 +382,7 @@ def test_voice_approve_example_uses_revised_body_and_dedupes(monkeypatch, tmp_pa
     store = Store(settings.paths.db_path)
     store.init()
     _seed_draft(store, "d1", "original ai draft body")
-    svc = ReviewService(DraftRepository(store), ReviewRepository(store))
-    svc.revise("d1", "human revised body")
-    svc.approve("d1")
-    svc.confirm_position("d1", voice_match=4)
+    _seed_accept_decision(store, "d1", revised_body="human revised body")
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["voice", "approve-example", "d1"])
@@ -412,8 +403,7 @@ def test_voice_approve_example_falls_back_to_draft_body(monkeypatch, tmp_path):
     store = Store(settings.paths.db_path)
     store.init()
     _seed_draft(store, "d2", "original ai draft body")
-    ReviewRepository(store).save_review(_approve_decision("d2", voice_match=5))
-    ReviewRepository(store).save_review(_confirm_decision("d2", voice_match=5))
+    _seed_accept_decision(store, "d2")
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["voice", "approve-example", "d2"])
@@ -432,7 +422,7 @@ def test_voice_approve_example_missing_draft(monkeypatch, tmp_path):
     assert "not found" in r.output
 
 
-def test_voice_approve_example_requires_review_decision(monkeypatch, tmp_path):
+def test_voice_approve_example_requires_decision(monkeypatch, tmp_path):
     settings = _voice_settings(tmp_path)
     store = Store(settings.paths.db_path)
     store.init()
@@ -440,53 +430,7 @@ def test_voice_approve_example_requires_review_decision(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     r = CliRunner().invoke(app, ["voice", "approve-example", "d3"])
     assert r.exit_code == 1
-    assert "not approved" in r.output
-
-
-def test_voice_approve_example_rejects_non_approve(monkeypatch, tmp_path):
-    settings = _voice_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_draft(store, "d4", "body")
-    ReviewRepository(store).save_review(
-        ReviewDecision(
-            id="rev_d4",
-            draft_id="d4",
-            action=ReviewAction.REVISE,
-            revised_body="revised",
-            voice_match=5,
-            decided_at=datetime.now(UTC),
-        )
-    )
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    r = CliRunner().invoke(app, ["voice", "approve-example", "d4"])
-    assert r.exit_code == 1
-    assert "not approved" in r.output
-
-
-def test_voice_approve_example_rejects_missing_voice_match(monkeypatch, tmp_path):
-    settings = _voice_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_draft(store, "d5", "body")
-    ReviewRepository(store).save_review(_approve_decision("d5", voice_match=None))
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    r = CliRunner().invoke(app, ["voice", "approve-example", "d5"])
-    assert r.exit_code == 1
-    assert "voice_match not recorded" in r.output
-
-
-def test_voice_approve_example_rejects_voice_match_below_threshold(monkeypatch, tmp_path):
-    settings = _voice_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_draft(store, "d6", "body")
-    ReviewRepository(store).save_review(_approve_decision("d6", voice_match=3))
-    ReviewRepository(store).save_review(_confirm_decision("d6", voice_match=3))
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    r = CliRunner().invoke(app, ["voice", "approve-example", "d6"])
-    assert r.exit_code == 1
-    assert "below threshold" in r.output
+    assert "not accepted" in r.output
 
 
 def test_voice_approve_example_removes_from_rejected(monkeypatch, tmp_path):
@@ -494,8 +438,7 @@ def test_voice_approve_example_removes_from_rejected(monkeypatch, tmp_path):
     store = Store(settings.paths.db_path)
     store.init()
     _seed_draft(store, "d7", "body")
-    ReviewRepository(store).save_review(_approve_decision("d7", voice_match=4))
-    ReviewRepository(store).save_review(_confirm_decision("d7", voice_match=4))
+    _seed_accept_decision(store, "d7")
     profile = load_voice_profile(settings.paths.voice_profile_path)
     profile.rejected_examples.append(RejectedExample(id="d7", reason="old"))
     save_voice_profile(profile, settings.paths.voice_profile_path)

@@ -61,11 +61,11 @@ from .idea.service import (
 )
 from .inbox.models import DecisionAction, DecisionRecord
 from .inbox.service import InboxDecisionService, next_item
+from .learn.models import OutcomeAssessment
 from .learn.service import FeedbackService
+from .learn.weekly import render_weekly, weekly_analysis
 from .llm.openai_compatible import create_runner
 from .reddit.opencli_client import RedditOpenCliClient
-from .review.models import OutcomeAssessment, ReviewAction
-from .review.weekly import render_weekly, weekly_analysis
 from .settings import load_settings
 from .storage.database import RunRecord, Store
 from .storage.repositories import (
@@ -83,7 +83,6 @@ from .storage.repositories import (
     PositionApprovalRepository,
     PublicationIntentRepository,
     RepoCursorRepository,
-    ReviewRepository,
 )
 from .twitter.models import TwitterError
 from .twitter.normalizer import normalize_tweets
@@ -651,7 +650,7 @@ def run_weekly() -> None:
     since = datetime.now(UTC) - timedelta(days=7)
     report = weekly_analysis(
         DraftRepository(store),
-        ReviewRepository(store),
+        DecisionRecordRepository(store),
         FeedbackRepository(store),
         ContentJobRepository(store),
         CriticReportRepository(store),
@@ -674,15 +673,9 @@ def voice_show() -> None:
     )
 
 
-_VOICE_MATCH_THRESHOLD = 4
-
-
 @voice_app.command("approve-example")
 def voice_approve_example(draft_id: str) -> None:
-    """把草稿追加为 approved example（人工修改文本优先于原始 AI 草稿，按 id 去重）。
-
-    仅当草稿已被人工 APPROVE 且 voice_match 达标时允许进入 approved examples。
-    """
+    """把草稿追加为 approved example（按 id 去重；已接受即入库）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -690,20 +683,12 @@ def voice_approve_example(draft_id: str) -> None:
     if draft is None:
         typer.echo(f"draft not found: {draft_id}")
         raise typer.Exit(code=1)
-    review_repo = ReviewRepository(store)
-    decision = review_repo.get_review(draft_id)
-    if decision is None or decision.action != ReviewAction.APPROVE:
-        typer.echo(f"not approved: {draft_id}")
+    decisions = {d.draft_id: d for d in DecisionRecordRepository(store).list()}
+    decision = decisions.get(draft_id)
+    if decision is None or decision.action != DecisionAction.ACCEPT:
+        typer.echo(f"not accepted: {draft_id}")
         raise typer.Exit(code=1)
-    position = review_repo.get_position_review(draft_id)
-    if position is None or position.voice_match is None:
-        typer.echo(f"voice_match not recorded: {draft_id}")
-        raise typer.Exit(code=1)
-    if position.voice_match < _VOICE_MATCH_THRESHOLD:
-        typer.echo(f"voice_match below threshold: {draft_id}")
-        raise typer.Exit(code=1)
-    # approve() 用 revised_body=None 覆盖最终决策，故人工修订文本需从历史读取。
-    text = review_repo.latest_revised_body(draft_id) or draft.body
+    text = decision.revised_body or draft.body
     path = settings.paths.voice_profile_path
     profile = load_voice_profile(path)
     if any(ex.id == draft_id for ex in profile.approved_examples):

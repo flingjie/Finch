@@ -5,7 +5,6 @@
 
 import json
 from datetime import UTC, datetime
-from uuid import uuid4
 
 from sqlmodel import Field, Session, SQLModel, col, select
 
@@ -29,7 +28,8 @@ from finch.engagement.models import (
 from finch.evidence.models import EvidenceCard
 from finch.gate.models import PositionApproval
 from finch.github.models import CommitDetail, CommitSummary
-from finch.review.models import DecisionRecord, Feedback, ReviewAction, ReviewDecision
+from finch.inbox.models import DecisionRecord
+from finch.learn.models import Feedback
 from finch.storage.database import Store
 
 
@@ -306,15 +306,6 @@ class DraftRepository:
         return [d for d in self.list_drafts() if d.content_job_id == job_id]
 
 
-class ReviewRecord(SQLModel, table=True):
-    """ReviewDecision 持久化模型（C2）。"""
-
-    id: str = Field(primary_key=True)  # = decision.id（"rev_<draft_id>"）
-    draft_id: str = Field(index=True)
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
 class DecisionRecordRecord(SQLModel, table=True):
     """DecisionRecord 持久化模型（单一决策点）。"""
 
@@ -355,107 +346,6 @@ class DecisionRecordRepository:
         with Session(self.store.engine) as session:
             records = list(session.exec(select(DecisionRecordRecord)))
             return [DecisionRecord.model_validate_json(r.payload_json) for r in records]
-
-
-class ReviewRepository:
-    """ReviewDecision 仓储（C2）。"""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
-
-    def save_review(self, decision: ReviewDecision) -> None:
-        """按 id merge 保存 ReviewDecision（幂等，可重放）。"""
-        payload_json = decision.model_dump_json()
-        record = ReviewRecord(
-            id=decision.id,
-            draft_id=decision.draft_id,
-            payload_json=payload_json,
-            updated_at=datetime.now(UTC),
-        )
-        with Session(self.store.engine) as session:
-            session.merge(record)
-            session.commit()
-
-    def get_review(self, draft_id: str) -> ReviewDecision | None:
-        """按 draft_id 获取最终审核决策（approve/revise/skip），不存在返回 None。
-
-        最终决策以 id ``rev_<draft_id>`` 存储；CONFIRM_POSITION 使用独立 id
-        ``confirm_<draft_id>``，故此处按主键取最终决策，避免二义。
-        """
-        with Session(self.store.engine) as session:
-            record = session.get(ReviewRecord, f"rev_{draft_id}")
-            if record is None:
-                return None
-            return ReviewDecision.model_validate_json(record.payload_json)
-
-    def get_position_review(self, draft_id: str) -> ReviewDecision | None:
-        """返回该草稿最新的一条 CONFIRM_POSITION 决策（独立于 approve/skip）。
-
-        CONFIRM_POSITION 以独立 id ``confirm_<draft_id>`` 经 merge 保存，因此该记录
-        即是最新一次立场确认；不存在返回 None。
-        """
-        with Session(self.store.engine) as session:
-            record = session.get(ReviewRecord, f"confirm_{draft_id}")
-            if record is None:
-                return None
-            return ReviewDecision.model_validate_json(record.payload_json)
-
-    def list_reviews(self) -> list[ReviewDecision]:
-        """列出所有 ReviewDecision。"""
-        with Session(self.store.engine) as session:
-            stmt = select(ReviewRecord)
-            records = list(session.exec(stmt))
-            return [ReviewDecision.model_validate_json(r.payload_json) for r in records]
-
-    def append_history(self, decision: ReviewDecision) -> None:
-        """追加一条审核历史（不覆盖，供周复盘统计修改次数）。"""
-        record = ReviewHistoryRecord(
-            id=f"revhist_{uuid4().hex}",
-            draft_id=decision.draft_id,
-            payload_json=decision.model_dump_json(),
-            created_at=datetime.now(UTC),
-        )
-        with Session(self.store.engine) as session:
-            session.add(record)
-            session.commit()
-
-    def list_history(self) -> list[ReviewDecision]:
-        """列出全部审核历史事件。"""
-        with Session(self.store.engine) as session:
-            stmt = select(ReviewHistoryRecord)
-            records = list(session.exec(stmt))
-            return [ReviewDecision.model_validate_json(r.payload_json) for r in records]
-
-    def latest_revised_body(self, draft_id: str) -> str | None:
-        """返回该草稿历史中最近一次 REVISE 的人工修订正文，无则返回 None。
-
-        approve() 会用 ``revised_body=None`` 覆盖 ``rev_<id>`` 记录，因此最终决策里
-        的人工修订文本已丢失；改为从追加式历史中读取最近一次 REVISE 的 revised_body。
-        直接按 draft_id 走索引查询，避免全表拉取。
-        """
-        with Session(self.store.engine) as session:
-            stmt = select(ReviewHistoryRecord).where(
-                ReviewHistoryRecord.draft_id == draft_id
-            )
-            records = list(session.exec(stmt))
-        revisions = [
-            d
-            for d in (ReviewDecision.model_validate_json(r.payload_json) for r in records)
-            if d.action == ReviewAction.REVISE and d.revised_body is not None
-        ]
-        if not revisions:
-            return None
-        latest = max(revisions, key=lambda d: d.decided_at)
-        return latest.revised_body
-
-
-class ReviewHistoryRecord(SQLModel, table=True):
-    """ReviewDecision 追加式历史模型（Phase 9）。"""
-
-    id: str = Field(primary_key=True)  # 唯一事件 id
-    draft_id: str = Field(index=True)
-    payload_json: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class FeedbackRecord(SQLModel, table=True):
