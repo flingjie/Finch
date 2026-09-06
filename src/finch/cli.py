@@ -89,6 +89,7 @@ from .storage.repositories import (
     RepoCursorRepository,
     ReviewRepository,
 )
+from .twitter.models import TwitterError
 from .twitter.normalizer import normalize_tweets
 from .twitter.opencli_client import OpenCliClient
 from .twitter.query_builder import QueryBuilder
@@ -130,14 +131,18 @@ def author_sync(as_json: bool = typer.Option(False, "--json", help="输出 JSON"
     store.init()
     client = OpenCliClient()
     total_synced = 0
-    for cfg in settings.author_accounts:
-        if not cfg.enabled:
-            continue
-        account = verify_account(cfg, client, store)
-        total_synced += sync_posts(
-            account, client, store, lookback_days=cfg.history_lookback_days
-        )
-    result = reconcile(store)
+    try:
+        for cfg in settings.author_accounts:
+            if not cfg.enabled:
+                continue
+            account = verify_account(cfg, client, store)
+            total_synced += sync_posts(
+                account, client, store, lookback_days=cfg.history_lookback_days
+            )
+        result = reconcile(store)
+    except (KeyError, ValueError, TwitterError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
     payload = {
         "synced": total_synced,
         "linked": [link.model_dump(mode="json") for link in result.linked],

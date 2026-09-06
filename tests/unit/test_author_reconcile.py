@@ -3,7 +3,11 @@ from datetime import UTC, datetime, timedelta
 from finch.author.models import AuthorPost, PublicationIntent
 from finch.author.reconcile import reconcile
 from finch.storage.database import Store
-from finch.storage.repositories import AuthorPostRepository, PublicationIntentRepository
+from finch.storage.repositories import (
+    AuthorPostRepository,
+    PublicationIntentRepository,
+    PublicationLinkRepository,
+)
 
 
 def _intent(source_id="d1", body="hello world"):
@@ -54,3 +58,16 @@ def test_reconcile_no_candidate_awaiting(tmp_path):
     PublicationIntentRepository(store).save(_intent())
     result = reconcile(store)
     assert result.linked == [] and result.awaiting == ["d1"]
+
+
+def test_reconcile_does_not_double_link_same_post(tmp_path):
+    store = Store(tmp_path / "finch.db")
+    store.init()
+    PublicationIntentRepository(store).save(_intent(source_id="d1"))
+    PublicationIntentRepository(store).save(_intent(source_id="d2"))
+    AuthorPostRepository(store).save(_post("p1", "hello world"))
+    result = reconcile(store)
+    # 一个帖子只能被关联到一个 intent，另一个保持 awaiting。
+    assert len(result.linked) == 1
+    assert result.awaiting == ["d2"]
+    assert len(PublicationLinkRepository(store).list()) == 1

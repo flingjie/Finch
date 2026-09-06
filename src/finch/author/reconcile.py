@@ -35,6 +35,7 @@ def reconcile(store: Store, *, similarity_threshold: float = 0.85) -> ReconcileR
     posts = AuthorPostRepository(store).list()
     link_repo = PublicationLinkRepository(store)
     result = ReconcileResult()
+    used_post_ids: set[str] = set()
 
     for intent in intents:
         if intent.source_id in linked_sources:
@@ -44,6 +45,7 @@ def reconcile(store: Store, *, similarity_threshold: float = 0.85) -> ReconcileR
             if p.kind in {"original", "quote"}
             and p.published_at >= intent.approved_at
             and p.author_account_id  # 账号过滤在调用方/后续按 user_id 精确化
+            and p.remote_post_id not in used_post_ids
         ]
         # exact
         exact = [p for p in candidates if _normalize(p.body) == _normalize(intent.approved_body)]
@@ -54,6 +56,7 @@ def reconcile(store: Store, *, similarity_threshold: float = 0.85) -> ReconcileR
             )
             link_repo.save(link)
             result.linked.append(link)
+            used_post_ids.add(link.remote_post_id)
             continue
         if len(exact) > 1:
             result.needs_manual.append(
@@ -73,6 +76,7 @@ def reconcile(store: Store, *, similarity_threshold: float = 0.85) -> ReconcileR
             )
             link_repo.save(link)
             result.linked.append(link)
+            used_post_ids.add(link.remote_post_id)
         elif len(similar) > 1:
             result.needs_manual.append(
                 {"source_id": intent.source_id, "candidates": [p.remote_post_id for p in similar]}

@@ -1276,6 +1276,25 @@ def test_author_sync_json(monkeypatch, tmp_path):
     assert '"synced": 3' in r.output
 
 
+def test_author_sync_error_is_clean(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    settings.author_accounts = [AuthorAccountConfig(handle="test", enabled=True)]
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    def fail_verify(cfg, client, store):
+        raise ValueError("mismatch")
+
+    monkeypatch.setattr(cli, "verify_account", fail_verify)
+    r = CliRunner().invoke(app, ["author", "sync"])
+    assert r.exit_code == 1
+    assert isinstance(r.exception, SystemExit), repr(r.exception)
+    assert "mismatch" in r.output
+    assert "Traceback" not in r.output
+    assert r.output.count("\n") <= 1  # 单行干净错误，非 traceback
+
+
 def test_decide_accept(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     store = Store(settings.paths.db_path)
