@@ -270,6 +270,28 @@ def test_draft_node_empty_ready_jobs_writes_empty(tmp_path):
     assert calls == {"reply": 0, "original": 0}
 
 
+def test_draft_node_sets_run_id():
+    """Task 4：draft 节点把 ctx 里的 run_id 打到每条产出的 Draft 上。"""
+    job = _job(job_id="j1", candidate_id=None, source_card_ids=("ev1",))
+
+    def write_reply(runner, match, candidate, cards_by_id, job):
+        raise AssertionError("reply writer must not be called for an ORIGINAL job")
+
+    def write_original(runner, cards, job):
+        return Draft(id="d1", kind=DraftKind.ORIGINAL, body="hi", content_job_id=job.id)
+
+    node = make_draft_node(None, write_reply, write_original, QualityGates())
+    ctx = {
+        "ready_jobs": items_payload([job]),
+        "evidence_cards": items_payload([_card()]),
+        "candidates": items_payload([]),
+        "run_id": "r1",
+    }
+    result = node.run(ctx)
+    drafts = parse_items(result.output, Draft)
+    assert drafts and drafts[0].run_id == "r1"
+
+
 def _failed_check(
     checker: str = "specificity",
     severity: str = "high",

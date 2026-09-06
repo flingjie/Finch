@@ -153,8 +153,13 @@ def make_draft_node(
                 with ThreadPoolExecutor(max_workers=min(len(plans), 8)) as pool:
                     written = list(pool.map(_write_draft, plans))
 
-            # Phase 3（收集）：cap 已在 Phase 1 预留，按顺序丢弃 None。
-            drafts = [d for d in written if d is not None]
+            # Phase 3（收集）：cap 已在 Phase 1 预留，按顺序丢弃 None，并打上 run_id。
+            run_id = ctx.get("run_id", "")
+            drafts = [
+                d.model_copy(update={"run_id": run_id})
+                for d in written
+                if d is not None
+            ]
 
             return NodeResult(
                 status="succeeded",
