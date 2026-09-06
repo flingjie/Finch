@@ -304,3 +304,48 @@ class TestOpenCliClientUserPosts:
         assert captured["argv"][3] == "flingjie"
         assert "--limit" in captured["argv"]
         assert "50" in captured["argv"]
+
+    def test_user_posts_missing_metrics_are_none(self, monkeypatch):
+        # 指标缺失 → None（绝不为 0），绕过 Tweet 模型的 likes/views 默认值污染。
+        def fake_run(argv, timeout):
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": json.dumps([
+                    {"id": "1", "author": "flingjie", "text": "hello", "url": "u"},
+                ]),
+                "stderr": "",
+            }
+
+        monkeypatch.setattr("finch.twitter.opencli_client._run", fake_run)
+        client = OpenCliClient()
+        posts = client.user_posts("flingjie")
+        assert len(posts) == 1
+        assert posts[0].likes is None
+        assert posts[0].views is None
+
+    def test_user_posts_preserves_replies_reposts(self, monkeypatch):
+        # Tweet 模型没有 replies/reposts 字段；原始路径必须保留它们。
+        def fake_run(argv, timeout):
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": json.dumps([
+                    {
+                        "id": "1",
+                        "author": "flingjie",
+                        "text": "hello",
+                        "url": "u",
+                        "replies": 5,
+                        "reposts": 2,
+                    },
+                ]),
+                "stderr": "",
+            }
+
+        monkeypatch.setattr("finch.twitter.opencli_client._run", fake_run)
+        client = OpenCliClient()
+        posts = client.user_posts("flingjie")
+        assert len(posts) == 1
+        assert posts[0].replies == 5
+        assert posts[0].reposts == 2

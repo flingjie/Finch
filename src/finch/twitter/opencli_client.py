@@ -78,8 +78,8 @@ def _check_allowlist(argv: list[str]) -> None:
         raise TwitterCommandBlocked(f"Command not in allowlist: {twitter_cmd}")
 
 
-def _parse_tweets(stdout: str) -> list[Tweet]:
-    """解析 opencli JSON 输出为 Tweet 列表."""
+def _parse_json(stdout: str) -> list:
+    """解析 opencli JSON 并归一化为 list（dict → [dict]），校验必须是 list."""
     try:
         data = json.loads(stdout)
     except json.JSONDecodeError as exc:
@@ -90,16 +90,25 @@ def _parse_tweets(stdout: str) -> list[Tweet]:
             data = [data]
         else:
             raise TwitterError(f"Expected list from opencli, got {type(data).__name__}")
+    return data
+
+
+def _tolerant_tweets(items: list) -> list[Tweet]:
+    """把原始 JSON 列表解析为 Tweet 列表；单条解析失败不中断整批."""
     tweets: list[Tweet] = []
-    for item in data:
+    for item in items:
         if not isinstance(item, dict):
             continue
         try:
             tweets.append(Tweet.model_validate(item))
         except Exception:  # noqa: BLE001
-            # 单条解析失败不中断整批
             continue
     return tweets
+
+
+def _parse_tweets(stdout: str) -> list[Tweet]:
+    """解析 opencli JSON 输出为 Tweet 列表."""
+    return _tolerant_tweets(_parse_json(stdout))
 
 
 def _browser_flags() -> list[str]:
@@ -116,8 +125,13 @@ def _browser_flags() -> list[str]:
     return ["--window", window, "--site-session", "persistent"]
 
 
-def _call(argv: list[str], timeout: float = 60.0) -> list[Tweet]:
-    """执行 opencli 命令并解析结果."""
+def _raw_json(argv: list[str], timeout: float = 60.0) -> list[dict]:
+    """执行 opencli 命令并返回原始 JSON 列表（不做 Tweet 模型转换）。
+
+    保留原始字段：缺失字段不会被 Pydantic 默认值（如 ``likes=0``/``views=0``）
+    污染，``replies``/``reposts`` 也不会被丢弃。供 ``user_posts`` 直接解码为
+    AuthorPost 以守住「指标缺失 → None（绝不为 0）」的不变式。
+    """
     _check_allowlist(argv)
     r = run_opencli(
         [*argv, *_browser_flags()], run_fn=_run, timeout=timeout
@@ -132,7 +146,12 @@ def _call(argv: list[str], timeout: float = 60.0) -> list[Tweet]:
         if "rate" in stderr.lower() or "too many" in stderr.lower():
             raise TwitterRateLimited(f"Rate limited: {stderr}")
         raise TwitterError(f"opencli failed (exit={r['exit_code']}): {stderr}")
-    return _parse_tweets(r["stdout"])
+    return _parse_json(r["stdout"])
+
+
+def _call(argv: list[str], timeout: float = 60.0) -> list[Tweet]:
+    """执行 opencli 命令并解析结果."""
+    return _tolerant_tweets(_raw_json(argv, timeout))
 
 
 class OpenCliClient:
@@ -211,5 +230,5 @@ class OpenCliClient:
             "opencli", "twitter", "tweets", handle,
             "--limit", str(limit), "-f", "json",
         ]
-        tweets = _call(argv, timeout=60.0)
-        return [decode_author_post("x", handle, t.model_dump(mode="json")) for t in tweets]
+        raw = _raw_json(argv, timeout=60.0)
+        return [decode_author_post("x", handle, item) for item in raw]
