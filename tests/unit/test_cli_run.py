@@ -880,3 +880,73 @@ def test_run_resolve_file_malformed_clean_error(monkeypatch, tmp_path):
     assert isinstance(r.exception, SystemExit), repr(r.exception)
     assert r.output.strip()  # 单行错误确实被 echo（非空）
 
+
+def test_run_resolve_edit_applies(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    request = _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
+    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid: None)
+    monkeypatch.setattr(
+        cli, "_edit_position",
+        lambda proposed: ProposedPosition(claim="edited", decision="d", tradeoff="t"),
+    )
+
+    r = CliRunner().invoke(app, ["run", "resolve", "--edit"])
+    assert r.exit_code == 0, r.output
+    job = ContentJobRepository(store).get_job(request.job_id)
+    assert job.author_position.claim == "edited"
+    assert job.author_position.confirmed is True
+
+
+def test_run_resolve_interactive_confirm(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    request = _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
+
+    resumed = {}
+    monkeypatch.setattr(
+        cli, "_resume_and_echo", lambda st, nodes, rid: resumed.setdefault("run_id", rid)
+    )
+
+    r = CliRunner().invoke(app, ["run", "resolve"], input="1\n")
+    assert r.exit_code == 0, r.output
+    assert ContentJobRepository(store).get_job(request.job_id).author_position.confirmed is True
+    assert resumed["run_id"] == "r1"
+
+
+def test_run_resolve_interactive_show_evidence_returns_without_resume(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
+
+    resumed = []
+    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid: resumed.append(rid))
+
+    r = CliRunner().invoke(app, ["run", "resolve"], input="5\n")
+    assert r.exit_code == 0, r.output
+    assert "无证据" in r.output  # render_evidence 空卡片
+    assert resumed == []  # choice 5 直接 return，不 resume
+
+
+def test_run_resolve_interactive_invalid_choice(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
+    monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid: None)
+
+    r = CliRunner().invoke(app, ["run", "resolve"], input="9\n")
+    assert r.exit_code == 1, r.output
+    assert "invalid choice" in r.output
+

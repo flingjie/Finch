@@ -80,6 +80,44 @@ def test_edit_revokes_old_approves_new(tmp_path):
     )) is not None
 
 
+def test_edit_revokes_stored_fingerprint_when_request_diverges(tmp_path):
+    store, jobs, approvals, job = _seed(tmp_path)
+    stored_fp = position_fingerprint(job.author_position)  # "c/d/t"
+    approvals.approve(stored_fp, "j1")
+    # 请求里的提案与存储立场不一致（如 gate 停后 job 被 out-of-band 编辑）。
+    diverging_request = InputRequest(
+        run_id="r1", job_id="j1", topic="t",
+        proposed_position=ProposedPosition(claim="stale", decision="stale", tradeoff="stale"),
+    )
+    edited = ProposedPosition(claim="new", decision="d", tradeoff="t")
+    resolve_input(
+        diverging_request, InputAction.EDIT, jobs_repo=jobs, approvals_repo=approvals,
+        edited_position=edited,
+    )
+    # 撤销的是存储的旧立场 "c/d/t"，而非请求里的 "stale/stale/stale"。
+    assert approvals.find_active(stored_fp) is None
+    assert approvals.find_active(position_fingerprint(
+        AuthorPosition(claim="new", decision="d", tradeoff="t")
+    )) is not None
+
+
+def test_skip_revokes_stored_approval(tmp_path):
+    store, jobs, approvals, job = _seed(tmp_path)
+    approvals.approve(position_fingerprint(job.author_position), "j1")
+    resolve_input(
+        _request(job), InputAction.SKIP, jobs_repo=jobs, approvals_repo=approvals,
+        skip_reason="not relevant",
+    )
+    assert approvals.find_active(position_fingerprint(job.author_position)) is None
+
+
+def test_stop_revokes_stored_approval(tmp_path):
+    store, jobs, approvals, job = _seed(tmp_path)
+    approvals.approve(position_fingerprint(job.author_position), "j1")
+    resolve_input(_request(job), InputAction.STOP, jobs_repo=jobs, approvals_repo=approvals)
+    assert approvals.find_active(position_fingerprint(job.author_position)) is None
+
+
 def test_skip_marks_do_not_write(tmp_path):
     store, jobs, approvals, job = _seed(tmp_path)
     msg = resolve_input(

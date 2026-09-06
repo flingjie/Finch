@@ -58,8 +58,9 @@ def resolve_input(
     job = jobs_repo.get_job(request.job_id)
     if job is None:
         raise ValueError(f"job not found: {request.job_id}")
-    proposed_fp = position_fingerprint(
-        _to_author_position(request.proposed_position, confirmed=False)
+    stored_position = job.author_position
+    stored_fp = (
+        position_fingerprint(stored_position) if stored_position is not None else None
     )
 
     if action is InputAction.CONFIRM:
@@ -84,8 +85,8 @@ def resolve_input(
         jobs_repo.upsert_job(job.model_copy(update={"author_position": position}))
         if approvals_repo is not None:
             new_fp = position_fingerprint(position)
-            if new_fp != proposed_fp:
-                approvals_repo.revoke(proposed_fp)
+            if stored_fp is not None and new_fp != stored_fp:
+                approvals_repo.revoke(stored_fp)
             approvals_repo.approve(new_fp, request.job_id)
         return f"edited {request.job_id}"
 
@@ -100,8 +101,8 @@ def resolve_input(
                 }
             )
         )
-        if approvals_repo is not None:
-            approvals_repo.revoke(proposed_fp)
+        if approvals_repo is not None and stored_fp is not None:
+            approvals_repo.revoke(stored_fp)
         return f"skipped {request.job_id}"
 
     if action is InputAction.STOP:
@@ -115,8 +116,8 @@ def resolve_input(
                         }
                     )
                 )
-        if approvals_repo is not None:
-            approvals_repo.revoke(proposed_fp)
+        if approvals_repo is not None and stored_fp is not None:
+            approvals_repo.revoke(stored_fp)
         return "stopped original track"
 
     raise ValueError(f"unsupported action: {action}")
