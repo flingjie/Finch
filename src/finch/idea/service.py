@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import cast
 
 from finch.author.models import AuthorPost
-from finch.content.checkers.base import CheckResult
+from finch.content.checkers.aggregate import AggregateOutcome, aggregate_checks
+from finch.content.checkers.base import CheckContext, Checker, CheckResult
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
@@ -20,8 +21,10 @@ from finch.content.jobs import (
     SuccessCriterion,
 )
 from finch.content.models import Draft, DraftKind
+from finch.content.voice import VoiceProfile
 from finch.content.writer import _render_failed_checks, _render_job_context
 from finch.evidence.models import EvidenceCard
+from finch.graph.content_nodes import _run_checks, default_checker_suite
 from finch.idea.models import AssessIdeaOutput, RewriteIdeaOutput, WriteIdeaOutput
 from finch.llm.base import StructuredInferenceRunner
 
@@ -169,3 +172,60 @@ def rewrite_idea(
     )
     out = cast(RewriteIdeaOutput, runner.run(prompt, RewriteIdeaOutput))
     return draft.model_copy(update={"body": out.body})
+
+
+def idea_checker_suite(
+    runner: StructuredInferenceRunner | None,
+    voice_profile: VoiceProfile | None = None,
+) -> list[Checker]:
+    """Critic 套件去掉 EvidenceChecker（idea 允许个人判断/假设，不强制证据绑定）。"""
+    return [c for c in default_checker_suite(runner, voice_profile) if c.name != "evidence"]
+
+
+def run_idea_critic(
+    runner: StructuredInferenceRunner | None,
+    draft: Draft,
+    job: ContentJob,
+    cards: list[EvidenceCard],
+    max_rewrite_rounds: int,
+    *,
+    checkers: list[Checker] | None = None,
+    voice_profile: VoiceProfile | None = None,
+) -> tuple[str, list[CheckResult], Draft]:
+    """跑 Critic + 定向重写循环，返回 (outcome, checks, final_draft)。
+
+    outcome ∈ {"pass","rewrite","reject","needs_input"}（与 aggregate_checks 对齐）。
+    pass 才落库；rewrite 用尽 max_rewrite_rounds 后仍不 pass 即返回 "rewrite"。
+    """
+    suite = checkers if checkers is not None else idea_checker_suite(runner, voice_profile)
+    current = draft
+    checks: list[CheckResult] = []
+    for i in range(max_rewrite_rounds + 1):
+        ctx = CheckContext(draft=current, cards=cards, job=job)
+        checks = _run_checks(suite, ctx)
+        outcome = aggregate_checks(checks)
+        if outcome != AggregateOutcome.REWRITE:
+            return outcome, checks, current
+        if i == max_rewrite_rounds:
+            return AggregateOutcome.REWRITE, checks, current
+        failed = [c for c in checks if not c.passed]
+        assert runner is not None, "rewrite requires a runner"
+        current = rewrite_idea(runner, current, failed, job)
+    return AggregateOutcome.REWRITE, checks, current
+
+
+def _joined_issues(checks: list[CheckResult]) -> str:
+    parts: list[str] = []
+    for check in checks:
+        if not check.passed:
+            detail = "; ".join(check.issues) if check.issues else "failed"
+            parts.append(f"{check.checker}: {detail}")
+    return " | ".join(parts) or "critic failed"
+
+
+def critic_failure_reason(checks: list[CheckResult]) -> tuple[str, str]:
+    """把 Critic 失败映射到 (reason_code, reason)。"""
+    failed = [c for c in checks if not c.passed]
+    if any(c.checker == "safety" and c.severity == "hard_fail" for c in failed):
+        return "UNSAFE_TO_PUBLISH", _joined_issues(failed)
+    return "NO_NEW_VALUE", _joined_issues(failed)
