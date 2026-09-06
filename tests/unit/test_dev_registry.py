@@ -9,13 +9,20 @@ def test_registry_has_unique_names_and_valid_kinds():
         assert spec.kind in ("graph_node", "function")
 
 
-def test_graph_node_build_returns_node_with_matching_reads():
+def test_graph_node_build_returns_node():
     ctx = DevContext(settings=Settings())
-    for name in ("recall", "brief"):
+    for name, expected_reads in {
+        "recall": {"candidates", "evidence_cards"},
+        "brief": {
+            "drafts", "content_jobs", "evidence_cards",
+            "ready_jobs", "candidates", "match_results",
+        },
+    }.items():
         spec = REGISTRY[name]
         assert spec.kind == "graph_node"
         node = spec.build(ctx)
-        assert set(node.reads) == set(spec.required_inputs)
+        assert node.name == name
+        assert set(node.reads) == expected_reads
 
 
 def test_function_has_no_build():

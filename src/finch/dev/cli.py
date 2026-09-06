@@ -42,3 +42,5 @@ def run_node_cmd(
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
     typer.echo(json.dumps(result.model_dump(mode="json"), indent=2, ensure_ascii=False))
+    if result.status != "succeeded":
+        raise typer.Exit(code=1)
