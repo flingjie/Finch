@@ -9,7 +9,7 @@ from finch.content.jobs import (
 )
 from finch.content.models import Draft, DraftKind
 from finch.review.decision import DecisionService, content_hash
-from finch.review.models import DecisionAction
+from finch.review.models import DecisionAction, ReviewAction
 from finch.storage.database import Store
 from finch.storage.repositories import (
     ContentJobRepository,
@@ -62,6 +62,9 @@ def test_accept_confirms_position_and_approves_draft(tmp_path):
     ) is not None
     # 决策记录落库
     assert DecisionRecordRepository(store).get("j1") is not None
+    # 向后兼容投影：ReviewDecision(APPROVE)
+    assert ReviewRepository(store).get_review("d1") is not None
+    assert ReviewRepository(store).get_review("d1").action == ReviewAction.APPROVE
 
 
 def test_skip_marks_do_not_write(tmp_path):
@@ -71,11 +74,21 @@ def test_skip_marks_do_not_write(tmp_path):
     DraftRepository(store).upsert_draft(
         Draft(id="d1", kind=DraftKind.ORIGINAL, body="b", content_job_id="j1")
     )
+    PositionApprovalRepository(store).approve(
+        position_fingerprint(_job("j1").author_position), "j1"
+    )
     rec = _svc(store).skip("j1", "not_now")
     assert rec.action == DecisionAction.SKIP
     job = ContentJobRepository(store).get_job("j1")
     assert job.status == ContentJobStatus.DO_NOT_WRITE
     assert job.reject_reason == "not_now"
+    # 向后兼容投影：ReviewDecision(SKIP)
+    assert ReviewRepository(store).get_review("d1") is not None
+    assert ReviewRepository(store).get_review("d1").action == ReviewAction.SKIP
+    # 跳过后撤销此前批准
+    assert PositionApprovalRepository(store).find_active(
+        position_fingerprint(job.author_position)
+    ) is None
 
 
 def test_content_hash_deterministic():

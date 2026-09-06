@@ -25,7 +25,11 @@ def content_hash(body: str) -> str:
 
 
 class DecisionService:
-    """把一次「采用/跳过」落到 job/approval/review/decision 上（权威 = DecisionRecord）。"""
+    """把一次「采用/跳过」落到 job/approval/review/decision 上（权威 = DecisionRecord）。
+
+    多仓写入不是单一 DB 事务，但依赖稳定 id（``rev_<draft_id>``、``dec_<job_id>``、
+    fingerprint 合并的 ``PositionApproval``）幂等，部分写入可通过重跑命令恢复。
+    """
 
     def __init__(
         self,
@@ -91,6 +95,16 @@ class DecisionService:
         )
         if job.author_position is not None:
             self.approvals.revoke(position_fingerprint(job.author_position))
+        # 向后兼容投影：ReviewDecision(SKIP)（周复盘读旧 ReviewAction.SKIP 记录）
+        self.reviews.save_review(
+            ReviewDecision(
+                id=f"rev_{draft.id}",
+                draft_id=draft.id,
+                action=ReviewAction.SKIP,
+                reason=reason,
+                decided_at=datetime.now(UTC),
+            )
+        )
         record = DecisionRecord(
             id=f"dec_{job_id}", job_id=job_id, draft_id=draft.id,
             action=DecisionAction.SKIP,
