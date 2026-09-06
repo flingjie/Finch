@@ -111,7 +111,8 @@ class DecisionRecord(BaseModel):          # 新表；幂等键 "dec_<job_id>"
     decided_at: datetime
 ```
 
-- `Draft` 增加 `job_id: str` 与 `run_id: str` 关联（判断 call #1），使草稿可回溯到源 job/立场。
+- `Draft` 已含 `content_job_id`（writer 已填充 `job.id`）与 `position_statement`（已存 `author_position.decision`）；
+  本次**新增 `run_id: str`** 使草稿可回溯到当次 run（`content_job_id` 无需新增，仅沿用）。
 - `AuthorPosition` 增加 `position_source: PositionSource | None = None` 字段（加性，保留 `confirmed: bool`）：
   运行期推断立场标记 `INFERRED`，复用门禁命中标记 `REUSED`，采用时标记 `HUMAN_CONFIRMED`。
   `confirmed=True` 与 `position_source ∈ {HUMAN_CONFIRMED, REUSED}` 语义等价，旧代码读 `confirmed` 不受影响。
