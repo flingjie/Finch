@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import UTC, datetime, timedelta
@@ -32,8 +33,14 @@ from .engagement.metrics import (
 from .engagement.models import EngagementRunStats
 from .evidence.extractor import Extractor, build_cards
 from .evidence.models import EvidenceCard
+from .gate.interactive import edit_position_inline, select_action
 from .gate.models import InputAction, InputRequest, ProposedPosition
-from .gate.render import render_evidence, render_input_request, render_position_diff
+from .gate.render import (
+    render_compact_resolve,
+    render_outcome,
+    render_position_diff,
+    state_label,
+)
 from .gate.resolve import parse_position_yaml, position_yaml, resolve_input
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.discovery import resolve_repositories
@@ -54,7 +61,7 @@ from .review.models import OutcomeAssessment, ReviewAction, SkipReason
 from .review.service import ReviewService, build_review_package, render_review_package
 from .review.weekly import render_weekly, weekly_analysis
 from .settings import Settings, load_settings
-from .storage.database import Store
+from .storage.database import RunRecord, Store
 from .storage.repositories import (
     CommitIngestionRepository,
     ContentJobRepository,
@@ -485,12 +492,17 @@ def _resume_nodes(settings: Settings, store: Store) -> list[Node]:
     )
 
 
-def _resume_and_echo(store: Store, nodes: list[Node], run_id: str) -> None:
-    """replay + 打印 state + 持久化 run 输出 + 打印 brief。"""
+def _resume_and_echo(
+    store: Store, nodes: list[Node], run_id: str, *, verbose: bool = False
+) -> RunRecord:
+    """replay + 打印 state（人性化文案）+ 持久化 run 输出 + 打印 brief，返回 run。"""
     run = replay(store, nodes, run_id)
-    typer.echo(run.state)
+    typer.echo(state_label(run.state))
+    if verbose:
+        typer.echo(f"[internal] state={run.state} run_id={run.id}")
     _persist_run_outputs(store, run_id)
     _echo_daily_brief(store, run_id)
+    return run
 
 
 @run_app.command("resume")
@@ -507,14 +519,22 @@ def run_resume(run_id: str) -> None:
 def run_resolve(
     run_id: str | None = typer.Argument(None, help="run id（缺省取最近 NEEDS_INPUT 的 run）"),
     confirm: bool = typer.Option(False, "--confirm", help="确认并继续"),  # noqa: B008
-    edit: bool = typer.Option(False, "--edit", help="打开预填编辑器修改立场"),  # noqa: B008
+    edit: bool = typer.Option(False, "--edit", help="逐字段编辑立场并继续"),  # noqa: B008
+    edit_editor: bool = typer.Option(False, "--edit-editor", help="用 $EDITOR 编辑立场并继续"),  # noqa: B008
     file: Path | None = typer.Option(None, "--file", help="从 YAML 文件读取立场"),  # noqa: B008
     skip: bool = typer.Option(False, "--skip", help="跳过当前主题，尝试下一个"),  # noqa: B008
     reason: str | None = typer.Option(None, "--reason", help="--skip 的拒绝理由"),  # noqa: B008
     stop: bool = typer.Option(False, "--stop", help="结束今天的原创轨道"),  # noqa: B008
     as_json: bool = typer.Option(False, "--json", help="输出 JSON（供 Skill/Agent）"),  # noqa: B008
+    interactive: bool = typer.Option(False, "--interactive", help="强制交互选择器"),  # noqa: B008
+    non_interactive: bool = typer.Option(False, "--non-interactive", help="强制紧凑输出"),  # noqa: B008
+    verbose: bool = typer.Option(False, "--verbose", help="显示内部状态与 run_id"),  # noqa: B008
 ) -> None:
     """处理当前阻塞点（author position confirmation），完成后自动 resume。"""
+    if interactive and non_interactive:
+        typer.echo("--interactive 与 --non-interactive 互斥")
+        raise typer.Exit(code=1)
+
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -529,9 +549,9 @@ def run_resolve(
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
 
-    flags = [confirm, edit, skip, stop, file is not None]
+    flags = [confirm, edit, edit_editor, skip, stop, file is not None]
     if sum(1 for f in flags if f) > 1:
-        typer.echo("choose exactly one of --confirm/--edit/--file/--skip/--stop")
+        typer.echo("choose exactly one of --confirm/--edit/--edit-editor/--file/--skip/--stop")
         raise typer.Exit(code=1)
 
     if reason is not None and not skip:
@@ -549,14 +569,19 @@ def run_resolve(
     approvals_repo = PositionApprovalRepository(store)
     cards = _cards_for(request, store)
 
-    action: InputAction
+    action: InputAction | None
     edited: ProposedPosition | None = None
     skip_reason: str | None = reason
+
+    use_interactive = interactive or (not non_interactive and sys.stdout.isatty())
 
     try:
         if confirm:
             action = InputAction.CONFIRM
         elif edit:
+            action = InputAction.EDIT
+            edited = edit_position_inline(request.proposed_position)
+        elif edit_editor:
             action = InputAction.EDIT
             edited = _edit_position(request.proposed_position)
             typer.echo(render_position_diff(request.proposed_position, edited))
@@ -568,21 +593,18 @@ def run_resolve(
             action = InputAction.SKIP
         elif stop:
             action = InputAction.STOP
-        else:
-            typer.echo(render_input_request(request, cards))
-            choice = typer.prompt("请选择", default="1")
-            if choice == "5":
-                typer.echo(render_evidence(cards))
+        elif use_interactive:
+            action = select_action(request, cards)
+            if action is None:
+                typer.echo(render_outcome(None))
                 return
-            if choice not in _ACTION_BY_CHOICE:
-                typer.echo("invalid choice")
-                raise typer.Exit(code=1)
-            action = _ACTION_BY_CHOICE[choice]
             if action is InputAction.EDIT:
-                edited = _edit_position(request.proposed_position)
-                typer.echo(render_position_diff(request.proposed_position, edited))
+                edited = edit_position_inline(request.proposed_position)
             elif action is InputAction.SKIP:
                 skip_reason = typer.prompt("跳过理由", default="not_now")
+        else:
+            typer.echo(render_compact_resolve(request))
+            raise typer.Exit(code=0)
     except (ValueError, OSError, yaml.YAMLError) as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
@@ -599,10 +621,12 @@ def run_resolve(
     except ValueError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
-    typer.echo(summary)
+    typer.echo(render_outcome(action))
+    if verbose:
+        typer.echo(f"[internal] resolve={summary}")
 
     nodes = _resume_nodes(settings, store)
-    _resume_and_echo(store, nodes, resolved_run_id)
+    _resume_and_echo(store, nodes, resolved_run_id, verbose=verbose)
 
 
 @run_app.command("weekly")
