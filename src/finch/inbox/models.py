@@ -1,9 +1,12 @@
-"""收件箱投影模型（产品层只读投影）。"""
+"""收件箱投影模型（产品层只读投影 + 唯一权威决策记录）。"""
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel
+
+from finch.content.jobs import PositionSource
 
 
 class InboxTrack(StrEnum):
@@ -29,3 +32,39 @@ class InboxItem(BaseModel):
     must_ask: bool = False
     ask_reasons: list[str] = []
     risks: list[str] = []
+
+
+class DecisionAction(StrEnum):
+    ACCEPT = "accept"
+    REVISE = "revise"
+    SKIP = "skip"
+
+
+class DecisionRecord(BaseModel):
+    """一次原子决策的唯一权威记录。
+
+    position_source / position_fingerprint 是立场机制残留（Phase 1 Task 6 删除）。
+    """
+
+    id: str                                   # "dec_<job_id>"（幂等键）
+    job_id: str
+    draft_id: str
+    action: DecisionAction
+    position_source: PositionSource
+    position_fingerprint: str
+    approved_content_hash: str                # 采用时绑定最终正文；revise 改变 hash → 旧批准失效
+    revised_body: str | None = None
+    diff: str | None = None
+    decided_at: datetime
+
+
+class SkipReason(StrEnum):
+    EVIDENCE_INSUFFICIENT = "evidence_insufficient"
+    NOT_RELEVANT = "not_relevant"
+    LOW_QUALITY = "low_quality"
+    NOT_NOW = "not_now"
+    OTHER = "other"
+    NO_CLEAR_POSITION = "no_clear_position"
+    GENERIC_VOICE = "generic_voice"
+    JOB_NOT_USEFUL = "job_not_useful"
+    FACT_ERROR = "fact_error"

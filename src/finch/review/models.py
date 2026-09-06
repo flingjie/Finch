@@ -6,7 +6,17 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from finch.content.jobs import PositionSource
+from finch.inbox.models import DecisionAction, DecisionRecord, SkipReason
+
+__all__ = [
+    "ReviewAction",
+    "ReviewDecision",
+    "DecisionAction",
+    "DecisionRecord",
+    "SkipReason",
+    "OutcomeAssessment",
+    "Feedback",
+]
 
 
 class ReviewAction(StrEnum):
@@ -14,39 +24,6 @@ class ReviewAction(StrEnum):
     REVISE = "revise"
     SKIP = "skip"
     CONFIRM_POSITION = "confirm_position"  # 独立于最终发布批准
-
-
-class DecisionAction(StrEnum):
-    ACCEPT = "accept"
-    REVISE = "revise"
-    SKIP = "skip"
-
-
-class DecisionRecord(BaseModel):
-    """一次原子决策：采用同时确认立场 + 批准草稿 + 绑定正文 hash。"""
-
-    id: str                                   # "dec_<job_id>"（幂等键）
-    job_id: str
-    draft_id: str
-    action: DecisionAction
-    position_source: PositionSource
-    position_fingerprint: str
-    approved_content_hash: str                # 采用时绑定最终正文；revise 改变 hash → 旧批准失效
-    revised_body: str | None = None
-    diff: str | None = None
-    decided_at: datetime
-
-
-class SkipReason(StrEnum):
-    EVIDENCE_INSUFFICIENT = "evidence_insufficient"
-    NOT_RELEVANT = "not_relevant"
-    LOW_QUALITY = "low_quality"
-    NOT_NOW = "not_now"
-    OTHER = "other"
-    NO_CLEAR_POSITION = "no_clear_position"
-    GENERIC_VOICE = "generic_voice"
-    JOB_NOT_USEFUL = "job_not_useful"
-    FACT_ERROR = "fact_error"
 
 
 class ReviewDecision(BaseModel):
