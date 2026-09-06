@@ -37,6 +37,7 @@ from .github.models import CommitDetail
 from .graph.context import parse_items
 from .graph.daily import daily_nodes
 from .graph.dual_track import DualTrackResult, run_dual_track
+from .graph.nodes import Node
 from .graph.replay import replay
 from .graph.runtime import GraphRuntime
 from .llm.openai_compatible import create_runner
@@ -45,7 +46,7 @@ from .review.feedback import FeedbackService
 from .review.models import OutcomeAssessment, ReviewAction, SkipReason
 from .review.service import ReviewService, build_review_package, render_review_package
 from .review.weekly import render_weekly, weekly_analysis
-from .settings import load_settings
+from .settings import Settings, load_settings
 from .storage.database import Store
 from .storage.repositories import (
     CommitIngestionRepository,
@@ -390,23 +391,17 @@ def run_daily() -> None:
     _echo_daily_brief(store, run.id)
 
 
-@run_app.command("resume")
-def run_resume(run_id: str) -> None:
-    """从 run-id 恢复：复用已完成节点，从 position_gate 继续（读取用户最新 job 编辑）。"""
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+def _resume_nodes(settings: Settings, store: Store) -> list[Node]:
+    """run_resume 与 resolve 共用：空 groups 的 daily_nodes 装配。"""
     gh = GhClient()
     opencli = OpenCliClient()
-
-    # 只需重建节点依赖；已成功节点由 replay 复用，不会重新同步/收集/匹配。
     groups_by_repo: dict[str, list[list[CommitDetail]]] = {
         repo: [] for repo in settings.repositories
     }
     known_commit_urls: set[str] = set()
     repo_is_private = {repo: False for repo in settings.repositories}
 
-    nodes = daily_nodes(
+    return daily_nodes(
         settings=settings,
         store=store,
         gh=gh,
@@ -428,14 +423,24 @@ def run_resume(run_id: str) -> None:
             "critique": create_runner(settings.llm, "critique"),
         },
     )
+
+
+def _resume_and_echo(store: Store, nodes: list[Node], run_id: str) -> None:
+    """replay + 打印 state + 持久化 run 输出 + 打印 brief。"""
     run = replay(store, nodes, run_id)
     typer.echo(run.state)
     _persist_run_outputs(store, run_id)
-    brief_record = store.find_node(run_id, "brief", "default")
-    if brief_record is not None and brief_record.output_json:
-        briefs = parse_items(json.loads(brief_record.output_json), DailyBrief)
-        if briefs:
-            typer.echo(briefs[0].body)
+    _echo_daily_brief(store, run_id)
+
+
+@run_app.command("resume")
+def run_resume(run_id: str) -> None:
+    """从 run-id 恢复：复用已完成节点，从 position_gate 继续（读取用户最新 job 编辑）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    nodes = _resume_nodes(settings, store)
+    _resume_and_echo(store, nodes, run_id)
 
 
 @run_app.command("weekly")
