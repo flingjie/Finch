@@ -1,11 +1,12 @@
-"""双轨调度：原创轨道与互动轨道每轮必执行，故障隔离（同步顺序执行）。
+"""双轨调度：原创轨道与互动轨道每轮必执行，故障隔离（并发执行）。
 
 对应执行计划 Phase 1 的 ``asyncio.gather(..., return_exceptions=True)`` 语义：仓库 runtime 为
-同步顺序执行，两条轨道仍独立运行；任一轨道异常或返回失败状态时，另一条轨道的有效结果保留，
-汇总结果显式标记部分失败，不把整轮误报为完全成功。
+同步顺序执行，但两条轨道在轨道层以 ``ThreadPoolExecutor`` 并发运行；任一轨道异常或返回失败状态时，
+另一条轨道的有效结果保留，汇总结果显式标记部分失败，不把整轮误报为完全成功。
 """
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 from uuid import uuid4
 
@@ -83,14 +84,17 @@ def run_dual_track(
     original_track: Callable[[str], RunRecord],
     engagement_track: Callable[[str], EngagementRunResult],
 ) -> DualTrackResult:
-    """顺序执行两条轨道，共享同一 ``run_id``，并汇总为 ``DualTrackResult``。
+    """并行执行两条轨道，共享同一 ``run_id``，并汇总为 ``DualTrackResult``。
 
-    两条轨道各自以 try/except 隔离：异常被捕获为该轨道的结果，不重新抛出；任一轨道失败
-    都会让 ``DualTrackResult.partial_failure`` 为 True。
+    两条轨道各自以 ``_capture`` 隔离（异常捕获为轨道结果，不重新抛出）；用
+    ``ThreadPoolExecutor`` 并发执行（不变量禁 ``asyncio.gather``），``pool.map`` 保序。
+    任一轨道失败都让 ``DualTrackResult.partial_failure`` 为 True。
     """
     run_id = run_id or uuid4().hex
-    original, original_error = _capture(original_track, run_id)
-    engagement, engagement_error = _capture(engagement_track, run_id)
+    tracks = [original_track, engagement_track]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda track: _capture(track, run_id), tracks))
+    (original, original_error), (engagement, engagement_error) = results
     return DualTrackResult(
         run_id=run_id,
         original=original,

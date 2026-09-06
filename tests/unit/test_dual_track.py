@@ -106,3 +106,27 @@ def test_shared_run_id_propagates_to_both_tracks():
     assert result.run_id == "run-123"
     assert result.original is not None and result.original.id == "run-123"
     assert result.engagement is not None and result.engagement.run_id == "run-123"
+
+
+def test_run_dual_track_runs_both_tracks_in_parallel():
+    import threading
+
+    seen = []
+    barrier = threading.Barrier(2)  # 两条轨道必须同时推进，串行执行会超时触发 BrokenBarrierError
+
+    def original(rid):
+        seen.append("original")
+        barrier.wait(timeout=5)
+        return RunRecord(id=rid, state="COMPLETED")
+
+    def engagement(rid):
+        seen.append("engagement")
+        barrier.wait(timeout=5)
+        return EngagementRunResult(
+            run_id=rid, posts_found=0, candidates=[], failures=[],
+            status="empty", summary="no posts",
+        )
+
+    result = run_dual_track(original_track=original, engagement_track=engagement)
+    assert result.status == "succeeded"
+    assert sorted(seen) == ["engagement", "original"]  # 两条轨道都执行了
