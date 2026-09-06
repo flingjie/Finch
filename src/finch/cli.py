@@ -18,6 +18,7 @@ from .content.voice import (
     load_voice_profile,
     save_voice_profile,
 )
+from .dev.cli import dev_app
 from .engagement.flow import run_discovery_engagement_flow
 from .engagement.metrics import (
     compute_metrics,
@@ -87,6 +88,8 @@ app.add_typer(voice_app, name="voice")
 
 engagement_app = typer.Typer(help="Review engagement candidates (human-in-the-loop)")
 app.add_typer(engagement_app, name="engagement")
+
+app.add_typer(dev_app, name="dev")
 
 
 def _since_iso(since: str | None) -> str | None:

@@ -1,0 +1,26 @@
+{
+  "candidates": {
+    "items": [
+      {
+        "id": "c1",
+        "source": "twitter",
+        "author_handle": "alice",
+        "text": "agent harness reliability",
+        "url": "https://x.com/alice/status/1",
+        "query_id": "q1"
+      }
+    ]
+  },
+  "evidence_cards": {
+    "items": [
+      {
+        "id": "ev1",
+        "event_id": "evt1",
+        "claim": "agent harness reliability matters",
+        "confidence": "SUPPORTED",
+        "publishable": true,
+        "topics": ["agent reliability"]
+      }
+    ]
+  }
+}
