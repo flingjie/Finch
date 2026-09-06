@@ -5,12 +5,14 @@ import pytest
 from pydantic import ValidationError
 
 from finch.settings import (
+    AuthorAccountConfig,
     DailyBudget,
     DailyBudgetWeights,
     EngagementSettings,
     LLMNodeSettings,
     LLMSettings,
     QualityGates,
+    Settings,
     load_settings,
 )
 
@@ -130,3 +132,12 @@ def test_daily_budget_rejects_nonpositive():
 def test_extraction_global_concurrency_default():
     s = load_settings(Path("finch.example.yaml"))
     assert s.extraction.global_max_concurrency == 4
+
+
+def test_settings_author_accounts_default_empty():
+    assert Settings().author_accounts == []
+
+
+def test_author_account_config_defaults():
+    cfg = AuthorAccountConfig(handle="flingjie")
+    assert cfg.platform == "x" and cfg.enabled is True and cfg.history_lookback_days == 90

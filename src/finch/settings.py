@@ -117,6 +117,15 @@ class TwitterSettings(BaseModel):
     blocked_authors: list[str] = Field(default_factory=list)
 
 
+class AuthorAccountConfig(BaseModel):
+    """作者账号配置（P0 自动关联发布）。"""
+
+    platform: str = "x"
+    handle: str = ""
+    enabled: bool = True
+    history_lookback_days: int = 90
+
+
 class ScoringWeights(BaseModel):
     """互动评分五维权重（执行计划 5 默认评分权重表）。"""
 
@@ -163,6 +172,7 @@ class Settings(BaseModel):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
     daily_budget: DailyBudget = Field(default_factory=DailyBudget)
+    author_accounts: list[AuthorAccountConfig] = Field(default_factory=list)
 
 
 def load_settings(path: Path | None = None) -> Settings:
