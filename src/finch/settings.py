@@ -63,6 +63,8 @@ class ExtractionSettings(BaseModel):
     max_concurrent_batches: int = 2
     global_max_concurrency: int = Field(default=4, ge=1)
     timeout_seconds: int = 180
+    max_commits_per_group_prompt: int = Field(default=15, ge=1)
+    max_group_prompt_bytes: int = Field(default=25000, ge=1)
 
 
 class DailyBudgetWeights(BaseModel):

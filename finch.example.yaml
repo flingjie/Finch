@@ -99,6 +99,8 @@ extraction:
   max_concurrent_batches: 2
   global_max_concurrency: 4
   timeout_seconds: 180
+  max_commits_per_group_prompt: 15
+  max_group_prompt_bytes: 25000
 
 daily_budget:
   max_detail_fetches: 40

@@ -6,6 +6,7 @@ from finch.evidence.extractor import (
     ExtractedGroup,
     Extractor,
     IncompleteBatchExtractionError,
+    MergeEventsOutput,
     build_cards,
     group_fingerprint,
     pack_batches,
@@ -337,6 +338,61 @@ def test_extract_grouped_accepts_pregrouped(tmp_path):
     out = extractor.extract_grouped(groups, "r")
     assert [e.id for e in out] == ["evt"]
     assert runner.calls == 1
+
+
+def test_extractor_is_oversized(tmp_path):
+    from finch.settings import ExtractionSettings
+
+    s = ExtractionSettings(max_commits_per_group_prompt=3, max_group_prompt_bytes=1000)
+    extractor = Extractor(None, settings=s, cache_path=tmp_path / "c.json")
+    small = [_detail(f"{i:040d}", f"feat: {i}") for i in range(3)]
+    big = [_detail(f"{i:040d}", f"feat: {i}") for i in range(4)]
+    assert extractor._is_oversized(small) is False
+    assert extractor._is_oversized(big) is True  # 4 commits > 3
+
+
+def test_extractor_split_group():
+    from finch.settings import ExtractionSettings
+
+    s = ExtractionSettings(max_commits_per_group_prompt=2)
+    extractor = Extractor(None, settings=s, cache_path=None)
+    group = [_detail(f"{i:040d}", f"feat: {i}") for i in range(5)]
+    chunks = extractor._split_group(group)
+    assert [len(c) for c in chunks] == [2, 2, 1]
+    assert [c.sha for chunk in chunks for c in chunk] == [c.sha for c in group]  # 保序
+
+
+def test_extract_grouped_routes_oversized_group(tmp_path):
+    from finch.settings import ExtractionSettings
+
+    def _evt(sha, id_):
+        return EngineeringEvent(
+            id=id_, repository="r", commits=[sha],
+            problem=Claim(statement="p", confidence=ClaimConfidence.SUPPORTED),
+            decision=Claim(statement="d", confidence=ClaimConfidence.INFERRED),
+            result=Claim(statement="r", confidence=ClaimConfidence.SUPPORTED),
+        )
+
+    class FakeRunner:
+        def run(self, prompt, model, timeout=None):
+            if model is BatchExtractionOutput:
+                # 每个 chunk 返回一个 partial（group_id g_0）
+                return BatchExtractionOutput(
+                    items=[
+                        {
+                            "group_id": "g_0",
+                            "event": _evt("a" * 40, "part").model_dump(mode="json"),
+                        }
+                    ]
+                )
+            # merge 调用 → MergeEventsOutput
+            return MergeEventsOutput(event=_evt("a" * 40, "merged"))
+
+    s = ExtractionSettings(max_commits_per_group_prompt=2)
+    extractor = Extractor(FakeRunner(), settings=s, cache_path=tmp_path / "c.json")
+    group = [_detail("a" * 40, f"feat: {i}") for i in range(3)]  # 3 commits > 2 → 超大
+    out = extractor.extract_grouped([group], "r")
+    assert [e.id for e in out] == ["merged"]
 
 
 def test_extractor_semaphore_caps_concurrent_llm_calls(tmp_path):

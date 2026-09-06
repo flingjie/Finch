@@ -38,6 +38,10 @@ class BatchExtractionOutput(BaseModel):
     items: list[ExtractedGroup]
 
 
+class MergeEventsOutput(BaseModel):
+    event: EngineeringEvent
+
+
 class DuplicateExtractionGroupError(RuntimeError):
     """批量输出包含重复 group_id。"""
 
@@ -303,9 +307,9 @@ class Extractor:
             return []
         template = _BATCH_PROMPT_PATH.read_text()
 
-        # 指纹缓存查找：命中直接复用，未命中进入提取列表。
         events: dict[int, EngineeringEvent] = {}
         miss_indices: list[int] = []
+        oversized_indices: list[int] = []
         for i, group in enumerate(groups):
             cached = (
                 self.cache.get(group_fingerprint(repo, group, _CACHE_VERSION))
@@ -316,20 +320,32 @@ class Extractor:
                 events[i] = cached
             else:
                 miss_indices.append(i)
+                if self._is_oversized(group):
+                    oversized_indices.append(i)
 
-        if miss_indices:
-            miss_groups = [groups[i] for i in miss_indices]
+        # 正常组：走既有批量提取（不改缓存语义）
+        normal_miss = [i for i in miss_indices if i not in oversized_indices]
+        if normal_miss:
+            miss_groups = [groups[i] for i in normal_miss]
             fresh = self._extract_groups(miss_groups, repo, template)
-            for local_i, global_i in enumerate(miss_indices):
+            for local_i, global_i in enumerate(normal_miss):
                 events[global_i] = fresh[local_i]
                 if self.cache is not None:
                     self.cache.put(
                         group_fingerprint(repo, miss_groups[local_i], _CACHE_VERSION),
                         fresh[local_i],
                     )
-            if self.cache is not None:
-                self.cache.save()
 
+        # 超大组：逐个分层提取（拆块 → 局部提取 → merge）
+        for i in oversized_indices:
+            events[i] = self._extract_oversized_group(groups[i], repo, template)
+            if self.cache is not None:
+                self.cache.put(
+                    group_fingerprint(repo, groups[i], _CACHE_VERSION), events[i]
+                )
+
+        if self.cache is not None:
+            self.cache.save()
         return [events[i] for i in range(len(groups))]
 
     def _extract_groups(
@@ -412,6 +428,39 @@ class Extractor:
                 ),
             )
         return _validate_batch(output, groups, repo)
+
+    def _is_oversized(self, group: list[CommitDetail]) -> bool:
+        return len(group) > self.settings.max_commits_per_group_prompt or (
+            len(_render_commits(group).encode("utf-8")) > self.settings.max_group_prompt_bytes
+        )
+
+    def _split_group(self, group: list[CommitDetail]) -> list[list[CommitDetail]]:
+        n = self.settings.max_commits_per_group_prompt
+        return [group[i:i + n] for i in range(0, len(group), n)]
+
+    def _merge_partials(
+        self, partials: list[EngineeringEvent], repo: str
+    ) -> EngineeringEvent:
+        template = Path("prompts/merge-engineering-events.md").read_text()
+        partials_json = json.dumps(
+            [p.model_dump(mode="json") for p in partials], ensure_ascii=False
+        )
+        prompt = template.replace("{repo}", repo).replace("{partials}", partials_json)
+        with self._llm_semaphore:
+            output = cast(
+                MergeEventsOutput,
+                self.runner.run(prompt, MergeEventsOutput, timeout=self.settings.timeout_seconds),
+            )
+        return output.event
+
+    def _extract_oversized_group(
+        self, group: list[CommitDetail], repo: str, template: str
+    ) -> EngineeringEvent:
+        partials: list[EngineeringEvent] = []
+        for chunk in self._split_group(group):
+            partials.extend(self._extract_group_batch([chunk], repo, template))
+        merged = self._merge_partials(partials, repo)
+        return _finalize_event(merged, repo, group)
 
 
 def build_cards(events: list[EngineeringEvent]) -> list[EvidenceCard]:
