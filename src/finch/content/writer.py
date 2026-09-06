@@ -220,12 +220,34 @@ def rewrite(
     cards_by_id: dict[str, EvidenceCard],
     job: ContentJob | None = None,
 ) -> Draft:
+    """按 Critic 失败检查器指令重写（保留 run_id 等来源字段）。"""
+    return _rewrite(runner, draft, _render_failed_checks(failed_checks), cards_by_id, job)
+
+
+def rewrite_with_instruction(
+    runner: CodexRunner,
+    draft: Draft,
+    instruction: str,
+    cards_by_id: dict[str, EvidenceCard],
+    job: ContentJob | None = None,
+) -> Draft:
+    """按自然语言指令重写（单一决策点 `decide revise` 路径）。"""
+    return _rewrite(runner, draft, instruction, cards_by_id, job)
+
+
+def _rewrite(
+    runner: CodexRunner,
+    draft: Draft,
+    instructions: str,
+    cards_by_id: dict[str, EvidenceCard],
+    job: ContentJob | None = None,
+) -> Draft:
     card_ids = {ref.evidence_card_id for ref in draft.claims}
     cards = [cards_by_id[cid] for cid in card_ids if cid in cards_by_id]
     prompt = _REWRITE_PROMPT.format(
         body=draft.body,
         job_context=_render_job_context(job),
-        rewrite_instructions=_render_failed_checks(failed_checks),
+        rewrite_instructions=instructions,
         cards=_render_cards(cards),
     )
     out = _sanitize_draft_claims(cast(Draft, runner.run(prompt, Draft)))
@@ -237,5 +259,6 @@ def rewrite(
             "language": draft.language,
             "content_job_id": draft.content_job_id,
             "position_statement": draft.position_statement,
+            "run_id": draft.run_id,
         }
     )

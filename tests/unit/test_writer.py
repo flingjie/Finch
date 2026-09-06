@@ -351,3 +351,35 @@ def test_rewrite_downgrades_model_user_confirmed():
                                                confidence=ClaimConfidence.USER_CONFIRMED)])
     d = rewrite(FakeRunner(out), _good_draft(), [_failed_check()], {"ev_1": _card()})
     assert d.claims[0].confidence == ClaimConfidence.SUPPORTED
+
+
+def test_rewrite_preserves_run_id(monkeypatch):
+    from finch.content import writer
+
+    draft = Draft(id="d1", kind=DraftKind.ORIGINAL, body="before", claims=[], run_id="r1")
+
+    class _Runner:
+        def run(self, prompt, model):
+            return Draft(id="d1", kind=DraftKind.ORIGINAL, body="after", claims=[])
+
+    monkeypatch.setattr(writer, "_sanitize_draft_claims", lambda d: d)
+    out = writer.rewrite(_Runner(), draft, [], {})
+    assert out.run_id == "r1"
+    assert out.body == "after"
+
+
+def test_rewrite_with_instruction_uses_nl_instruction(monkeypatch):
+    from finch.content import writer
+
+    captured: dict[str, str] = {}
+
+    class _Runner:
+        def run(self, prompt, model):
+            captured["prompt"] = prompt
+            return Draft(id="d1", kind=DraftKind.ORIGINAL, body="revised", claims=[])
+
+    monkeypatch.setattr(writer, "_sanitize_draft_claims", lambda d: d)
+    draft = Draft(id="d1", kind=DraftKind.ORIGINAL, body="before", claims=[], run_id="r1")
+    out = writer.rewrite_with_instruction(_Runner(), draft, "语气弱一点", {})
+    assert out.body == "revised"
+    assert "语气弱一点" in captured["prompt"]
