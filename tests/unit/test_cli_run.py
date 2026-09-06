@@ -1227,3 +1227,39 @@ def test_run_daily_interactive_non_interactive_conflict(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["run", "daily", "--interactive", "--non-interactive"])
     assert r.exit_code == 1
     assert "互斥" in r.output
+
+
+def test_decide_accept(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    # 种子 job + draft
+    ContentJobRepository(store).upsert_job(
+        _job(job_id="j1", author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"))
+    )
+    DraftRepository(store).upsert_draft(
+        Draft(id="d1", kind=DraftKind.ORIGINAL, body="b", content_job_id="j1")
+    )
+    r = CliRunner().invoke(app, ["decide", "j1", "--action", "accept", "--json"])
+    assert r.exit_code == 0, r.output
+    assert '"action": "accept"' in r.output
+    assert ContentJobRepository(store).get_job("j1").author_position.confirmed is True
+
+
+def test_decide_skip(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    ContentJobRepository(store).upsert_job(
+        _job(job_id="j1", author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"))
+    )
+    DraftRepository(store).upsert_draft(
+        Draft(id="d1", kind=DraftKind.ORIGINAL, body="b", content_job_id="j1")
+    )
+    r = CliRunner().invoke(
+        app, ["decide", "j1", "--action", "skip", "--reason", "not_now", "--json"]
+    )
+    assert r.exit_code == 0, r.output
+    assert ContentJobRepository(store).get_job("j1").status.value == "do_not_write"

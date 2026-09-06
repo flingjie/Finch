@@ -58,8 +58,9 @@ from .graph.runtime import GraphRuntime
 from .graph.state import GraphState
 from .llm.openai_compatible import create_runner
 from .reddit.opencli_client import RedditOpenCliClient
+from .review.decision import DecisionService
 from .review.feedback import FeedbackService
-from .review.models import OutcomeAssessment, ReviewAction, SkipReason
+from .review.models import DecisionAction, OutcomeAssessment, ReviewAction, SkipReason
 from .review.service import ReviewService, build_review_package, render_review_package
 from .review.weekly import render_weekly, weekly_analysis
 from .settings import Settings, load_settings
@@ -69,6 +70,7 @@ from .storage.repositories import (
     ContentJobRepository,
     ConversationEvidenceRepository,
     CriticReportRepository,
+    DecisionRecordRepository,
     DraftRepository,
     DraftVersionRepository,
     EngagementRunStatsRepository,
@@ -1271,6 +1273,49 @@ def voice_reject_example(
     profile.rejected_examples.append(RejectedExample(id=draft_id, reason=reason))
     save_voice_profile(profile, path)
     typer.echo(f"rejected example: {draft_id}")
+
+
+@app.command("decide")
+def decide(
+    item_id: str = typer.Argument(..., help="primary ContentJob id"),
+    action: str = typer.Option(..., "--action", help="accept|revise|skip"),
+    reason: str = typer.Option(None, "--reason", help="--action skip 的拒绝理由"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """单一决策点：accept 同时确认立场 + 批准草稿；skip 标记 DO_NOT_WRITE。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    svc = DecisionService(
+        jobs=ContentJobRepository(store),
+        drafts=DraftRepository(store),
+        approvals=PositionApprovalRepository(store),
+        reviews=ReviewRepository(store),
+        decisions=DecisionRecordRepository(store),
+    )
+    try:
+        action_enum = DecisionAction(action)
+    except ValueError as exc:
+        typer.echo(f"invalid --action: {action}")
+        raise typer.Exit(code=1) from exc
+    try:
+        if action_enum is DecisionAction.ACCEPT:
+            record = svc.accept(item_id)
+        elif action_enum is DecisionAction.SKIP:
+            if not reason:
+                typer.echo("--action skip requires --reason")
+                raise typer.Exit(code=1)
+            record = svc.skip(item_id, reason)
+        else:
+            typer.echo("--action revise not yet supported (Plan 2)")
+            raise typer.Exit(code=1)
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(record.model_dump_json(indent=2))
+    else:
+        typer.echo(record.action.value)
 
 
 if __name__ == "__main__":
