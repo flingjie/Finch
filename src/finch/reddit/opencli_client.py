@@ -4,6 +4,7 @@ import json
 import os
 
 from finch.github.gh_client import _run
+from finch.opencli import run_opencli
 
 from .models import (
     RedditCommandBlocked,
@@ -83,7 +84,9 @@ def _browser_flags() -> list[str]:
 def _call(argv: list[str], timeout: float = 60.0) -> list[RedditPost]:
     """执行 opencli 命令并解析结果."""
     _check_allowlist(argv)
-    r = _run([*argv, *_browser_flags()], timeout=timeout)
+    r = run_opencli(
+        [*argv, *_browser_flags()], run_fn=_run, timeout=timeout
+    )
     if not r["ok"]:
         stderr = (r["stderr"] or "").strip()
         if "not logged in" in stderr.lower() or "login" in stderr.lower():

@@ -53,6 +53,7 @@ engagement:
   schedule: every_run
   platforms: [x, reddit]
   max_posts_scanned: 30
+  search_concurrency: 4
   min_candidate_score: 0.72
   max_bookmarks: 5
   max_reply_drafts: 3

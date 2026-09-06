@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from finch.settings import (
     DailyBudget,
     DailyBudgetWeights,
+    EngagementSettings,
     LLMNodeSettings,
     LLMSettings,
     QualityGates,
@@ -54,6 +55,12 @@ def test_quality_gates_defaults_without_file(tmp_path, monkeypatch):
     s = load_settings(tmp_path / "missing.yaml")
     assert s.quality_gates.match_top_k == 10
     assert s.twitter.blocked_authors == []
+
+
+def test_engagement_search_concurrency_defaults_and_rejects_nonpositive():
+    assert EngagementSettings().search_concurrency == 4
+    with pytest.raises(ValidationError):
+        EngagementSettings(search_concurrency=0)
 
 
 def test_for_node_returns_default_model_when_no_node():

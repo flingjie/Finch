@@ -236,7 +236,7 @@ def search_engagement_posts(
     if len(tasks) <= 1:
         results = [_search(task) for task in tasks]
     else:
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, engagement.search_concurrency)) as pool:
             results = list(pool.map(_search, tasks))
 
     # 按任务顺序回放结果，重新注入 unavailable provider 的失败。

@@ -134,6 +134,7 @@ class EngagementSettings(BaseModel):
     schedule: str = "every_run"
     platforms: list[str] = Field(default_factory=lambda: ["x", "reddit"])
     max_posts_scanned: int = 30
+    search_concurrency: int = Field(default=4, ge=1)
     min_candidate_score: float = 0.72
     max_bookmarks: int = 5
     max_reply_drafts: int = 3
