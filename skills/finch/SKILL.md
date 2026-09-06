@@ -19,6 +19,7 @@ Finch 的读取与生成都依赖真实网络：`gh` 读 GitHub，`opencli` 读 
 |---|---|---|
 | `$finch daily` | 运行完整每日 Graph（双轨），生成 Daily Brief | `finch run daily` |
 | `$finch resume` | 从 run-id 恢复，复用已完成节点、从 position_gate 继续 | `finch run resume <RUN_ID>` |
+| `$finch resolve` | 处理当前 author-position 阻塞点（确认/修改/跳过/停止），完成后自动 resume | `finch run resolve [RUN_ID] --confirm` / `--edit` / `--skip --reason` / `--stop` / `--json` |
 | `$finch reflect` | 只用 `gh` 分析某仓库/某时间段的工程变化 | `finch github reflect` |
 | `$finch review` | 处理待审核草稿与反馈 | `finch review list` / `show` / `approve` / `revise` / `skip` / `confirm-position` / `feedback` |
 | `$finch jobs` | 查看/回答/确认/拒绝 Content Jobs（人工立场） | `finch jobs list` / `show` / `answer` / `confirm-position` / `reject` |
@@ -44,7 +45,7 @@ Finch 的读取与生成都依赖真实网络：`gh` 读 GitHub，`opencli` 读 
 
 - 环境异常：运行 `finch diagnose` 分别报告 `gh` 与 `opencli` 状态。不要自动安装、不要修改浏览器配置、不要代填凭据。
 - 每日 Graph 停在 `WAITING_FOR_REVIEW`：运行 `finch review list` 查看待审草稿，用 `finch review show <ID>` 看全文，再 `approve` / `revise` / `skip`。
-- 每日 Graph 停在 `NEEDS_INPUT`（position_gate 需要作者立场）：`finch jobs show <JOB_ID>` 看问题 → `finch jobs answer <JOB_ID> --file answers.yaml` → `finch jobs confirm-position <JOB_ID>` → `finch run resume <RUN_ID>`。
+- 每日 Graph 停在 `NEEDS_INPUT`（position_gate 需要作者立场）：运行 `finch run resolve --json` 取结构化 `input_request`，把建议立场渲染成对话选项，依据用户选择调用 `finch run resolve [RUN_ID] --confirm | --edit | --skip --reason | --stop`（完成后自动 resume）。底层 `finch jobs answer/confirm-position/reject` 与 `finch run resume` 保留给脚本与高级用户。
 - Graph 停在 `BLOCKED` / `FAILED`：用 `finch diagnose` 排查；不要自行修改质量门禁数值。
 - `revise` 需要用户提供修订文本（`--file revised.md`）；`skip` 需要标准跳过原因（`--reason evidence_insufficient|not_relevant|low_quality|not_now|other`）。
 - 发布后由用户手动填写发布链接与互动数据：`finch review feedback <DRAFT_ID> --url <URL> --metrics '<json>'`。
