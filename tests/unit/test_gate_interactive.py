@@ -66,3 +66,12 @@ def test_edit_position_inline_keeps_fields_on_empty(monkeypatch):
     assert out.decision == "方案2"
     assert out.tradeoff == "t"
     assert out.change_mind_if == "cm"
+
+
+def test_edit_position_inline_incomplete_retries(monkeypatch):
+    fake = _FakeTyper(["", "", "", "", "c", "d", "t", ""])
+    monkeypatch.setattr(interactive, "typer", fake)
+    out = interactive.edit_position_inline(ProposedPosition())
+    assert out.complete()
+    assert out.claim == "c"
+    assert any("立场不完整" in e for e in fake.echoed)

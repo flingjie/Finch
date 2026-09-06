@@ -9,14 +9,22 @@ from .render import render_confirm_card, render_evidence
 
 
 def edit_position_inline(proposed: ProposedPosition) -> ProposedPosition:
-    """逐字段编辑立场；直接回车（空输入）保留原值。"""
+    """逐字段编辑立场；直接回车（空输入）保留原值；不完整时提示补全并重新询问。"""
     typer.echo("编辑你的立场（直接回车表示保留原内容）")
-    claim = typer.prompt("主张", default=proposed.claim or "") or proposed.claim
-    decision = typer.prompt("方案", default=proposed.decision or "") or proposed.decision
-    tradeoff = typer.prompt("取舍", default=proposed.tradeoff or "") or proposed.tradeoff
+    edited = _collect_position(proposed)
+    while not edited.complete():
+        typer.echo("立场不完整，请补充主张/方案/取舍")
+        edited = _collect_position(edited)
+    return edited
+
+
+def _collect_position(current: ProposedPosition) -> ProposedPosition:
+    claim = typer.prompt("主张", default=current.claim or "") or current.claim
+    decision = typer.prompt("方案", default=current.decision or "") or current.decision
+    tradeoff = typer.prompt("取舍", default=current.tradeoff or "") or current.tradeoff
     change_mind_if = (
-        typer.prompt("改变决定的条件", default=proposed.change_mind_if or "")
-        or proposed.change_mind_if
+        typer.prompt("改变决定的条件", default=current.change_mind_if or "")
+        or current.change_mind_if
     )
     return ProposedPosition(
         claim=claim,

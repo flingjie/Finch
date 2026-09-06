@@ -1121,3 +1121,13 @@ def test_run_resolve_interactive_non_interactive_conflict(monkeypatch, tmp_path)
     assert r.exit_code == 1
     assert "互斥" in r.output
 
+
+def test_run_daily_interactive_non_interactive_conflict(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    r = CliRunner().invoke(app, ["run", "daily", "--interactive", "--non-interactive"])
+    assert r.exit_code == 1
+    assert "互斥" in r.output
+

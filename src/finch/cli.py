@@ -15,7 +15,7 @@ import yaml
 from .codex.runner import CodexRunner
 from .content.checkers.base import CheckResult
 from .content.jobs import AuthorPosition, ContentJob, ContentJobStatus
-from .content.models import DailyBrief, Draft
+from .content.models import DailyBrief, Draft, DraftKind
 from .content.voice import (
     ApprovedExample,
     RejectedExample,
@@ -197,7 +197,10 @@ def _original_draft_count(store: Store, run_id: str) -> int:
     record = store.find_node(run_id, "draft", "default")
     if record is None or not record.output_json:
         return 0
-    return len(parse_items(json.loads(record.output_json), Draft))
+    return sum(
+        1 for d in parse_items(json.loads(record.output_json), Draft)
+        if d.kind == DraftKind.ORIGINAL
+    )
 
 
 def _finish_daily(
@@ -260,15 +263,17 @@ def _finish_daily(
             raise typer.Exit(code=1) from exc
         typer.echo(render_outcome(action))
         run = _resume_and_echo(store, nodes, run_id, verbose=verbose)
-        if run.state != GraphState.NEEDS_INPUT.value:
+        if run.state == GraphState.NEEDS_INPUT.value:
+            request = _read_input_request(store, run_id)
+            continue
+        if run.state in {GraphState.COMPLETED.value, GraphState.SKIPPED.value}:
             typer.echo(
                 render_produced(
                     engagement_drafts=engagement_drafts,
                     original_drafts=_original_draft_count(store, run_id),
                 )
             )
-            return
-        request = _read_input_request(store, run_id)
+        return
 
 
 def _persist_engagement_candidates(result: DualTrackResult, store: Store) -> None:
@@ -532,14 +537,6 @@ def run_daily(
         typer.echo(f"[internal] state={run.state} run_id={run.id}")
     _persist_run_outputs(store, run.id)
     _echo_daily_brief(store, run.id)
-
-
-_ACTION_BY_CHOICE = {
-    "1": InputAction.CONFIRM,
-    "2": InputAction.EDIT,
-    "3": InputAction.SKIP,
-    "4": InputAction.STOP,
-}
 
 
 def _latest_needs_input_run_id(store: Store) -> str | None:
