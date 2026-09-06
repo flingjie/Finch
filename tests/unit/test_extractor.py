@@ -395,6 +395,38 @@ def test_extract_grouped_routes_oversized_group(tmp_path):
     assert [e.id for e in out] == ["merged"]
 
 
+def test_extract_oversized_group_rejects_invented_sha(tmp_path):
+    from finch.settings import ExtractionSettings
+
+    def _evt(sha, id_):
+        return EngineeringEvent(
+            id=id_, repository="r", commits=[sha],
+            problem=Claim(statement="p", confidence=ClaimConfidence.SUPPORTED),
+            decision=Claim(statement="d", confidence=ClaimConfidence.INFERRED),
+            result=Claim(statement="r", confidence=ClaimConfidence.SUPPORTED),
+        )
+
+    class FakeRunner:
+        def run(self, prompt, model, timeout=None):
+            if model is BatchExtractionOutput:
+                return BatchExtractionOutput(
+                    items=[
+                        {
+                            "group_id": "g_0",
+                            "event": _evt("a" * 40, "part").model_dump(mode="json"),
+                        }
+                    ]
+                )
+            # merge 返回一个不在 group 内的 SHA
+            return MergeEventsOutput(event=_evt("9" * 40, "merged"))
+
+    s = ExtractionSettings(max_commits_per_group_prompt=2)
+    extractor = Extractor(FakeRunner(), settings=s, cache_path=tmp_path / "c.json")
+    group = [_detail("a" * 40, f"feat: {i}") for i in range(3)]  # 3 > 2 → 超大
+    with pytest.raises(IncompleteBatchExtractionError):
+        extractor.extract_grouped([group], "r")
+
+
 def test_extractor_semaphore_caps_concurrent_llm_calls(tmp_path):
     import threading
     import time

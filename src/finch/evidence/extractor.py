@@ -460,7 +460,13 @@ class Extractor:
         for chunk in self._split_group(group):
             partials.extend(self._extract_group_batch([chunk], repo, template))
         merged = self._merge_partials(partials, repo)
-        return _finalize_event(merged, repo, group)
+        event = _finalize_event(merged, repo, group)
+        group_shas = {c.sha for c in group}
+        if any(sha not in group_shas for sha in event.commits):
+            raise IncompleteBatchExtractionError(
+                f"merge produced commits outside the group: {event.commits}"
+            )
+        return event
 
 
 def build_cards(events: list[EngineeringEvent]) -> list[EvidenceCard]:
