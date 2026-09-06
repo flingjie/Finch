@@ -17,6 +17,7 @@ from .author.reconcile import reconcile
 from .author.sync import sync_posts, verify_account
 from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
+from .content.checkers.aggregate import AggregateOutcome
 from .content.checkers.base import CheckResult
 from .content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from .content.models import DailyBrief, Draft, DraftKind
@@ -62,6 +63,16 @@ from .graph.nodes import Node
 from .graph.replay import replay
 from .graph.runtime import GraphRuntime
 from .graph.state import GraphState
+from .idea.models import IdeaAssessment
+from .idea.service import (
+    assess_idea,
+    build_content_job,
+    build_draft,
+    critic_failure_reason,
+    recent_author_posts,
+    run_idea_critic,
+    write_idea,
+)
 from .llm.openai_compatible import create_runner
 from .reddit.opencli_client import RedditOpenCliClient
 from .review.decision import DecisionService
@@ -72,6 +83,7 @@ from .review.weekly import render_weekly, weekly_analysis
 from .settings import Settings, load_settings
 from .storage.database import RunRecord, Store
 from .storage.repositories import (
+    AuthorPostRepository,
     CommitIngestionRepository,
     ContentJobRepository,
     ConversationEvidenceRepository,
@@ -1479,6 +1491,121 @@ def next_item(as_json: bool = typer.Option(False, "--json", help="输出 JSON"))
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         typer.echo(payload.get("topic") or payload.get("status", "none"))
+
+
+@app.command()
+def idea(
+    text: str = typer.Argument(..., help="想法或片段"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),  # noqa: B008
+) -> None:
+    """判断一个想法能否发，能发时生成样稿进入 Review。"""
+    if not text.strip():
+        typer.echo("idea text is empty")
+        raise typer.Exit(code=1)
+
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+
+    cards = EvidenceRepository(store).list_cards()
+    cards_by_id = {card.id: card for card in cards}
+    recent_posts = recent_author_posts(AuthorPostRepository(store).list())
+
+    assess_runner = create_runner(settings.llm, "assess_idea") or CodexRunner()
+    write_runner = create_runner(settings.llm, "write_idea") or CodexRunner()
+    critic_runner = create_runner(settings.llm, "critique") or CodexRunner()
+    voice_profile = load_voice_profile(settings.paths.voice_profile_path)
+
+    try:
+        assessment = assess_idea(assess_runner, text, cards, recent_posts)
+    except (RuntimeError, StructuredOutputError) as exc:
+        _echo_idea_error(exc, as_json)
+        raise typer.Exit(code=1) from exc
+
+    if assessment.status != "ready":
+        _echo_idea(assessment, as_json)
+        return
+
+    matched_cards = [
+        cards_by_id[cid] for cid in assessment.matched_evidence_ids if cid in cards_by_id
+    ]
+    try:
+        body = write_idea(write_runner, text, assessment, matched_cards)
+        job = build_content_job(text, assessment)
+        draft = build_draft(job, body)
+        outcome, checks, final_draft = run_idea_critic(
+            critic_runner,
+            draft,
+            job,
+            matched_cards,
+            settings.quality_gates.max_rewrite_rounds,
+            voice_profile=voice_profile,
+        )
+    except (RuntimeError, StructuredOutputError) as exc:
+        _echo_idea_error(exc, as_json)
+        raise typer.Exit(code=1) from exc
+
+    if outcome != AggregateOutcome.PASS:
+        reason_code, reason = critic_failure_reason(checks)
+        _echo_idea(
+            IdeaAssessment(
+                status="not_ready",
+                reason_code=reason_code,
+                reason=reason,
+                core_point=assessment.core_point,
+                matched_evidence_ids=assessment.matched_evidence_ids,
+            ),
+            as_json,
+        )
+        return
+
+    ContentJobRepository(store).upsert_job(job)
+    DraftRepository(store).upsert_draft(final_draft)
+    CriticReportRepository(store).upsert_report(
+        final_draft.id, 0, checks, AggregateOutcome.PASS
+    )
+
+    _echo_idea(
+        IdeaAssessment(
+            status="ready",
+            reason_code=None,
+            reason="观点明确，且通过 Critic",
+            core_point=assessment.core_point,
+            matched_evidence_ids=assessment.matched_evidence_ids,
+            draft_id=final_draft.id,
+            sample=final_draft.body,
+        ),
+        as_json,
+    )
+
+
+def _echo_idea(assessment: IdeaAssessment, as_json: bool) -> None:
+    if as_json:
+        typer.echo(assessment.model_dump_json(indent=2))
+        return
+    if assessment.status == "ready":
+        typer.echo("适合发。")
+        typer.echo(f"\n原因\n{assessment.reason}")
+        if assessment.core_point:
+            typer.echo(f"\n核心观点\n{assessment.core_point}")
+        if assessment.sample:
+            typer.echo(f"\n样稿\n{assessment.sample}")
+        if assessment.draft_id:
+            typer.echo(f"\n采用：finch review approve {assessment.draft_id}")
+            typer.echo(f"修改：finch review revise {assessment.draft_id} --file <path>")
+            typer.echo(f"跳过：finch review skip {assessment.draft_id} --reason not_now")
+    else:
+        typer.echo("暂时不适合发。")
+        typer.echo(f"\n原因\n{assessment.reason}")
+        if assessment.reason_code:
+            typer.echo(f"（{assessment.reason_code}）")
+
+
+def _echo_idea_error(exc: Exception, as_json: bool) -> None:
+    if as_json:
+        typer.echo(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False))
+    else:
+        typer.echo(f"idea failed: {exc}")
 
 
 if __name__ == "__main__":
