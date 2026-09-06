@@ -8,6 +8,7 @@ import tempfile
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import typer
 import yaml
@@ -1280,6 +1281,9 @@ def decide(
     item_id: str = typer.Argument(..., help="primary ContentJob id"),
     action: str = typer.Option(..., "--action", help="accept|revise|skip"),
     reason: str = typer.Option(None, "--reason", help="--action skip 的拒绝理由"),
+    instruction: str | None = typer.Option(
+        None, "--instruction", help="--action revise 的自然语言指令"
+    ),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
     """单一决策点：accept 同时确认立场 + 批准草稿；skip 标记 DO_NOT_WRITE。"""
@@ -1298,6 +1302,8 @@ def decide(
     except ValueError as exc:
         typer.echo(f"invalid --action: {action}")
         raise typer.Exit(code=1) from exc
+    record = None
+    result = None
     try:
         if action_enum is DecisionAction.ACCEPT:
             record = svc.accept(item_id)
@@ -1306,16 +1312,32 @@ def decide(
                 typer.echo("--action skip requires --reason")
                 raise typer.Exit(code=1)
             record = svc.skip(item_id, reason)
-        else:
-            typer.echo("--action revise not yet supported (Plan 2)")
-            raise typer.Exit(code=1)
+        elif action_enum is DecisionAction.REVISE:
+            if not instruction:
+                typer.echo("--action revise requires --instruction")
+                raise typer.Exit(code=1)
+            cards_by_id = {
+                c.id: c for c in EvidenceRepository(store).list_cards()
+            }
+            runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
+            result = svc.revise(
+                item_id, instruction,
+                runner=runner, cards_by_id=cards_by_id, gates=settings.quality_gates,
+            )
     except (KeyError, ValueError) as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
     if as_json:
-        typer.echo(record.model_dump_json(indent=2))
+        if record is not None:
+            typer.echo(record.model_dump_json(indent=2))
+        else:
+            typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
     else:
-        typer.echo(record.action.value)
+        if record is not None:
+            typer.echo(record.action.value)
+        else:
+            assert result is not None
+            typer.echo(result["new_body"])
 
 
 if __name__ == "__main__":

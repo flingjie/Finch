@@ -1263,3 +1263,33 @@ def test_decide_skip(monkeypatch, tmp_path):
     )
     assert r.exit_code == 0, r.output
     assert ContentJobRepository(store).get_job("j1").status.value == "do_not_write"
+
+
+def test_decide_revise(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    ContentJobRepository(store).upsert_job(
+        _job(job_id="j1", author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"))
+    )
+    DraftRepository(store).upsert_draft(
+        Draft(id="d1", kind=DraftKind.ORIGINAL, body="b", content_job_id="j1")
+    )
+
+    class _FakeDecisionService:
+        def __init__(self, revise):
+            self._revise = revise
+
+        def revise(self, job_id, instruction, *, runner, cards_by_id, gates):
+            return self._revise
+
+    monkeypatch.setattr(
+        cli, "DecisionService",
+        lambda **kw: _FakeDecisionService(revise={"new_body": "v2", "diff": "", "critic": {}}),
+    )
+    r = CliRunner().invoke(
+        app, ["decide", "j1", "--action", "revise", "--instruction", "语气弱一点", "--json"]
+    )
+    assert r.exit_code == 0, r.output
+    assert "v2" in r.output
