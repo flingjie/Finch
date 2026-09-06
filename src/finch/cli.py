@@ -1340,5 +1340,57 @@ def decide(
             typer.echo(result["new_body"])
 
 
+@app.command("next")
+def next_item(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """返回下一个待决策卡（primary ContentJob + 其草稿），无则 status=none。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+
+    decided_job_ids = {
+        rec.job_id for rec in DecisionRecordRepository(store).list()
+        if rec.action in {DecisionAction.ACCEPT, DecisionAction.SKIP}
+    }
+    drafts = [d for d in DraftRepository(store).list_drafts() if d.content_job_id]
+    pending = [d for d in drafts if d.content_job_id not in decided_job_ids]
+    if not pending:
+        payload: dict[str, object] = {"status": "none"}
+    else:
+        draft = pending[0]
+        job_id = draft.content_job_id
+        assert job_id is not None  # filtered by the list comprehension above
+        job = ContentJobRepository(store).get_job(job_id)
+        cards_by_id = {c.id: c for c in EvidenceRepository(store).list_cards()}
+        evidence = [
+            {"id": cid, "claim": cards_by_id[cid].claim}
+            for cid in (job.source_card_ids if job else []) if cid in cards_by_id
+        ]
+        pos = job.author_position if job else None
+        payload = {
+            "status": "review_required",
+            "job_id": job.id if job else job_id,
+            "topic": (job.core_message or job.reader_problem) if job else "",
+            "why_now": job.why_now if job else "",
+            "position": {
+                "claim": pos.claim if pos else "",
+                "decision": pos.decision if pos else "",
+                "tradeoff": pos.tradeoff if pos else "",
+                "source": (
+                    pos.position_source.value if pos and pos.position_source else "inferred"
+                ),
+            },
+            "evidence": evidence,
+            "draft": draft.body,
+            "draft_id": draft.id,
+            "must_ask": [],
+            "ask_reasons": [],
+            "risks": [],
+        }
+    if as_json:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(payload.get("topic") or payload.get("status", "none"))
+
+
 if __name__ == "__main__":
     app()

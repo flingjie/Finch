@@ -1293,3 +1293,35 @@ def test_decide_revise(monkeypatch, tmp_path):
     )
     assert r.exit_code == 0, r.output
     assert "v2" in r.output
+
+
+def test_next_json_returns_card(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    ContentJobRepository(store).upsert_job(
+        _job(
+            job_id="j1",
+            author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"),
+            core_message="topic here", why_now="why now",
+        )
+    )
+    DraftRepository(store).upsert_draft(
+        Draft(id="d1", kind=DraftKind.ORIGINAL, body="body", content_job_id="j1")
+    )
+    r = CliRunner().invoke(app, ["next", "--json"])
+    assert r.exit_code == 0, r.output
+    assert '"job_id": "j1"' in r.output
+    assert "topic here" in r.output
+    assert '"must_ask": []' in r.output
+
+
+def test_next_json_none(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    r = CliRunner().invoke(app, ["next", "--json"])
+    assert r.exit_code == 0, r.output
+    assert '"status": "none"' in r.output
