@@ -129,3 +129,5 @@ def test_revise_rewrites_and_persists(monkeypatch, tmp_path):
     assert DraftRepository(store).get_draft("d1").body == "after"
     rec = DecisionRecordRepository(store).get("j1")
     assert rec is not None and rec.action == DecisionAction.REVISE
+    # 修订历史写入 list_history（周复盘「修改次数/修正率」口径）
+    assert [h.action for h in ReviewRepository(store).list_history()] == [ReviewAction.REVISE]

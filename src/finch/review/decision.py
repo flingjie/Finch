@@ -111,13 +111,13 @@ class DecisionService:
         diff = compute_diff(draft.body, new_draft.body)
 
         self.drafts.upsert_draft(new_draft)
-        self.reviews.save_review(
-            ReviewDecision(
-                id=f"rev_{draft.id}", draft_id=draft.id,
-                action=ReviewAction.REVISE, revised_body=new_draft.body, diff=diff,
-                decided_at=datetime.now(UTC),
-            )
+        decision = ReviewDecision(
+            id=f"rev_{draft.id}", draft_id=draft.id,
+            action=ReviewAction.REVISE, revised_body=new_draft.body, diff=diff,
+            decided_at=datetime.now(UTC),
         )
+        self.reviews.save_review(decision)
+        self.reviews.append_history(decision)
         fingerprint = (
             position_fingerprint(job.author_position) if job.author_position else ""
         )

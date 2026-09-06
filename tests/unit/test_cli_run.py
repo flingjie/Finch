@@ -1326,6 +1326,35 @@ def test_decide_revise(monkeypatch, tmp_path):
     assert "v2" in r.output
 
 
+def test_decide_revise_codex_error_emits_structured_json(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    ContentJobRepository(store).upsert_job(
+        _job(job_id="j1", author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"))
+    )
+    DraftRepository(store).upsert_draft(
+        Draft(id="d1", kind=DraftKind.ORIGINAL, body="b", content_job_id="j1")
+    )
+
+    class _FailingDecisionService:
+        def __init__(self, **kwargs):
+            pass
+
+        def revise(self, job_id, instruction, *, runner, cards_by_id, gates):
+            raise RuntimeError("codex exec failed")
+
+    monkeypatch.setattr(cli, "DecisionService", lambda **kw: _FailingDecisionService())
+    r = CliRunner().invoke(
+        app, ["decide", "j1", "--action", "revise", "--instruction", "语气弱一点", "--json"]
+    )
+    assert r.exit_code == 1, r.output
+    assert isinstance(r.exception, SystemExit), repr(r.exception)
+    assert '"status": "error"' in r.output
+    assert "codex exec failed" in r.output
+
+
 def test_next_json_returns_card(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     store = Store(settings.paths.db_path)

@@ -14,6 +14,7 @@ import typer
 import yaml
 
 from .codex.runner import CodexRunner
+from .codex.structured_output import StructuredOutputError
 from .content.checkers.base import CheckResult
 from .content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from .content.models import DailyBrief, Draft, DraftKind
@@ -298,7 +299,10 @@ def _daily_json_summary(store: Store, run_id: str, *, engagement_drafts: int) ->
         rec.job_id for rec in DecisionRecordRepository(store).list()
         if rec.action in {DecisionAction.ACCEPT, DecisionAction.SKIP}
     }
-    drafts = [d for d in DraftRepository(store).list_drafts() if d.content_job_id]
+    drafts = [
+        d for d in DraftRepository(store).list_drafts()
+        if d.content_job_id and d.run_id == run_id
+    ]
     n_review = sum(1 for d in drafts if d.content_job_id not in decided)
     return json.dumps(
         {
@@ -1352,10 +1356,16 @@ def decide(
                 c.id: c for c in EvidenceRepository(store).list_cards()
             }
             runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
-            result = svc.revise(
-                item_id, instruction,
-                runner=runner, cards_by_id=cards_by_id, gates=settings.quality_gates,
-            )
+            try:
+                result = svc.revise(
+                    item_id, instruction,
+                    runner=runner, cards_by_id=cards_by_id, gates=settings.quality_gates,
+                )
+            except (RuntimeError, StructuredOutputError) as exc:
+                typer.echo(
+                    json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False)
+                )
+                raise typer.Exit(code=1) from exc
     except (KeyError, ValueError) as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc

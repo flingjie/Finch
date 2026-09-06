@@ -7,7 +7,7 @@ import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlmodel import Field, Session, SQLModel, select
+from sqlmodel import Field, Session, SQLModel, col, select
 
 from finch.content.checkers.base import CheckResult
 from finch.content.jobs import ContentJob
@@ -288,9 +288,9 @@ class DraftRepository:
             return Draft.model_validate_json(record.payload_json)
 
     def list_drafts(self) -> list[Draft]:
-        """列出所有 Draft。"""
+        """列出所有 Draft（按 id 稳定排序，保证 next --json 的 pending[0] 确定性）。"""
         with Session(self.store.engine) as session:
-            stmt = select(DraftRecord)
+            stmt = select(DraftRecord).order_by(col(DraftRecord.id))
             records = list(session.exec(stmt))
             return [Draft.model_validate_json(r.payload_json) for r in records]
 
