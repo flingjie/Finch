@@ -236,14 +236,14 @@ def test_scenario_1_strong_evidence_and_confirmed_position_routes_to_ready(tmp_p
     assert [j["id"] for j in json.loads(rec.output_json)["items"]] == ["job1"]
 
 
-def test_scenario_2_strong_evidence_without_confirmed_position_needs_input(tmp_path):
-    """强证据 + 无作者判断 → NEEDS_INPUT：未确认立场挡在门禁处。"""
+def test_scenario_2_strong_evidence_without_author_position_needs_input(tmp_path):
+    """强证据 + 无作者判断 → NEEDS_INPUT：立场缺失挡在门禁处。"""
     store = _store(tmp_path)
     nodes = [
         Seed(
             name="define_jobs",
             writes="content_jobs",
-            seed=items_payload([_job(position=_position(confirmed=False))]),
+            seed=items_payload([_job(position=None)]),
         ),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         make_position_gate_node(),

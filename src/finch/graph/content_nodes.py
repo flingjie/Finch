@@ -26,6 +26,7 @@ from ..content.claims import validate_draft
 from ..content.jobs import (
     ContentJob,
     ContentJobStatus,
+    PositionSource,
     TopicProposal,
     expand_content_job,
     plan_content_topics,
@@ -950,38 +951,54 @@ def make_position_gate_node(
                 return NodeResult(status="succeeded", output=output)
 
             position = primary.author_position
-            ready = (
+            has_decision_tradeoff = (
                 position is not None
                 and bool(position.decision)
                 and bool(position.tradeoff)
-                and position.confirmed
             )
-            if ready:
-                output["items"] = [primary.model_dump(mode="json")]
-                return NodeResult(status="succeeded", output=output)
 
-            # 复用门禁（P2）：立场逐字一致、未被撤销、且作者未写出「什么会改变判断」→ 复用确认。
+            # 复用门禁（P2）：逐字一致 + 未撤销 + 无 change_mind_if → 复用确认（REUSED）。
             if (
-                approvals_repo is not None
+                has_decision_tradeoff
+                and approvals_repo is not None
                 and jobs_repo is not None
                 and position is not None
-                and bool(position.decision)
-                and bool(position.tradeoff)
             ):
                 fingerprint = position_fingerprint(position)
                 approval = approvals_repo.find_active(fingerprint)
                 if approval is not None and not position.change_mind_if:
-                    confirmed_pos = position.model_copy(update={"confirmed": True})
+                    confirmed_pos = position.model_copy(
+                        update={"confirmed": True, "position_source": PositionSource.REUSED}
+                    )
                     confirmed_job = primary.model_copy(update={"author_position": confirmed_pos})
                     jobs_repo.upsert_job(confirmed_job)
                     output["items"] = [confirmed_job.model_dump(mode="json")]
                     output["reused_approval"] = fingerprint
                     return NodeResult(status="succeeded", output=output)
 
-            # primary 缺已确认立场：只问最多 3 个问题，并附带结构化 input_request。
+            if position is not None and position.confirmed:
+                # 已人类确认：原样通过。
+                output["items"] = [primary.model_dump(mode="json")]
+                return NodeResult(status="succeeded", output=output)
+
+            if has_decision_tradeoff:
+                # 可推断但未确认：非阻塞，标记 INFERRED 后通过（生成候选草稿）。
+                assert position is not None
+                inferred_pos = position.model_copy(
+                    update={"position_source": PositionSource.INFERRED}
+                )
+                inferred_job = primary.model_copy(update={"author_position": inferred_pos})
+                if jobs_repo is not None:
+                    jobs_repo.upsert_job(inferred_job)
+                output["items"] = [inferred_job.model_dump(mode="json")]
+                output["inferred_position"] = True
+                return NodeResult(status="succeeded", output=output)
+
+            # 立场不完整：无法起草，仍阻塞 + must_ask 信号。
             pos = primary.author_position
             output["items"] = [primary.model_dump(mode="json")]
             output["questions"] = list(primary.missing_questions)[:3]
+            output["must_ask"] = ["position_incomplete"]
             output["input_request"] = InputRequest(
                 run_id=ctx.get("run_id", ""),
                 job_id=primary.id,

@@ -178,7 +178,7 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path):
                     author_position=AuthorPosition(
                         claim="use token bucket",
                         decision="use token bucket",
-                        tradeoff="more memory",
+                        tradeoff="",
                         confirmed=False,
                     ),
                     success_criteria=[
@@ -246,13 +246,17 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path):
     calls_after_first = runner.calls
     assert calls_after_first > 0
 
-    # 模拟人工 confirm-position：把 repo 里的 job 置为 confirmed。
+    # 模拟人工 confirm-position：补全取舍并置 confirmed，立场才完整可放行。
     jobs_repo = ContentJobRepository(store)
     job = jobs_repo.get_job("job1")
     assert job is not None and job.author_position is not None
     jobs_repo.upsert_job(
         job.model_copy(
-            update={"author_position": job.author_position.model_copy(update={"confirmed": True})}
+            update={
+                "author_position": job.author_position.model_copy(
+                    update={"tradeoff": "more memory", "confirmed": True}
+                )
+            }
         )
     )
 

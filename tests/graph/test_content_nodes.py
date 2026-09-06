@@ -11,6 +11,7 @@ from finch.content.jobs import (
     ContentJobStatus,
     IntendedEffect,
     PlanTopicsOutput,
+    PositionSource,
     SuccessCriterion,
     TopicProposal,
     position_fingerprint,
@@ -25,7 +26,7 @@ from finch.graph.content_nodes import (
     make_draft_node,
     make_position_gate_node,
 )
-from finch.graph.context import items_payload
+from finch.graph.context import items_payload, parse_items
 from finch.graph.events import NodeResult
 from finch.graph.nodes import Node
 from finch.graph.runtime import GraphRuntime
@@ -634,12 +635,16 @@ def test_position_gate_skips_do_not_write():
     assert result.output["items"] == []
 
 
-def test_position_gate_unconfirmed_needs_input():
+def test_position_gate_unconfirmed_inferable_passes_inferred():
+    """可推断立场（decision+tradeoff 非空）未确认时非阻塞：标记 INFERRED 放行。"""
     node = make_position_gate_node()
     job = _job(job_id="j1", position=_position(confirmed=False))
     result = node.run({"content_jobs": items_payload([job])})
-    assert result.status == "needs_input"
-    assert [j["id"] for j in result.output["items"]] == ["j1"]
+    assert result.status == "succeeded"
+    assert result.output["inferred_position"] is True
+    items = parse_items(result.output, ContentJob)
+    assert [j.id for j in items] == ["j1"]
+    assert items[0].author_position.position_source == PositionSource.INFERRED
 
 
 def test_position_gate_missing_position_needs_input():
@@ -648,13 +653,15 @@ def test_position_gate_missing_position_needs_input():
     result = node.run({"content_jobs": items_payload([job])})
     assert result.status == "needs_input"
     assert [j["id"] for j in result.output["items"]] == ["j1"]
+    assert result.output["must_ask"] == ["position_incomplete"]
 
 
 def test_position_gate_empty_decision_needs_input():
     node = make_position_gate_node()
-    job = _job(job_id="j1", position=_position(decision="", confirmed=True))
+    job = _job(job_id="j1", position=_position(decision="", confirmed=False))
     result = node.run({"content_jobs": items_payload([job])})
     assert result.status == "needs_input"
+    assert result.output["must_ask"] == ["position_incomplete"]
 
 
 def test_position_gate_only_primary_blocks():
@@ -677,12 +684,12 @@ def test_position_gate_only_primary_blocks():
 
 def test_position_gate_resume_proceeds_once_confirmed(tmp_path):
     store = _store(tmp_path)
-    unconfirmed = _job(job_id="j1", candidate_id=None, position=_position(confirmed=False))
+    incomplete = _job(job_id="j1", candidate_id=None, position=None)
     confirmed = _job(job_id="j1", candidate_id=None, position=_position(confirmed=True))
 
     def nodes():
         return [
-            Seed(name="define_jobs", writes="content_jobs", seed=items_payload([unconfirmed])),
+            Seed(name="define_jobs", writes="content_jobs", seed=items_payload([incomplete])),
             Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
             make_position_gate_node(),
             Seed(name="draft", writes="drafts", seed=items_payload([]), succeeds_to="DRAFTED"),
@@ -713,8 +720,8 @@ def test_position_gate_resume_proceeds_once_confirmed(tmp_path):
     assert gate_rec2 is not None and gate_rec2.status == "succeeded"
 
 
-def test_define_jobs_strips_model_confirmed_so_gate_needs_input(tmp_path):
-    """模型输出的 confirmed=true 必须被剥除：只有人类 confirm-position 才能放行。"""
+def test_define_jobs_strips_model_confirmed_before_inferred_gate(tmp_path):
+    """模型输出的 confirmed=true 必须被剥除：未确认立场只能以 INFERRED 放行，不得伪装成人类确认。"""
     store = _store(tmp_path)
     repo = ContentJobRepository(store)
     job = _job(job_id="j1", candidate_id="t1", position=_position(confirmed=True))
@@ -728,7 +735,12 @@ def test_define_jobs_strips_model_confirmed_so_gate_needs_input(tmp_path):
         make_position_gate_node(jobs_repo=repo),
     ]
     run = GraphRuntime(store, nodes).run()
-    assert run.state == "NEEDS_INPUT"
+    assert run.state == "POSITIONS_READY"
+    gate_rec = store.find_node(run.id, "position_gate", "default")
+    assert gate_rec is not None
+    items = json.loads(gate_rec.output_json)["items"]
+    assert items[0]["author_position"]["confirmed"] is False
+    assert items[0]["author_position"]["position_source"] == PositionSource.INFERRED.value
 
 
 def test_define_jobs_rejects_job_with_unknown_candidate(tmp_path):
@@ -816,17 +828,18 @@ def test_position_gate_falls_back_to_context_when_repo_missing(tmp_path):
     """D7: repo 查不到时回退到 context 里的 job。"""
     store = _store(tmp_path)
     repo = ContentJobRepository(store)
-    unconfirmed = _job(job_id="j1", candidate_id=None, position=_position(confirmed=False))
+    incomplete = _job(job_id="j1", candidate_id=None, position=None)
 
     node = make_position_gate_node(jobs_repo=repo)
-    result = node.run({"content_jobs": items_payload([unconfirmed])})
+    result = node.run({"content_jobs": items_payload([incomplete])})
     assert result.status == "needs_input"
+    assert result.output["must_ask"] == ["position_incomplete"]
 
 
 def test_position_gate_asks_at_most_three_questions():
     """Task 2.4：primary 缺立场时只问 missing_questions（模型已限 ≤3 个）。"""
     node = make_position_gate_node()
-    job = _job(job_id="j1", position=_position(confirmed=False)).model_copy(
+    job = _job(job_id="j1", position=None).model_copy(
         update={"missing_questions": ["q1", "q2", "q3"]}
     )
     result = node.run({"content_jobs": items_payload([job])})
@@ -837,7 +850,7 @@ def test_position_gate_asks_at_most_three_questions():
 
 def test_position_gate_emits_input_request():
     node = make_position_gate_node()
-    job = _job(job_id="j1", position=_position(confirmed=False))
+    job = _job(job_id="j1", position=None)
     result = node.run(
         {"content_jobs": items_payload([job]), "run_id": "r1"}
     )
@@ -846,7 +859,7 @@ def test_position_gate_emits_input_request():
     assert req["type"] == "author_position_confirmation"
     assert req["run_id"] == "r1"
     assert req["job_id"] == "j1"
-    assert req["proposed_position"]["decision"] == "use token bucket"
+    assert req["proposed_position"]["decision"] == ""
     assert req["evidence_card_ids"] == ["ev1"]
 
 
@@ -857,7 +870,7 @@ def test_position_gate_falls_back_once_after_reject(tmp_path):
     rejected = _job(
         job_id="A", candidate_id="t1", position=None, status=ContentJobStatus.DO_NOT_WRITE
     ).model_copy(update={"reject_reason": "not now"})
-    fallback = _job(job_id="B", candidate_id="t1", position=_position(confirmed=False))
+    fallback = _job(job_id="B", candidate_id="t1", position=None)
     repo.upsert_job(rejected)
     repo.upsert_job(fallback)
 
@@ -865,6 +878,7 @@ def test_position_gate_falls_back_once_after_reject(tmp_path):
     result = node.run({"content_jobs": items_payload([rejected, fallback])})
     assert result.status == "needs_input"
     assert [j["id"] for j in result.output["items"]] == ["B"]
+    assert result.output["must_ask"] == ["position_incomplete"]
 
 
 def test_position_gate_stops_after_one_fallback(tmp_path):
@@ -899,7 +913,7 @@ def test_position_gate_model_do_not_write_does_not_exhaust_fallback():
     dw2 = _job(
         job_id="dw2", candidate_id=None, position=None, status=ContentJobStatus.DO_NOT_WRITE
     )
-    active = _job(job_id="j1", candidate_id=None, position=_position(confirmed=False))
+    active = _job(job_id="j1", candidate_id=None, position=None)
     result = node.run({"content_jobs": items_payload([dw1, dw2, active])})
     assert result.status == "needs_input"
     assert [j["id"] for j in result.output["items"]] == ["j1"]
@@ -916,11 +930,11 @@ def test_position_gate_evidence_ratio_breaks_tie():
     )
     weak = _job(
         job_id="weak", candidate_id=None, source_card_ids=("ev_weak",),
-        position=_position(confirmed=False),
+        position=None,
     )
     strong = _job(
         job_id="strong", candidate_id=None, source_card_ids=("ev_strong",),
-        position=_position(confirmed=False),
+        position=None,
     )
     # 故意把 weak 放前面：若忽略证据占比，稳定顺序会让 weak 胜出。
     result = node.run({
@@ -1569,10 +1583,13 @@ def test_position_gate_reuses_approved_position(tmp_path):
     result = node.run({"content_jobs": items_payload([job]), "run_id": "r1"})
     assert result.status == "succeeded"
     assert result.output["reused_approval"] == position_fingerprint(job.author_position)
+    items = parse_items(result.output, ContentJob)
+    assert items[0].author_position.position_source == PositionSource.REUSED
     assert ContentJobRepository(store).get_job("j1").author_position.confirmed is True
 
 
-def test_position_gate_reasks_when_change_mind_if_set(tmp_path):
+def test_position_gate_change_mind_if_skips_reuse(tmp_path):
+    """change_mind_if 阻止复用门禁：立场仍可推断，但绝不当作 REUSED 确认。"""
     store = _store(tmp_path)
     jobs_repo = ContentJobRepository(store)
     approvals = PositionApprovalRepository(store)
@@ -1585,10 +1602,14 @@ def test_position_gate_reasks_when_change_mind_if_set(tmp_path):
 
     node = make_position_gate_node(jobs_repo=jobs_repo, approvals_repo=approvals)
     result = node.run({"content_jobs": items_payload([job])})
-    assert result.status == "needs_input"
+    assert result.status == "succeeded"
+    assert "reused_approval" not in result.output
+    items = parse_items(result.output, ContentJob)
+    assert items[0].author_position.position_source == PositionSource.INFERRED
 
 
-def test_position_gate_reasks_when_revoked(tmp_path):
+def test_position_gate_revoked_approval_falls_back_to_inferred(tmp_path):
+    """已撤销的批准不可复用：立场回退为 INFERRED，而非 REUSED 或阻塞。"""
     store = _store(tmp_path)
     jobs_repo = ContentJobRepository(store)
     approvals = PositionApprovalRepository(store)
@@ -1599,6 +1620,9 @@ def test_position_gate_reasks_when_revoked(tmp_path):
 
     node = make_position_gate_node(jobs_repo=jobs_repo, approvals_repo=approvals)
     result = node.run({"content_jobs": items_payload([job])})
-    assert result.status == "needs_input"
+    assert result.status == "succeeded"
+    assert "reused_approval" not in result.output
+    items = parse_items(result.output, ContentJob)
+    assert items[0].author_position.position_source == PositionSource.INFERRED
 
 
