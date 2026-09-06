@@ -834,6 +834,21 @@ def test_position_gate_asks_at_most_three_questions():
     assert [j["id"] for j in result.output["items"]] == ["j1"]
 
 
+def test_position_gate_emits_input_request():
+    node = make_position_gate_node()
+    job = _job(job_id="j1", position=_position(confirmed=False))
+    result = node.run(
+        {"content_jobs": items_payload([job]), "run_id": "r1"}
+    )
+    assert result.status == "needs_input"
+    req = result.output["input_request"]
+    assert req["type"] == "author_position_confirmation"
+    assert req["run_id"] == "r1"
+    assert req["job_id"] == "j1"
+    assert req["proposed_position"]["decision"] == "use token bucket"
+    assert req["evidence_card_ids"] == ["ev1"]
+
+
 def test_position_gate_falls_back_once_after_reject(tmp_path):
     """用户拒绝 primary 后，确定性选择下一个 job（一次递补）。"""
     store = _store(tmp_path)

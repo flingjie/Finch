@@ -35,6 +35,7 @@ from ..content.jobs import (
 from ..content.models import DailyBrief, Draft, DraftKind, DraftWarning
 from ..content.voice import VoiceProfile
 from ..evidence.models import EvidenceCard, MatchResult
+from ..gate.models import InputRequest, ProposedPosition
 from ..llm.base import StructuredInferenceRunner
 from ..settings import DailyBudget, QualityGates
 from ..storage.repositories import ContentJobRepository
@@ -957,9 +958,24 @@ def make_position_gate_node(
                 output["items"] = [primary.model_dump(mode="json")]
                 return NodeResult(status="succeeded", output=output)
 
-            # primary 缺已确认立场：只问最多 3 个问题。
+            # primary 缺已确认立场：只问最多 3 个问题，并附带结构化 input_request。
+            pos = primary.author_position
             output["items"] = [primary.model_dump(mode="json")]
             output["questions"] = list(primary.missing_questions)[:3]
+            output["input_request"] = InputRequest(
+                run_id=ctx.get("run_id", ""),
+                job_id=primary.id,
+                topic=primary.core_message or primary.reader_problem,
+                why_now=primary.why_now,
+                proposed_position=ProposedPosition(
+                    claim=(pos.claim if pos else ""),
+                    decision=(pos.decision if pos else ""),
+                    tradeoff=(pos.tradeoff if pos else ""),
+                    change_mind_if=(pos.change_mind_if if pos else None),
+                ),
+                evidence_card_ids=list(primary.source_card_ids),
+                questions=list(primary.missing_questions)[:3],
+            ).model_dump(mode="json")
             return NodeResult(
                 status="needs_input",
                 output=output,
