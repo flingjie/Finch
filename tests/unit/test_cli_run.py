@@ -257,6 +257,59 @@ def test_run_daily_interactive_auto_resumes(monkeypatch, tmp_path):
     assert "今日产出" in r.output
 
 
+def test_run_daily_interactive_quit_marks_stopped(monkeypatch, tmp_path):
+    """TTY 交互：[q] 保存进度并退出应把 run 标记为 STOPPED，而不是停在 NEEDS_INPUT。"""
+    settings = Settings(
+        repositories=["flingjie/FDE-Gym"],
+        paths=Paths(db_path=tmp_path / "finch.db"),
+        engagement=EngagementSettings(enabled=False),
+    )
+    store = Store(settings.paths.db_path)
+    store.init()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    class FakeIngestor:
+        def __init__(self, gh, settings, ingestion, cursor):
+            pass
+
+        def ingest(self, repos, existing_topics=None):
+            return {}
+
+    class FakeGh:
+        def repo_view(self, repo):
+            from finch.github.models import RepoInfo
+
+            return RepoInfo(name_with_owner=repo, default_branch="main",
+                            url="https://github.com/" + repo, is_private=False)
+
+    from finch.gate.models import InputRequest, ProposedPosition
+    from finch.graph.events import NodeResult
+    from finch.graph.nodes import Node
+
+    class BlockingGate(Node):
+        def run(self, ctx):
+            request = InputRequest(
+                run_id=ctx.get("run_id", ""), job_id="j1", topic="t",
+                proposed_position=ProposedPosition(claim="c", decision="d", tradeoff="t"),
+            )
+            return NodeResult(
+                status="needs_input", output={"input_request": request.model_dump(mode="json")},
+            )
+
+    monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
+    monkeypatch.setattr(cli, "Ingestor", FakeIngestor)
+    monkeypatch.setattr(
+        cli, "daily_nodes",
+        lambda **kw: [BlockingGate(name="position_gate", reads=[], writes="ready_jobs")],
+    )
+    monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
+
+    r = CliRunner().invoke(app, ["run", "daily", "--interactive"], input="q\n")
+    assert r.exit_code == 0, r.output
+    assert "已保存进度并退出" in r.output
+    assert store.find_latest_run(GraphState.STOPPED.value) is not None
+
+
 def test_run_weekly_renders_with_new_repos(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     store = Store(settings.paths.db_path)
@@ -958,6 +1011,30 @@ def test_run_resolve_skip_marks_job(monkeypatch, tmp_path):
     assert job.reject_reason == "not now"
 
 
+def test_run_resolve_stop_marks_run_stopped(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    request = _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
+
+    resumed = []
+    monkeypatch.setattr(
+        cli, "_resume_and_echo", lambda st, nodes, rid, **kw: resumed.append(rid)
+    )
+
+    r = CliRunner().invoke(app, ["run", "resolve", "--stop"])
+    assert r.exit_code == 0, r.output
+    assert "已保存并退出" in r.output
+    assert resumed == []
+    assert store.get_run("r1").state == GraphState.STOPPED.value
+    assert (
+        ContentJobRepository(store).get_job(request.job_id).status
+        == ContentJobStatus.DO_NOT_WRITE
+    )
+
+
 def test_run_resolve_file_edits(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     store = Store(settings.paths.db_path)
@@ -1065,6 +1142,26 @@ def test_run_resolve_interactive_show_evidence_returns_without_resume(monkeypatc
     assert resumed == []  # q 直接 return，不 resume
 
 
+def test_run_resolve_interactive_quit_marks_stopped(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    _seed_needs_input(store)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_resume_nodes", lambda s, st: [])
+
+    resumed = []
+    monkeypatch.setattr(
+        cli, "_resume_and_echo", lambda st, nodes, rid, **kw: resumed.append(rid)
+    )
+
+    r = CliRunner().invoke(app, ["run", "resolve", "--interactive"], input="q\n")
+    assert r.exit_code == 0, r.output
+    assert "已保存进度并退出" in r.output
+    assert resumed == []
+    assert store.get_run("r1").state == GraphState.STOPPED.value
+
+
 def test_run_resolve_interactive_invalid_choice(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     store = Store(settings.paths.db_path)
@@ -1130,4 +1227,3 @@ def test_run_daily_interactive_non_interactive_conflict(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["run", "daily", "--interactive", "--non-interactive"])
     assert r.exit_code == 1
     assert "互斥" in r.output
-

@@ -13,7 +13,7 @@ def test_advance_past_review_reaches_waits():
 
 
 def test_terminal_states_are_stable():
-    for s in (GraphState.COMPLETED, GraphState.FAILED, GraphState.BLOCKED):
+    for s in (GraphState.COMPLETED, GraphState.STOPPED, GraphState.FAILED, GraphState.BLOCKED):
         assert s.is_terminal
         assert advance(s) == s
 

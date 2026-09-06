@@ -10,6 +10,7 @@ _STATE_LABELS = {
     "COMPLETED": "已完成",
     "NEEDS_INPUT": "等待你的确认",
     "SKIPPED": "已跳过",
+    "STOPPED": "已保存并退出",
     "FAILED": "运行失败",
     "BLOCKED": "运行失败",
 }

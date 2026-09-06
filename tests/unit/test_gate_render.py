@@ -44,6 +44,7 @@ def test_state_label_mapping():
     assert state_label("COMPLETED") == "已完成"
     assert state_label("NEEDS_INPUT") == "等待你的确认"
     assert state_label("SKIPPED") == "已跳过"
+    assert state_label("STOPPED") == "已保存并退出"
     assert state_label("FAILED") == "运行失败"
     assert state_label("BLOCKED") == "运行失败"
     assert state_label("WEIRD_STATE") == "WEIRD_STATE"

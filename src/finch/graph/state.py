@@ -24,13 +24,19 @@ class GraphState(StrEnum):
     COMPLETED = "COMPLETED"
     # 异常状态
     NEEDS_INPUT = "NEEDS_INPUT"
+    STOPPED = "STOPPED"
     PARTIALLY_COMPLETED = "PARTIALLY_COMPLETED"
     BLOCKED = "BLOCKED"
     FAILED = "FAILED"
 
     @property
     def is_terminal(self) -> bool:
-        return self in {GraphState.COMPLETED, GraphState.FAILED, GraphState.BLOCKED}
+        return self in {
+            GraphState.COMPLETED,
+            GraphState.STOPPED,
+            GraphState.FAILED,
+            GraphState.BLOCKED,
+        }
 
     @property
     def is_abnormal(self) -> bool:

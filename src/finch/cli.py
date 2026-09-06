@@ -242,6 +242,7 @@ def _finish_daily(
         action = select_action(request, cards)
         if action is None:
             typer.echo(render_outcome(None))
+            _mark_stopped(store, run_id)
             return
         edited: ProposedPosition | None = None
         skip_reason: str | None = None
@@ -544,6 +545,13 @@ def _latest_needs_input_run_id(store: Store) -> str | None:
     return record.id if record is not None else None
 
 
+def _mark_stopped(store: Store, run_id: str) -> None:
+    """把 run 标记为 STOPPED（用户保存进度并退出 / 结束原创轨道）。"""
+    store.upsert_run(
+        RunRecord(id=run_id, state=GraphState.STOPPED.value, updated_at=datetime.now(UTC))
+    )
+
+
 def _read_input_request(store: Store, run_id: str) -> InputRequest:
     record = store.find_node(run_id, "position_gate", "default")
     if record is None or not record.output_json:
@@ -722,6 +730,7 @@ def run_resolve(
             action = select_action(request, cards)
             if action is None:
                 typer.echo(render_outcome(None))
+                _mark_stopped(store, resolved_run_id)
                 return
             if action is InputAction.EDIT:
                 edited = edit_position_inline(request.proposed_position)
@@ -747,6 +756,11 @@ def run_resolve(
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
     typer.echo(render_outcome(action))
+    if action is InputAction.STOP:
+        _mark_stopped(store, resolved_run_id)
+        if verbose:
+            typer.echo(f"[internal] state={GraphState.STOPPED.value} run_id={resolved_run_id}")
+        return
     if verbose:
         typer.echo(f"[internal] resolve={summary}")
 
