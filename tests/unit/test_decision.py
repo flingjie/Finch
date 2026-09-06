@@ -16,6 +16,7 @@ from finch.storage.repositories import (
     DecisionRecordRepository,
     DraftRepository,
     PositionApprovalRepository,
+    PublicationIntentRepository,
     ReviewRepository,
 )
 
@@ -37,6 +38,7 @@ def _svc(store):
         approvals=PositionApprovalRepository(store),
         reviews=ReviewRepository(store),
         decisions=DecisionRecordRepository(store),
+        publication_intents=PublicationIntentRepository(store),
     )
 
 
@@ -94,6 +96,21 @@ def test_skip_marks_do_not_write(tmp_path):
 def test_content_hash_deterministic():
     assert content_hash("a") == content_hash("a")
     assert content_hash("a") != content_hash("b")
+
+
+def test_accept_writes_publication_intent(tmp_path):
+    store = Store(tmp_path / "finch.db")
+    store.init()
+    ContentJobRepository(store).upsert_job(_job("j1"))
+    DraftRepository(store).upsert_draft(
+        Draft(id="d1", kind=DraftKind.ORIGINAL, body="final", content_job_id="j1")
+    )
+    svc = _svc(store)
+    svc.accept("j1")
+    intent = PublicationIntentRepository(store).get("d1")
+    assert intent is not None
+    assert intent.approved_body == "final"
+    assert intent.expected_kind == "original"
 
 
 def test_revise_rewrites_and_persists(monkeypatch, tmp_path):

@@ -83,6 +83,7 @@ from .storage.repositories import (
     FeedbackSnapshotRepository,
     InteractionRepository,
     PositionApprovalRepository,
+    PublicationIntentRepository,
     RepoCursorRepository,
     ReviewRepository,
 )
@@ -1334,6 +1335,7 @@ def decide(
         approvals=PositionApprovalRepository(store),
         reviews=ReviewRepository(store),
         decisions=DecisionRecordRepository(store),
+        publication_intents=PublicationIntentRepository(store),
     )
     try:
         action_enum = DecisionAction(action)

@@ -3,6 +3,7 @@
 import hashlib
 from datetime import UTC, datetime
 
+from finch.author.models import PublicationIntent
 from finch.codex.runner import CodexRunner
 from finch.content.critic import critique
 from finch.content.jobs import ContentJobStatus, PositionSource, position_fingerprint
@@ -20,6 +21,7 @@ from finch.storage.repositories import (
     DecisionRecordRepository,
     DraftRepository,
     PositionApprovalRepository,
+    PublicationIntentRepository,
     ReviewRepository,
 )
 
@@ -44,12 +46,14 @@ class DecisionService:
         approvals: PositionApprovalRepository,
         reviews: ReviewRepository,
         decisions: DecisionRecordRepository,
+        publication_intents: PublicationIntentRepository,
     ) -> None:
         self.jobs = jobs
         self.drafts = drafts
         self.approvals = approvals
         self.reviews = reviews
         self.decisions = decisions
+        self.publication_intents = publication_intents
 
     def _require_job_and_draft(self, job_id: str) -> tuple:
         job = self.jobs.get_job(job_id)
@@ -87,6 +91,16 @@ class DecisionService:
             position_fingerprint=position_fingerprint(confirmed),
             approved_content_hash=content_hash(draft.body),
             decided_at=datetime.now(UTC),
+        )
+        self.publication_intents.save(
+            PublicationIntent(
+                source_type="draft",
+                source_id=draft.id,
+                approved_body=draft.body,
+                content_hash=content_hash(draft.body),
+                approved_at=datetime.now(UTC),
+                expected_kind="original",
+            )
         )
         self.decisions.save(record)
         return record
