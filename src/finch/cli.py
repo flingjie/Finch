@@ -366,7 +366,7 @@ def run_daily() -> None:
         },
     )
     if settings.engagement.enabled:
-        # 单轮延迟以 run_dual_track（顺序执行原创+互动两条轨道）为口径。
+        # 单轮延迟以 run_dual_track（并发执行原创+互动两条轨道）为口径。
         start = time.monotonic()
         result = run_dual_track(
             original_track=lambda rid: GraphRuntime(store, nodes).run(run_id=rid),
