@@ -3,10 +3,19 @@
 from datetime import UTC, datetime, timedelta
 
 from finch.author.models import AuthorPost
+from finch.content.checkers.base import CheckResult
 from finch.content.jobs import ContentJobStatus, ContentScope, PositionSource
 from finch.content.models import DraftKind
-from finch.idea.models import AssessIdeaOutput, IdeaAssessment
-from finch.idea.service import build_content_job, build_draft, recent_author_posts
+from finch.evidence.models import ClaimConfidence, EvidenceCard
+from finch.idea.models import AssessIdeaOutput, IdeaAssessment, RewriteIdeaOutput, WriteIdeaOutput
+from finch.idea.service import (
+    assess_idea,
+    build_content_job,
+    build_draft,
+    recent_author_posts,
+    rewrite_idea,
+    write_idea,
+)
 
 
 def _assessment(**overrides) -> AssessIdeaOutput:
@@ -115,3 +124,58 @@ def test_assess_output_inherits_idea_assessment_fields():
     assert out.reason_code == "TOO_BROAD"
     assert out.sample is None
     assert out.matched_evidence_ids == []
+
+
+class FakeRunner:
+    def __init__(self, ret):
+        self.calls = 0
+        self.ret = ret
+
+    def run(self, prompt, output_model, **kw):
+        self.calls += 1
+        return self.ret
+
+
+def _card(card_id="ev_1"):
+    return EvidenceCard(
+        id=card_id,
+        event_id="evt",
+        claim="replay 让失败可重放",
+        sources=[],
+        confidence=ClaimConfidence.SUPPORTED,
+        publishable=True,
+        topics=["graph"],
+    )
+
+
+def test_assess_idea_calls_runner_once():
+    ret = AssessIdeaOutput(status="ready", core_point="p", matched_evidence_ids=["ev_1"])
+    runner = FakeRunner(ret)
+    out = assess_idea(runner, "想法", [_card()], [])
+    assert runner.calls == 1
+    assert out == ret
+
+
+def test_write_idea_returns_body():
+    runner = FakeRunner(WriteIdeaOutput(body="样稿正文"))
+    body = write_idea(runner, "想法", _assessment(), [_card()])
+    assert runner.calls == 1
+    assert body == "样稿正文"
+
+
+def test_rewrite_idea_keeps_draft_identity_updates_body():
+    job = build_content_job("想法", _assessment())
+    draft = build_draft(job, "旧正文")
+    runner = FakeRunner(RewriteIdeaOutput(body="新正文"))
+    out = rewrite_idea(
+        runner,
+        draft,
+        [CheckResult(checker="specificity", passed=False, severity="medium",
+                     issues=["vague"], rewrite_instructions=["be specific"])],
+        job,
+    )
+    assert runner.calls == 1
+    assert out.body == "新正文"
+    assert out.id == draft.id
+    assert out.claims == []
+    assert out.content_job_id == job.id
