@@ -38,6 +38,8 @@ from .evidence.models import EvidenceCard
 from .gate.interactive import edit_position_inline, select_action
 from .gate.models import InputAction, InputRequest, ProposedPosition
 from .gate.render import (
+    build_ask_reasons,
+    build_risks,
     render_compact_resolve,
     render_daily_summary,
     render_outcome,
@@ -1408,6 +1410,8 @@ def next_item(as_json: bool = typer.Option(False, "--json", help="输出 JSON"))
             for cid in (job.source_card_ids if job else []) if cid in cards_by_id
         ]
         pos = job.author_position if job else None
+        critic_reports = CriticReportRepository(store).list_reports(draft.id)
+        ask_reasons = build_ask_reasons(job, critic_reports)
         payload = {
             "status": "review_required",
             "job_id": job.id if job else job_id,
@@ -1424,9 +1428,9 @@ def next_item(as_json: bool = typer.Option(False, "--json", help="输出 JSON"))
             "evidence": evidence,
             "draft": draft.body,
             "draft_id": draft.id,
-            "must_ask": [],
-            "ask_reasons": [],
-            "risks": [],
+            "must_ask": bool(ask_reasons),
+            "ask_reasons": ask_reasons,
+            "risks": build_risks(critic_reports),
         }
     if as_json:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))

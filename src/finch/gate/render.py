@@ -2,6 +2,7 @@
 
 import difflib
 
+from finch.content.jobs import ContentJob
 from finch.evidence.models import EvidenceCard
 
 from .models import InputAction, InputRequest, ProposedPosition
@@ -129,3 +130,31 @@ def render_produced(*, engagement_drafts: int, original_drafts: int) -> str:
         f"  互动草稿：{engagement_drafts} 条，等待审核",
         f"  原创草稿：{original_drafts} 条，等待审核",
     ])
+
+
+def build_ask_reasons(job: ContentJob | None, critic_reports: list[dict]) -> list[str]:
+    """must_ask 信号：position_conflict（change_mind_if 非空）或 safety_risk（safety 失败）。"""
+    reasons: list[str] = []
+    if (
+        job is not None
+        and job.author_position is not None
+        and job.author_position.change_mind_if
+    ):
+        reasons.append("position_conflict")
+    if critic_reports:
+        for check in critic_reports[-1].get("checks", []):
+            if check.get("checker") == "safety" and not check.get("passed", True):
+                reasons.append("safety_risk")
+                break
+    return reasons
+
+
+def build_risks(critic_reports: list[dict]) -> list[str]:
+    """返回最后一轮 Critic 的失败检查项（checker: issues）。"""
+    if not critic_reports:
+        return []
+    return [
+        f"{c['checker']}: {c.get('issues') or 'failed'}"
+        for c in critic_reports[-1].get("checks", [])
+        if not c.get("passed", True)
+    ]

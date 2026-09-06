@@ -1374,7 +1374,9 @@ def test_next_json_returns_card(monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
     assert '"job_id": "j1"' in r.output
     assert "topic here" in r.output
-    assert '"must_ask": []' in r.output
+    assert '"must_ask": false' in r.output
+    assert '"ask_reasons": []' in r.output
+    assert '"risks": []' in r.output
 
 
 def test_next_json_none(monkeypatch, tmp_path):

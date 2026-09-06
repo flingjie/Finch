@@ -1,6 +1,16 @@
+from finch.content.jobs import (
+    AuthorPosition,
+    ContentJob,
+    ContentJobStatus,
+    IntendedEffect,
+    SuccessCriterion,
+)
+from finch.content.models import DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard
 from finch.gate.models import InputAction, InputRequest, ProposedPosition
 from finch.gate.render import (
+    build_ask_reasons,
+    build_risks,
     render_compact_resolve,
     render_confirm_card,
     render_daily_summary,
@@ -94,3 +104,43 @@ def test_render_position_diff_shows_change():
     diff = render_position_diff(before, after)
     assert "-claim: c" in diff
     assert "+claim: c2" in diff
+
+
+def _job_with_change_mind_if(change_mind_if=None):
+    return ContentJob(
+        id="j1", source_card_ids=["ev1"], reader_problem="r", audience="a",
+        intended_effect=IntendedEffect(understand="u"),
+        author_position=AuthorPosition(
+            claim="c", decision="d", tradeoff="t", change_mind_if=change_mind_if
+        ),
+        success_criteria=[SuccessCriterion(id="c1", description="d", measurement="critic")],
+        recommended_format=DraftKind.ORIGINAL, status=ContentJobStatus.NEEDS_INPUT,
+    )
+
+
+def test_build_ask_reasons_position_conflict():
+    reasons = build_ask_reasons(_job_with_change_mind_if("条件改变"), [])
+    assert reasons == ["position_conflict"]
+
+
+def test_build_ask_reasons_safety_risk():
+    reports = [
+        {
+            "round": 0,
+            "checks": [{"checker": "safety", "passed": False, "issues": ["risk"]}],
+            "outcome": "rewrite",
+        }
+    ]
+    assert build_ask_reasons(_job_with_change_mind_if(), reports) == ["safety_risk"]
+
+
+def test_build_ask_reasons_empty():
+    assert build_ask_reasons(_job_with_change_mind_if(), []) == []
+
+
+def test_build_risks():
+    reports = [{"round": 0, "checks": [
+        {"checker": "safety", "passed": False, "issues": ["risk"]},
+        {"checker": "voice", "passed": True, "issues": []},
+    ], "outcome": "rewrite"}]
+    assert build_risks(reports) == ["safety: ['risk']"]
