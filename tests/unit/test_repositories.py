@@ -1,14 +1,23 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import inspect
 
 from finch.content.checkers.base import CheckResult
+from finch.content.jobs import PositionSource
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard, Source
-from finch.review.models import Feedback, ReviewAction, ReviewDecision, SkipReason
+from finch.review.models import (
+    DecisionAction,
+    DecisionRecord,
+    Feedback,
+    ReviewAction,
+    ReviewDecision,
+    SkipReason,
+)
 from finch.storage.database import Store
 from finch.storage.repositories import (
     CriticReportRepository,
+    DecisionRecordRepository,
     DraftRepository,
     DraftVersionRepository,
     EvidenceRepository,
@@ -182,3 +191,34 @@ def test_critic_report_roundtrip(tmp_path):
     assert [r["outcome"] for r in reports] == ["rewrite", "pass"]
     assert reports[0]["checks"][0]["checker"] == "specificity"
     assert reports[0]["checks"][0]["passed"] is False
+
+
+def test_decision_record_repository_roundtrip(tmp_path):
+    from finch.storage.database import Store
+
+    store = Store(tmp_path / "finch.db")
+    store.init()
+    repo = DecisionRecordRepository(store)
+    rec = DecisionRecord(
+        id="dec_j1", job_id="j1", draft_id="d1",
+        action=DecisionAction.ACCEPT,
+        position_source=PositionSource.HUMAN_CONFIRMED,
+        position_fingerprint="fp", approved_content_hash="h",
+        decided_at=datetime.now(UTC),
+    )
+    repo.save(rec)
+    assert repo.get("j1") is not None
+    assert repo.get("j1").action == DecisionAction.ACCEPT
+    assert len(repo.list()) == 1
+
+
+def test_draft_repository_list_by_job(tmp_path):
+    from finch.storage.database import Store
+
+    store = Store(tmp_path / "finch.db")
+    store.init()
+    repo = DraftRepository(store)
+    repo.upsert_draft(Draft(id="d1", kind=DraftKind.ORIGINAL, body="a", content_job_id="j1"))
+    repo.upsert_draft(Draft(id="d2", kind=DraftKind.ORIGINAL, body="b", content_job_id="j2"))
+    assert [d.id for d in repo.list_by_job("j1")] == ["d1"]
+    assert repo.list_by_job("nope") == []

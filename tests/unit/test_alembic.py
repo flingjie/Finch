@@ -25,6 +25,7 @@ ALL_TABLES = {
     "contentjobrecord",
     "draftversionrecord",
     "criticreportrecord",
+    "decisionrecordrecord",
 }
 
 

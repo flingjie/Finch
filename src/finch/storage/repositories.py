@@ -22,7 +22,7 @@ from finch.engagement.models import (
 from finch.evidence.models import EvidenceCard
 from finch.gate.models import PositionApproval
 from finch.github.models import CommitDetail, CommitSummary
-from finch.review.models import Feedback, ReviewAction, ReviewDecision
+from finch.review.models import DecisionRecord, Feedback, ReviewAction, ReviewDecision
 from finch.storage.database import Store
 
 
@@ -294,6 +294,10 @@ class DraftRepository:
             records = list(session.exec(stmt))
             return [Draft.model_validate_json(r.payload_json) for r in records]
 
+    def list_by_job(self, job_id: str) -> list[Draft]:
+        """按 content_job_id 列出草稿（payload_json 内字段，需全表扫描后过滤）。"""
+        return [d for d in self.list_drafts() if d.content_job_id == job_id]
+
 
 class ReviewRecord(SQLModel, table=True):
     """ReviewDecision 持久化模型（C2）。"""
@@ -302,6 +306,48 @@ class ReviewRecord(SQLModel, table=True):
     draft_id: str = Field(index=True)
     payload_json: str
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class DecisionRecordRecord(SQLModel, table=True):
+    """DecisionRecord 持久化模型（单一决策点）。"""
+
+    id: str = Field(primary_key=True)  # "dec_<job_id>"
+    job_id: str = Field(index=True)
+    draft_id: str = Field(index=True)
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class DecisionRecordRepository:
+    """DecisionRecord 仓储（加性，与旧 ReviewRepository 并存）。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def save(self, record: DecisionRecord) -> None:
+        with Session(self.store.engine) as session:
+            session.merge(
+                DecisionRecordRecord(
+                    id=record.id,
+                    job_id=record.job_id,
+                    draft_id=record.draft_id,
+                    payload_json=record.model_dump_json(),
+                    updated_at=datetime.now(UTC),
+                )
+            )
+            session.commit()
+
+    def get(self, job_id: str) -> DecisionRecord | None:
+        with Session(self.store.engine) as session:
+            record = session.get(DecisionRecordRecord, f"dec_{job_id}")
+            if record is None:
+                return None
+            return DecisionRecord.model_validate_json(record.payload_json)
+
+    def list(self) -> list[DecisionRecord]:
+        with Session(self.store.engine) as session:
+            records = list(session.exec(select(DecisionRecordRecord)))
+            return [DecisionRecord.model_validate_json(r.payload_json) for r in records]
 
 
 class ReviewRepository:
