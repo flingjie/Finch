@@ -40,6 +40,12 @@ def test_draft_has_new_fields():
     assert modern.critic_report_id == "critic_1"
 
 
+def test_draft_run_id_defaults_empty():
+    draft = Draft(id="d1", kind=DraftKind.ORIGINAL, body="hi")
+    assert draft.run_id == ""
+    assert draft.content_job_id is None
+
+
 def test_daily_brief_shape():
     b = DailyBrief(run_id="r", has_drafts=True, reply_count=1, body="# brief")
     assert b.reply_count == 1

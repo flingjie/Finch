@@ -1,9 +1,12 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
 
+from finch.content.jobs import PositionSource
 from finch.review.models import (
+    DecisionAction,
+    DecisionRecord,
     Feedback,
     OutcomeAssessment,
     ReviewAction,
@@ -64,6 +67,22 @@ def test_review_decision_shape():
                        reason=SkipReason.NOT_NOW.value,
                        decided_at=datetime(2026, 1, 1))
     assert d.action == ReviewAction.SKIP and d.reason == "not_now"
+
+
+def test_decision_record_shape():
+    rec = DecisionRecord(
+        id="dec_j1",
+        job_id="j1",
+        draft_id="d1",
+        action=DecisionAction.ACCEPT,
+        position_source=PositionSource.HUMAN_CONFIRMED,
+        position_fingerprint="fp",
+        approved_content_hash="h",
+        decided_at=datetime.now(UTC),
+    )
+    assert rec.id == "dec_j1"
+    assert rec.action == DecisionAction.ACCEPT
+    assert rec.position_source == PositionSource.HUMAN_CONFIRMED
 
 
 def test_feedback_shape():

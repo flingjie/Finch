@@ -79,6 +79,12 @@ class TestAuthorPosition:
         assert pos.confirmed is False
 
 
+def test_author_position_source_defaults_none():
+    pos = AuthorPosition(claim="c", decision="d", tradeoff="t")
+    assert pos.position_source is None
+    assert pos.confirmed is False
+
+
 def test_position_fingerprint_is_deterministic():
     p = AuthorPosition(claim="c", decision="d", tradeoff="t")
     assert position_fingerprint(p) == position_fingerprint(p)

@@ -25,6 +25,14 @@ class ContentJobStatus(StrEnum):
     DO_NOT_WRITE = "do_not_write"
 
 
+class PositionSource(StrEnum):
+    """作者立场的确认来源：推断 / 人类确认 / 复用门禁确认。"""
+
+    INFERRED = "inferred"
+    HUMAN_CONFIRMED = "human_confirmed"
+    REUSED = "reused"
+
+
 class IntendedEffect(BaseModel):
     """内容预期产生的效果。"""
 
@@ -41,6 +49,7 @@ class AuthorPosition(BaseModel):
     tradeoff: str
     change_mind_if: str | None = None
     confirmed: bool = False
+    position_source: PositionSource | None = None
 
 
 def position_fingerprint(position: AuthorPosition) -> str:

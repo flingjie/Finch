@@ -28,6 +28,7 @@ class Draft(BaseModel):
     content_job_id: str | None = None
     position_statement: str = ""
     critic_report_id: str | None = None
+    run_id: str = ""                  # 当次 run（回溯到来源）
 
 
 class DraftWarning(BaseModel):
