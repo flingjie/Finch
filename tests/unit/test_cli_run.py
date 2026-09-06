@@ -844,9 +844,10 @@ def test_run_resolve_file_missing_clean_error(monkeypatch, tmp_path):
 
     r = CliRunner().invoke(app, ["run", "resolve", "--file", str(tmp_path / "nope.yaml")])
     assert r.exit_code == 1, r.output
-    # 干净错误：typer.Exit(1) 在 CliRunner 中以 SystemExit(1) 呈现（而非 None），
-    # 不变的保证是「单行错误 + exit 1」——即输出里没有未捕获 traceback。
-    assert "Traceback" not in r.output
+    # 干净错误：域错误经 typer.Exit(1) 呈现为 SystemExit；
+    # 修复前会以 FileNotFoundError 出现在 r.exception。
+    assert isinstance(r.exception, SystemExit), repr(r.exception)
+    assert "No such file" in r.output
 
 
 def test_run_resolve_file_malformed_clean_error(monkeypatch, tmp_path):
@@ -859,8 +860,9 @@ def test_run_resolve_file_malformed_clean_error(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_resume_and_echo", lambda st, nodes, rid: None)
 
     bad = tmp_path / "bad.yaml"
-    bad.write_text(": bad yaml: [")
+    bad.write_text(": bad: [")
     r = CliRunner().invoke(app, ["run", "resolve", "--file", str(bad)])
     assert r.exit_code == 1, r.output
-    assert "Traceback" not in r.output
+    assert isinstance(r.exception, SystemExit), repr(r.exception)
+    assert r.output.strip()  # 单行错误确实被 echo（非空）
 
