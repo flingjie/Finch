@@ -54,11 +54,26 @@ def draft_generation_key(
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _idea_fingerprint(idea: ContentJob) -> str:
-    """idea 指纹：优先用已算好的 ``content_fingerprint``，否则回退到核心主张的 sha256。"""
-    if idea.content_fingerprint:
-        return idea.content_fingerprint
-    return hashlib.sha256(idea.core_message.encode("utf-8")).hexdigest()
+def _idea_fingerprint(job: ContentJob) -> str:
+    """草稿幂等指纹：writer 实际读取的全部语境字段（7 项），而非仅 core_message。
+
+    立场（claim/decision/tradeoff/change_mind_if）变化必须改变指纹，否则
+    ``revise_position`` 后重生成会命中旧 draft_id、返回旧草稿（静默吞掉修改）。
+    不再优先用 ``content_fingerprint``：它是 idea 自身的幂等字段，不含 writer 读取
+    的立场与边界，覆盖不足。
+    """
+    position = job.author_position
+    parts = [
+        job.reader_problem,
+        job.core_message,
+        job.why_now or "",
+        position.claim if position is not None else "",
+        position.decision if position is not None else "",
+        position.tradeoff if position is not None else "",
+        position.change_mind_if or "" if position is not None else "",
+    ]
+    raw = _SEP.join(parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _failed_issues(checks: list[CheckResult]) -> str:

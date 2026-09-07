@@ -7,7 +7,7 @@ from finch.content.checkers.portability import _PortabilityOutput
 from finch.content.checkers.safety import _SafetyOutput
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from finch.content.models import Draft, DraftKind
-from finch.drafts.service import DraftService, draft_generation_key
+from finch.drafts.service import DraftService, draft_generation_key, _idea_fingerprint
 
 
 class FakeDraftRepository:
@@ -194,7 +194,7 @@ def test_create_pass_through_saves_draft_and_report():
     draft = svc.create("idea_abc123", version="1.0.0", format="original", voice_version="1.0.0")
 
     expected_id = (
-        f"draft_{draft_generation_key('fp_abc123', '1.0.0', 'original', '1.0.0')[:16]}"
+        f"draft_{draft_generation_key(_idea_fingerprint(_idea()), '1.0.0', 'original', '1.0.0')[:16]}"
     )
     assert draft.id == expected_id
     assert draft.body == runner.body
@@ -209,6 +209,29 @@ def test_create_pass_through_saves_draft_and_report():
     assert draft_id == expected_id
     assert round_no == 0
     assert outcome == "pass"
+
+
+def test_idea_fingerprint_changes_when_tradeoff_changes():
+    base = _idea()
+    changed = _idea(
+        author_position=AuthorPosition(
+            claim="Graph 主要价值是恢复与重放",
+            decision="用可恢复性评价 Graph",
+            tradeoff="稳定后，再把需要确定性和幂等保障的部分代码化",
+            change_mind_if=None,
+        )
+    )
+    # core_message 相同、content_fingerprint 相同，但 tradeoff 变了 → 指纹必须变。
+    assert base.core_message == changed.core_message
+    assert base.content_fingerprint == changed.content_fingerprint
+    assert _idea_fingerprint(base) != _idea_fingerprint(changed)
+
+
+def test_idea_fingerprint_ignores_content_fingerprint():
+    a = _idea()
+    b = _idea(content_fingerprint="different_fp_but_same_fields")
+    # content_fingerprint 只是 idea 自身的幂等字段，不应影响草稿指纹。
+    assert _idea_fingerprint(a) == _idea_fingerprint(b)
 
 
 # ---- create: 硬失败（needs_input）丢弃 ----
