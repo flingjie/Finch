@@ -5,6 +5,20 @@ from finch.inbox.models import InboxItem, InboxTrack
 _TRACK_LABEL = {InboxTrack.ORIGINAL: "原创", InboxTrack.ENGAGEMENT: "互动"}
 _CONTENT_LABEL = {"original": "原创", "reply": "回复", "quote": "引用"}
 
+_STATE_LABELS = {
+    "COMPLETED": "已完成",
+    "NEEDS_INPUT": "等待你的确认",
+    "SKIPPED": "已跳过",
+    "STOPPED": "已保存并退出",
+    "FAILED": "运行失败",
+    "BLOCKED": "运行失败",
+}
+
+
+def state_label(state: str) -> str:
+    """把内部 GraphState 映射为面向用户的文案；未知名回退原值。"""
+    return _STATE_LABELS.get(state, state)
+
 
 def render_inbox(items: list[InboxItem]) -> str:
     """「今天 N 条待决定」汇总。"""

@@ -9,7 +9,7 @@ from finch.storage.database import Store
 from finch.twitter.opencli_client import OpenCliClient
 
 
-def test_daily_nodes_has_eight_nodes(tmp_path):
+def test_daily_nodes_has_seven_nodes(tmp_path):
     store = Store(tmp_path / "db.sqlite")
     store.init()
     nodes = daily_nodes(
@@ -31,12 +31,9 @@ def test_daily_nodes_has_eight_nodes(tmp_path):
         "match_evidence",
         "select",
         "write",
-        "brief",
     ]
     assert nodes[5].reads == ["match_results", "evidence_cards", "candidates"]
     assert nodes[6].reads == ["ready_jobs", "evidence_cards", "candidates", "match_results"]
-    assert nodes[7].writes == "brief"
-    assert nodes[7].terminal_state_key == "terminal_state"
 
 
 def test_daily_nodes_order_and_contract(tmp_path):
@@ -56,7 +53,7 @@ def test_daily_nodes_order_and_contract(tmp_path):
     assert [n.name for n in nodes] == [
         "preflight", "extract_events",
         "collect_tweets", "recall", "match_evidence",
-        "select", "write", "brief",
+        "select", "write",
     ]
     assert nodes[3].reads == ["candidates", "evidence_cards"]
     assert nodes[4].writes == "match_results"
@@ -236,7 +233,7 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path):
         )
 
     run = GraphRuntime(store, build()).run()
-    assert run.state == "WAITING_FOR_REVIEW"
+    assert run.state == "DRAFTED"
     # 单轮直达（select 不阻塞）：match(1) + select(plan 1 + expand 1) + write 写稿(1) = 4 次
     # LLM 调用。write 节点 L0 确定性门禁通过（valid claim）且 mode=on_fail_or_gate，L1
     # 检查器套件被跳过，不再调用 LLM。
@@ -244,12 +241,12 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path):
 
     # resume 全绿：所有节点已成功，重放不新增 LLM 调用。
     run2 = GraphRuntime(store, build()).run(run_id=run.id)
-    assert run2.state == "WAITING_FOR_REVIEW"
+    assert run2.state == "DRAFTED"
     assert runner.calls == 4
 
 
 def test_daily_no_evidence_completes_without_llm(tmp_path):
-    """Phase 0 回归：无证据卡时整条原创图到达 COMPLETED，不进入人工审核，也不调 LLM。"""
+    """Phase 0 回归：无证据卡时整条原创图到达 DRAFTED（跑满 7 节点不阻塞），不调 LLM。"""
     import json
 
     from finch.graph.runtime import GraphRuntime
@@ -309,14 +306,10 @@ def test_daily_no_evidence_completes_without_llm(tmp_path):
 
     run = GraphRuntime(store, nodes).run()
     assert runner.calls == 0
-    assert run.state == "COMPLETED"
+    assert run.state == "DRAFTED"
 
-    # 无 draft：write 节点输出空 items，brief 判定 has_drafts=False。
+    # 无 draft：write 节点输出空 items（无 brief 节点判定 has_drafts）。
     write_rec = store.find_node(run.id, "write", "default")
     assert write_rec is not None
     assert json.loads(write_rec.output_json)["items"] == []
-
-    brief_rec = store.find_node(run.id, "brief", "default")
-    assert brief_rec is not None
-    assert json.loads(brief_rec.output_json)["terminal_state"] == "COMPLETED"
 

@@ -3,7 +3,7 @@ from finch.settings import Settings
 
 
 def test_registry_has_unique_names_and_valid_kinds():
-    assert len(REGISTRY) >= 7
+    assert len(REGISTRY) >= 6
     for name, spec in REGISTRY.items():
         assert spec.name == name
         assert spec.kind in ("graph_node", "function")
@@ -13,10 +13,6 @@ def test_graph_node_build_returns_node():
     ctx = DevContext(settings=Settings())
     for name, expected_reads in {
         "recall": {"candidates", "evidence_cards"},
-        "brief": {
-            "drafts", "evidence_cards",
-            "ready_jobs", "candidates", "match_results",
-        },
     }.items():
         spec = REGISTRY[name]
         assert spec.kind == "graph_node"

@@ -1,4 +1,4 @@
-"""每日 Graph 组装（Phase 5 Task F7）：把节点 1–9 串成完整管线。"""
+"""每日 Graph 组装：把 7 个节点串成完整管线。"""
 
 from ..codex.runner import CodexRunner
 from ..content.voice import VoiceProfile
@@ -20,7 +20,6 @@ from ..twitter.opencli_client import OpenCliClient
 from ..twitter.query_builder import QueryBuilder
 from .content_nodes import (
     default_checker_suite,
-    make_brief_node,
     make_select_node,
     make_write_node,
 )
@@ -48,8 +47,7 @@ def daily_nodes(
     inference_runners: dict[str, StructuredInferenceRunner | None] | None = None,
 ) -> list[Node]:
     """组装每日 Graph：preflight → extract → collect → recall → match → select →
-    draft → critique → brief。提取节点对 groups_by_repo 中的预分组 group 提取事件并
-    合并 Evidence Cards。
+    write。提取节点对 groups_by_repo 中的预分组 group 提取事件并合并 Evidence Cards。
     """
     def collect_fn() -> list[DiscussionCandidate]:
         builder = QueryBuilder(
@@ -106,5 +104,4 @@ def daily_nodes(
             checkers=default_checker_suite(_resolve("critique"), voice_profile),
             voice_profile=voice_profile,
         ),
-        make_brief_node(settings.quality_gates, jobs_repo=jobs_repo),
     ]

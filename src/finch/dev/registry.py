@@ -41,13 +41,6 @@ def _build_recall(ctx: DevContext) -> Node:
     return make_recall_node(ctx.settings.quality_gates)
 
 
-def _build_brief(ctx: DevContext) -> Node:
-    """延迟装配 brief 节点（避免 import registry 即拖入 content 管线）。"""
-    from finch.graph.content_nodes import make_brief_node
-
-    return make_brief_node(ctx.settings.quality_gates)
-
-
 _SPECS: list[FeatureSpec] = [
     FeatureSpec(
         name="recall",
@@ -55,13 +48,6 @@ _SPECS: list[FeatureSpec] = [
         description="确定性召回：candidates × cards → ranked_candidates（Jaccard）",
         test_targets=("tests/graph/test_match_nodes.py",),
         build=_build_recall,
-    ),
-    FeatureSpec(
-        name="brief",
-        kind="graph_node",
-        description="每日简报渲染（确定性，jobs_repo=None）",
-        test_targets=("tests/graph/test_content_nodes.py",),
-        build=_build_brief,
     ),
     FeatureSpec(
         name="select_groups",

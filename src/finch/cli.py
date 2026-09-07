@@ -1,7 +1,6 @@
 """Finch CLI（spec 10）。"""
 
 import json
-import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,7 +15,7 @@ from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
 from .content.checkers.aggregate import AggregateOutcome
 from .content.checkers.base import CheckResult
-from .content.models import DailyBrief, Draft, DraftKind
+from .content.models import Draft
 from .content.voice import (
     ApprovedExample,
     RejectedExample,
@@ -27,17 +26,6 @@ from .dev.cli import dev_app
 from .engagement.flow import run_discovery_engagement_flow
 from .engagement.models import EngagementRunStats, InteractionCandidate
 from .evidence.extractor import Extractor, build_cards
-from .evidence.models import EvidenceCard
-from .gate.interactive import edit_position_inline, select_action
-from .gate.models import InputAction, InputRequest, ProposedPosition
-from .gate.render import (
-    render_compact_resolve,
-    render_daily_summary,
-    render_outcome,
-    render_produced,
-    state_label,
-)
-from .gate.resolve import resolve_input
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.discovery import resolve_repositories
 from .github.gh_client import GhClient
@@ -45,10 +33,7 @@ from .github.ingestion import Ingestor
 from .graph.context import parse_items
 from .graph.daily import daily_nodes
 from .graph.dual_track import DualTrackResult, run_dual_track
-from .graph.nodes import Node
-from .graph.replay import replay
 from .graph.runtime import GraphRuntime
-from .graph.state import GraphState
 from .idea.models import IdeaAssessment
 from .idea.service import (
     assess_idea,
@@ -60,6 +45,7 @@ from .idea.service import (
     write_idea,
 )
 from .inbox.models import DecisionAction, DecisionRecord
+from .inbox.render import state_label
 from .inbox.service import InboxDecisionService, next_item
 from .learn.models import OutcomeAssessment
 from .learn.service import FeedbackService
@@ -67,7 +53,7 @@ from .learn.weekly import render_weekly, weekly_analysis
 from .llm.openai_compatible import create_runner
 from .reddit.opencli_client import RedditOpenCliClient
 from .settings import load_settings
-from .storage.database import RunRecord, Store
+from .storage.database import Store
 from .storage.repositories import (
     AuthorPostRepository,
     CommitIngestionRepository,
@@ -190,21 +176,11 @@ def _persist_run_outputs(store: Store, run_id: str) -> None:
             draft_repo.upsert_draft(draft)
 
 
-def _echo_daily_brief(store: Store, run_id: str) -> None:
-    """打印一次 run 的 brief 正文（存在时），与 run_daily/run_resume 原逻辑一致。"""
-    brief_record = store.find_node(run_id, "brief", "default")
-    if brief_record is not None and brief_record.output_json:
-        briefs = parse_items(json.loads(brief_record.output_json), DailyBrief)
-        if briefs:
-            typer.echo(briefs[0].body)
-
-
 def _echo_dual_track_result(result: DualTrackResult, store: Store) -> None:
-    """汇总输出双轨结果：原创轨道 state + brief（同今日），随后互动轨道 summary。"""
+    """汇总输出双轨结果：原创轨道 state，随后互动轨道 summary（不再打印 brief）。"""
     if result.original is not None:
         typer.echo(state_label(result.original.state))
         _persist_run_outputs(store, result.original.id)
-        _echo_daily_brief(store, result.original.id)
     elif result.original_error is not None:
         typer.echo(
             f"original track error: {result.original_error.type}: {result.original_error.message}"
@@ -216,89 +192,6 @@ def _echo_dual_track_result(result: DualTrackResult, store: Store) -> None:
             f"engagement track error: {result.engagement_error.type}: "
             f"{result.engagement_error.message}"
         )
-
-
-def _original_draft_count(store: Store, run_id: str) -> int:
-    """读 draft 节点输出，统计本次 run 生成的原创草稿数。"""
-    record = store.find_node(run_id, "draft", "default")
-    if record is None or not record.output_json:
-        return 0
-    return sum(
-        1 for d in parse_items(json.loads(record.output_json), Draft)
-        if d.kind == DraftKind.ORIGINAL
-    )
-
-
-def _finish_daily(
-    store: Store,
-    nodes: list[Node],
-    run_id: str,
-    *,
-    engagement_drafts: int,
-    posts_found: int | None,
-    use_interactive: bool,
-    verbose: bool,
-) -> None:
-    """run 停在 NEEDS_INPUT 时的收尾：TTY 进交互循环自动恢复，非 TTY 输出紧凑结果。"""
-    request = _read_input_request(store, run_id)
-    if not use_interactive:
-        typer.echo(
-            render_daily_summary(
-                posts_found=posts_found,
-                engagement_drafts=engagement_drafts,
-                pending_original=1,
-            )
-        )
-        typer.echo("")
-        typer.echo(render_compact_resolve(request, engagement_drafts=engagement_drafts))
-        return
-
-    jobs_repo = ContentJobRepository(store)
-    while True:
-        typer.echo(
-            render_daily_summary(
-                posts_found=posts_found,
-                engagement_drafts=engagement_drafts,
-                pending_original=1,
-            )
-        )
-        typer.echo("")
-        cards = _cards_for(request, store)
-        action = select_action(request, cards)
-        if action is None:
-            typer.echo(render_outcome(None))
-            _mark_stopped(store, run_id)
-            return
-        edited: ProposedPosition | None = None
-        skip_reason: str | None = None
-        if action is InputAction.EDIT:
-            edited = edit_position_inline(request.proposed_position)
-        elif action is InputAction.SKIP:
-            skip_reason = typer.prompt("跳过理由", default="not_now")
-        try:
-            resolve_input(
-                request,
-                action,
-                jobs_repo=jobs_repo,
-                edited_position=edited,
-                skip_reason=skip_reason,
-            )
-        except ValueError as exc:
-            typer.echo(str(exc))
-            raise typer.Exit(code=1) from exc
-        typer.echo(render_outcome(action))
-        run = _resume_and_echo(store, nodes, run_id, verbose=verbose)
-        if run.state == GraphState.NEEDS_INPUT.value:
-            request = _read_input_request(store, run_id)
-            continue
-        if run.state in {GraphState.COMPLETED.value, GraphState.SKIPPED.value}:
-            typer.echo(
-                render_produced(
-                    engagement_drafts=engagement_drafts,
-                    original_drafts=_original_draft_count(store, run_id),
-                )
-            )
-        return
 
 
 def _persist_engagement_candidates(result: DualTrackResult, store: Store) -> None:
@@ -467,16 +360,9 @@ def twitter_diagnose() -> None:
 
 @app.command("daily")
 def run_daily(
-    interactive: bool = typer.Option(False, "--interactive", help="强制交互选择器"),  # noqa: B008
-    non_interactive: bool = typer.Option(False, "--non-interactive", help="强制紧凑输出"),  # noqa: B008
-    verbose: bool = typer.Option(False, "--verbose", help="显示内部状态与 run_id"),  # noqa: B008
     as_json: bool = typer.Option(False, "--json", help="输出结构化 JSON 摘要"),  # noqa: B008
 ) -> None:
     """运行每日 Graph：同步 commit → 提取证据卡 → 收集推文 → 匹配证据 → 撰写与审查草稿。"""
-    if interactive and non_interactive:
-        typer.echo("--interactive 与 --non-interactive 互斥")
-        raise typer.Exit(code=1)
-
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -527,8 +413,6 @@ def run_daily(
         },
     )
 
-    use_interactive = interactive or (not non_interactive and sys.stdout.isatty())
-
     if settings.engagement.enabled:
         start = time.monotonic()
         result = run_dual_track(
@@ -546,7 +430,6 @@ def run_daily(
         engagement_drafts = sum(
             1 for c in (engagement.candidates if engagement else []) if c.draft is not None
         )
-        posts_found = engagement.posts_found if engagement else 0
 
         if as_json:
             run_id = (
@@ -557,23 +440,6 @@ def run_daily(
             )
             return
 
-        original = result.original
-        if (
-            original is not None
-            and original.state == GraphState.NEEDS_INPUT.value
-            and not result.original_failed
-        ):
-            _finish_daily(
-                store,
-                nodes,
-                original.id,
-                engagement_drafts=engagement_drafts,
-                posts_found=posts_found,
-                use_interactive=use_interactive,
-                verbose=verbose,
-            )
-            return
-
         _echo_dual_track_result(result, store)
         return
 
@@ -581,57 +447,8 @@ def run_daily(
     if as_json:
         typer.echo(_daily_json_summary(store, run.id, engagement_drafts=0))
         return
-    if run.state == GraphState.NEEDS_INPUT.value:
-        _finish_daily(
-            store,
-            nodes,
-            run.id,
-            engagement_drafts=0,
-            posts_found=None,
-            use_interactive=use_interactive,
-            verbose=verbose,
-        )
-        return
     typer.echo(state_label(run.state))
-    if verbose:
-        typer.echo(f"[internal] state={run.state} run_id={run.id}")
     _persist_run_outputs(store, run.id)
-    _echo_daily_brief(store, run.id)
-
-
-def _mark_stopped(store: Store, run_id: str) -> None:
-    """把 run 标记为 STOPPED（用户保存进度并退出 / 结束原创轨道）。"""
-    store.upsert_run(
-        RunRecord(id=run_id, state=GraphState.STOPPED.value, updated_at=datetime.now(UTC))
-    )
-
-
-def _read_input_request(store: Store, run_id: str) -> InputRequest:
-    record = store.find_node(run_id, "position_gate", "default")
-    if record is None or not record.output_json:
-        raise ValueError(f"run {run_id} has no position_gate output")
-    raw = json.loads(record.output_json).get("input_request")
-    if raw is None:
-        raise ValueError(f"run {run_id} has no pending input_request")
-    return InputRequest.model_validate(raw)
-
-
-def _cards_for(request: InputRequest, store: Store) -> list[EvidenceCard]:
-    cards_by_id = {card.id: card for card in EvidenceRepository(store).list_cards()}
-    return [cards_by_id[cid] for cid in request.evidence_card_ids if cid in cards_by_id]
-
-
-def _resume_and_echo(
-    store: Store, nodes: list[Node], run_id: str, *, verbose: bool = False
-) -> RunRecord:
-    """replay + 打印 state（人性化文案）+ 持久化 run 输出 + 打印 brief，返回 run。"""
-    run = replay(store, nodes, run_id)
-    typer.echo(state_label(run.state))
-    if verbose:
-        typer.echo(f"[internal] state={run.state} run_id={run.id}")
-    _persist_run_outputs(store, run_id)
-    _echo_daily_brief(store, run_id)
-    return run
 
 
 @app.command("weekly")

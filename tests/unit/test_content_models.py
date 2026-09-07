@@ -1,4 +1,4 @@
-from finch.content.models import ClaimRef, DailyBrief, Draft, DraftKind, DraftWarning
+from finch.content.models import ClaimRef, Draft, DraftKind, DraftWarning
 from finch.evidence.models import ClaimConfidence
 
 
@@ -44,11 +44,6 @@ def test_draft_run_id_defaults_empty():
     draft = Draft(id="d1", kind=DraftKind.ORIGINAL, body="hi")
     assert draft.run_id == ""
     assert draft.content_job_id is None
-
-
-def test_daily_brief_shape():
-    b = DailyBrief(run_id="r", has_drafts=True, reply_count=1, body="# brief")
-    assert b.reply_count == 1
 
 
 def test_draft_warning_binds_to_draft():
