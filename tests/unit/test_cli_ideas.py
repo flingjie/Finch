@@ -13,12 +13,14 @@ from finch.ideas.models import (
     IdeaPosition,
     SourceRef,
 )
-from finch.settings import Paths, Settings
+from finch.settings import Paths, Settings, TwitterSettings
 from finch.storage.database import Store
 from finch.storage.repositories import ContentJobRepository
 
 CORE_POINT = "make the orchestrator a deterministic graph"
 COMMIT_URL = "https://github.com/acme/proj/commit/" + "a" * 40
+SEARCH_TOPIC = "agent evals"
+SEARCH_POST_URL = "https://x.com/acme/status/9876543210"
 
 
 def _settings(tmp_path, repositories):
@@ -144,4 +146,149 @@ def test_ideas_commit_requires_repo_when_unconfigured(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["ideas", "commit", "--json"])
     assert r.exit_code == 1
     assert "--repo" in r.output
+    assert ContentJobRepository(store).list_jobs() == []
+
+
+# ---- finch ideas search ----
+
+def _search_settings(tmp_path, queries):
+    return Settings(
+        paths=Paths(db_path=tmp_path / "finch.db"),
+        twitter=TwitterSettings(queries=queries),
+    )
+
+
+def _search_candidate(topic: str = SEARCH_TOPIC) -> IdeaCandidate:
+    return IdeaCandidate(
+        id="idea_abc12345",
+        origin="search",
+        core_point=f"{topic} 相关公开讨论暴露工程缺口：agent keeps failing",
+        reader_problem="agent keeps failing on long context",
+        why_worth_saying="公开讨论中出现的真实问题/缺口，值得写",
+        author_position=IdeaPosition(
+            claim=f"{topic} 相关公开讨论暴露真实工程缺口",
+            decision="值得调研或回应这个缺口",
+            tradeoff="不写则错失这个公共信号",
+            status="proposed",
+        ),
+        source_refs=[
+            SourceRef(type="post", ref=SEARCH_POST_URL, summary="agent keeps failing")
+        ],
+        boundaries=IdeaBoundaries(inferred=["agent keeps failing"]),
+        recommended_format="original",
+        generator=IdeaGenerator(skill="search-to-idea", version="1.0.0"),
+    )
+
+
+class _FakeQueryConfig:
+    def __init__(self, cfg: dict) -> None:
+        self.text = cfg.get("text", "")
+        self.filter = cfg.get("filter", "top")
+
+
+class _FakeQueryBuilder:
+    def __init__(self, configs, per_query_limit=20):
+        self.configs = [_FakeQueryConfig(c) for c in configs]
+        self.per_query_limit = per_query_limit
+
+
+class _FakeSearchService:
+    def __init__(self, opencli, builder):
+        self.opencli = opencli
+        self.builder = builder
+
+    def to_ideas(self, posts, *, topic):
+        return [_search_candidate(topic)]
+
+
+def _patch_search_cli(monkeypatch, settings, record):
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "QueryBuilder", _FakeQueryBuilder)
+    monkeypatch.setattr(cli, "SearchService", _FakeSearchService)
+
+    class _FakeOpenCliClient:
+        def search(self, query, *, product="top", limit=20):
+            record.append((query, product, limit))
+            return []
+
+    monkeypatch.setattr(cli, "OpenCliClient", _FakeOpenCliClient)
+
+
+def test_ideas_search_persists_and_outputs_json(monkeypatch, tmp_path):
+    settings = _search_settings(tmp_path, [{"text": SEARCH_TOPIC, "filter": "top"}])
+    store = Store(settings.paths.db_path)
+    store.init()
+    _patch_search_cli(monkeypatch, settings, [])
+
+    r = CliRunner().invoke(app, ["ideas", "search", "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert isinstance(payload, list)
+    assert len(payload) == 1
+    assert payload[0]["id"].startswith("idea_")
+    assert payload[0]["origin"] == "search"
+    assert SEARCH_TOPIC in payload[0]["core_point"]
+    assert payload[0]["status"] == "proposed"
+    assert payload[0]["generation_key"]
+
+    jobs = ContentJobRepository(store).list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].origin == "search"
+    assert jobs[0].status.value == "proposed"
+    assert SEARCH_TOPIC in jobs[0].core_message
+
+
+def test_ideas_search_non_json_output(monkeypatch, tmp_path):
+    settings = _search_settings(tmp_path, [{"text": SEARCH_TOPIC, "filter": "top"}])
+    store = Store(settings.paths.db_path)
+    store.init()
+    _patch_search_cli(monkeypatch, settings, [])
+
+    r = CliRunner().invoke(app, ["ideas", "search"])
+    assert r.exit_code == 0, r.output
+    lines = [ln for ln in r.output.strip().splitlines() if ln]
+    assert len(lines) == 1
+    idea_id, status, core = lines[0].split("\t")
+    assert idea_id.startswith("idea_")
+    assert status == "proposed"
+    assert core
+
+
+def test_ideas_search_defaults_topic_from_settings(monkeypatch, tmp_path):
+    settings = _search_settings(tmp_path, [{"text": SEARCH_TOPIC, "filter": "top"}])
+    store = Store(settings.paths.db_path)
+    store.init()
+    record = []
+    _patch_search_cli(monkeypatch, settings, record)
+
+    r = CliRunner().invoke(app, ["ideas", "search", "--json"])
+    assert r.exit_code == 0, r.output
+    assert len(record) == 1
+    assert record[0][0] == SEARCH_TOPIC
+    assert record[0][2] == settings.twitter.per_query_limit
+
+
+def test_ideas_search_explicit_topic_used(monkeypatch, tmp_path):
+    settings = _search_settings(tmp_path, [{"text": SEARCH_TOPIC, "filter": "top"}])
+    store = Store(settings.paths.db_path)
+    store.init()
+    record = []
+    _patch_search_cli(monkeypatch, settings, record)
+
+    r = CliRunner().invoke(app, ["ideas", "search", "--topic", "vector search", "--json"])
+    assert r.exit_code == 0, r.output
+    assert record[0][0] == "vector search"
+
+
+def test_ideas_search_requires_topic_when_unconfigured(monkeypatch, tmp_path):
+    settings = _search_settings(tmp_path, [])
+    store = Store(settings.paths.db_path)
+    store.init()
+    record = []
+    _patch_search_cli(monkeypatch, settings, record)
+
+    r = CliRunner().invoke(app, ["ideas", "search", "--json"])
+    assert r.exit_code == 1
+    assert "--topic" in r.output
+    assert record == []
     assert ContentJobRepository(store).list_jobs() == []

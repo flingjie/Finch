@@ -45,6 +45,7 @@ from .idea.service import (
     write_idea,
 )
 from .ideas.commit_service import CommitService
+from .ideas.search_service import SearchService
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, DecisionRecord
 from .inbox.render import render_daily_summary, state_label
@@ -351,6 +352,46 @@ def ideas_commit(
         cache_path=settings.paths.cache_dir / "extraction_cache.json",
     )
     ideas = CommitService(reader, extractor).to_ideas(details, repo=repo)
+    idea_service = IdeaService(ContentJobRepository(store))
+    jobs = [idea_service.create_candidate(idea) for idea in ideas]
+    if as_json:
+        payload = [
+            {
+                "id": job.id,
+                "origin": job.origin,
+                "core_point": job.core_message,
+                "status": job.status.value,
+                "generation_key": job.generation_key,
+            }
+            for job in jobs
+        ]
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        for job in jobs:
+            typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
+
+
+@ideas_app.command("search")
+def ideas_search(
+    topic: str = typer.Option(None, "--topic", help="搜索话题（默认 settings.twitter.queries[0]）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """从公开讨论搜索提炼 Idea 候选并幂等落库为 ContentJob（不生成草稿）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    builder = QueryBuilder(
+        settings.twitter.queries, per_query_limit=settings.twitter.per_query_limit
+    )
+    opencli = OpenCliClient()
+    if topic is None:
+        if not builder.configs:
+            typer.echo("--topic is required (no twitter queries configured)")
+            raise typer.Exit(code=1)
+        topic = builder.configs[0].text
+    tweets = opencli.search(topic, product="top", limit=builder.per_query_limit)
+    posts = normalize_tweets(tweets)
+    ideas = SearchService(opencli, builder).to_ideas(posts, topic=topic)
     idea_service = IdeaService(ContentJobRepository(store))
     jobs = [idea_service.create_candidate(idea) for idea in ideas]
     if as_json:
