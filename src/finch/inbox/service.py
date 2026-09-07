@@ -334,28 +334,3 @@ def list_items(
         if candidate.draft or candidate.revised_draft:
             items.append(build_engagement_item(candidate))
     return sorted(items, key=_sort_key)
-
-
-def next_item(
-    *,
-    jobs: ContentJobRepository,
-    drafts: DraftRepository,
-    decisions: DecisionRecordRepository,
-    interactions: InteractionRepository,
-    cards: EvidenceRepository,
-) -> dict:
-    """组装收件箱并返回第一条待决策卡（JSON 载荷），空则 {"status": "none"}。"""
-    first = select_next(
-        list_items(
-            jobs=jobs, drafts=drafts, decisions=decisions,
-            interactions=interactions, cards=cards,
-        )
-    )
-    if first is None:
-        return {"status": "none"}
-    payload = first.model_dump(mode="json")
-    payload["status"] = "review_required"
-    if first.track == InboxTrack.ORIGINAL:
-        payload["job_id"] = first.id  # 兼容旧客户端
-        payload["topic"] = first.position.get("decision") if first.position else first.id
-    return payload

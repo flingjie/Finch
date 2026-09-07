@@ -8,11 +8,8 @@ from typing import cast
 import typer
 import yaml
 
-from .author.reconcile import reconcile
-from .author.sync import sync_posts, verify_account
 from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
-from .content.checkers.aggregate import AggregateOutcome
 from .content.voice import (
     ApprovedExample,
     RejectedExample,
@@ -28,34 +25,20 @@ from .engagement.metrics import (
     render_run_stats,
     summarize_run_stats,
 )
-from .engagement.models import InteractionCandidate
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient
-from .idea.models import IdeaAssessment
-from .idea.service import (
-    assess_idea,
-    build_content_job,
-    build_draft,
-    critic_failure_reason,
-    recent_author_posts,
-    run_idea_critic,
-    write_idea,
-)
 from .ideas.commit_service import CommitService
 from .ideas.models import IdeaPosition
 from .ideas.search_service import SearchService
 from .ideas.service import IdeaService
-from .inbox.models import DecisionAction, DecisionRecord, InboxTrack
-from .inbox.service import InboxDecisionService, list_items, next_item
-from .learn.models import OutcomeAssessment
-from .learn.service import FeedbackService
+from .inbox.models import DecisionAction, InboxTrack
+from .inbox.service import InboxDecisionService, list_items
 from .learn.weekly import render_weekly, weekly_analysis
 from .llm.openai_compatible import create_runner
 from .settings import load_settings
 from .storage.database import Store
 from .storage.repositories import (
-    AuthorPostRepository,
     ContentJobRepository,
     ConversationEvidenceRepository,
     CriticReportRepository,
@@ -68,7 +51,6 @@ from .storage.repositories import (
     InteractionRepository,
     PublicationIntentRepository,
 )
-from .twitter.models import TwitterError
 from .twitter.normalizer import normalize_tweets
 from .twitter.opencli_client import OpenCliClient
 from .twitter.query_builder import QueryBuilder
@@ -84,9 +66,6 @@ app.add_typer(twitter_app, name="twitter")
 voice_app = typer.Typer(help="Manage the author voice profile (local, no auto-publish)")
 app.add_typer(voice_app, name="voice")
 
-author_app = typer.Typer(help="Author account sync + publication reconcile (read-only)")
-app.add_typer(author_app, name="author")
-
 app.add_typer(dev_app, name="dev")
 
 ideas_app = typer.Typer(help="Idea 候选流（commit/search 提炼 + 状态转换）")
@@ -100,41 +79,6 @@ app.add_typer(review_app, name="review")
 
 engagement_app = typer.Typer(help="Review engagement candidates (human-in-the-loop)")
 app.add_typer(engagement_app, name="engagement")
-
-
-@author_app.command("sync")
-def author_sync(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
-    """同步作者账号发帖并确定性匹配已批准草稿。"""
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    client = OpenCliClient()
-    total_synced = 0
-    try:
-        for cfg in settings.author_accounts:
-            if not cfg.enabled:
-                continue
-            account = verify_account(cfg, client, store)
-            total_synced += sync_posts(
-                account, client, store, lookback_days=cfg.history_lookback_days
-            )
-        result = reconcile(store)
-    except (KeyError, ValueError, TwitterError) as exc:
-        typer.echo(str(exc))
-        raise typer.Exit(code=1) from exc
-    payload = {
-        "synced": total_synced,
-        "linked": [link.model_dump(mode="json") for link in result.linked],
-        "needs_manual": result.needs_manual,
-        "awaiting": result.awaiting,
-    }
-    if as_json:
-        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
-    else:
-        typer.echo(
-            f"synced={total_synced} linked={len(result.linked)} "
-            f"awaiting={len(result.awaiting)}"
-        )
 
 
 def _since_iso(since: str | None) -> str | None:
@@ -627,92 +571,6 @@ def voice_reject_example(
     typer.echo(f"rejected example: {draft_id}")
 
 
-@app.command("decide")
-def decide(
-    item_id: str = typer.Argument(..., help="待决策项 id（job_id 或 candidate id）"),
-    action: str = typer.Option(..., "--action", help="accept|skip|revise"),
-    reason: str = typer.Option(None, "--reason", help="--action skip 的拒绝理由"),
-    instruction: str | None = typer.Option(None, "--instruction", help="--action revise 的指令"),
-    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
-) -> None:
-    """单一决策点：accept 确认立场+批准；skip 标记不写；revise 按指令重写。"""
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    svc = InboxDecisionService(
-        jobs=ContentJobRepository(store),
-        drafts=DraftRepository(store),
-        decisions=DecisionRecordRepository(store),
-        publication_intents=PublicationIntentRepository(store),
-        interactions=InteractionRepository(store),
-    )
-    try:
-        action_enum = DecisionAction(action)
-    except ValueError as exc:
-        typer.echo(f"invalid --action: {action}")
-        raise typer.Exit(code=1) from exc
-    result: DecisionRecord | InteractionCandidate | dict | None = None
-    try:
-        if action_enum is DecisionAction.ACCEPT:
-            result = svc.accept(item_id)
-        elif action_enum is DecisionAction.SKIP:
-            if not reason:
-                typer.echo("--action skip requires --reason")
-                raise typer.Exit(code=1)
-            result = svc.skip(item_id, reason)
-        else:
-            if not instruction:
-                typer.echo("--action revise requires --instruction")
-                raise typer.Exit(code=1)
-            cards_by_id = {c.id: c for c in EvidenceRepository(store).list_cards()}
-            runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
-            try:
-                result = svc.revise(item_id, instruction, runner=runner, cards_by_id=cards_by_id)
-            except (RuntimeError, StructuredOutputError) as exc:
-                typer.echo(
-                    json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False)
-                )
-                raise typer.Exit(code=1) from exc
-    except (KeyError, ValueError) as exc:
-        typer.echo(str(exc))
-        raise typer.Exit(code=1) from exc
-    assert result is not None
-    if as_json:
-        if isinstance(result, dict):
-            typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
-        else:
-            typer.echo(result.model_dump_json(indent=2))
-    else:
-        if isinstance(result, dict):
-            typer.echo(result["new_body"])
-        elif isinstance(result, DecisionRecord):
-            typer.echo(result.action.value)
-        else:
-            typer.echo(result.status.value)
-
-
-@app.command("next")
-def next_cmd(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
-    """返回下一个待决策卡（原创 + 互动），无则 status=none。"""
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    payload = next_item(
-        jobs=ContentJobRepository(store),
-        drafts=DraftRepository(store),
-        decisions=DecisionRecordRepository(store),
-        interactions=InteractionRepository(store),
-        cards=EvidenceRepository(store),
-    )
-    if as_json:
-        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
-    else:
-        if payload.get("status") == "none":
-            typer.echo("no pending items")
-        else:
-            typer.echo(payload.get("topic") or payload.get("id", ""))
-
-
 def _decision_service(store: Store) -> InboxDecisionService:
     return InboxDecisionService(
         jobs=ContentJobRepository(store),
@@ -1020,145 +878,6 @@ def engagement_metrics() -> None:
     typer.echo(render_metrics(metrics))
     stats = EngagementRunStatsRepository(store).list_all()
     typer.echo(render_run_stats(summarize_run_stats(stats)))
-
-
-@app.command("draft")
-@app.command("idea", hidden=True)
-def draft(
-    text: str = typer.Argument(..., help="想法或片段"),
-    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),  # noqa: B008
-) -> None:
-    """判断一个想法能否发，能发时生成样稿进入收件箱。"""
-    if not text.strip():
-        typer.echo("idea text is empty")
-        raise typer.Exit(code=1)
-
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-
-    cards = EvidenceRepository(store).list_cards()
-    cards_by_id = {card.id: card for card in cards}
-    recent_posts = recent_author_posts(AuthorPostRepository(store).list())
-
-    assess_runner = create_runner(settings.llm, "assess_idea") or CodexRunner()
-    write_runner = create_runner(settings.llm, "write_idea") or CodexRunner()
-    critic_runner = create_runner(settings.llm, "critique") or CodexRunner()
-    voice_profile = load_voice_profile(settings.paths.voice_profile_path)
-
-    try:
-        assessment = assess_idea(assess_runner, text, cards, recent_posts)
-    except (RuntimeError, StructuredOutputError) as exc:
-        _echo_idea_error(exc, as_json)
-        raise typer.Exit(code=1) from exc
-
-    if assessment.status != "ready":
-        _echo_idea(assessment, as_json)
-        return
-
-    matched_cards = [
-        cards_by_id[cid] for cid in assessment.matched_evidence_ids if cid in cards_by_id
-    ]
-    try:
-        body = write_idea(write_runner, text, assessment, matched_cards)
-        job = build_content_job(text, assessment)
-        draft = build_draft(job, body)
-        outcome, checks, final_draft = run_idea_critic(
-            critic_runner,
-            draft,
-            job,
-            matched_cards,
-            settings.quality_gates.max_rewrite_rounds,
-            voice_profile=voice_profile,
-        )
-    except (RuntimeError, StructuredOutputError) as exc:
-        _echo_idea_error(exc, as_json)
-        raise typer.Exit(code=1) from exc
-
-    if outcome != AggregateOutcome.PASS:
-        reason_code, reason = critic_failure_reason(checks)
-        _echo_idea(
-            IdeaAssessment(
-                status="not_ready",
-                reason_code=reason_code,
-                reason=reason,
-                core_point=assessment.core_point,
-                matched_evidence_ids=assessment.matched_evidence_ids,
-            ),
-            as_json,
-        )
-        return
-
-    ContentJobRepository(store).upsert_job(job)
-    DraftRepository(store).upsert_draft(final_draft)
-    CriticReportRepository(store).upsert_report(
-        final_draft.id, 0, checks, AggregateOutcome.PASS
-    )
-
-    _echo_idea(
-        IdeaAssessment(
-            status="ready",
-            reason_code=None,
-            reason="观点明确，且通过 Critic",
-            core_point=assessment.core_point,
-            matched_evidence_ids=assessment.matched_evidence_ids,
-            draft_id=final_draft.id,
-            sample=final_draft.body,
-        ),
-        as_json,
-    )
-
-
-def _echo_idea(assessment: IdeaAssessment, as_json: bool) -> None:
-    if as_json:
-        typer.echo(assessment.model_dump_json(indent=2))
-        return
-    if assessment.status == "ready":
-        typer.echo("适合发。")
-        typer.echo(f"\n原因\n{assessment.reason}")
-        if assessment.core_point:
-            typer.echo(f"\n核心观点\n{assessment.core_point}")
-        if assessment.sample:
-            typer.echo(f"\n样稿\n{assessment.sample}")
-        if assessment.draft_id:
-            typer.echo(f"\n采用：finch decide {assessment.draft_id} --action accept")
-            typer.echo(f"修改：finch decide {assessment.draft_id} --action revise")
-            typer.echo(f"跳过：finch decide {assessment.draft_id} --action skip --reason not_now")
-    else:
-        typer.echo("暂时不适合发。")
-        typer.echo(f"\n原因\n{assessment.reason}")
-        if assessment.reason_code:
-            typer.echo(f"（{assessment.reason_code}）")
-
-
-def _echo_idea_error(exc: Exception, as_json: bool) -> None:
-    if as_json:
-        typer.echo(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False))
-    else:
-        typer.echo(f"idea failed: {exc}")
-
-
-@app.command("learn")
-def learn(
-    draft_id: str = typer.Argument(..., help="草稿 id"),
-    url: str | None = typer.Option(None, "--url", help="发布链接"),
-    metrics: str | None = typer.Option(None, "--metrics", help="互动数据 JSON"),
-    outcome: str | None = typer.Option(None, "--outcome", help="结果评估 JSON"),
-    learning: str | None = typer.Option(None, "--learning", help="学习记录"),
-) -> None:
-    """登记发布链接、互动数据、结果评估与学习记录。"""
-    metrics_dict: dict | None = json.loads(metrics) if metrics else None
-    outcome_obj: OutcomeAssessment | None = (
-        OutcomeAssessment.model_validate_json(outcome) if outcome else None
-    )
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    feedback = FeedbackService(FeedbackRepository(store)).record(
-        draft_id, published_url=url, metrics=metrics_dict,
-        outcome=outcome_obj, learning=learning,
-    )
-    typer.echo(f"feedback recorded: {feedback.draft_id}")
 
 
 if __name__ == "__main__":
