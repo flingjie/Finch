@@ -3,7 +3,7 @@ from finch.settings import Settings
 
 
 def test_registry_has_unique_names_and_valid_kinds():
-    assert len(REGISTRY) >= 6
+    assert len(REGISTRY) >= 5
     for name, spec in REGISTRY.items():
         assert spec.name == name
         assert spec.kind in ("graph_node", "function")
@@ -22,7 +22,7 @@ def test_graph_node_build_returns_node():
 
 
 def test_function_has_no_build():
-    for name in ("select_groups", "rank_pending", "select_primary_job",
+    for name in ("select_groups", "rank_pending",
                  "select_planning_evidence", "scan_cards"):
         spec = REGISTRY[name]
         assert spec.kind == "function"

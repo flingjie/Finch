@@ -62,12 +62,6 @@ _SPECS: list[FeatureSpec] = [
         test_targets=("tests/unit/test_budget.py",),
     ),
     FeatureSpec(
-        name="select_primary_job",
-        kind="function",
-        description="选出唯一 primary ContentJob（确定性）",
-        test_targets=("tests/unit/test_jobs.py",),
-    ),
-    FeatureSpec(
         name="select_planning_evidence",
         kind="function",
         description="plan_topics 前裁剪证据卡（确定性）",
