@@ -13,7 +13,7 @@ uv sync
 ## 命令
 
 ```bash
-uv run finch init                        # 初始化 var/ 与数据库
+uv run finch init [--prune]             # 初始化 var/ 与数据库；--prune 清理孤儿表
 uv run finch diagnose                    # 探测 gh / opencli 可用性
 
 uv run finch ideas commit [--repo R] [--since 7d]   # 从最近 Commit 提炼 idea 候选
@@ -37,6 +37,8 @@ uv run finch engagement show <id>
 uv run finch engagement approve <id>              # 批准（不自动发布）
 
 uv run finch weekly                      # 周复盘
+uv run finch learn <draft_id> --url <URL> --metrics '<JSON>' --outcome '<JSON>' --learning '<文本>'
+                                          # 记录已发布草稿的反馈，供 weekly 汇总
 ```
 
 ## 从 Idea 到 Draft

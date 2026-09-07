@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 from sqlmodel import SQLModel, create_engine
 
 
@@ -35,3 +35,21 @@ class Store:
         from finch.storage import repositories as _  # noqa: F401
 
         SQLModel.metadata.create_all(self.engine)
+
+    def prune_orphan_tables(self) -> list[str]:
+        """删除数据库里已不在 SQLModel.metadata 中的表（schema 漂移清理）。
+
+        模型类删除后 ``create_all`` 不再创建它们，但旧库仍留着这些孤儿表。
+        返回被删除的表名列表（按名排序）；无孤儿时返回空列表。
+        """
+        from finch.storage import repositories as _  # noqa: F401
+
+        existing = set(inspect(self.engine).get_table_names())
+        expected = set(SQLModel.metadata.tables)
+        orphans = sorted(existing - expected)
+        if not orphans:
+            return []
+        with self.engine.begin() as conn:
+            for name in orphans:
+                conn.exec_driver_sql(f'DROP TABLE IF EXISTS "{name}"')
+        return orphans

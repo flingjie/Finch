@@ -1,3 +1,5 @@
+> **已过时（superseded）**：本计划描述的 Content Job 字段（`IntendedEffect` / `SuccessCriterion` / `scope` / `audience`）已随 Skill 架构收敛移除。当前权威文档见 `CLAUDE.md` 与 `skills/`。
+
 # Finch：让 AI 完成它的工作——实现计划
 
 > 基于 `flingjie/Finch` 最新 HEAD `e99a2b6`（2026-09-02）生成。当前基线：195 tests passed，Ruff 与 mypy 通过。

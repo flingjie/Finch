@@ -7,6 +7,7 @@ from typing import cast
 
 import typer
 import yaml
+from pydantic import ValidationError
 
 from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
@@ -33,6 +34,7 @@ from .ideas.search_service import SearchService
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
 from .inbox.service import InboxDecisionService, list_items
+from .learn.models import Feedback, OutcomeAssessment
 from .learn.weekly import render_weekly, weekly_analysis
 from .llm.openai_compatible import create_runner
 from .settings import load_settings
@@ -89,13 +91,21 @@ def _since_iso(since: str | None) -> str | None:
 
 
 @app.command()
-def init() -> None:
-    """初始化 var/ 目录与数据库 schema。"""
+def init(
+    prune: bool = typer.Option(False, "--prune", help="删除数据库里已废弃模型遗留的孤儿表"),
+) -> None:
+    """初始化 var/ 目录与数据库 schema；--prune 时额外清理 schema 漂移。"""
     settings = load_settings()
     from .storage.database import Store
 
     store = Store(settings.paths.db_path)
     store.init()
+    if prune:
+        dropped = store.prune_orphan_tables()
+        typer.echo(
+            f"pruned orphan tables: {', '.join(dropped)}" if dropped
+            else "no orphan tables to prune"
+        )
     typer.echo(f"initialized: {settings.paths.db_path}")
 
 
@@ -476,6 +486,57 @@ def twitter_diagnose() -> None:
         typer.echo(f"search probe: ok ({len(tweets)} tweets)")
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"search probe: failed ({type(exc).__name__}: {exc})")
+
+
+@app.command("learn")
+def learn(
+    draft_id: str = typer.Argument(..., help="已发布草稿 id"),
+    url: str = typer.Option(None, "--url", help="发布后的 URL"),
+    metrics: str = typer.Option(None, "--metrics", help="互动指标 JSON 对象（如 {\"likes\":3}）"),
+    outcome: str = typer.Option(None, "--outcome", help="结果评估 JSON（OutcomeAssessment）"),
+    learning: str = typer.Option(None, "--learning", help="这次实际学到了什么（自由文本）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """记录一条已发布草稿的反馈（URL / 互动指标 / 结果评估 / 学习），供 weekly 汇总。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    if DraftRepository(store).get_draft(draft_id) is None:
+        typer.echo(f"draft not found: {draft_id}")
+        raise typer.Exit(code=1)
+
+    parsed_metrics: dict = {}
+    if metrics:
+        try:
+            parsed_metrics = json.loads(metrics)
+        except json.JSONDecodeError as exc:
+            typer.echo(f"invalid --metrics JSON: {exc}")
+            raise typer.Exit(code=1) from exc
+        if not isinstance(parsed_metrics, dict):
+            typer.echo("--metrics must be a JSON object")
+            raise typer.Exit(code=1)
+
+    parsed_outcome: OutcomeAssessment | None = None
+    if outcome:
+        try:
+            parsed_outcome = OutcomeAssessment.model_validate_json(outcome)
+        except ValidationError as exc:
+            typer.echo(f"invalid --outcome JSON: {exc}")
+            raise typer.Exit(code=1) from exc
+
+    feedback = Feedback(
+        draft_id=draft_id,
+        published_url=url,
+        interaction_metrics=parsed_metrics,
+        recorded_at=datetime.now(UTC),
+        outcome=parsed_outcome,
+        learning=learning,
+    )
+    FeedbackRepository(store).save_feedback(feedback)
+    if as_json:
+        typer.echo(feedback.model_dump_json(indent=2))
+    else:
+        typer.echo(f"recorded feedback for {draft_id}")
 
 
 @app.command("weekly")

@@ -17,7 +17,7 @@
    不写的用 `finch ideas skip <id> --reason <理由>` 标为 `skipped`。
 3. `finch drafts create <id>` 从已确认 idea 生成草稿（经 Critic，不自动发布）。
 4. 用 `finch review list` 列出待审草稿，`finch review approve <draft_id>` / `finch review revise <draft_id> --instruction "<指令>"` / `finch review skip <draft_id> --reason <理由>` 人工审核。
-5. 批准后你在 Finch 外部手动发布，并记录发布链接与互动数据（当前无对应 CLI，见 `weekly` 的反馈数据模型）。
+5. 批准后你在 Finch 外部手动发布，然后用 `finch learn <draft_id> --url <URL> --metrics '<JSON>' --outcome '<JSON>' --learning '<文本>'` 记录发布链接与互动数据。
 6. **手动记录审核耗时**（从打开候选到完成审核的分钟数）到你的运行日志。
 
 ## 每周流程

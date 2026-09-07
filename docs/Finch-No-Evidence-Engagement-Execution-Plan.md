@@ -1,3 +1,5 @@
+> **已过时（superseded）**：本计划描述的每日双轨编排（`run_daily` / `run_dual_track`）已移除；engagement 现作为库（`finch engagement ...` + 收件箱投影）存在。当前权威文档见 `CLAUDE.md`。
+
 # Finch：原创生产与外部互动双轨执行计划（Python）
 
 ## 1. 目标

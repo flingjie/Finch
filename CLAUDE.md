@@ -18,7 +18,7 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (typer sub-apps / commands): `finch ideas ...` (commit / search / list / show / confirm / revise-position / skip), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch engagement ...` (list / show / approve / reject / edit / metrics), `finch weekly`, `finch voice ...` (show / approve-example / reject-example), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init`, `finch diagnose`.
+CLI surface (typer sub-apps / commands): `finch ideas ...` (commit / search / list / show / confirm / revise-position / skip), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch engagement ...` (list / show / approve / reject / edit / metrics), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init [--prune]`, `finch diagnose`.
 
 ## Architecture
 
@@ -38,7 +38,7 @@ src/finch/
   idea/         finch drafts 复用的纯函数：rewrite_idea / idea_checker_suite（去掉 EvidenceChecker）
   content/      ContentJob、writer、critic 检查器、voice profile
   inbox/        原创 + 互动轨道的投影与决策（InboxDecisionService，供 review 命令）
-  learn/        FeedbackService + weekly 周复盘
+  learn/        Feedback 模型 + weekly 周复盘 + finch learn（记录发布反馈）
   evidence/     Commit → EngineeringEvent → EvidenceCard 提取 + 安全扫描（scan_cards）
   github/       gh adapter (read-only): commit/PR/issue reading, repo discovery
   twitter/      opencli adapter (read-only): search/thread/bookmarks
