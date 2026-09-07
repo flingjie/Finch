@@ -1,41 +1,19 @@
-"""idea 服务：纯函数集合（判断 + 写样稿 + Critic + 对象构建），不访问 DB。
+"""idea 服务：idea 草稿的 Critic 套件与定向重写（纯函数，不访问 DB）。
 
-CLI 负责 IO 与落库；本模块不依赖 finch.cli，避免循环导入。
+被 ``finch drafts`` 使用；旧的 assess/write 一体式入口已由 Skill 架构
+（``finch ideas create`` + ``finch drafts create``）取代，本模块不依赖 finch.cli。
 """
 
-import hashlib
-import json
-from pathlib import Path
 from typing import cast
 
-from finch.author.models import AuthorPost
-from finch.content.checkers.aggregate import AggregateOutcome, aggregate_checks
-from finch.content.checkers.base import CheckContext, Checker, CheckResult
-from finch.content.critic import _run_checks, default_checker_suite
-from finch.content.jobs import (
-    AuthorPosition,
-    ContentJob,
-    ContentJobStatus,
-    ContentScope,
-    IntendedEffect,
-    SuccessCriterion,
-)
-from finch.content.models import Draft, DraftKind
+from finch.content.checkers.base import Checker, CheckResult
+from finch.content.critic import default_checker_suite
+from finch.content.jobs import ContentJob
+from finch.content.models import Draft
 from finch.content.voice import VoiceProfile
 from finch.content.writer import _render_failed_checks, _render_job_context
-from finch.evidence.models import EvidenceCard
-from finch.idea.models import AssessIdeaOutput, RewriteIdeaOutput, WriteIdeaOutput
+from finch.idea.models import RewriteIdeaOutput
 from finch.llm.base import StructuredInferenceRunner
-
-_ASSESS_PROMPT_PATH = Path("prompts/assess-idea.md")
-_WRITE_PROMPT_PATH = Path("prompts/write-idea.md")
-_MAX_ASSESS_CARDS = 50
-
-_IDEA_SUCCESS_CRITERION = SuccessCriterion(
-    id="idea_human_review",
-    description="人工审核确认是否发布",
-    measurement="human",
-)
 
 _IDEA_REWRITE_PROMPT = """\
 You rewrite a draft to address specific critic check failures. Return JSON matching the schema.
@@ -50,109 +28,6 @@ Instructions:
 ## Failed checks
 {rewrite_instructions}
 """
-
-
-def recent_author_posts(posts: list[AuthorPost], limit: int = 25) -> list[AuthorPost]:
-    """返回作者最近的原创/回复（按 published_at 降序，取前 limit）。"""
-    filtered = [p for p in posts if p.kind in {"original", "reply"}]
-    filtered.sort(key=lambda p: p.published_at, reverse=True)
-    return filtered[:limit]
-
-
-def build_content_job(text: str, assessment: AssessIdeaOutput) -> ContentJob:
-    """把评估结果转换成 ContentJob（id 由文本哈希确定，幂等）。"""
-    job_id = "idea_" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
-    return ContentJob(
-        id=job_id,
-        source_card_ids=list(assessment.matched_evidence_ids),
-        candidate_id=None,
-        reader_problem=assessment.reader_problem or "",
-        audience=assessment.audience or "",
-        intended_effect=IntendedEffect(
-            understand=assessment.understand or "",
-            believe=assessment.believe,
-            action=assessment.action,
-        ),
-        author_position=AuthorPosition(
-            claim=assessment.claim or "",
-            decision=assessment.decision or "",
-            tradeoff=assessment.tradeoff or "",
-            change_mind_if=assessment.change_mind_if,
-        ),
-        success_criteria=[_IDEA_SUCCESS_CRITERION],
-        recommended_format=DraftKind.ORIGINAL,
-        status=ContentJobStatus.CONFIRMED,
-        scope=ContentScope.BOUNDED_LESSON,
-    )
-
-
-def build_draft(job: ContentJob, body: str) -> Draft:
-    """把样稿正文包成 idea 草稿（claims 恒为空，run_id 用常量 idea）。"""
-    return Draft(
-        id=f"draft_{job.id}",
-        kind=DraftKind.ORIGINAL,
-        candidate_id=None,
-        language="zh",
-        body=body,
-        claims=[],
-        content_job_id=job.id,
-        position_statement=job.author_position.decision if job.author_position else "",
-        run_id="idea",
-    )
-
-
-def _slim_cards(cards: list[EvidenceCard]) -> list[dict]:
-    slim: list[dict] = []
-    for card in cards[:_MAX_ASSESS_CARDS]:
-        slim.append({"id": card.id, "claim": card.claim, "topics": card.topics})
-    return slim
-
-
-def _slim_posts(posts: list[AuthorPost]) -> list[dict]:
-    return [
-        {
-            "kind": p.kind,
-            "body": p.body,
-            "url": p.url,
-            "published_at": p.published_at.isoformat(),
-        }
-        for p in posts
-    ]
-
-
-def assess_idea(
-    runner: StructuredInferenceRunner,
-    text: str,
-    cards: list[EvidenceCard],
-    recent_posts: list[AuthorPost],
-) -> AssessIdeaOutput:
-    """调用①：判断能否发 + 提取 job 语境。"""
-    prompt = _ASSESS_PROMPT_PATH.read_text().format(
-        text=text,
-        cards=json.dumps(_slim_cards(cards), ensure_ascii=False),
-        recent_posts=json.dumps(_slim_posts(recent_posts), ensure_ascii=False),
-    )
-    return cast(AssessIdeaOutput, runner.run(prompt, AssessIdeaOutput))
-
-
-def write_idea(
-    runner: StructuredInferenceRunner,
-    text: str,
-    assessment: AssessIdeaOutput,
-    cards: list[EvidenceCard],
-) -> str:
-    """调用②：把用户原文 + 证据扩写成样稿正文。"""
-    prompt = _WRITE_PROMPT_PATH.read_text().format(
-        text=text,
-        core_point=assessment.core_point or "",
-        audience=assessment.audience or "",
-        claim=assessment.claim or "",
-        decision=assessment.decision or "",
-        tradeoff=assessment.tradeoff or "",
-        cards=json.dumps([c.model_dump(mode="json") for c in cards], ensure_ascii=False),
-    )
-    out = cast(WriteIdeaOutput, runner.run(prompt, WriteIdeaOutput))
-    return out.body
 
 
 def rewrite_idea(
@@ -177,52 +52,3 @@ def idea_checker_suite(
 ) -> list[Checker]:
     """Critic 套件去掉 EvidenceChecker（idea 允许个人判断/假设，不强制证据绑定）。"""
     return [c for c in default_checker_suite(runner, voice_profile) if c.name != "evidence"]
-
-
-def run_idea_critic(
-    runner: StructuredInferenceRunner | None,
-    draft: Draft,
-    job: ContentJob,
-    cards: list[EvidenceCard],
-    max_rewrite_rounds: int,
-    *,
-    checkers: list[Checker] | None = None,
-    voice_profile: VoiceProfile | None = None,
-) -> tuple[str, list[CheckResult], Draft]:
-    """跑 Critic + 定向重写循环，返回 (outcome, checks, final_draft)。
-
-    outcome ∈ {"pass","rewrite","reject","needs_input"}（与 aggregate_checks 对齐）。
-    pass 才落库；rewrite 用尽 max_rewrite_rounds 后仍不 pass 即返回 "rewrite"。
-    """
-    suite = checkers if checkers is not None else idea_checker_suite(runner, voice_profile)
-    current = draft
-    checks: list[CheckResult] = []
-    for i in range(max_rewrite_rounds + 1):
-        ctx = CheckContext(draft=current, cards=cards, job=job)
-        checks = _run_checks(suite, ctx)
-        outcome = aggregate_checks(checks)
-        if outcome != AggregateOutcome.REWRITE:
-            return outcome, checks, current
-        if i == max_rewrite_rounds:
-            return AggregateOutcome.REWRITE, checks, current
-        failed = [c for c in checks if not c.passed]
-        assert runner is not None, "rewrite requires a runner"
-        current = rewrite_idea(runner, current, failed, job)
-    return AggregateOutcome.REWRITE, checks, current
-
-
-def _joined_issues(checks: list[CheckResult]) -> str:
-    parts: list[str] = []
-    for check in checks:
-        if not check.passed:
-            detail = "; ".join(check.issues) if check.issues else "failed"
-            parts.append(f"{check.checker}: {detail}")
-    return " | ".join(parts) or "critic failed"
-
-
-def critic_failure_reason(checks: list[CheckResult]) -> tuple[str, str]:
-    """把 Critic 失败映射到 (reason_code, reason)。"""
-    failed = [c for c in checks if not c.passed]
-    if any(c.checker == "safety" and c.severity == "hard_fail" for c in failed):
-        return "UNSAFE_TO_PUBLISH", _joined_issues(failed)
-    return "NO_NEW_VALUE", _joined_issues(failed)
