@@ -12,6 +12,8 @@
 
 - Skill/领域服务不得在无人确认的情况下改写 `claim`/`decision`/`tradeoff`。
 - `confirm_position` 只把 `status` 从 `proposed` 翻到 `confirmed`，不改内容。
+- **scoping-only 允许**：缩小适用范围 / 绝对结论改条件结论是允许的表达调整，不改变立场方向；
+  推翻或反向改写 decision/tradeoff 仍须重新走确认流程。
 
 ## revise 只改表达，不改立场
 

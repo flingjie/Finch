@@ -7,6 +7,9 @@ idea-to-draft 只依据 Content Job 语境写正文。下面是把「已确认�
 - `author_position.claim / decision / tradeoff` 已由人工确认，草稿必须**逐条表达**，不得替换、软化为近义表述、或夹带相反立场。
 - 正文只做「把立场讲清楚」的扩写：给出读者问题 → 立场（decision）→ 取舍（tradeoff）→ 一个具体例子或增量。
 - 要推翻立场须重新走确认流程（`finch ideas` 状态机），绝不在草稿层改写。
+- **scoping-only 是允许的**：把绝对结论改写为条件结论、缩小适用范围（如"稳定后仍需代码化"
+  → "稳定后，再把需要确定性/幂等保障的部分代码化"）不算软化或改变立场；禁止的是推翻
+  decision/tradeoff 的方向或夹带相反立场。
 
 ## 边界：known / inferred / unknown
 

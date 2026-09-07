@@ -206,3 +206,12 @@ def test_rewrite_with_instruction_uses_nl_instruction(monkeypatch):
     out = writer.rewrite_with_instruction(_Runner(), draft, "语气弱一点", {})
     assert out.body == "revised"
     assert "语气弱一点" in captured["prompt"]
+
+
+def test_draft_from_job_prompt_contains_scoping_rules():
+    from pathlib import Path
+
+    text = Path("prompts/draft-from-job.md").read_text()
+    assert "条件结论" in text
+    assert "不追加" in text and "免责声明" in text
+    assert "至多出现一次" in text
