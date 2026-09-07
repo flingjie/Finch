@@ -286,11 +286,28 @@ class ContentJobRepository:
             return ContentJob.model_validate_json(record.payload_json)
 
     def list_jobs(self) -> list[ContentJob]:
-        """列出所有 ContentJob（单查询，避免 N+1）。"""
+        """列出所有可解析的 ContentJob（单查询）。不可解析的旧行被跳过，绝不 raise。"""
+        jobs, _ = self._list_jobs_and_failures()
+        return jobs
+
+    def list_job_parse_failures(self) -> list[str]:
+        """列出 payload 无法解析为 ContentJob 的旧行 id（供 CLI 渲染系统警告）。"""
+        _, failures = self._list_jobs_and_failures()
+        return failures
+
+    def _list_jobs_and_failures(self) -> tuple[list[ContentJob], list[str]]:
+        from pydantic import ValidationError
+
         with Session(self.store.engine) as session:
-            stmt = select(ContentJobRecord)
-            records = list(session.exec(stmt))
-            return [ContentJob.model_validate_json(r.payload_json) for r in records]
+            records = list(session.exec(select(ContentJobRecord)))
+        jobs: list[ContentJob] = []
+        failures: list[str] = []
+        for record in records:
+            try:
+                jobs.append(ContentJob.model_validate_json(record.payload_json))
+            except ValidationError:
+                failures.append(record.id)
+        return jobs, failures
 
 
 class DraftVersionRecord(SQLModel, table=True):

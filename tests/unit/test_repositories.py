@@ -190,3 +190,40 @@ def test_contentjob_find_by_generation_key(tmp_path):
     assert found.id == "job_1"
     assert found.origin == "commit"
     assert repo.find_by_generation_key("nope") is None
+
+
+def test_list_jobs_skips_unparseable_legacy_rows(tmp_path):
+    from sqlmodel import Session
+
+    from finch.content.jobs import ContentJob, ContentJobStatus
+    from finch.content.models import DraftKind
+    from finch.storage.database import Store
+    from finch.storage.repositories import ContentJobRecord, ContentJobRepository
+
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = ContentJobRepository(store)
+    repo.upsert_job(
+        ContentJob(
+            id="job_ok",
+            source_card_ids=[],
+            reader_problem="p",
+            author_position=None,
+            recommended_format=DraftKind.REPLY,
+            status=ContentJobStatus.PROPOSED,
+            core_message="m",
+        )
+    )
+    # 模拟旧版行：payload 含不在枚举里的 status，无法解析为当前 ContentJob。
+    with Session(store.engine) as session:
+        session.merge(
+            ContentJobRecord(
+                id="job_tp_legacy",
+                payload_json='{"id":"job_tp_legacy","status":"ready"}',
+            )
+        )
+        session.commit()
+
+    jobs = repo.list_jobs()
+    assert [j.id for j in jobs] == ["job_ok"]
+    assert repo.list_job_parse_failures() == ["job_tp_legacy"]
