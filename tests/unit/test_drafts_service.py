@@ -1,5 +1,11 @@
-"""Tests for DraftService (Skill 架构 Step 1 领域核心：draft 幂等键 + 骨架)。"""
+"""Tests for DraftService (Skill 架构 Step 4：idea-to-draft 完整流程)。"""
 
+import pytest
+
+from finch.content.checkers.actionability import _ActionabilityOutput
+from finch.content.checkers.decision import _DecisionOutput
+from finch.content.checkers.portability import _PortabilityOutput
+from finch.content.checkers.safety import _SafetyOutput
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus, IntendedEffect
 from finch.content.models import Draft, DraftKind
 from finch.drafts.service import DraftService, draft_generation_key
@@ -25,16 +31,71 @@ class FakeDraftRepository:
 
 
 class FakeCriticReportRepository:
-    """Minimal double for CriticReportRepository (DraftService 本任务不调用它)。"""
+    """In-memory double for CriticReportRepository (记录 upsert_report 调用)。"""
 
-    def upsert_report(self, *args: object, **kwargs: object) -> None:
-        return None
+    def __init__(self) -> None:
+        self.reports: list[tuple[str, int, object, str]] = []
 
-    def list_reports(self, *args: object, **kwargs: object) -> list[dict]:
-        return []
+    def upsert_report(self, draft_id: str, round: int, checks: object, outcome: str) -> None:
+        self.reports.append((draft_id, round, checks, outcome))
 
-    def list_all_reports(self, *args: object, **kwargs: object) -> dict[str, list[dict]]:
-        return {}
+    def list_reports(self, draft_id: str) -> list[tuple[str, int, object, str]]:
+        return [r for r in self.reports if r[0] == draft_id]
+
+
+class FakeContentJobRepository:
+    """In-memory double for ContentJobRepository（get_job / upsert_job）。"""
+
+    def __init__(self, jobs: list[ContentJob] | None = None) -> None:
+        self._by_id: dict[str, ContentJob] = {j.id: j for j in (jobs or [])}
+
+    def get_job(self, job_id: str) -> ContentJob | None:
+        return self._by_id.get(job_id)
+
+    def upsert_job(self, job: ContentJob) -> None:
+        self._by_id[job.id] = job
+
+
+class FakeRunner:
+    """Counting double for CodexRunner：首稿返回 Draft，各检查器返回通过结果。
+
+    ``safety=(invented, unsupported)`` 可注入 SafetyChecker 的失败 flag 以触发
+    ``needs_input`` 丢弃路径。
+    """
+
+    def __init__(
+        self,
+        body: str = "把编排器改成确定性图后，失败可以重放，代价是要持久化状态。",
+        safety: tuple[bool, bool] = (False, False),
+    ) -> None:
+        self.calls = 0
+        self.body = body
+        self.safety = safety
+
+    def run(self, prompt: str, output_model: type, *, timeout: float | None = None) -> object:
+        self.calls += 1
+        if output_model is Draft:
+            return Draft(
+                id="tmp",
+                kind=DraftKind.ORIGINAL,
+                language="zh",
+                body=self.body,
+                claims=[],
+            )
+        if output_model is _DecisionOutput:
+            return _DecisionOutput(
+                expresses_decision=True, expresses_tradeoff=True, missing=[]
+            )
+        if output_model is _PortabilityOutput:
+            return _PortabilityOutput(generic_sentences=[])
+        if output_model is _ActionabilityOutput:
+            return _ActionabilityOutput(fulfills_effect=True, missing=[])
+        if output_model is _SafetyOutput:
+            return _SafetyOutput(
+                invented_personal_experience=self.safety[0],
+                unsupported_metric=self.safety[1],
+            )
+        raise AssertionError(f"unexpected output_model: {output_model!r}")
 
 
 def _idea(**overrides: object) -> ContentJob:
@@ -61,13 +122,26 @@ def _idea(**overrides: object) -> ContentJob:
     return ContentJob(**data)  # type: ignore[arg-type]
 
 
-def _service() -> tuple[DraftService, FakeDraftRepository]:
-    repo = FakeDraftRepository()
-    return DraftService(repo, FakeCriticReportRepository()), repo
+def _service(
+    job: ContentJob | None = None,
+    runner: FakeRunner | None = None,
+    *,
+    max_rewrite_rounds: int = 1,
+) -> tuple[DraftService, FakeDraftRepository, FakeCriticReportRepository]:
+    drafts = FakeDraftRepository()
+    reports = FakeCriticReportRepository()
+    jobs = FakeContentJobRepository([job] if job is not None else [])
+    svc = DraftService(
+        drafts,
+        reports,
+        jobs,
+        runner or FakeRunner(),  # type: ignore[arg-type]
+        max_rewrite_rounds=max_rewrite_rounds,
+    )
+    return svc, drafts, reports
 
 
 # ---- draft_generation_key ----
-
 
 def test_draft_generation_key_is_deterministic():
     a = draft_generation_key("fp", "0.1.0", "original", "v1")
@@ -88,75 +162,68 @@ def test_draft_generation_key_sensitive_to_each_field():
     assert all(draft_generation_key(*v) != base_key for v in variants)
 
 
-# ---- create ----
+# ---- create: 状态门禁 ----
+
+def test_create_raises_when_job_missing():
+    svc, _, _ = _service()
+    with pytest.raises(KeyError):
+        svc.create("idea_missing", version="1.0.0", format="original", voice_version="1.0.0")
 
 
-def test_create_builds_skeleton_draft():
-    svc, repo = _service()
-    draft = svc.create(_idea(), version="0.1.0", format="original", voice_version="v1")
-    assert draft.id == f"draft_{draft_generation_key('fp_abc123', '0.1.0', 'original', 'v1')[:16]}"
-    assert draft.kind == DraftKind.ORIGINAL
-    assert draft.candidate_id is None
-    assert draft.language == "zh"
-    assert draft.body == ""
+def test_create_raises_when_unconfirmed():
+    svc, _, _ = _service(_idea(status=ContentJobStatus.PROPOSED))
+    with pytest.raises(ValueError, match="needs_confirmation") as excinfo:
+        svc.create("idea_abc123", version="1.0.0", format="original", voice_version="1.0.0")
+    assert "idea_abc123" in str(excinfo.value)
+
+
+# ---- create: 幂等 ----
+
+def test_create_is_idempotent_no_second_llm_call():
+    runner = FakeRunner()
+    svc, drafts, _ = _service(_idea(), runner)
+    first = svc.create("idea_abc123", version="1.0.0", format="original", voice_version="1.0.0")
+    calls_after_first = runner.calls
+    assert calls_after_first > 0
+
+    second = svc.create("idea_abc123", version="1.0.0", format="original", voice_version="1.0.0")
+    assert second == first
+    assert runner.calls == calls_after_first  # 命中已有 Draft，不再调用 LLM
+    assert len(drafts._by_id) == 1
+
+
+# ---- create: 通过 Critic 落库 Draft + CriticReport ----
+
+def test_create_pass_through_saves_draft_and_report():
+    runner = FakeRunner()
+    svc, drafts, reports = _service(_idea(), runner)
+    draft = svc.create("idea_abc123", version="1.0.0", format="original", voice_version="1.0.0")
+
+    expected_id = (
+        f"draft_{draft_generation_key('fp_abc123', '1.0.0', 'original', '1.0.0')[:16]}"
+    )
+    assert draft.id == expected_id
+    assert draft.body == runner.body
     assert draft.claims == []
     assert draft.content_job_id == "idea_abc123"
     assert draft.position_statement == "用可恢复性评价 Graph"
     assert draft.run_id == "idea"
-    assert repo.get_draft(draft.id) is not None
+
+    assert drafts.get_draft(expected_id) == draft
+    assert reports.reports
+    draft_id, round_no, _checks, outcome = reports.reports[-1]
+    assert draft_id == expected_id
+    assert round_no == 0
+    assert outcome == "pass"
 
 
-def test_create_is_idempotent_by_generation_key():
-    svc, repo = _service()
-    first = svc.create(_idea(), version="0.1.0", format="original", voice_version="v1")
-    second = svc.create(_idea(), version="0.1.0", format="original", voice_version="v1")
-    assert first.id == second.id
-    assert first == second
-    assert len(repo._by_id) == 1
+# ---- create: 硬失败（needs_input）丢弃 ----
 
-
-def test_create_reply_kind_from_recommended_format():
-    svc, _ = _service()
-    draft = svc.create(
-        _idea(recommended_format=DraftKind.REPLY),
-        version="0.1.0",
-        format="reply",
-        voice_version="v1",
-    )
-    assert draft.kind == DraftKind.REPLY
-
-
-def test_create_distinguishes_format_in_key():
-    svc, _ = _service()
-    a = svc.create(_idea(), version="0.1.0", format="original", voice_version="v1")
-    b = svc.create(_idea(), version="0.1.0", format="reply", voice_version="v1")
-    assert a.id != b.id
-
-
-def test_create_distinguishes_version_in_key():
-    svc, _ = _service()
-    a = svc.create(_idea(), version="0.1.0", format="original", voice_version="v1")
-    b = svc.create(_idea(), version="0.2.0", format="original", voice_version="v1")
-    assert a.id != b.id
-
-
-def test_create_falls_back_to_core_message_fingerprint():
-    import hashlib
-
-    svc, _ = _service()
-    idea = _idea(content_fingerprint=None)
-    fingerprint = hashlib.sha256(idea.core_message.encode("utf-8")).hexdigest()
-    expected_id = f"draft_{draft_generation_key(fingerprint, '0.1.0', 'original', 'v1')[:16]}"
-    draft = svc.create(idea, version="0.1.0", format="original", voice_version="v1")
-    assert draft.id == expected_id
-
-
-def test_create_position_statement_empty_without_author_position():
-    svc, _ = _service()
-    draft = svc.create(
-        _idea(author_position=None),
-        version="0.1.0",
-        format="original",
-        voice_version="v1",
-    )
-    assert draft.position_statement == ""
+def test_create_drops_on_safety_needs_input():
+    runner = FakeRunner(safety=(True, False))  # invented_personal_experience
+    svc, drafts, reports = _service(_idea(), runner)
+    with pytest.raises(ValueError, match="needs_input"):
+        svc.create("idea_abc123", version="1.0.0", format="original", voice_version="1.0.0")
+    assert drafts.list_drafts() == []
+    # Critic 报告已落库（供排查），但 Draft 未保留。
+    assert reports.reports

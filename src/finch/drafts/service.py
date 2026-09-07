@@ -1,22 +1,36 @@
-"""DraftService：draft 幂等键 + 骨架（Skill 架构 Step 1 领域核心）。
+"""DraftService：idea-to-draft 领域服务（Skill 架构 Step 4）。
 
-把 idea-to-draft Skill 产出的统一 Draft 落库为幂等骨架。本模块是纯领域服务：
-只依赖注入的 ``DraftRepository`` 与 ``CriticReportRepository``，不直接访问 DB、
-不调用 LLM、不做自动重试。
+把已确认的 ``ContentJob``（idea 候选）生成统一 ``Draft``：加载 job → ``require_confirmed``
+语义 → ``draft_generation_key`` 幂等命中 → 生成正文（只依据 job 语境，不搜索新来源、
+不绑定证据卡）→ Critic（7 检查器，Safety 硬门禁）→ 有限 rewrite → 落库 ``Draft`` +
+``CriticReport``。
+
+本模块是纯领域服务：只依赖注入的仓储与 runner，不直接访问 DB、不做自动重试、
+不自动发布。idea 候选没有证据卡，故复用 ``idea`` 流的 Critic 套件（``idea_checker_suite``，
+去掉 EvidenceChecker），而不是证据绑定的 ``default_checker_suite``。
 
 幂等：``draft_generation_key`` 由 (idea 指纹, idea-to-draft 版本, 格式, voice 版本)
-的 sha256 决定，同一 idea + 同一生成配置重复创建时命中同一 ``draft_id``，
-返回已存在的 Draft。
-
-本任务只落键与幂等骨架（``body`` 为空占位）；真正的正文生成与 Critic 由后续
-idea-to-draft Skill（Step 4）完成。
+的 sha256 决定，同一 idea + 同一生成配置重复创建时命中同一 ``draft_id``，返回已存在的
+Draft，不重复调用 LLM。
 """
 
 import hashlib
 
-from finch.content.jobs import ContentJob
-from finch.content.models import Draft, DraftKind
-from finch.storage.repositories import CriticReportRepository, DraftRepository
+from finch.codex.runner import CodexRunner
+from finch.content.checkers.aggregate import AggregateOutcome, aggregate_checks
+from finch.content.checkers.base import CheckContext, CheckResult
+from finch.content.critic import _run_checks
+from finch.content.jobs import ContentJob, ContentJobStatus
+from finch.content.models import Draft
+from finch.content.voice import VoiceProfile
+from finch.content.writer import write_original_from_job
+from finch.idea.service import idea_checker_suite, rewrite_idea
+from finch.settings import QualityGates
+from finch.storage.repositories import (
+    ContentJobRepository,
+    CriticReportRepository,
+    DraftRepository,
+)
 
 # 稳定分隔符：ASCII unit separator，字段值几乎不可能包含该控制字符。
 _SEP = "\x1f"
@@ -47,56 +61,103 @@ def _idea_fingerprint(idea: ContentJob) -> str:
     return hashlib.sha256(idea.core_message.encode("utf-8")).hexdigest()
 
 
+def _failed_issues(checks: list[CheckResult]) -> str:
+    """把失败检查器折叠成一句人类可读原因（用于硬失败抛出）。"""
+    parts: list[str] = []
+    for check in checks:
+        if not check.passed:
+            detail = "; ".join(check.issues) if check.issues else "failed"
+            parts.append(f"{check.checker}: {detail}")
+    return " | ".join(parts) or "critic failed"
+
+
 class DraftService:
-    """draft 领域服务：幂等创建 Draft 骨架。"""
+    """idea-to-draft 领域服务：从已确认 idea 生成 Draft 并落库 Critic 报告。"""
 
     def __init__(
         self,
         drafts: DraftRepository,
         critic_reports: CriticReportRepository,
+        jobs: ContentJobRepository,
+        runner: CodexRunner,
+        *,
+        max_rewrite_rounds: int | None = None,
+        voice_profile: VoiceProfile | None = None,
     ) -> None:
         self.drafts = drafts
         self.critic_reports = critic_reports
+        self.jobs = jobs
+        self.runner = runner
+        self.max_rewrite_rounds = (
+            max_rewrite_rounds
+            if max_rewrite_rounds is not None
+            else QualityGates().max_rewrite_rounds
+        )
+        self.voice_profile = voice_profile
 
     def create(
         self,
-        idea: ContentJob,
+        idea_id: str,
         *,
         version: str,
         format: str,
         voice_version: str,
     ) -> Draft:
-        """按幂等键创建 Draft 骨架：命中已有 Draft 直接返回，否则落库空骨架。
+        """从已确认 idea 生成 Draft（幂等）：未确认抛 ValueError，命中已有 Draft 直接返回。
 
-        ``Draft`` 没有独立 ``generation_key`` 字段，故把键的截断值确定性写入 ``id``
-        （``draft_<key[:16]>``），用 ``get_draft`` 命中即视为已存在、直接返回。
-
-        本方法只落幂等键与骨架（``body=""`` 占位）；正文生成与 Critic 由后续
-        idea-to-draft Skill（Step 4）完成。
+        生成正文只依据 job 语境（``write_original_from_job``，不搜索新来源、不绑定证据卡）；
+        Critic 用 7 检查器套件（去掉 EvidenceChecker），有限 rewrite 至多
+        ``max_rewrite_rounds`` 轮。``pass`` 或 rewrite 用尽 → 落库并返回最终 Draft；
+        ``reject``（hard_fail）/``needs_input`` → 丢弃（抛 ValueError，fail-closed）。
         """
-        fingerprint = _idea_fingerprint(idea)
+        job = self.jobs.get_job(idea_id)
+        if job is None:
+            raise KeyError(idea_id)
+        if job.status != ContentJobStatus.CONFIRMED:
+            raise ValueError(
+                f"idea {idea_id} needs_confirmation (status={job.status.value})"
+            )
+
+        fingerprint = _idea_fingerprint(job)
         key = draft_generation_key(fingerprint, version, format, voice_version)
         draft_id = f"{_ID_PREFIX}{key[:16]}"
         existing = self.drafts.get_draft(draft_id)
         if existing is not None:
             return existing
-        kind = (
-            DraftKind.REPLY
-            if idea.recommended_format == DraftKind.REPLY
-            else DraftKind.ORIGINAL
-        )
-        draft = Draft(
-            id=draft_id,
-            kind=kind,
-            candidate_id=idea.candidate_id,
-            language="zh",
-            body="",
-            claims=[],
-            content_job_id=idea.id,
-            position_statement=(
-                idea.author_position.decision if idea.author_position else ""
-            ),
-            run_id="idea",
-        )
-        self.drafts.upsert_draft(draft)
-        return draft
+
+        draft = self._generate(job, draft_id)
+        return self._critic_loop(draft, job, draft_id)
+
+    def _generate(self, job: ContentJob, draft_id: str) -> Draft:
+        """生成首稿：只依据 job 语境写正文，并把幂等键确定性写入 ``id``。"""
+        draft = write_original_from_job(self.runner, job)
+        return draft.model_copy(update={"id": draft_id, "run_id": "idea"})
+
+    def _critic_loop(self, draft: Draft, job: ContentJob, draft_id: str) -> Draft:
+        """Critic + 有限 rewrite：逐轮写 CriticReport，pass/rewrite 用尽保留，硬失败丢弃。"""
+        suite = idea_checker_suite(self.runner, self.voice_profile)
+        current = draft
+        for round_no in range(self.max_rewrite_rounds + 1):
+            checks = _run_checks(suite, CheckContext(draft=current, cards=[], job=job))
+            outcome = aggregate_checks(checks)
+            self.critic_reports.upsert_report(draft_id, round_no, checks, outcome)
+
+            if outcome == AggregateOutcome.PASS:
+                self.drafts.upsert_draft(current)
+                return current
+
+            if outcome in (AggregateOutcome.REJECT, AggregateOutcome.NEEDS_INPUT):
+                raise ValueError(
+                    f"draft {draft_id} dropped by critic ({outcome}): "
+                    f"{_failed_issues(checks)}"
+                )
+
+            # rewrite：只把失败检查器的指令交给 rewrite_idea（不改立场、不换来源）
+            if round_no == self.max_rewrite_rounds:
+                break
+            failed = [check for check in checks if not check.passed]
+            current = rewrite_idea(self.runner, current, failed, job)
+
+        # rewrite 用尽仍不 pass：保留最后一版（人工审核仍可见 Critic 报告）。
+        self.drafts.upsert_draft(current)
+        return current

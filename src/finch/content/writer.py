@@ -20,6 +20,7 @@ from finch.twitter.models import DiscussionCandidate
 
 _REPLY_PROMPT_PATH = Path("prompts/draft-reply.md")
 _ORIGINAL_PROMPT_PATH = Path("prompts/draft-original.md")
+_FROM_JOB_PROMPT_PATH = Path("prompts/draft-from-job.md")
 
 _REWRITE_PROMPT = """\
 You rewrite a draft to address specific critic check failures. Return JSON matching the schema.
@@ -183,6 +184,35 @@ def write_reply(
         }
     )
     return result
+
+
+def write_original_from_job(runner: CodexRunner, job: ContentJob) -> Draft:
+    """只从 Content Job 语境写原创中文草稿（idea 流：不搜索、不绑定证据卡）。
+
+    ``write_original`` 硬依赖证据卡（内部 ``validate_draft``，零证据返回 None），
+    idea 候选没有证据卡，故用独立 prompt（``prompts/draft-from-job.md``）只依据 job
+    语境（读者问题 / 作者立场 / 核心主张 / scope）写正文，``claims`` 恒为空。
+    """
+    prompt = _FROM_JOB_PROMPT_PATH.read_text().format(
+        job_context=_render_job_context(job),
+    )
+    draft = _sanitize_draft_claims(cast(Draft, runner.run(prompt, Draft)))
+    return draft.model_copy(
+        update={
+            "kind": (
+                DraftKind.REPLY
+                if job.recommended_format == DraftKind.REPLY
+                else DraftKind.ORIGINAL
+            ),
+            "candidate_id": None,
+            "language": "zh",
+            "claims": [],
+            "content_job_id": job.id,
+            "position_statement": (
+                job.author_position.decision if job.author_position else ""
+            ),
+        }
+    )
 
 
 def write_original(
