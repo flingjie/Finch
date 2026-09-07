@@ -1,8 +1,8 @@
 # Finch
 
-Finch 是一个证据驱动的 Builder 伙伴。它通过 `gh` 读取 GitHub Commit/PR/Issue/测试证据，通过 `opencli` 搜索与读取 Twitter/X 内容，将工程实践与公共技术讨论匹配，生成必须经人工审核的回复与原创内容。
+Finch 是一个证据驱动的 Builder 伙伴。它通过 `gh` 读取 GitHub Commit/PR/Issue/测试证据，通过 `opencli` 搜索与读取 Twitter/X 内容，把工程实践与公共技术讨论提炼成「Idea」，再由人工确认立场、生成草稿，最终必须经人工审核才能发布。
 
-当前状态：Phase 1（项目骨架与 Runtime）已完成。Graph 可确定性执行、失败恢复与重放；`finch diagnose` 可分别报告 `gh` 与 `opencli` 状态。
+当前架构是 **Skill + 领域服务**（不再是 Graph Runtime）：`commit-to-idea` / `search-to-idea` 提炼候选 → `IdeaService` 落库为 `ContentJob` → 人工确认 → `idea-to-draft` 生成草稿 → `DraftService` + Critic 审查 → 人工审核。`finch diagnose` 可分别报告 `gh` 与 `opencli` 状态。
 
 ## 安装
 
@@ -13,8 +13,68 @@ uv sync
 ## 命令
 
 ```bash
-uv run finch init      # 初始化 var/ 与数据库
-uv run finch diagnose  # 探测 gh / opencli 可用性
+uv run finch init                        # 初始化 var/ 与数据库
+uv run finch diagnose                    # 探测 gh / opencli 可用性
+
+uv run finch ideas commit [--repo R] [--since 7d]   # 从最近 Commit 提炼 idea 候选
+uv run finch ideas search [--topic T]               # 从公开讨论提炼 idea 候选
+uv run finch ideas list                              # 列出全部候选（ContentJob）
+uv run finch ideas confirm <id>                      # 确认立场：proposed → confirmed
+uv run finch ideas skip <id> --reason <理由>          # 跳过候选
+
+uv run finch drafts create <id>          # 从已确认 idea 生成草稿（经 Critic，不自动发布）
+uv run finch drafts show <draft_id>
+uv run finch drafts revise <draft_id> --instruction "<指令>"
+
+uv run finch next                        # 下一条待决策卡（原创 + 互动）
+uv run finch decide <id> --action accept|skip|revise
+
+uv run finch draft "<想法>"              # 判断一个想法能否发，能发时生成样稿进收件箱
+uv run finch learn <draft_id> --url <URL> --metrics '<JSON>'
+uv run finch weekly                      # 周复盘
 ```
 
-详见 `docs/Finch-Codex-Development-Plan.md`。
+## 从 Idea 到 Draft
+
+```bash
+# 1. 从公开讨论提炼 idea 候选（落库为 ContentJob，状态 proposed）
+uv run finch ideas search --topic "agent evals"
+
+# 2. 查看候选
+uv run finch ideas list
+
+# 3. 确认立场（proposed → confirmed）
+uv run finch ideas confirm <id>
+
+# 4. 从已确认 idea 生成草稿（idea-to-draft → DraftService → Critic，不自动发布）
+uv run finch drafts create <id>
+
+# 5. 人工审核
+uv run finch next
+uv run finch decide <id> --action accept
+```
+
+候选状态机：`PROPOSED → CONFIRMED → DRAFTED`，或 `PROPOSED/CONFIRMED → SKIPPED`。
+
+## Skill 架构
+
+```
+skills/
+  commit-to-idea/   从 Commit/PR/Issue/测试变化提炼 IdeaCandidate → finch ideas commit
+  search-to-idea/   从公开讨论提炼 IdeaCandidate → finch ideas search
+  idea-to-draft/    已确认 idea → Draft + CriticReport → finch drafts create
+  _shared/          idea-contract / evidence-policy / author-position / quality-policy / voice-guide
+
+src/finch/
+  ideas/            IdeaService（状态机）+ CommitService + SearchService
+  drafts/           DraftService（已确认 idea → 草稿）
+  idea/             finch draft/idea 的纯函数（assess_idea / write_idea / run_idea_critic）
+  content/          ContentJob、writer、critic 检查器、voice profile
+  inbox/            next / decide 单一决策点
+  learn/            FeedbackService + weekly 周复盘
+  evidence/         Commit → EngineeringEvent → EvidenceCard
+  github/ twitter/  只读 adapter（gh / opencli）
+  storage/          SQLite via SQLModel
+```
+
+详见 `docs/` 与 `skills/`。历史开发计划见 `docs/Finch-Codex-Development-Plan.md`（Graph 架构，已由 Skill 架构取代）。

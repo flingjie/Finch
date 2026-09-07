@@ -1,5 +1,9 @@
 # Finch：基于 Codex 的开发计划
 
+> **已过时（superseded）**：本计划描述的是 Graph 运行时架构（`finch run daily` / `run replay` / 节点 / 重放），
+> 已被 Skill 架构取代（`commit-to-idea` / `search-to-idea` → `IdeaService` → `ContentJob` → `idea-to-draft` → `DraftService`）。
+> 当前架构与 CLI 见 `README.md` 与 `CLAUDE.md`；本文仅作历史参考。
+
 > 项目定位：Finch 是一个证据驱动的 Builder 伙伴。它通过 `gh` 读取 GitHub Commit、PR、Issue 和测试证据，通过 `opencli` 搜索与读取 Twitter/X 内容，将工程实践与公共技术讨论匹配，生成必须经过人工审核的回复和原创内容。
 
 ## 1. 目标与非目标

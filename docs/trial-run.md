@@ -1,6 +1,6 @@
-# Finch 两周试运行（Phase 9 框架）
+# Finch 两周试运行
 
-> 真实两周试运行由你手动执行。本文件给出流程与验收指标。框架以「脚本 + 记录机制」交付，不做自动发布。
+> 真实两周试运行由你手动执行。本文件给出流程与验收指标。以「Skill 架构 + 人工审核」交付，不做自动发布。
 
 ## 前置
 
@@ -10,31 +10,34 @@
 
 ## 每日流程（约 15 分钟以内）
 
-1. 运行 `bash scripts/trial.sh`（等价于 `finch run daily` + `finch jobs list --status needs_input` + `finch review list`）。
-2. 若 Graph 停在 `NEEDS_INPUT`（Content Jobs 人审门）：`finch jobs show <JOB_ID>` 看详情，然后
-   `finch jobs answer <JOB_ID> --file answers.yaml` 补立场，再 `finch jobs confirm-position <JOB_ID>` 确认；
-   不写的用 `finch jobs reject <JOB_ID> --reason <理由>` 标为 `do_not_write`。之后 `finch run resume <RUN_ID>` 继续。
-3. 若 Graph 停在 `WAITING_FOR_REVIEW`：`finch review show <DRAFT_ID>` 看全文，然后 `approve` / `revise` / `skip`。
-   - `revise` 需要 `--file revised.md` 提供你的修订。
-   - `skip` 需要 `--reason evidence_insufficient|not_relevant|low_quality|not_now|other`。
-4. 批准后你在 Finch 外部手动发布，然后记录发布链接与互动数据：
-   `finch review feedback <DRAFT_ID> --url <URL> --metrics '{"likes":N,"replies":N}'`。
-5. **手动记录审核耗时**（从打开 Brief 到完成审核的分钟数）到你的运行日志。
+1. 提炼 idea 候选：
+   - `finch ideas commit [--repo <REPO>] [--since 7d]` —— 从最近 Commit 提炼。
+   - `finch ideas search --topic <话题>` —— 从公开讨论提炼。
+2. `finch ideas list` 查看候选；用 `finch ideas confirm <id>` 确认立场（`proposed → confirmed`）；
+   不写的用 `finch ideas skip <id> --reason <理由>` 标为 `skipped`。
+3. `finch drafts create <id>` 从已确认 idea 生成草稿（经 Critic，不自动发布）。
+4. 用 `finch next` / `finch decide <id> --action accept|skip|revise` 人工审核。
+   - `revise` 需要 `--instruction "<指令>"`。
+   - `skip` 需要 `--reason <理由>`。
+5. 批准后你在 Finch 外部手动发布，然后记录发布链接与互动数据：
+   `finch learn <draft_id> --url <URL> --metrics '{"likes":N,"replies":N}' --outcome '<JSON>' --learning '<学习记录>'`。
+6. **手动记录审核耗时**（从打开候选到完成审核的分钟数）到你的运行日志。
 
 ## 每周流程
 
-1. 运行 `finch run weekly`，得到批准率、跳过原因与已发布候选的汇总。
-2. 人工补充分析：哪类 Commit 产生价值、哪类 Evidence 匹配精度高、哪些作者产生真实对话、下周该继续/减少/实验什么。
+1. 运行 `finch weekly`，得到批准率、跳过原因与已发布候选的汇总。
+2. 人工补充分析：哪类 Commit/讨论产生价值、哪些草稿被频繁修改或跳过、哪些作者产生真实对话、下周该继续/减少/实验什么。
 3. **只提配置建议，不自动修改质量门禁。**
 
 ## 记录机制（已由代码落库）
 
-- 审核决策（approve/revise/skip + 理由 + diff + 时间戳）→ `ReviewRecord`。
+- 审核决策（accept/skip/revise + 理由 + diff + 时间戳）→ `DecisionRecord`。
 - 发布链接与互动数据 → `FeedbackRecord`。
-- 每日草稿 → `DraftRecord`。
-- 审核耗时由你手动记入运行日志（每日流程第 5 步）。
+- 每日草稿 → `Draft`（幂等键由 idea 指纹 + 生成配置决定）。
+- idea 候选 → `ContentJob`（`origin=commit|search|user`，状态机 `proposed → confirmed → drafted` / `→ skipped`）。
+- 审核耗时由你手动记入运行日志（每日流程第 6 步）。
 
-## 验收指标（主 plan §12.4）
+## 验收指标
 
 | 指标 | 目标 |
 |---|---|
@@ -46,9 +49,8 @@
 | twitter_write_actions | 0 |
 | draft_approval_rate | ≥ 60% |
 | daily_review_time | ≤ 15 分钟 |
-| replay_success_rate | 100% |
 
-### 每周内容指标（Task 8 新增，`finch run weekly` 输出）
+### 每周内容指标（`finch weekly` 输出）
 
 | 指标 | 含义 | 目标 |
 |---|---|---|
@@ -58,7 +60,7 @@
 | human_correction_rate | 需人工改事实/立场的已审草稿占比 | 越低越好 |
 | job_completion_rate | 结果评估 job_completed ∈ {yes, partly} 的占比 | 越高越好 |
 | useful_reply_rate | 回复中 useful_reply_count>0 的占比 | 越高越好 |
-| do_not_write_rate | DO_NOT_WRITE job 占比 | **信息性，不视为失败** |
+| do_not_write_rate | SKIPPED job 占比 | **信息性，不视为失败** |
 
 - 每个指标按「继续 / 调整 / 停止」三档给出每周建议：健康（score ≥ 0.7）→ 继续；
   偏弱（0.4 ≤ score < 0.7）→ 调整；差（< 0.4）→ 停止。高者为优的指标直接用值，
@@ -69,7 +71,7 @@
 
 试运行满两周后，回顾上述指标并**只提建议、不自动修改**：
 
-1. 汇总两周的 `finch run weekly` 输出，逐项对照「继续 / 调整 / 停止」建议。
+1. 汇总两周的 `finch weekly` 输出，逐项对照「继续 / 调整 / 停止」建议。
 2. 对持续「停止」或「调整」的指标，给出对 `finch.yaml` 中 `quality_gates` 的
    **提议**（例如 `min_candidate_score`、`min_evidence_score`、`max_rewrite_rounds`），
    以及对 `weekly.py` 建议阈值常量（`_HEALTHY=0.7`、`_WEAK=0.4`）的**提议**。
@@ -77,15 +79,14 @@
 
 ## 合并门槛
 
-每个 Phase 只在以下全绿时才合并：
+每个阶段只在以下全绿时才合并：
 
-- `uv run pytest`（含 `tests/evals/` 的 7 个场景）；
+- `uv run pytest`（含 `tests/evals/` 的场景）；
 - `uv run ruff check .`；
 - `uv run mypy src`。
 - 每个新增 prompt 都有对应 contract test（prompt 模板 + 输出 schema 校验）。
-- Graph 的恢复 / 重放 / 幂等测试（`tests/graph/test_replay.py` 等）不回退。
 
-## 后续演进（主 plan §16，满足后再开发 Web UI）
+## 后续演进（满足后再开发 Web UI）
 
 ```yaml
 productization_gate:

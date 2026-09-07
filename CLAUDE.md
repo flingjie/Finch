@@ -18,34 +18,41 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
+CLI surface (typer sub-apps / commands): `finch ideas ...` (commit / search / list / show / confirm / revise-position / skip), `finch drafts ...` (create / show / revise), `finch next`, `finch decide <id> --action accept|skip|revise`, `finch draft "<text>"` (alias `finch idea`), `finch learn <draft_id>`, `finch weekly`, `finch voice ...`, `finch author sync`, `finch github reflect`, `finch twitter ...`, `finch init`, `finch diagnose`, `finch dev ...`.
+
 ## Architecture
 
-Deterministic graph runtime, not an LLM agent loop. Codex (`codex exec`) is called as a subprocess only at specific "smart" nodes; ordering, state, retries, and idempotency live in Python.
+Skill + domain services, not an LLM agent loop and not a graph runtime. Three skills drive the pipeline; ordering, state, retries, and idempotency live in deterministic Python domain services. Codex (`codex exec`) is called as a subprocess only at specific "smart" steps (assess / write / critic).
 
 ```
+skills/
+  commit-to-idea/    Commit/PR/Issue → IdeaCandidate → finch ideas commit
+  search-to-idea/    公开讨论帖子 → IdeaCandidate → finch ideas search
+  idea-to-draft/     已确认 idea → Draft + CriticReport → finch drafts create
+  _shared/           idea-contract / evidence-policy / author-position / quality-policy / voice-guide
+
 src/finch/
-  graph/        deterministic runtime: Node (reads/writes/succeeds_to contract),
-                GraphRuntime (sequential, idempotent, replay), daily_nodes assembly,
-                dual_track.py (original + engagement fan-out with fault isolation)
-  evidence/     Commit -> EngineeringEvent -> EvidenceCard extraction/judging/scoring
-  content/      ContentJobs, writer, critic checkers, voice profile
-  review/       human review decisions + weekly aggregation
+  ideas/        IdeaService（ContentJob 状态机：PROPOSED→CONFIRMED→DRAFTED，或→SKIPPED）、
+                CommitService（commit→IdeaCandidate）、SearchService（帖子→IdeaCandidate）
+  drafts/       DraftService（已确认 idea → Draft + CriticReport，幂等，不自动发布）
+  idea/         finch draft/idea 的纯函数：assess_idea / write_idea / run_idea_critic
+  content/      ContentJob、writer、critic 检查器、voice profile
+  inbox/        next / decide 单一决策点（原创 + 互动轨道投影，InboxDecisionService）
+  learn/        FeedbackService + weekly 周复盘
+  evidence/     Commit → EngineeringEvent → EvidenceCard extraction/judging/scoring
   github/       gh adapter (read-only): commit/PR/issue reading, repo discovery
   twitter/      opencli adapter (read-only): search/thread/bookmarks
-  engagement/   NEW dual-track engagement (see below)
+  engagement/   engagement 轨道库（models 供 inbox 投影；search/scoring/proposals/guard/evidence_upgrade/metrics）
   storage/      SQLite via SQLModel: Store + repositories (payload_json pattern)
   settings.py   finch.yaml + env loading (Pydantic)
-  cli.py        typer app (run/review/jobs/voice/github/twitter/engagement)
+  cli.py        typer app (ideas/drafts/next/decide/draft/learn/weekly/voice/author/github/twitter/init/diagnose/dev)
 ```
 
-Config lives in `finch.yaml` (repositories, repository_discovery, twitter, quality_gates, engagement, interests). Prompts live in `prompts/`.
+Config lives in `finch.yaml` (repositories, repository_discovery, twitter, quality_gates, paths, engagement, interests, llm, extraction, daily_budget, author_accounts). Prompts live in `prompts/`.
 
-## Engagement track (dual-track, every run)
+## Engagement track (library, not daily-orchestrated)
 
-`run_daily` runs two independent tracks via `run_dual_track` (sequential, fault-isolated, shared `run_id`; one track failing never erases the other's results, and marks `partial_failure`):
-
-- **Original track** — the existing evidence-gated graph (unchanged). No evidence → empty success, still runs.
-- **Engagement track** (`engagement/`) — search → prefilter → deterministic 5-dim scoring → ranked proposals → human approval queue → guarded execution → feedback → conversation evidence → verified upgrade to personal evidence.
+The engagement module (`engagement/`) still exists as a library: search → prefilter → deterministic 5-dim scoring → ranked proposals → guarded execution → feedback → conversation evidence → verified upgrade to personal evidence. Its `InteractionCandidate`/`ConversationEvidence` models feed the inbox (`finch next` / `finch decide`). The previous daily dual-track orchestration (`run_daily` / `run_dual_track`) has been removed.
 
 Pipeline files: `models.py` (domain types) → `search.py` (PostSearchProvider: X + Reddit stub) → `scoring.py` (weighted_total is the *only* place `total` is computed; the LLM never decides it) → `proposals.py` (choose_action + bounded drafts) → `guard.py` (execution precondition check) → `evidence_upgrade.py` (conversation→personal gate) → `metrics.py` (quality-first metrics).
 
@@ -60,6 +67,6 @@ Pipeline files: `models.py` (domain types) → `search.py` (PostSearchProvider: 
 ## Conventions
 
 - Python 3.12+; Pydantic 2 models (`StrEnum`/`Literal`/`Field`); SQLModel records store `payload_json` and upsert via `session.merge` (idempotent).
-- The graph runtime is sequential and deterministic — node ordering, state, retries, and fault isolation (try/except) stay single-threaded; no `asyncio.gather`. Bounded `ThreadPoolExecutor` parallelism is allowed *inside* a node for independent I/O-bound subprocess calls (codex/git/opencli), always via `pool.map` so result order matches serial exactly.
+- Domain services are deterministic and single-threaded — state transitions, retries, and fault isolation (try/except) live in Python; no `asyncio.gather`. Bounded `ThreadPoolExecutor` parallelism is allowed *inside* a service step for independent I/O-bound subprocess calls (codex/git/opencli), always via `pool.map` so result order matches serial exactly.
 - Bilingual (Chinese/English) docstrings are common; match the surrounding file.
 - Ruff selects `E,F,I,B,UP`; alembic migration scripts are excluded from linting.
