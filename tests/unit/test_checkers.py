@@ -15,8 +15,8 @@ from finch.content.checkers import (
     StructureChecker,
     aggregate_checks,
 )
-from finch.content.checkers.portability import _PortabilityFinding
 from finch.content.checkers.base import split_sentences
+from finch.content.checkers.portability import _PortabilityFinding
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard
@@ -32,9 +32,6 @@ class FakeRunner:
         self.calls += 1
         self.last_prompt = prompt
         return self.ret
-
-
-from finch.content.checkers.portability import _PortabilityFinding
 
 
 def test_portability_overgeneralized_gets_conditionalize_instruction():

@@ -17,8 +17,8 @@ from finch.content.checkers import (
     SpecificityChecker,
     aggregate_checks,
 )
-from finch.content.critic import default_checker_suite
 from finch.content.checkers.portability import _PortabilityFinding
+from finch.content.critic import default_checker_suite
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
@@ -154,7 +154,9 @@ def test_scenario_4_generic_ai_boilerplate_fails_portability_and_specificity():
     assert specificity.passed is False
     assert specificity.severity in ("medium", "high")
 
-    runner = FakeRunner(SimpleNamespace(findings=[_PortabilityFinding(sentence=body, kind="boilerplate")]))
+    runner = FakeRunner(
+        SimpleNamespace(findings=[_PortabilityFinding(sentence=body, kind="boilerplate")])
+    )
     portability = PortabilityChecker(runner).check(CheckContext(draft=draft, cards=cards))
     assert portability.passed is False
     assert portability.severity == "high"

@@ -62,7 +62,10 @@ def _fix_instruction(kind: str, has_evidence: bool) -> str:
     if kind == "disclaimer":
         return "remove the meta-disclaimer; scope the underlying claim instead"
     if has_evidence:
-        return "anchor the claim to a concrete detail from the evidence that is specific to this project"
+        return (
+            "anchor the claim to a concrete detail from the evidence "
+            "that is specific to this project"
+        )
     return "remove the sentence or make it specific to this project"
 
 

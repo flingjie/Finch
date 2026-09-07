@@ -7,7 +7,7 @@ from finch.content.checkers.portability import _PortabilityOutput
 from finch.content.checkers.safety import _SafetyOutput
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from finch.content.models import Draft, DraftKind
-from finch.drafts.service import DraftService, draft_generation_key, _idea_fingerprint
+from finch.drafts.service import DraftService, _idea_fingerprint, draft_generation_key
 
 
 class FakeDraftRepository:
@@ -193,9 +193,8 @@ def test_create_pass_through_saves_draft_and_report():
     svc, drafts, reports = _service(_idea(), runner)
     draft = svc.create("idea_abc123", version="1.0.0", format="original", voice_version="1.0.0")
 
-    expected_id = (
-        f"draft_{draft_generation_key(_idea_fingerprint(_idea()), '1.0.0', 'original', '1.0.0')[:16]}"
-    )
+    key = draft_generation_key(_idea_fingerprint(_idea()), "1.0.0", "original", "1.0.0")
+    expected_id = f"draft_{key[:16]}"
     assert draft.id == expected_id
     assert draft.body == runner.body
     assert draft.claims == []
