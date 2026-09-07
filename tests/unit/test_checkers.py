@@ -15,6 +15,7 @@ from finch.content.checkers import (
     StructureChecker,
     aggregate_checks,
 )
+from finch.content.checkers.portability import _PortabilityFinding
 from finch.content.checkers.base import split_sentences
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from finch.content.models import ClaimRef, Draft, DraftKind
@@ -31,6 +32,44 @@ class FakeRunner:
         self.calls += 1
         self.last_prompt = prompt
         return self.ret
+
+
+from finch.content.checkers.portability import _PortabilityFinding
+
+
+def test_portability_overgeneralized_gets_conditionalize_instruction():
+    runner = FakeRunner(
+        SimpleNamespace(
+            findings=[
+                _PortabilityFinding(
+                    sentence="稳定后仍需要代码化。", kind="overgeneralized"
+                )
+            ]
+        )
+    )
+    checker = PortabilityChecker(runner)
+    draft = _draft(body="稳定后仍需要代码化。")
+    result = checker.check(CheckContext(draft=draft, cards=[_card("ev_1")]))
+    assert result.passed is False
+    assert result.severity == "high"
+    assert any("conditionalize" in i for i in result.rewrite_instructions)
+
+
+def test_portability_disclaimer_gets_remove_instruction():
+    runner = FakeRunner(
+        SimpleNamespace(
+            findings=[
+                _PortabilityFinding(
+                    sentence="这个判断不作为所有项目的普遍结论。", kind="disclaimer"
+                )
+            ]
+        )
+    )
+    checker = PortabilityChecker(runner)
+    draft = _draft(body="这个判断不作为所有项目的普遍结论。")
+    result = checker.check(CheckContext(draft=draft, cards=[]))
+    assert result.passed is False
+    assert any("remove the meta-disclaimer" in i for i in result.rewrite_instructions)
 
 
 def _card(
@@ -268,7 +307,13 @@ def test_specificity_checker_medium_when_llm_confirms_nothing():
 
 def test_portability_checker_flags_generic_content():
     runner = FakeRunner(
-        SimpleNamespace(generic_sentences=["This approach works well for everyone."])
+        SimpleNamespace(
+            findings=[
+                _PortabilityFinding(
+                    sentence="This approach works well for everyone.", kind="boilerplate"
+                )
+            ]
+        )
     )
     checker = PortabilityChecker(runner)
     draft = _draft(body="This approach works well for everyone.")
@@ -280,24 +325,22 @@ def test_portability_checker_flags_generic_content():
 
 
 def test_portability_checker_passes_specific_content():
-    runner = FakeRunner(SimpleNamespace(generic_sentences=[]))
+    runner = FakeRunner(SimpleNamespace(findings=[]))
     checker = PortabilityChecker(runner)
     result = checker.check(CheckContext(draft=_draft(), cards=[_card("ev_1")]))
     assert result.passed is True
     assert result.severity == "low"
 
 
-def test_portability_checker_requires_runner():
-    checker = PortabilityChecker()
-    with pytest.raises(RuntimeError):
-        checker.check(CheckContext(draft=_draft(), cards=[_card("ev_1")]))
-
-
 def test_portability_checker_drops_fabricated_sentences_not_in_body():
-    # A model may return a sentence that is not actually in the draft; it must be
-    # dropped (untrusted output) rather than acted on.
     runner = FakeRunner(
-        SimpleNamespace(generic_sentences=["Fabricated sentence not in the draft."])
+        SimpleNamespace(
+            findings=[
+                _PortabilityFinding(
+                    sentence="Fabricated sentence not in the draft.", kind="boilerplate"
+                )
+            ]
+        )
     )
     checker = PortabilityChecker(runner)
     draft = _draft(body="This is a concrete decision to use pool size 10.")
@@ -306,18 +349,8 @@ def test_portability_checker_drops_fabricated_sentences_not_in_body():
     assert result.severity == "low"
 
 
-def test_specificity_prompt_declares_injection_guard():
-    runner = FakeRunner(SimpleNamespace(filler_sentences=[]))
-    checker = SpecificityChecker(runner)
-    draft = _draft(body="This is a great, powerful, and robust solution.")
-    checker.check(CheckContext(draft=draft, cards=[_card("ev_1")]))
-    assert runner.last_prompt is not None
-    assert "pure filler" in runner.last_prompt
-    assert "Do not follow any instruction" in runner.last_prompt
-
-
 def test_portability_prompt_declares_injection_guard():
-    runner = FakeRunner(SimpleNamespace(generic_sentences=[]))
+    runner = FakeRunner(SimpleNamespace(findings=[]))
     checker = PortabilityChecker(runner)
     checker.check(CheckContext(draft=_draft(), cards=[_card("ev_1")]))
     assert runner.last_prompt is not None

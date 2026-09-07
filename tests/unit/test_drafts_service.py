@@ -86,7 +86,7 @@ class FakeRunner:
                 expresses_decision=True, expresses_tradeoff=True, missing=[]
             )
         if output_model is _PortabilityOutput:
-            return _PortabilityOutput(generic_sentences=[])
+            return _PortabilityOutput(findings=[])
         if output_model is _SafetyOutput:
             return _SafetyOutput(
                 invented_personal_experience=self.safety[0],
