@@ -16,6 +16,8 @@ Draft，不重复调用 LLM。
 
 import hashlib
 
+from pydantic import BaseModel, Field
+
 from finch.codex.runner import CodexRunner
 from finch.content.checkers.aggregate import AggregateOutcome, aggregate_checks
 from finch.content.checkers.base import CheckContext, CheckResult
@@ -36,6 +38,42 @@ from finch.storage.repositories import (
 _SEP = "\x1f"
 
 _ID_PREFIX = "draft_"
+
+
+class DraftCreateResult(BaseModel):
+    """``create`` 的 CLI 友好结果：草稿 + 从 Critic 报告确定性派生的审核元数据。"""
+
+    draft: Draft
+    critic_rounds: int
+    outcome: str  # "pass" | "rewrite"（rewrite 用尽仍未 pass）
+    adjustments: list[str] = Field(default_factory=list)
+
+
+_ADJUSTMENT_PHRASES = {
+    "portability": "收紧了观点的适用边界",
+    "specificity": "去掉了空泛表述",
+    "voice": "调整了语气以匹配作者",
+    "structure": "调整了结构",
+    "decision": "明确了决策与取舍的表达",
+}
+
+
+def _adjustments_summary(reports: list[dict]) -> list[str]:
+    """把「前面轮次失败、最终轮通过」的检查器映射成一句人话（确定性，不调 LLM）。"""
+    if not reports:
+        return []
+    final = {c["checker"]: c.get("passed") for c in reports[-1]["checks"]}
+    earlier_failed = {
+        c["checker"]
+        for report in reports[:-1]
+        for c in report["checks"]
+        if not c.get("passed")
+    }
+    return [
+        _ADJUSTMENT_PHRASES[name]
+        for name, passed in final.items()
+        if passed and name in earlier_failed and name in _ADJUSTMENT_PHRASES
+    ]
 
 
 def draft_generation_key(
@@ -142,6 +180,30 @@ class DraftService:
 
         draft = self._generate(job, draft_id)
         return self._critic_loop(draft, job, draft_id)
+
+    def create_result(
+        self,
+        idea_id: str,
+        *,
+        version: str,
+        format: str,
+        voice_version: str,
+    ) -> DraftCreateResult:
+        """``create`` + 从 Critic 报告派生审核元数据（缓存命中与新建路径都可用）。
+
+        ``outcome`` 取最后一轮报告的 ``outcome``；无报告（遗留草稿）时为 ``"unknown"``。
+        """
+        draft = self.create(
+            idea_id, version=version, format=format, voice_version=voice_version
+        )
+        reports = self.critic_reports.list_reports(draft.id)
+        outcome = reports[-1]["outcome"] if reports else "unknown"
+        return DraftCreateResult(
+            draft=draft,
+            critic_rounds=len(reports),
+            outcome=outcome,
+            adjustments=_adjustments_summary(reports),
+        )
 
     def _generate(self, job: ContentJob, draft_id: str) -> Draft:
         """生成首稿：只依据 job 语境写正文，并把幂等键确定性写入 ``id``。"""

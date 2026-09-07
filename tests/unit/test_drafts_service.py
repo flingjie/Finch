@@ -7,7 +7,13 @@ from finch.content.checkers.portability import _PortabilityOutput
 from finch.content.checkers.safety import _SafetyOutput
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from finch.content.models import Draft, DraftKind
-from finch.drafts.service import DraftService, _idea_fingerprint, draft_generation_key
+from finch.drafts.service import (
+    DraftCreateResult,
+    DraftService,
+    _adjustments_summary,
+    _idea_fingerprint,
+    draft_generation_key,
+)
 
 
 class FakeDraftRepository:
@@ -133,6 +139,56 @@ def _service(
         max_rewrite_rounds=max_rewrite_rounds,
     )
     return svc, drafts, reports
+
+
+def test_adjustments_summary_lists_checkers_fixed_between_rounds():
+    reports = [
+        {"outcome": "rewrite", "checks": [
+            {"checker": "portability", "passed": False},
+            {"checker": "voice", "passed": True},
+        ]},
+        {"outcome": "pass", "checks": [
+            {"checker": "portability", "passed": True},
+            {"checker": "voice", "passed": True},
+        ]},
+    ]
+    assert _adjustments_summary(reports) == ["收紧了观点的适用边界"]
+
+
+def test_adjustments_summary_empty_when_no_rounds_or_no_fixups():
+    assert _adjustments_summary([]) == []
+    reports = [{"outcome": "pass", "checks": [
+        {"checker": "portability", "passed": True},
+    ]}]
+    assert _adjustments_summary(reports) == []
+
+
+def test_create_result_reports_rounds_outcome_and_adjustments():
+    class DictReports:
+        def __init__(self) -> None:
+            self.reports = [
+                {"outcome": "rewrite", "checks": [{"checker": "portability", "passed": False}]},
+                {"outcome": "pass", "checks": [{"checker": "portability", "passed": True}]},
+            ]
+
+        def upsert_report(self, *args, **kwargs) -> None:
+            pass
+
+        def list_reports(self, draft_id: str) -> list[dict]:
+            return self.reports
+
+    drafts = FakeDraftRepository()
+    reports = DictReports()
+    jobs = FakeContentJobRepository([_idea()])
+    svc = DraftService(drafts, reports, jobs, FakeRunner(), max_rewrite_rounds=1)
+    result = svc.create_result(
+        "idea_abc123", version="1.0.0", format="original", voice_version="1.0.0"
+    )
+    assert isinstance(result, DraftCreateResult)
+    assert result.outcome == "pass"
+    assert result.critic_rounds == 2
+    assert result.adjustments == ["收紧了观点的适用边界"]
+    assert result.draft.id.startswith("draft_")
 
 
 # ---- draft_generation_key ----
