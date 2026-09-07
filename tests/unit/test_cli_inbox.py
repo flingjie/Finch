@@ -7,7 +7,7 @@ from finch.cli import app
 
 def test_product_commands_present():
     names = {c.name for c in app.registered_commands}
-    for present in ("daily", "draft", "next", "decide", "learn", "weekly"):
+    for present in ("draft", "next", "decide", "learn", "weekly"):
         assert present in names, present
 
 

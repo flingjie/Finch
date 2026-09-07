@@ -1,7 +1,6 @@
 """Finch CLI（spec 10）。"""
 
 import json
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -14,8 +13,6 @@ from .author.sync import sync_posts, verify_account
 from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
 from .content.checkers.aggregate import AggregateOutcome
-from .content.checkers.base import CheckResult
-from .content.models import Draft
 from .content.voice import (
     ApprovedExample,
     RejectedExample,
@@ -25,17 +22,10 @@ from .content.voice import (
 from .content.writer import rewrite_with_instruction
 from .dev.cli import dev_app
 from .drafts.service import DraftService
-from .engagement.flow import run_discovery_engagement_flow
-from .engagement.models import EngagementRunStats, InteractionCandidate
+from .engagement.models import InteractionCandidate
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
-from .github.discovery import resolve_repositories
 from .github.gh_client import GhClient
-from .github.ingestion import Ingestor
-from .graph.context import parse_items
-from .graph.daily import daily_nodes
-from .graph.dual_track import DualTrackResult, run_dual_track
-from .graph.runtime import GraphRuntime
 from .idea.models import IdeaAssessment
 from .idea.service import (
     assess_idea,
@@ -51,29 +41,23 @@ from .ideas.models import IdeaPosition
 from .ideas.search_service import SearchService
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, DecisionRecord
-from .inbox.render import render_daily_summary, state_label
-from .inbox.service import InboxDecisionService, list_items, next_item
+from .inbox.service import InboxDecisionService, next_item
 from .learn.models import OutcomeAssessment
 from .learn.service import FeedbackService
 from .learn.weekly import render_weekly, weekly_analysis
 from .llm.openai_compatible import create_runner
-from .reddit.opencli_client import RedditOpenCliClient
 from .settings import load_settings
 from .storage.database import Store
 from .storage.repositories import (
     AuthorPostRepository,
-    CommitIngestionRepository,
     ContentJobRepository,
     CriticReportRepository,
     DecisionRecordRepository,
     DraftRepository,
-    DraftVersionRepository,
-    EngagementRunStatsRepository,
     EvidenceRepository,
     FeedbackRepository,
     InteractionRepository,
     PublicationIntentRepository,
-    RepoCursorRepository,
 )
 from .twitter.models import TwitterError
 from .twitter.normalizer import normalize_tweets
@@ -146,135 +130,6 @@ def _since_iso(since: str | None) -> str | None:
     if since.endswith("d"):
         return (datetime.now(UTC) - timedelta(days=int(since[:-1]))).isoformat()
     return since
-
-
-def persist_critique_reports(store: Store, output_json: str) -> None:
-    """从 critique 节点输出持久化草稿版本与 Critic 报告（Task 7）。
-
-    critique 节点保持无状态（不访问 DB），持久化在 CLI 层完成。每个 report 条目含
-    draft_id / round / version / checks / outcome，分别写入 DraftVersionRepository
-    与 CriticReportRepository。历史草稿（content_job_id=None）照常读回，
-    不参与新指标（Task 8 在指标侧跳过）。
-    """
-    payload = json.loads(output_json)
-    reports = payload.get("reports", [])
-    if not reports:
-        return
-    version_repo = DraftVersionRepository(store)
-    report_repo = CriticReportRepository(store)
-    for report in reports:
-        draft_id = report["draft_id"]
-        round_no = report["round"]
-        version = report.get("version")
-        if version is not None:
-            version_repo.upsert_version(draft_id, round_no, Draft.model_validate(version))
-        checks = [CheckResult.model_validate(c) for c in report.get("checks", [])]
-        report_repo.upsert_report(draft_id, round_no, checks, report["outcome"])
-
-
-def _persist_run_outputs(store: Store, run_id: str) -> None:
-    """把一次 run 的 Critic 报告与保留草稿持久化（Task 7 + F1）。
-
-    write 节点输出既是 kept drafts 又是 report 的权威来源。run_daily 与 run_resume 共用，
-    确保 resume 出来的草稿进入 review list、报告进入周复盘指标。
-    """
-    write_record = store.find_node(run_id, "write", "default")
-    if write_record is not None and write_record.output_json:
-        persist_critique_reports(store, write_record.output_json)
-    if write_record is not None and write_record.output_json:
-        drafts = parse_items(json.loads(write_record.output_json), Draft)
-        draft_repo = DraftRepository(store)
-        for draft in drafts:
-            draft_repo.upsert_draft(draft)
-
-
-def _echo_inbox_summary(store: Store) -> None:
-    """非 json 输出末尾打印收件箱汇总（今天 N 条待决定）。"""
-    items = list_items(
-        jobs=ContentJobRepository(store),
-        drafts=DraftRepository(store),
-        decisions=DecisionRecordRepository(store),
-        interactions=InteractionRepository(store),
-        cards=EvidenceRepository(store),
-    )
-    typer.echo(render_daily_summary(items))
-
-
-def _echo_dual_track_result(result: DualTrackResult, store: Store) -> None:
-    """汇总输出双轨结果：原创轨道 state，随后互动轨道 summary（不再打印 brief）。"""
-    if result.original is not None:
-        typer.echo(state_label(result.original.state))
-        _persist_run_outputs(store, result.original.id)
-    elif result.original_error is not None:
-        typer.echo(
-            f"original track error: {result.original_error.type}: {result.original_error.message}"
-        )
-    if result.engagement is not None:
-        typer.echo(result.engagement.summary)
-    elif result.engagement_error is not None:
-        typer.echo(
-            f"engagement track error: {result.engagement_error.type}: "
-            f"{result.engagement_error.message}"
-        )
-
-
-def _persist_engagement_candidates(result: DualTrackResult, store: Store) -> None:
-    """把互动轨道产出的候选写入审批队列（keyed by run_id）。
-
-    无候选时不写入；``engagement.enabled`` 为 False 时调用方跳过，本函数也不处理。
-    """
-    engagement = result.engagement
-    if engagement is None or not engagement.candidates:
-        return
-    repo = InteractionRepository(store)
-    for candidate in engagement.candidates:
-        repo.upsert(candidate, run_id=engagement.run_id)
-
-
-def _daily_json_summary(store: Store, run_id: str, *, engagement_drafts: int) -> str:
-    decided = {
-        rec.job_id for rec in DecisionRecordRepository(store).list()
-        if rec.action in {DecisionAction.ACCEPT, DecisionAction.SKIP}
-    }
-    drafts = [
-        d for d in DraftRepository(store).list_drafts()
-        if d.content_job_id and d.run_id == run_id
-    ]
-    n_review = sum(1 for d in drafts if d.content_job_id not in decided)
-    return json.dumps(
-        {
-            "run_id": run_id,
-            "status": "review_required" if n_review else "completed",
-            "n_review": n_review,
-            "n_engagement_drafts": engagement_drafts,
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
-
-
-def _persist_engagement_run_stats(
-    result: DualTrackResult, store: Store, *, latency_ms: int
-) -> None:
-    """把互动轨道单轮运行级计数写入运行统计（Phase 7 可观测性）。
-
-    ``posts_scanned`` 来自 ``EngagementRunResult.posts_found``，``candidates`` 为候选数，
-    ``drafts`` 为含非空草稿的候选数。互动轨道未返回结果（异常被双轨调度隔离）时跳过，
-    不写统计。空运行（``posts_scanned=0``）也写入，否则 ``no_evidence_runs`` 无法计数。
-    """
-    engagement = result.engagement
-    if engagement is None:
-        return
-    drafts = sum(1 for c in engagement.candidates if c.draft is not None)
-    EngagementRunStatsRepository(store).upsert(
-        EngagementRunStats(
-            run_id=engagement.run_id,
-            posts_scanned=engagement.posts_found,
-            candidates=len(engagement.candidates),
-            drafts=drafts,
-            latency_ms=latency_ms,
-        )
-    )
 
 
 @app.command()
@@ -668,101 +523,6 @@ def twitter_diagnose() -> None:
         typer.echo(f"search probe: ok ({len(tweets)} tweets)")
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"search probe: failed ({type(exc).__name__}: {exc})")
-
-
-@app.command("daily")
-def run_daily(
-    as_json: bool = typer.Option(False, "--json", help="输出结构化 JSON 摘要"),  # noqa: B008
-) -> None:
-    """运行每日 Graph：同步 commit → 提取证据卡 → 收集推文 → 匹配证据 → 撰写与审查草稿。"""
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    gh = GhClient()
-    opencli = OpenCliClient()
-    reddit_opencli = RedditOpenCliClient()
-
-    repos = resolve_repositories(settings, gh)
-
-    ingestion_repo = CommitIngestionRepository(store)
-    cursor_repo = RepoCursorRepository(store)
-    existing_topics = {
-        topic for card in EvidenceRepository(store).list_cards() for topic in card.topics
-    }
-    groups_by_repo = Ingestor(gh, settings, ingestion_repo, cursor_repo).ingest(
-        repos, existing_topics=existing_topics
-    )
-
-    repo_is_private: dict[str, bool] = {}
-    known_commit_urls: set[str] = set()
-    for repo in repos:
-        repo_is_private[repo] = gh.repo_view(repo).is_private
-    for repo, groups in groups_by_repo.items():
-        for group in groups:
-            for commit in group:
-                known_commit_urls.add(f"https://github.com/{repo}/commit/{commit.sha}")
-
-    nodes = daily_nodes(
-        settings=settings,
-        store=store,
-        gh=gh,
-        opencli=opencli,
-        extractor=Extractor(
-            create_runner(settings.llm) or CodexRunner(),
-            settings=settings.extraction,
-            cache_path=settings.paths.cache_dir / "extraction_cache.json",
-        ),
-        runner=CodexRunner(),
-        groups_by_repo=groups_by_repo,
-        known_commit_urls=known_commit_urls,
-        repo_is_private=repo_is_private,
-        voice_profile=load_voice_profile(settings.paths.voice_profile_path),
-        inference_runners={
-            "match_evidence": create_runner(settings.llm, "match_evidence"),
-            "plan_topics": create_runner(settings.llm, "plan_topics"),
-            "expand_job": create_runner(settings.llm, "expand_job"),
-            "critique": create_runner(settings.llm, "critique"),
-        },
-    )
-
-    if settings.engagement.enabled:
-        start = time.monotonic()
-        result = run_dual_track(
-            original_track=lambda rid: GraphRuntime(store, nodes).run(run_id=rid),
-            engagement_track=lambda rid: run_discovery_engagement_flow(
-                settings, opencli, CodexRunner(),
-                run_id=rid, reddit_opencli=reddit_opencli,
-            ),
-        )
-        latency_ms = int((time.monotonic() - start) * 1000)
-        _persist_engagement_candidates(result, store)
-        _persist_engagement_run_stats(result, store, latency_ms=latency_ms)
-
-        engagement = result.engagement
-        engagement_drafts = sum(
-            1 for c in (engagement.candidates if engagement else []) if c.draft is not None
-        )
-
-        if as_json:
-            run_id = (
-                result.original.id if result.original is not None else result.run_id
-            )
-            typer.echo(
-                _daily_json_summary(store, run_id, engagement_drafts=engagement_drafts)
-            )
-            return
-
-        _echo_dual_track_result(result, store)
-        _echo_inbox_summary(store)
-        return
-
-    run = GraphRuntime(store, nodes).run()
-    if as_json:
-        typer.echo(_daily_json_summary(store, run.id, engagement_drafts=0))
-        return
-    typer.echo(state_label(run.state))
-    _persist_run_outputs(store, run.id)
-    _echo_inbox_summary(store)
 
 
 @app.command("weekly")

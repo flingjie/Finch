@@ -15,8 +15,6 @@ from sqlalchemy import create_engine, inspect
 ROOT = Path(__file__).resolve().parents[2]
 
 ALL_TABLES = {
-    "runrecord",
-    "noderecord",
     "evidencecardrecord",
     "draftrecord",
     "feedbackrecord",

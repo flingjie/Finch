@@ -1,4 +1,4 @@
-"""Unit tests for finch daily/weekly/decide/next/voice/author CLI commands."""
+"""Unit tests for finch weekly/decide/next/voice/author CLI commands."""
 import json
 from datetime import UTC, datetime
 
@@ -6,7 +6,6 @@ from typer.testing import CliRunner
 
 from finch import cli
 from finch.cli import app
-from finch.content.checkers.base import CheckResult
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
@@ -22,109 +21,14 @@ from finch.content.voice import (
     save_voice_profile,
 )
 from finch.inbox.models import DecisionAction, DecisionRecord
-from finch.settings import AuthorAccountConfig, EngagementSettings, Paths, Settings
+from finch.settings import AuthorAccountConfig, Paths, Settings
 from finch.storage.database import Store
 from finch.storage.repositories import (
     ContentJobRepository,
-    CriticReportRepository,
     DecisionRecordRepository,
     DraftRepository,
-    DraftVersionRepository,
     PublicationIntentRepository,
 )
-
-
-def test_daily_help():
-    r = CliRunner().invoke(app, ["daily", "--help"])
-    assert r.exit_code == 0
-
-
-def test_daily_uses_ingestor(monkeypatch, tmp_path):
-    settings = Settings(
-        repositories=["flingjie/FDE-Gym"],
-        paths=Paths(db_path=tmp_path / "finch.db"),
-        engagement=EngagementSettings(enabled=False),
-    )
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    captured = {}
-
-    class FakeIngestor:
-        def __init__(self, gh, settings, ingestion, cursor):
-            captured["constructed"] = True
-
-        def ingest(self, repos, existing_topics=None):
-            captured["repos"] = repos
-            return {}
-
-    class FakeGh:
-        def repo_view(self, repo):
-            from finch.github.models import RepoInfo
-
-            return RepoInfo(
-                name_with_owner=repo,
-                default_branch="main",
-                url="https://github.com/" + repo,
-                is_private=False,
-            )
-
-    monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
-    monkeypatch.setattr(cli, "Ingestor", FakeIngestor)
-    monkeypatch.setattr(cli, "daily_nodes", lambda **kwargs: [])
-    monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
-
-    r = CliRunner().invoke(app, ["daily"])
-    assert r.exit_code == 0, r.output
-    assert captured["repos"] == ["flingjie/FDE-Gym"]
-
-
-def test_daily_enabled_echoes_engagement_summary(monkeypatch, tmp_path):
-    from finch.engagement.flow import EngagementRunResult
-
-    settings = Settings(
-        repositories=["flingjie/FDE-Gym"],
-        paths=Paths(db_path=tmp_path / "finch.db"),
-        engagement=EngagementSettings(enabled=True, platforms=["x"]),
-    )
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    class FakeIngestor:
-        def __init__(self, gh, settings, ingestion, cursor):
-            pass
-
-        def ingest(self, repos, existing_topics=None):
-            return {}
-
-    class FakeGh:
-        def repo_view(self, repo):
-            from finch.github.models import RepoInfo
-
-            return RepoInfo(
-                name_with_owner=repo,
-                default_branch="main",
-                url="https://github.com/" + repo,
-                is_private=False,
-            )
-
-    monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
-    monkeypatch.setattr(cli, "Ingestor", FakeIngestor)
-    monkeypatch.setattr(cli, "daily_nodes", lambda **kwargs: [])
-    monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
-
-    def fake_engagement_flow(
-        settings, opencli, runner, *, reddit_opencli=None, run_id, skip_ids=None
-    ):
-        return EngagementRunResult(
-            run_id=run_id, posts_found=0, candidates=[], failures=[],
-            status="empty", summary="engagement: no posts found",
-        )
-
-    monkeypatch.setattr(cli, "run_discovery_engagement_flow", fake_engagement_flow)
-
-    r = CliRunner().invoke(app, ["daily"])
-    assert r.exit_code == 0, r.output
-    assert "engagement: no posts found" in r.output
-    assert "已完成" in r.output
 
 
 def test_weekly_renders(monkeypatch, tmp_path):
@@ -326,179 +230,6 @@ def test_voice_reject_example_removes_from_approved(monkeypatch, tmp_path):
     profile = load_voice_profile(settings.paths.voice_profile_path)
     assert any(ex.id == "d8" for ex in profile.rejected_examples)
     assert not any(ex.id == "d8" for ex in profile.approved_examples)
-
-
-def test_persist_critique_reports_helper(tmp_path):
-    from finch.cli import persist_critique_reports
-
-    store = Store(tmp_path / "finch.db")
-    store.init()
-    draft = Draft(id="d1", kind=DraftKind.REPLY, candidate_id="t", body="v0", claims=[])
-    payload = json.dumps(
-        {
-            "reports": [
-                {
-                    "draft_id": "d1",
-                    "round": 0,
-                    "version": draft.model_dump(mode="json"),
-                    "checks": [
-                        CheckResult(
-                            checker="specificity", passed=True, severity="low"
-                        ).model_dump(mode="json")
-                    ],
-                    "outcome": "pass",
-                }
-            ]
-        }
-    )
-    persist_critique_reports(store, payload)
-
-    versions = DraftVersionRepository(store).list_versions("d1")
-    assert [v.body for v in versions] == ["v0"]
-    reports = CriticReportRepository(store).list_reports("d1")
-    assert len(reports) == 1
-    assert reports[0]["outcome"] == "pass"
-    assert reports[0]["checks"][0]["checker"] == "specificity"
-
-
-def test_daily_persists_versions_and_reports(monkeypatch, tmp_path):
-    from finch.codex.runner import CodexRunner
-    from finch.evidence.models import ClaimConfidence, EvidenceCard
-    from finch.graph.write_nodes import make_write_node
-    from finch.graph.context import items_payload
-    from finch.graph.events import NodeResult
-    from finch.graph.nodes import Node
-    from finch.settings import QualityGates
-
-    settings = _settings(tmp_path)
-    settings.engagement.enabled = False
-    store = Store(settings.paths.db_path)
-    store.init()
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    class Seed(Node):
-        model_config = {"extra": "allow"}
-
-        def run(self, ctx):
-            return NodeResult(status="succeeded", output=self.seed)
-
-    class PassChecker:
-        name = "pass"
-
-        def check(self, ctx):
-            return CheckResult(checker="pass", passed=True, severity="low")
-
-    draft = Draft(id="d1", kind=DraftKind.ORIGINAL, candidate_id=None, body="hi", claims=[])
-    job = _job(job_id="job1")
-    card = EvidenceCard(
-        id="ev1", event_id="e", claim="c", sources=[],
-        confidence=ClaimConfidence.VERIFIED, publishable=True, topics=[],
-    )
-
-    def build_nodes(**kw):
-        return [
-            Seed(name="select", writes="ready_jobs", seed=items_payload([job])),
-            Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
-            Seed(name="extract_events", writes="evidence_cards", seed=items_payload([card])),
-            Seed(name="collect_tweets", writes="candidates", seed=items_payload([])),
-            make_write_node(
-                CodexRunner(),
-                lambda *a, **k: draft,
-                lambda *a, **k: draft,
-                lambda *a, **k: draft,
-                QualityGates(llm_critique_mode="always"),
-                checkers=[PassChecker()],
-            ),
-        ]
-
-    monkeypatch.setattr(cli, "daily_nodes", build_nodes)
-    r = CliRunner().invoke(app, ["daily"])
-    assert r.exit_code == 0, r.output
-
-    versions = DraftVersionRepository(store).list_versions("d1")
-    assert len(versions) == 1
-    reports = CriticReportRepository(store).list_reports("d1")
-    assert len(reports) == 1
-    assert reports[0]["outcome"] == "pass"
-
-
-def test_daily_json(monkeypatch, tmp_path):
-    settings = Settings(
-        repositories=["flingjie/FDE-Gym"],
-        paths=Paths(db_path=tmp_path / "finch.db"),
-        engagement=EngagementSettings(enabled=False),
-    )
-    store = Store(settings.paths.db_path)
-    store.init()
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    class FakeIngestor:
-        def __init__(self, gh, settings, ingestion, cursor):
-            pass
-
-        def ingest(self, repos, existing_topics=None):
-            return {}
-
-    class FakeGh:
-        def repo_view(self, repo):
-            from finch.github.models import RepoInfo
-
-            return RepoInfo(name_with_owner=repo, default_branch="main",
-                            url="https://github.com/" + repo, is_private=False)
-
-    monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
-    monkeypatch.setattr(cli, "Ingestor", FakeIngestor)
-    monkeypatch.setattr(cli, "daily_nodes", lambda **kw: [])
-    monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
-
-    r = CliRunner().invoke(app, ["daily", "--json"])
-    assert r.exit_code == 0, r.output
-    assert '"status"' in r.output and '"run_id"' in r.output
-    assert '"n_review"' in r.output and '"n_engagement_drafts"' in r.output
-
-
-def test_daily_prints_inbox_summary(monkeypatch, tmp_path):
-    settings = Settings(
-        repositories=["flingjie/FDE-Gym"],
-        paths=Paths(db_path=tmp_path / "finch.db"),
-        engagement=EngagementSettings(enabled=False),
-    )
-    store = Store(settings.paths.db_path)
-    store.init()
-    ContentJobRepository(store).upsert_job(
-        _job(
-            job_id="j1",
-            author_position=AuthorPosition(claim="c", decision="决定要写", tradeoff="t"),
-        )
-    )
-    DraftRepository(store).upsert_draft(
-        Draft(id="d1", kind=DraftKind.ORIGINAL, body="正文", content_job_id="j1")
-    )
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    class FakeIngestor:
-        def __init__(self, gh, settings, ingestion, cursor):
-            pass
-
-        def ingest(self, repos, existing_topics=None):
-            return {}
-
-    class FakeGh:
-        def repo_view(self, repo):
-            from finch.github.models import RepoInfo
-
-            return RepoInfo(name_with_owner=repo, default_branch="main",
-                            url="https://github.com/" + repo, is_private=False)
-
-    monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
-    monkeypatch.setattr(cli, "Ingestor", FakeIngestor)
-    monkeypatch.setattr(cli, "daily_nodes", lambda **kw: [])
-    monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
-
-    r = CliRunner().invoke(app, ["daily"])
-    assert r.exit_code == 0, r.output
-    assert "今天" in r.output
-    assert "决定要写" in r.output
 
 
 def test_author_sync_json(monkeypatch, tmp_path):

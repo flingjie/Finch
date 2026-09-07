@@ -1,27 +1,17 @@
-"""Eval corpus: Spec §10 Phase E — seven representative scenarios for the
-effective-content system.
+"""Eval corpus: Spec §10 Phase E — representative scenarios for the effective-content
+system (read-focused, deterministic; scripted fake runners, no real LLM).
 
-The corpus is read-focused and deterministic. It uses scripted fake runners (no real
-LLM) to verify the SYSTEM's routing and deterministic aggregation on representative
-inputs — not the quality of real model output. One scenario = one clearly-named test.
-
-Scenario map:
-1. 强证据 + 清晰判断 → CONFIRMED
-2. 强证据 + 无作者判断 → NEEDS_INPUT
-3. 弱证据/无增量 → SKIPPED (silently skipped)
+One scenario = one clearly-named test. Remaining scenarios after the graph-runtime removal
+cover the checker/aggregation layer directly:
 4. 通用 AI 套话 → Portability/Specificity fail
 5. 有数字但无证据 → hard fail (reject)
 6. 有明确取舍且风格自然 → pass
-7. 重写两轮仍失败 → 不进审核 (dropped from kept)
 """
 
-import json
 from types import SimpleNamespace
 
-from finch.codex.runner import CodexRunner
 from finch.content.checkers import (
     CheckContext,
-    CheckResult,
     EvidenceChecker,
     PortabilityChecker,
     SpecificityChecker,
@@ -36,14 +26,7 @@ from finch.content.jobs import (
     SuccessCriterion,
 )
 from finch.content.models import ClaimRef, Draft, DraftKind
-from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
-from finch.graph.write_nodes import make_write_node
-from finch.graph.context import items_payload
-from finch.graph.events import NodeResult
-from finch.graph.nodes import Node
-from finch.graph.runtime import GraphRuntime
-from finch.settings import QualityGates
-from finch.storage.database import Store
+from finch.evidence.models import ClaimConfidence, EvidenceCard
 
 # --- scripted runners -------------------------------------------------------
 
@@ -89,42 +72,7 @@ _PASS_OUTPUTS = {
 }
 
 
-class Seed(Node):
-    """Seeds a context key with a pre-built items payload."""
-
-    model_config = {"extra": "allow"}
-
-    def run(self, ctx):
-        return NodeResult(status="succeeded", output=self.seed)
-
-
-class AlwaysFailChecker:
-    """Fails every round with a rewrite-level result (never reject/needs_input)."""
-
-    name = "always_fail"
-
-    def __init__(self):
-        self.calls = 0
-
-    def check(self, ctx) -> CheckResult:
-        self.calls += 1
-        return CheckResult(
-            checker=self.name,
-            passed=False,
-            severity="high",
-            locations=["body"],
-            issues=["always fails"],
-            rewrite_instructions=["fix it"],
-        )
-
-
 # --- fixtures ---------------------------------------------------------------
-
-
-def _store(tmp_path) -> Store:
-    s = Store(tmp_path / "db.sqlite")
-    s.init()
-    return s
 
 
 def _card(cid: str = "ev1") -> EvidenceCard:
@@ -136,19 +84,6 @@ def _card(cid: str = "ev1") -> EvidenceCard:
         confidence=ClaimConfidence.VERIFIED,
         publishable=True,
         topics=["rate"],
-    )
-
-
-def _match(candidate_id: str = "t1", card_ids: tuple[str, ...] = ("ev1",)) -> MatchResult:
-    return MatchResult(
-        candidate_id=candidate_id,
-        card_ids=list(card_ids),
-        scores=JudgeScores(
-            relevance=0.9, evidence_strength=0.9, incremental_value=0.9, discussability=0.9
-        ),
-        timing=1.0,
-        relationship_value=0.5,
-        score=0.9,
     )
 
 
@@ -212,7 +147,7 @@ def _job(
     )
 
 
-# --- the seven scenarios ----------------------------------------------------
+# --- the remaining scenarios ------------------------------------------------
 
 
 def test_scenario_4_generic_ai_boilerplate_fails_portability_and_specificity():
@@ -264,38 +199,3 @@ def test_scenario_6_concrete_decision_and_natural_style_pass():
 
     assert [c.checker for c in checks if not c.passed] == []
     assert aggregate_checks(checks) == "pass"
-
-
-def test_scenario_7_unfixable_draft_dropped_after_two_rewrites(tmp_path):
-    """重写两轮仍失败 → 不进审核：max_rewrite_rounds 后草稿从 kept 中丢弃。"""
-    checker = AlwaysFailChecker()
-
-    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
-        return draft.model_copy(update={"body": f"{draft.body} (revised)"})
-
-    job = _job().model_copy(
-        update={"candidate_id": None, "recommended_format": DraftKind.ORIGINAL}
-    )
-    store = _store(tmp_path)
-    nodes = [
-        Seed(name="select", writes="ready_jobs", seed=items_payload([job])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        Seed(name="collect_tweets", writes="candidates", seed=items_payload([])),
-        make_write_node(
-            CodexRunner(),
-            lambda r, m, c, cards, job: _draft(),
-            lambda r, cards, job: _draft(),
-            rewrite,
-            QualityGates(llm_critique_mode="always", max_rewrite_rounds=2),
-            checkers=[checker],
-        ),
-    ]
-    run = GraphRuntime(store, nodes).run()
-    assert run.state == "DRAFTED"
-    rec = store.find_node(run.id, "write", "default")
-    assert rec is not None
-    payload = json.loads(rec.output_json)
-    assert payload["items"] == []
-    assert any("failed critique after 2 rewrites" in w for w in payload["warnings"])
-    assert checker.calls == 3
