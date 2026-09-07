@@ -33,6 +33,22 @@ def render_inbox(items: list[InboxItem]) -> str:
     return "\n".join(lines)
 
 
+def _item_title(item: InboxItem) -> str:
+    """单条待决定项的标题：立场 decision → why_now → 正文前 40 字 → id。"""
+    title = item.position.get("decision") if item.position else ""
+    return title or item.why_now or item.draft[:40] or item.id
+
+
+def render_daily_summary(items: list[InboxItem]) -> str:
+    """daily 非 json 输出的收件箱汇总：「今天 N 条待决定」+ 逐条 `[类型] 标题`。"""
+    if not items:
+        return "今天没有待决定的内容。"
+    lines = [f"今天 {len(items)} 条待决定。"]
+    for i, item in enumerate(items, start=1):
+        lines.append(f"{i}. [{_CONTENT_LABEL[item.content_type]}] {_item_title(item)}")
+    return "\n".join(lines)
+
+
 def render_card(item: InboxItem) -> str:
     """单条决策卡。"""
     lines = [f"[{_CONTENT_LABEL[item.content_type]}] {item.id}"]

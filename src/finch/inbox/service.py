@@ -116,15 +116,19 @@ def build_engagement_item(candidate: InteractionCandidate) -> InboxItem:
     )
 
 
+_TRACK_RANK = {InboxTrack.ORIGINAL: 0, InboxTrack.ENGAGEMENT: 1}
+
+
+def _sort_key(item: InboxItem) -> tuple:
+    """§7.2 确定性排序键：must_ask 优先 → original 先于 engagement → score 降序、id 升序。"""
+    return (not item.must_ask, _TRACK_RANK[item.track], -item.score, item.id)
+
+
 def select_next(items: list[InboxItem]) -> InboxItem | None:
-    """§7.2 确定性选择：must_ask 优先 → original 先于 engagement → score 降序、id 升序。"""
+    """§7.2 确定性选择：取排序后的第一条。"""
     if not items:
         return None
-    rank = {InboxTrack.ORIGINAL: 0, InboxTrack.ENGAGEMENT: 1}
-    return sorted(
-        items,
-        key=lambda it: (not it.must_ask, rank[it.track], -it.score, it.id),
-    )[0]
+    return sorted(items, key=_sort_key)[0]
 
 
 def content_hash(body: str) -> str:
@@ -297,15 +301,15 @@ def _original_ask(job: ContentJob) -> tuple[bool, list[str]]:
     return False, []
 
 
-def next_item(
+def list_items(
     *,
     jobs: ContentJobRepository,
     drafts: DraftRepository,
     decisions: DecisionRecordRepository,
     interactions: InteractionRepository,
     cards: EvidenceRepository,
-) -> dict:
-    """组装收件箱并返回第一条待决策卡（JSON 载荷），空则 {"status": "none"}。"""
+) -> list[InboxItem]:
+    """组装收件箱：返回全部待决策项（原创 + 互动），按 select_next 的排序排好。"""
     decided_job_ids = {
         r.job_id
         for r in decisions.list()
@@ -329,8 +333,24 @@ def next_item(
     for candidate in interactions.list_pending():
         if candidate.draft or candidate.revised_draft:
             items.append(build_engagement_item(candidate))
+    return sorted(items, key=_sort_key)
 
-    first = select_next(items)
+
+def next_item(
+    *,
+    jobs: ContentJobRepository,
+    drafts: DraftRepository,
+    decisions: DecisionRecordRepository,
+    interactions: InteractionRepository,
+    cards: EvidenceRepository,
+) -> dict:
+    """组装收件箱并返回第一条待决策卡（JSON 载荷），空则 {"status": "none"}。"""
+    first = select_next(
+        list_items(
+            jobs=jobs, drafts=drafts, decisions=decisions,
+            interactions=interactions, cards=cards,
+        )
+    )
     if first is None:
         return {"status": "none"}
     payload = first.model_dump(mode="json")

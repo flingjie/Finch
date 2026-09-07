@@ -45,8 +45,8 @@ from .idea.service import (
     write_idea,
 )
 from .inbox.models import DecisionAction, DecisionRecord
-from .inbox.render import state_label
-from .inbox.service import InboxDecisionService, next_item
+from .inbox.render import render_daily_summary, state_label
+from .inbox.service import InboxDecisionService, list_items, next_item
 from .learn.models import OutcomeAssessment
 from .learn.service import FeedbackService
 from .learn.weekly import render_weekly, weekly_analysis
@@ -174,6 +174,18 @@ def _persist_run_outputs(store: Store, run_id: str) -> None:
         draft_repo = DraftRepository(store)
         for draft in drafts:
             draft_repo.upsert_draft(draft)
+
+
+def _echo_inbox_summary(store: Store) -> None:
+    """非 json 输出末尾打印收件箱汇总（今天 N 条待决定）。"""
+    items = list_items(
+        jobs=ContentJobRepository(store),
+        drafts=DraftRepository(store),
+        decisions=DecisionRecordRepository(store),
+        interactions=InteractionRepository(store),
+        cards=EvidenceRepository(store),
+    )
+    typer.echo(render_daily_summary(items))
 
 
 def _echo_dual_track_result(result: DualTrackResult, store: Store) -> None:
@@ -441,6 +453,7 @@ def run_daily(
             return
 
         _echo_dual_track_result(result, store)
+        _echo_inbox_summary(store)
         return
 
     run = GraphRuntime(store, nodes).run()
@@ -449,6 +462,7 @@ def run_daily(
         return
     typer.echo(state_label(run.state))
     _persist_run_outputs(store, run.id)
+    _echo_inbox_summary(store)
 
 
 @app.command("weekly")

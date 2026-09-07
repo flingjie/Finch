@@ -457,6 +457,50 @@ def test_daily_json(monkeypatch, tmp_path):
     assert '"n_review"' in r.output and '"n_engagement_drafts"' in r.output
 
 
+def test_daily_prints_inbox_summary(monkeypatch, tmp_path):
+    settings = Settings(
+        repositories=["flingjie/FDE-Gym"],
+        paths=Paths(db_path=tmp_path / "finch.db"),
+        engagement=EngagementSettings(enabled=False),
+    )
+    store = Store(settings.paths.db_path)
+    store.init()
+    ContentJobRepository(store).upsert_job(
+        _job(
+            job_id="j1",
+            author_position=AuthorPosition(claim="c", decision="决定要写", tradeoff="t"),
+        )
+    )
+    DraftRepository(store).upsert_draft(
+        Draft(id="d1", kind=DraftKind.ORIGINAL, body="正文", content_job_id="j1")
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    class FakeIngestor:
+        def __init__(self, gh, settings, ingestion, cursor):
+            pass
+
+        def ingest(self, repos, existing_topics=None):
+            return {}
+
+    class FakeGh:
+        def repo_view(self, repo):
+            from finch.github.models import RepoInfo
+
+            return RepoInfo(name_with_owner=repo, default_branch="main",
+                            url="https://github.com/" + repo, is_private=False)
+
+    monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
+    monkeypatch.setattr(cli, "Ingestor", FakeIngestor)
+    monkeypatch.setattr(cli, "daily_nodes", lambda **kw: [])
+    monkeypatch.setattr(cli, "load_voice_profile", lambda path: None)
+
+    r = CliRunner().invoke(app, ["daily"])
+    assert r.exit_code == 0, r.output
+    assert "今天" in r.output
+    assert "决定要写" in r.output
+
+
 def test_author_sync_json(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     settings.author_accounts = [AuthorAccountConfig(handle="test", enabled=True)]
