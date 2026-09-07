@@ -530,7 +530,8 @@ def test_persist_critique_reports_helper(tmp_path):
 
 def test_daily_persists_versions_and_reports(monkeypatch, tmp_path):
     from finch.codex.runner import CodexRunner
-    from finch.graph.content_nodes import make_critique_node
+    from finch.evidence.models import ClaimConfidence, EvidenceCard
+    from finch.graph.content_nodes import make_write_node
     from finch.graph.context import items_payload
     from finch.graph.events import NodeResult
     from finch.graph.nodes import Node
@@ -555,16 +556,25 @@ def test_daily_persists_versions_and_reports(monkeypatch, tmp_path):
             return CheckResult(checker="pass", passed=True, severity="low")
 
     draft = Draft(id="d1", kind=DraftKind.ORIGINAL, candidate_id=None, body="hi", claims=[])
+    job = _job(job_id="job1")
+    card = EvidenceCard(
+        id="ev1", event_id="e", claim="c", sources=[],
+        confidence=ClaimConfidence.VERIFIED, publishable=True, topics=[],
+    )
 
     def build_nodes(**kw):
         return [
-            Seed(name="draft", writes="drafts", seed=items_payload([draft])),
+            Seed(name="select", writes="ready_jobs", seed=items_payload([job])),
             Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
-            Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
-            Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
-            Seed(name="position_gate", writes="ready_jobs", seed=items_payload([])),
-            make_critique_node(
-                CodexRunner(), lambda *a, **k: draft, QualityGates(), checkers=[PassChecker()]
+            Seed(name="extract_events", writes="evidence_cards", seed=items_payload([card])),
+            Seed(name="collect_tweets", writes="candidates", seed=items_payload([])),
+            make_write_node(
+                CodexRunner(),
+                lambda *a, **k: draft,
+                lambda *a, **k: draft,
+                lambda *a, **k: draft,
+                QualityGates(llm_critique_mode="always"),
+                checkers=[PassChecker()],
             ),
         ]
 

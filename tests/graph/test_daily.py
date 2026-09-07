@@ -9,7 +9,7 @@ from finch.storage.database import Store
 from finch.twitter.opencli_client import OpenCliClient
 
 
-def test_daily_nodes_has_nine_nodes(tmp_path):
+def test_daily_nodes_has_eight_nodes(tmp_path):
     store = Store(tmp_path / "db.sqlite")
     store.init()
     nodes = daily_nodes(
@@ -30,14 +30,13 @@ def test_daily_nodes_has_nine_nodes(tmp_path):
         "recall",
         "match_evidence",
         "select",
-        "draft",
-        "critique",
+        "write",
         "brief",
     ]
     assert nodes[5].reads == ["match_results", "evidence_cards", "candidates"]
-    assert nodes[6].reads == ["ready_jobs", "evidence_cards", "candidates"]
-    assert nodes[8].writes == "brief"
-    assert nodes[8].terminal_state_key == "terminal_state"
+    assert nodes[6].reads == ["ready_jobs", "evidence_cards", "candidates", "match_results"]
+    assert nodes[7].writes == "brief"
+    assert nodes[7].terminal_state_key == "terminal_state"
 
 
 def test_daily_nodes_order_and_contract(tmp_path):
@@ -57,14 +56,14 @@ def test_daily_nodes_order_and_contract(tmp_path):
     assert [n.name for n in nodes] == [
         "preflight", "extract_events",
         "collect_tweets", "recall", "match_evidence",
-        "select", "draft", "critique", "brief",
+        "select", "write", "brief",
     ]
     assert nodes[3].reads == ["candidates", "evidence_cards"]
     assert nodes[4].writes == "match_results"
     assert nodes[4].reads == ["ranked_candidates", "evidence_cards", "candidates"]
     assert nodes[5].writes == "ready_jobs"
-    assert nodes[7].reads == [
-        "drafts", "match_results", "evidence_cards", "ready_jobs",
+    assert nodes[6].reads == [
+        "ready_jobs", "evidence_cards", "candidates", "match_results",
     ]
 
 
@@ -238,16 +237,15 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path):
 
     run = GraphRuntime(store, build()).run()
     assert run.state == "WAITING_FOR_REVIEW"
-    # 单轮直达（select 不阻塞）：match(1) + select(plan 1 + expand 1) + draft(1) +
-    # critique(5) = 9 次 LLM 调用。critique 检查器套件 LLM 调用：evidence entailment +
-    # decision + portability + actionability + safety = 5 次；specificity/structure/voice
-    # 走确定性路径，不调 LLM。
-    assert runner.calls == 9
+    # 单轮直达（select 不阻塞）：match(1) + select(plan 1 + expand 1) + write 写稿(1) = 4 次
+    # LLM 调用。write 节点 L0 确定性门禁通过（valid claim）且 mode=on_fail_or_gate，L1
+    # 检查器套件被跳过，不再调用 LLM。
+    assert runner.calls == 4
 
     # resume 全绿：所有节点已成功，重放不新增 LLM 调用。
     run2 = GraphRuntime(store, build()).run(run_id=run.id)
     assert run2.state == "WAITING_FOR_REVIEW"
-    assert runner.calls == 9
+    assert runner.calls == 4
 
 
 def test_daily_no_evidence_completes_without_llm(tmp_path):
@@ -313,10 +311,10 @@ def test_daily_no_evidence_completes_without_llm(tmp_path):
     assert runner.calls == 0
     assert run.state == "COMPLETED"
 
-    # 无 draft：draft 节点输出空 items，brief 判定 has_drafts=False。
-    draft_rec = store.find_node(run.id, "draft", "default")
-    assert draft_rec is not None
-    assert json.loads(draft_rec.output_json)["items"] == []
+    # 无 draft：write 节点输出空 items，brief 判定 has_drafts=False。
+    write_rec = store.find_node(run.id, "write", "default")
+    assert write_rec is not None
+    assert json.loads(write_rec.output_json)["items"] == []
 
     brief_rec = store.find_node(run.id, "brief", "default")
     assert brief_rec is not None

@@ -177,18 +177,14 @@ def persist_critique_reports(store: Store, output_json: str) -> None:
 def _persist_run_outputs(store: Store, run_id: str) -> None:
     """把一次 run 的 Critic 报告与保留草稿持久化（Task 7 + F1）。
 
-    critique 节点输出既是 kept drafts 又是 report 的权威来源；无 critique 输出时回退到
-    draft 节点输出。run_daily 与 run_resume 共用，确保 resume 出来的草稿进入 review list、
-    报告进入周复盘指标。
+    write 节点输出既是 kept drafts 又是 report 的权威来源。run_daily 与 run_resume 共用，
+    确保 resume 出来的草稿进入 review list、报告进入周复盘指标。
     """
-    critique_record = store.find_node(run_id, "critique", "default")
-    if critique_record is not None and critique_record.output_json:
-        persist_critique_reports(store, critique_record.output_json)
-    draft_record = critique_record
-    if draft_record is None:
-        draft_record = store.find_node(run_id, "draft", "default")
-    if draft_record is not None and draft_record.output_json:
-        drafts = parse_items(json.loads(draft_record.output_json), Draft)
+    write_record = store.find_node(run_id, "write", "default")
+    if write_record is not None and write_record.output_json:
+        persist_critique_reports(store, write_record.output_json)
+    if write_record is not None and write_record.output_json:
+        drafts = parse_items(json.loads(write_record.output_json), Draft)
         draft_repo = DraftRepository(store)
         for draft in drafts:
             draft_repo.upsert_draft(draft)

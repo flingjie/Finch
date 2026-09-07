@@ -19,9 +19,8 @@ from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, Ma
 from finch.graph.content_nodes import (
     default_checker_suite,
     make_brief_node,
-    make_critique_node,
-    make_draft_node,
     make_select_node,
+    make_write_node,
 )
 from finch.graph.context import items_payload, parse_items
 from finch.graph.events import NodeResult
@@ -203,7 +202,11 @@ class FakeJobsRunner(CodexRunner):
         raise AssertionError(f"unexpected output_model {output_model}")
 
 
-def test_draft_node_writes_reply_and_original(tmp_path):
+def _never_rewrite(runner, draft, failed_checks, cards_by_id, job=None):
+    raise AssertionError("rewrite must not be called")
+
+
+def test_write_node_writes_reply_and_original(tmp_path):
     original = Draft(
         id="d2",
         kind=DraftKind.ORIGINAL,
@@ -231,16 +234,17 @@ def test_draft_node_writes_reply_and_original(tmp_path):
         Seed(name="gate", writes="ready_jobs", seed=items_payload([reply_job, original_job])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        make_write_node(CodexRunner(), write_reply, write_original, _never_rewrite, QualityGates()),
     ]
     run = GraphRuntime(store, nodes).run()
     assert run.state == "DRAFTED"
-    rec = store.find_node(run.id, "draft", "default")
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     assert "d1" in rec.output_json and "d2" in rec.output_json
 
 
-def test_draft_node_empty_ready_jobs_writes_empty(tmp_path):
+def test_write_node_empty_ready_jobs_writes_empty(tmp_path):
     calls = {"reply": 0, "original": 0}
 
     def write_reply(runner, match, candidate, cards_by_id, job):
@@ -256,36 +260,120 @@ def test_draft_node_empty_ready_jobs_writes_empty(tmp_path):
         Seed(name="gate", writes="ready_jobs", seed=items_payload([])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([])),
-        make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
+        make_write_node(CodexRunner(), write_reply, write_original, _never_rewrite, QualityGates()),
     ]
     run = GraphRuntime(store, nodes).run()
     assert run.state == "DRAFTED"
-    rec = store.find_node(run.id, "draft", "default")
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     assert rec.output_json.replace(" ", "") == '{"items":[]}'
     assert calls == {"reply": 0, "original": 0}
 
 
-def test_draft_node_sets_run_id():
-    """Task 4：draft 节点把 ctx 里的 run_id 打到每条产出的 Draft 上。"""
+def test_write_node_sets_run_id():
+    """Task 4：write 节点把 ctx 里的 run_id 打到每条产出的 Draft 上。"""
     job = _job(job_id="j1", candidate_id=None, source_card_ids=("ev1",))
 
     def write_reply(runner, match, candidate, cards_by_id, job):
         raise AssertionError("reply writer must not be called for an ORIGINAL job")
 
     def write_original(runner, cards, job):
-        return Draft(id="d1", kind=DraftKind.ORIGINAL, body="hi", content_job_id=job.id)
+        return Draft(
+            id="d1",
+            kind=DraftKind.ORIGINAL,
+            body="hi",
+            content_job_id=job.id,
+            claims=[
+                ClaimRef(
+                    statement="x", evidence_card_id="ev1", confidence=ClaimConfidence.VERIFIED
+                )
+            ],
+        )
 
-    node = make_draft_node(None, write_reply, write_original, QualityGates())
+    node = make_write_node(None, write_reply, write_original, _never_rewrite, QualityGates())
     ctx = {
         "ready_jobs": items_payload([job]),
         "evidence_cards": items_payload([_card()]),
         "candidates": items_payload([]),
+        "match_results": items_payload([]),
         "run_id": "r1",
     }
     result = node.run(ctx)
     drafts = parse_items(result.output, Draft)
     assert drafts and drafts[0].run_id == "r1"
+
+
+def test_write_node_skips_l1_when_l0_passes_and_mode_not_always():
+    """L0 通过且 mode != always：不跑 L1（checker 不被调用），草稿原样保留。"""
+    checker = SeqChecker([_pass_check()])
+
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
+        raise AssertionError("rewrite must not be called when L1 is skipped")
+
+    node = make_write_node(
+        CodexRunner(),
+        lambda r, m, c, cards, job: _reply_draft(),
+        lambda r, cards, job: None,
+        rewrite,
+        QualityGates(),  # llm_critique_mode = "on_fail_or_gate"
+        checkers=[checker],
+    )
+    result = node.run(_write_ctx())
+    assert result.status == "succeeded"
+    assert checker.calls == 0
+    drafts = parse_items(result.output, Draft)
+    assert [d.id for d in drafts] == ["d1"]
+    assert result.output.get("reports") == []
+
+
+def test_write_node_runs_l1_when_mode_always():
+    checker = SeqChecker([_pass_check()])
+
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
+        raise AssertionError("rewrite must not be called when the checker passes")
+
+    node = make_write_node(
+        CodexRunner(),
+        lambda r, m, c, cards, job: _reply_draft(),
+        lambda r, cards, job: None,
+        rewrite,
+        QualityGates(llm_critique_mode="always"),
+        checkers=[checker],
+    )
+    result = node.run(_write_ctx())
+    assert result.status == "succeeded"
+    assert checker.calls == 1
+    drafts = parse_items(result.output, Draft)
+    assert [d.id for d in drafts] == ["d1"]
+
+
+def test_write_node_runs_l1_when_l0_fails():
+    invalid = _reply_draft().model_copy(
+        update={
+            "claims": [
+                ClaimRef(
+                    statement="x", evidence_card_id="ev_999", confidence=ClaimConfidence.VERIFIED
+                )
+            ]
+        }
+    )
+    checker = SeqChecker([_pass_check()])
+
+    def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
+        raise AssertionError("rewrite must not be called when the checker passes")
+
+    node = make_write_node(
+        CodexRunner(),
+        lambda r, m, c, cards, job: invalid,
+        lambda r, cards, job: None,
+        rewrite,
+        QualityGates(),
+        checkers=[checker],
+    )
+    result = node.run(_write_ctx())
+    assert result.status == "succeeded"
+    assert checker.calls == 1
 
 
 def _failed_check(
@@ -326,19 +414,56 @@ class SeqChecker:
         return self._results[idx]
 
 
-def _critique_nodes(rewrite, checker, gates=None):
+def _write_ctx(*, job=None):
+    """write 节点 run 的直接 ctx（reply job + candidate + match + card）。"""
+    return {
+        "ready_jobs": items_payload(
+            [job or _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))]
+        ),
+        "evidence_cards": items_payload([_card()]),
+        "candidates": items_payload([_candidate()]),
+        "match_results": items_payload([_match()]),
+    }
+
+
+def _write_seed_nodes(
+    rewrite,
+    checker=None,
+    gates=None,
+    jobs=None,
+    write_reply_fn=None,
+    write_original_fn=None,
+    matches=None,
+):
+    """write 节点上游 reads 的 Seed + write 节点（默认 reply job + always 模式）。"""
+    jobs = jobs if jobs is not None else [
+        _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))
+    ]
+    matches = matches if matches is not None else [_match()]
+
+    def default_write_reply(runner, match, candidate, cards_by_id, job):
+        return _reply_draft()
+
+    def default_write_original(runner, cards, job):
+        raise AssertionError("original writer must not be called for a REPLY job")
+
     return [
-        Seed(name="draft", writes="drafts", seed=items_payload([_reply_draft()])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="gate", writes="ready_jobs", seed=items_payload(jobs)),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        Seed(name="select", writes="ready_jobs", seed=items_payload([])),
-        make_critique_node(
-            CodexRunner(), rewrite, gates or QualityGates(), checkers=[checker]
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload(matches)),
+        make_write_node(
+            CodexRunner(),
+            write_reply_fn if write_reply_fn is not None else default_write_reply,
+            write_original_fn if write_original_fn is not None else default_write_original,
+            rewrite,
+            gates or QualityGates(llm_critique_mode="always"),
+            checkers=[checker] if checker is not None else None,
         ),
     ]
 
 
-def test_critique_node_rewrites_until_pass(tmp_path):
+def test_write_node_rewrites_until_pass(tmp_path):
     calls = {"rewrite": 0}
     fixed = _reply_draft().model_copy(update={"body": "v2"})
     checker = SeqChecker([_failed_check(), _pass_check()])
@@ -348,16 +473,16 @@ def test_critique_node_rewrites_until_pass(tmp_path):
         return fixed
 
     store = _store(tmp_path)
-    run = GraphRuntime(store, _critique_nodes(rewrite, checker)).run()
-    assert run.state == "CRITIQUED"
-    rec = store.find_node(run.id, "critique", "default")
+    run = GraphRuntime(store, _write_seed_nodes(rewrite, checker=checker)).run()
+    assert run.state == "DRAFTED"
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     assert "v2" in rec.output_json
     assert calls == {"rewrite": 1}
     assert checker.calls == 2
 
 
-def test_critique_node_drops_unfixable_draft(tmp_path):
+def test_write_node_drops_unfixable_draft(tmp_path):
     checker = SeqChecker([_failed_check()])
 
     def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
@@ -366,16 +491,20 @@ def test_critique_node_drops_unfixable_draft(tmp_path):
     store = _store(tmp_path)
     run = GraphRuntime(
         store,
-        _critique_nodes(rewrite, checker, gates=QualityGates(max_rewrite_rounds=2)),
+        _write_seed_nodes(
+            rewrite,
+            checker=checker,
+            gates=QualityGates(llm_critique_mode="always", max_rewrite_rounds=2),
+        ),
     ).run()
-    assert run.state == "CRITIQUED"
-    rec = store.find_node(run.id, "critique", "default")
+    assert run.state == "DRAFTED"
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     assert json.loads(rec.output_json)["items"] == []
     assert any("failed critique" in w for w in json.loads(rec.output_json)["warnings"])
 
 
-def test_critique_node_keeps_draft_fixed_by_single_rewrite(tmp_path):
+def test_write_node_keeps_draft_fixed_by_single_rewrite(tmp_path):
     calls = {"rewrite": 0}
     fixed = _reply_draft().model_copy(update={"body": "fixed"})
     checker = SeqChecker([_failed_check(), _pass_check()])
@@ -387,16 +516,20 @@ def test_critique_node_keeps_draft_fixed_by_single_rewrite(tmp_path):
     store = _store(tmp_path)
     run = GraphRuntime(
         store,
-        _critique_nodes(rewrite, checker, gates=QualityGates(max_rewrite_rounds=1)),
+        _write_seed_nodes(
+            rewrite,
+            checker=checker,
+            gates=QualityGates(llm_critique_mode="always", max_rewrite_rounds=1),
+        ),
     ).run()
-    assert run.state == "CRITIQUED"
-    rec = store.find_node(run.id, "critique", "default")
+    assert run.state == "DRAFTED"
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     assert "fixed" in rec.output_json
     assert calls == {"rewrite": 1}
 
 
-def test_critique_node_keeps_draft_fixed_by_second_rewrite(tmp_path):
+def test_write_node_keeps_draft_fixed_by_second_rewrite(tmp_path):
     calls = {"rewrite": 0}
     fixed = _reply_draft().model_copy(update={"body": "fixed"})
     checker = SeqChecker([_failed_check(), _failed_check(), _pass_check()])
@@ -410,17 +543,21 @@ def test_critique_node_keeps_draft_fixed_by_second_rewrite(tmp_path):
     store = _store(tmp_path)
     run = GraphRuntime(
         store,
-        _critique_nodes(rewrite, checker, gates=QualityGates(max_rewrite_rounds=2)),
+        _write_seed_nodes(
+            rewrite,
+            checker=checker,
+            gates=QualityGates(llm_critique_mode="always", max_rewrite_rounds=2),
+        ),
     ).run()
-    assert run.state == "CRITIQUED"
-    rec = store.find_node(run.id, "critique", "default")
+    assert run.state == "DRAFTED"
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     assert "fixed" in rec.output_json
     assert calls == {"rewrite": 2}
     assert checker.calls == 3
 
 
-def test_critique_node_warns_on_invalid_rewritten_claims():
+def test_write_node_warns_on_invalid_rewritten_claims():
     invalid = _reply_draft().model_copy(
         update={
             "claims": [
@@ -435,14 +572,15 @@ def test_critique_node_warns_on_invalid_rewritten_claims():
     def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         return invalid
 
-    node = make_critique_node(CodexRunner(), rewrite, QualityGates(), checkers=[checker])
-    result = node.run(
-        {
-            "drafts": items_payload([_reply_draft()]),
-            "match_results": items_payload([_match()]),
-            "evidence_cards": items_payload([_card()]),
-        }
+    node = make_write_node(
+        CodexRunner(),
+        lambda r, m, c, cards, job: _reply_draft(),
+        lambda r, cards, job: None,
+        rewrite,
+        QualityGates(llm_critique_mode="always"),
+        checkers=[checker],
     )
+    result = node.run(_write_ctx())
     assert result.status == "succeeded"
     assert result.output["items"] == []
     assert any("invalid claims" in w for w in result.warnings)
@@ -450,7 +588,7 @@ def test_critique_node_warns_on_invalid_rewritten_claims():
     assert any("invalid claims" in w for w in result.output["warnings"])
 
 
-def test_critique_node_drops_hard_fail_draft(tmp_path):
+def test_write_node_drops_hard_fail_draft(tmp_path):
     checker = SeqChecker(
         [
             _failed_check(
@@ -469,9 +607,9 @@ def test_critique_node_drops_hard_fail_draft(tmp_path):
         return draft
 
     store = _store(tmp_path)
-    run = GraphRuntime(store, _critique_nodes(rewrite, checker)).run()
-    assert run.state == "CRITIQUED"
-    rec = store.find_node(run.id, "critique", "default")
+    run = GraphRuntime(store, _write_seed_nodes(rewrite, checker=checker)).run()
+    assert run.state == "DRAFTED"
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     payload = json.loads(rec.output_json)
     assert payload["items"] == []
@@ -480,8 +618,8 @@ def test_critique_node_drops_hard_fail_draft(tmp_path):
     assert calls == {"rewrite": 0}
 
 
-def test_critique_node_emits_draft_warnings(tmp_path):
-    """Task 3.4：critique 输出结构化 draft_warnings（draft_id/checker/message 绑定）。"""
+def test_write_node_emits_draft_warnings(tmp_path):
+    """Task 3.4：write 输出结构化 draft_warnings（draft_id/checker/message 绑定）。"""
     checker = SeqChecker(
         [
             _failed_check(
@@ -498,8 +636,8 @@ def test_critique_node_emits_draft_warnings(tmp_path):
         return draft
 
     store = _store(tmp_path)
-    run = GraphRuntime(store, _critique_nodes(rewrite, checker)).run()
-    rec = store.find_node(run.id, "critique", "default")
+    run = GraphRuntime(store, _write_seed_nodes(rewrite, checker=checker)).run()
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     payload = json.loads(rec.output_json)
     draft_warnings = [DraftWarning.model_validate(w) for w in payload["draft_warnings"]]
@@ -508,7 +646,8 @@ def test_critique_node_emits_draft_warnings(tmp_path):
     assert "rejected by evidence" in draft_warnings[0].message
 
 
-def test_critique_node_stops_on_needs_input():
+def test_write_node_records_needs_input_warning():
+    """needs_input 不再停图：记 warning，草稿丢弃，节点仍 succeeded。"""
     checker = SeqChecker(
         [
             _failed_check(
@@ -524,19 +663,21 @@ def test_critique_node_stops_on_needs_input():
     def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         return draft
 
-    node = make_critique_node(CodexRunner(), rewrite, QualityGates(), checkers=[checker])
-    result = node.run(
-        {
-            "drafts": items_payload([_reply_draft()]),
-            "match_results": items_payload([_match()]),
-            "evidence_cards": items_payload([_card()]),
-        }
+    node = make_write_node(
+        CodexRunner(),
+        lambda r, m, c, cards, job: _reply_draft(),
+        lambda r, cards, job: None,
+        rewrite,
+        QualityGates(llm_critique_mode="always"),
+        checkers=[checker],
     )
-    assert result.status == "needs_input"
-    assert any("decision" in w for w in result.warnings)
+    result = node.run(_write_ctx())
+    assert result.status == "succeeded"
+    assert result.output["items"] == []
+    assert any("decision" in w and "human input" in w for w in result.warnings)
 
 
-def test_critique_node_passes_only_failed_checks_to_rewrite(tmp_path):
+def test_write_node_passes_only_failed_checks_to_rewrite(tmp_path):
     captured: list[list[CheckResult]] = []
     checker = SeqChecker([_failed_check(), _pass_check()])
     fixed = _reply_draft().model_copy(update={"body": "fixed"})
@@ -546,14 +687,14 @@ def test_critique_node_passes_only_failed_checks_to_rewrite(tmp_path):
         return fixed
 
     store = _store(tmp_path)
-    run = GraphRuntime(store, _critique_nodes(rewrite, checker)).run()
-    assert run.state == "CRITIQUED"
+    run = GraphRuntime(store, _write_seed_nodes(rewrite, checker=checker)).run()
+    assert run.state == "DRAFTED"
     assert len(captured) == 1
     assert [c.checker for c in captured[0]] == ["specificity"]
     assert all(not c.passed for c in captured[0])
 
 
-def test_critique_node_emits_per_round_reports(tmp_path):
+def test_write_node_emits_per_round_reports(tmp_path):
     checker = SeqChecker([_failed_check(), _pass_check()])
     fixed = _reply_draft().model_copy(update={"body": "fixed"})
 
@@ -561,27 +702,23 @@ def test_critique_node_emits_per_round_reports(tmp_path):
         return fixed
 
     store = _store(tmp_path)
-    run = GraphRuntime(store, _critique_nodes(rewrite, checker)).run()
-    assert run.state == "CRITIQUED"
-    rec = store.find_node(run.id, "critique", "default")
+    run = GraphRuntime(store, _write_seed_nodes(rewrite, checker=checker)).run()
+    assert run.state == "DRAFTED"
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     reports = json.loads(rec.output_json)["reports"]
     assert len(reports) == 2
-    assert reports[0] == {
-        "draft_id": "d1",
-        "round": 0,
-        "version": _reply_draft().model_dump(mode="json"),
-        "checks": [
-            _failed_check().model_dump(mode="json"),
-        ],
-        "outcome": "rewrite",
-    }
+    assert reports[0]["draft_id"] == "d1"
+    assert reports[0]["round"] == 0
+    assert reports[0]["checks"] == [_failed_check().model_dump(mode="json")]
+    assert reports[0]["outcome"] == "rewrite"
+    assert reports[0]["version"]["body"] == "hi"
     assert reports[1]["round"] == 1
     assert reports[1]["outcome"] == "pass"
     assert reports[1]["version"]["body"] == "fixed"
 
 
-def test_critique_node_runs_checkers_in_parallel(tmp_path):
+def test_write_node_runs_checkers_in_parallel(tmp_path):
     import threading
 
     # 串行实现会在第一个 checker 上阻塞至 barrier 超时（BrokenBarrierError）；并行后
@@ -603,14 +740,23 @@ def test_critique_node_runs_checkers_in_parallel(tmp_path):
 
     store = _store(tmp_path)
     nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([_reply_draft()])),
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="gate", writes="ready_jobs",
+             seed=items_payload([_job(job_id="job1", candidate_id="t1",
+                                      source_card_ids=("ev1",))])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        Seed(name="select", writes="ready_jobs", seed=items_payload([])),
-        make_critique_node(CodexRunner(), rewrite, QualityGates(), checkers=checkers),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        make_write_node(
+            CodexRunner(),
+            lambda r, m, c, cards, job: _reply_draft(),
+            lambda r, cards, job: None,
+            rewrite,
+            QualityGates(llm_critique_mode="always"),
+            checkers=checkers,
+        ),
     ]
     run = GraphRuntime(store, nodes).run()
-    assert run.state == "CRITIQUED"
+    assert run.state == "DRAFTED"
 
 
 def test_select_node_produces_and_filters_jobs(tmp_path):
@@ -790,7 +936,7 @@ def test_select_node_dedups_duplicate_job_ids(tmp_path):
     assert [j["id"] for j in payload["items"]] == ["dup"]
 
 
-def test_draft_node_caps_replies_and_originals(tmp_path):
+def test_write_node_caps_replies_and_originals(tmp_path):
     """资源上限：replies ≤ max_daily_replies，originals ≤ max_daily_original_posts。"""
     jobs = [_job(job_id=f"r{i}", candidate_id="t1", source_card_ids=("ev1",)) for i in range(6)]
     jobs += [_job(job_id=f"o{i}", candidate_id=None, source_card_ids=("ev1",)) for i in range(3)]
@@ -808,11 +954,12 @@ def test_draft_node_caps_replies_and_originals(tmp_path):
         Seed(name="gate", writes="ready_jobs", seed=items_payload(jobs)),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        make_write_node(CodexRunner(), write_reply, write_original, _never_rewrite, QualityGates()),
     ]
     run = GraphRuntime(store, nodes).run()
     assert run.state == "DRAFTED"
-    rec = store.find_node(run.id, "draft", "default")
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     drafts = json.loads(rec.output_json)["items"]
     replies = [d for d in drafts if d["kind"] == "reply"]
@@ -821,7 +968,7 @@ def test_draft_node_caps_replies_and_originals(tmp_path):
     assert len(originals) == 1
 
 
-def test_draft_node_bounds_write_attempts_to_cap(tmp_path):
+def test_write_node_bounds_write_attempts_to_cap(tmp_path):
     """cap 计尝试：即使 write 全部返回 None，写入次数也不得超出 daily cap。"""
     jobs = [_job(job_id=f"r{i}", candidate_id="t1", source_card_ids=("ev1",)) for i in range(10)]
     attempts: list[str] = []
@@ -838,7 +985,8 @@ def test_draft_node_bounds_write_attempts_to_cap(tmp_path):
         Seed(name="gate", writes="ready_jobs", seed=items_payload(jobs)),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        make_write_node(CodexRunner(), write_reply, write_original, _never_rewrite, QualityGates()),
     ]
     run = GraphRuntime(store, nodes).run()
     assert run.state == "DRAFTED"
@@ -846,7 +994,7 @@ def test_draft_node_bounds_write_attempts_to_cap(tmp_path):
     assert len(attempts) == 5
 
 
-def test_draft_node_routes_on_recommended_format_not_candidate(tmp_path):
+def test_write_node_routes_on_recommended_format_not_candidate(tmp_path):
     """F7: recommended_format=ORIGINAL 但 candidate_id 非空时仍写 original。"""
     job = _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",))
     job = job.model_copy(update={"recommended_format": DraftKind.ORIGINAL})
@@ -867,11 +1015,12 @@ def test_draft_node_routes_on_recommended_format_not_candidate(tmp_path):
         Seed(name="gate", writes="ready_jobs", seed=items_payload([job])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([])),
+        make_write_node(CodexRunner(), write_reply, write_original, _never_rewrite, QualityGates()),
     ]
     run = GraphRuntime(store, nodes).run()
     assert run.state == "DRAFTED"
-    rec = store.find_node(run.id, "draft", "default")
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     drafts = json.loads(rec.output_json)["items"]
     assert len(drafts) == 1
@@ -879,7 +1028,7 @@ def test_draft_node_routes_on_recommended_format_not_candidate(tmp_path):
     assert calls == {"reply": 0, "original": 1}
 
 
-def test_draft_node_runs_jobs_in_parallel_and_preserves_order(tmp_path):
+def test_write_node_runs_jobs_in_parallel_and_preserves_order(tmp_path):
     import threading
     import time
 
@@ -905,11 +1054,12 @@ def test_draft_node_runs_jobs_in_parallel_and_preserves_order(tmp_path):
         Seed(name="gate", writes="ready_jobs", seed=items_payload(jobs)),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        make_write_node(CodexRunner(), write_reply, write_original, _never_rewrite, QualityGates()),
     ]
     run = GraphRuntime(store, nodes).run()
     assert run.state == "DRAFTED"
-    rec = store.find_node(run.id, "draft", "default")
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     drafts = json.loads(rec.output_json)["items"]
     assert [d["id"] for d in drafts] == ["d_job1", "d_job2"]
@@ -1215,8 +1365,8 @@ def test_default_checker_suite_has_eight_checkers():
     ]
 
 
-def test_critique_node_needs_input_via_safety_checker(tmp_path):
-    """Task 6: SafetyChecker 设置 requires_human_input → needs_input 分支可达。"""
+def test_write_node_needs_input_via_safety_checker():
+    """Task 6: SafetyChecker 设置 requires_human_input → needs_input 记 warning，不停图。"""
     from finch.content.checkers.safety import SafetyChecker
 
     draft = _reply_draft().model_copy(
@@ -1226,17 +1376,16 @@ def test_critique_node_needs_input_via_safety_checker(tmp_path):
     def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         return draft
 
-    node = make_critique_node(
-        CodexRunner(), rewrite, QualityGates(), checkers=[SafetyChecker()]
+    node = make_write_node(
+        CodexRunner(),
+        lambda r, m, c, cards, job: draft,
+        lambda r, cards, job: None,
+        rewrite,
+        QualityGates(llm_critique_mode="always"),
+        checkers=[SafetyChecker()],
     )
-    result = node.run(
-        {
-            "drafts": items_payload([draft]),
-            "match_results": items_payload([_match()]),
-            "evidence_cards": items_payload([_card()]),
-        }
-    )
-    assert result.status == "needs_input"
+    result = node.run(_write_ctx())
+    assert result.status == "succeeded"
     assert any("safety" in w for w in result.warnings)
 
 
@@ -1259,7 +1408,7 @@ def test_select_node_short_circuits_without_cards(tmp_path):
 
 
 def test_original_flow_complete_position_produces_draft(tmp_path):
-    """Phase 0 回归：有证据卡 → select 选 job → draft 产出 → 进入人工审核。"""
+    """Phase 0 回归：有证据卡 → select 选 job → write 产出 → 进入人工审核。"""
     store = _store(tmp_path)
     repo = ContentJobRepository(store)
     repo.upsert_job(
@@ -1279,26 +1428,21 @@ def test_original_flow_complete_position_produces_draft(tmp_path):
     def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         raise AssertionError("rewrite must not be called when the draft passes")
 
-    checker = SeqChecker([_pass_check()])
-
     nodes = [
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
         make_select_node(runner, runner, gates=QualityGates()),
-        make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
-        make_critique_node(
-            CodexRunner(), rewrite, QualityGates(), checkers=[checker]
-        ),
+        make_write_node(CodexRunner(), write_reply, write_original, rewrite, QualityGates()),
         make_brief_node(QualityGates(), jobs_repo=repo),
     ]
     run = GraphRuntime(store, nodes).run()
     assert run.state == "WAITING_FOR_REVIEW"
 
-    draft_rec = store.find_node(run.id, "draft", "default")
-    assert draft_rec is not None
-    assert "d1" in draft_rec.output_json
-    assert "job1" in draft_rec.output_json
+    write_rec = store.find_node(run.id, "write", "default")
+    assert write_rec is not None
+    assert "d1" in write_rec.output_json
+    assert "job1" in write_rec.output_json
 
 
 

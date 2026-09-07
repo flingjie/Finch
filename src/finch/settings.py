@@ -1,6 +1,7 @@
 """配置加载：finch.yaml + 环境变量覆盖。"""
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from dotenv import load_dotenv
@@ -98,9 +99,10 @@ class QualityGates(BaseModel):
     min_evidence_score: float = 0.75
     min_quality_score: float = 0.75
     min_discussability: float = 0.50
-    max_rewrite_rounds: int = 2
+    max_rewrite_rounds: int = 1
     match_top_k: int = 10
     timing_default: float = 0.3
+    llm_critique_mode: Literal["on_fail_or_gate", "always"] = "on_fail_or_gate"
 
 
 class RepositoryDiscovery(BaseModel):

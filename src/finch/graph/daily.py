@@ -21,9 +21,8 @@ from ..twitter.query_builder import QueryBuilder
 from .content_nodes import (
     default_checker_suite,
     make_brief_node,
-    make_critique_node,
-    make_draft_node,
     make_select_node,
+    make_write_node,
 )
 from .match_nodes import make_match_node, make_recall_node
 from .nodes import Node
@@ -98,9 +97,12 @@ def daily_nodes(
             budget=settings.daily_budget,
             gates=settings.quality_gates,
         ),
-        make_draft_node(runner, write_reply, write_original, settings.quality_gates),
-        make_critique_node(
-            runner, rewrite, settings.quality_gates,
+        make_write_node(
+            runner,
+            write_reply,
+            write_original,
+            rewrite,
+            settings.quality_gates,
             checkers=default_checker_suite(_resolve("critique"), voice_profile),
             voice_profile=voice_profile,
         ),

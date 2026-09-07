@@ -38,7 +38,7 @@ from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
 from finch.graph.content_nodes import (
     default_checker_suite,
-    make_critique_node,
+    make_write_node,
 )
 from finch.graph.context import items_payload
 from finch.graph.events import NodeResult
@@ -275,19 +275,27 @@ def test_scenario_7_unfixable_draft_dropped_after_two_rewrites(tmp_path):
     def rewrite(runner, draft, failed_checks, cards_by_id, job=None):
         return draft.model_copy(update={"body": f"{draft.body} (revised)"})
 
+    job = _job().model_copy(
+        update={"candidate_id": None, "recommended_format": DraftKind.ORIGINAL}
+    )
     store = _store(tmp_path)
     nodes = [
-        Seed(name="draft", writes="drafts", seed=items_payload([_draft()])),
+        Seed(name="select", writes="ready_jobs", seed=items_payload([job])),
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        Seed(name="select", writes="ready_jobs", seed=items_payload([])),
-        make_critique_node(
-            CodexRunner(), rewrite, QualityGates(max_rewrite_rounds=2), checkers=[checker]
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([])),
+        make_write_node(
+            CodexRunner(),
+            lambda r, m, c, cards, job: _draft(),
+            lambda r, cards, job: _draft(),
+            rewrite,
+            QualityGates(llm_critique_mode="always", max_rewrite_rounds=2),
+            checkers=[checker],
         ),
     ]
     run = GraphRuntime(store, nodes).run()
-    assert run.state == "CRITIQUED"
-    rec = store.find_node(run.id, "critique", "default")
+    assert run.state == "DRAFTED"
+    rec = store.find_node(run.id, "write", "default")
     assert rec is not None
     payload = json.loads(rec.output_json)
     assert payload["items"] == []
