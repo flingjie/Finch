@@ -44,6 +44,8 @@ from .idea.service import (
     run_idea_critic,
     write_idea,
 )
+from .ideas.commit_service import CommitService
+from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, DecisionRecord
 from .inbox.render import render_daily_summary, state_label
 from .inbox.service import InboxDecisionService, list_items, next_item
@@ -89,6 +91,9 @@ author_app = typer.Typer(help="Author account sync + publication reconcile (read
 app.add_typer(author_app, name="author")
 
 app.add_typer(dev_app, name="dev")
+
+ideas_app = typer.Typer(help="Idea 候选流（commit/search 提炼 + 状态转换）")
+app.add_typer(ideas_app, name="ideas")
 
 
 @author_app.command("sync")
@@ -318,6 +323,51 @@ def github_reflect(repo: str = typer.Option("flingjie/FDE-Gym"),
         typer.echo(f"- decision: {ev.decision.statement} [{ev.decision.confidence.value}]")
         typer.echo(f"- result: {ev.result.statement} [{ev.result.confidence.value}]")
     typer.echo(f"\n{len(cards)} evidence cards")
+
+
+@ideas_app.command("commit")
+def ideas_commit(
+    repo: str = typer.Option(None, "--repo", help="仓库（默认 settings.repositories[0]）"),
+    since: str = typer.Option("7d", "--since", help="起始时间（如 7d / 24h / ISO 时间）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """从最近 Commit 提炼 Idea 候选并幂等落库为 ContentJob（不生成草稿）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    gh = GhClient()
+    if repo is None:
+        if not settings.repositories:
+            typer.echo("--repo is required (no repositories configured)")
+            raise typer.Exit(code=1)
+        repo = settings.repositories[0]
+    details = load_commit_details(
+        repo, gh, local_dirs=settings.paths.local_repos_dirs, since=_since_iso(since)
+    )
+    reader = CommitReader(gh, repo)
+    extractor = Extractor(
+        create_runner(settings.llm) or CodexRunner(),
+        settings=settings.extraction,
+        cache_path=settings.paths.cache_dir / "extraction_cache.json",
+    )
+    ideas = CommitService(reader, extractor).to_ideas(details, repo=repo)
+    idea_service = IdeaService(ContentJobRepository(store))
+    jobs = [idea_service.create_candidate(idea) for idea in ideas]
+    if as_json:
+        payload = [
+            {
+                "id": job.id,
+                "origin": job.origin,
+                "core_point": job.core_message,
+                "status": job.status.value,
+                "generation_key": job.generation_key,
+            }
+            for job in jobs
+        ]
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        for job in jobs:
+            typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
 
 
 @twitter_app.command("search")
