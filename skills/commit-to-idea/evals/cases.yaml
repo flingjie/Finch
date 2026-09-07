@@ -1,0 +1,86 @@
+skill_name: commit-to-idea
+cases:
+  - id: 1
+    name: 有决策的 commit 产出一个清晰 Idea
+    input:
+      repo: acme/proj
+      commits:
+        - message: "feat: node-ize orchestrator into a deterministic graph"
+          files:
+            - filename: src/graph/runtime.ts
+              status: modified
+              additions: 10
+              deletions: 4
+    expected_output:
+      ideas: 1
+      core_point: 单一中心主张（确定性图/orchestrator 相关决策）
+    assertions:
+      - name: 单候选
+        description: 产出恰好一个 IdeaCandidate
+      - name: 立场 proposed
+        description: author_position.status == proposed
+      - name: 可追溯来源
+        description: source_refs 至少一条 commit 类型引用
+
+  - id: 2
+    name: 机械变化产出空列表
+    input:
+      repo: acme/proj
+      commits:
+        - message: "chore: bump uv.lock"
+          files:
+            - filename: uv.lock
+              status: modified
+    expected_output:
+      ideas: 0
+    assertions:
+      - name: 空结果
+        description: 机械变化不产出 IdeaCandidate
+
+  - id: 3
+    name: 私有内容不可发布
+    input:
+      repo: acme/private-proj
+      repo_is_private: true
+      commits:
+        - message: "feat: add auth token rotation"
+          files:
+            - filename: src/auth.py
+              status: modified
+    expected_output:
+      ideas: 0
+    assertions:
+      - name: 不可发布
+        description: 私有仓库内容被过滤，产出空列表
+
+  - id: 4
+    name: 推断性立场 → proposed
+    input:
+      repo: acme/proj
+      commits:
+        - message: "perf: batch DB writes"
+          files:
+            - filename: src/db.py
+              status: modified
+    expected_output:
+      ideas: 1
+      author_position_status: proposed
+    assertions:
+      - name: 立场 proposed
+        description: 自动生成立场永远是 proposed，不是 confirmed
+
+  - id: 5
+    name: 相同输入 → 相同结果
+    input:
+      repo: acme/proj
+      commits:
+        - message: "feat: node-ize orchestrator"
+          files:
+            - filename: src/graph/runtime.ts
+              status: modified
+    expected_output:
+      deterministic: true
+      generation_key_stable: true
+    assertions:
+      - name: 确定性
+        description: 相同输入两次运行产出相同 Idea（id 与 generation_key 一致）
