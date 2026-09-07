@@ -23,6 +23,7 @@ from .content.voice import (
     save_voice_profile,
 )
 from .dev.cli import dev_app
+from .drafts.service import DraftService
 from .engagement.flow import run_discovery_engagement_flow
 from .engagement.models import EngagementRunStats, InteractionCandidate
 from .evidence.extractor import Extractor, build_cards
@@ -95,6 +96,9 @@ app.add_typer(dev_app, name="dev")
 
 ideas_app = typer.Typer(help="Idea 候选流（commit/search 提炼 + 状态转换）")
 app.add_typer(ideas_app, name="ideas")
+
+drafts_app = typer.Typer(help="Draft 生成（已确认 idea → 草稿，不自动发布）")
+app.add_typer(drafts_app, name="drafts")
 
 
 @author_app.command("sync")
@@ -409,6 +413,39 @@ def ideas_search(
     else:
         for job in jobs:
             typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
+
+
+@drafts_app.command("create")
+def drafts_create(
+    idea_id: str = typer.Argument(..., help="已确认的 idea id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),  # noqa: B008
+) -> None:
+    """从已确认 idea 生成草稿并落库 Draft + CriticReport（不自动发布）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    service = DraftService(
+        DraftRepository(store),
+        CriticReportRepository(store),
+        ContentJobRepository(store),
+        runner,
+        max_rewrite_rounds=settings.quality_gates.max_rewrite_rounds,
+        voice_profile=load_voice_profile(settings.paths.voice_profile_path),
+    )
+    try:
+        draft = service.create(
+            idea_id, version="1.0.0", format="original", voice_version="1.0.0"
+        )
+    except (KeyError, ValueError, RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        payload = {"draft_id": draft.id, "status": "drafted", "body": draft.body}
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"{draft.id}\tdrafted")
+        typer.echo(draft.body)
 
 
 @twitter_app.command("search")
