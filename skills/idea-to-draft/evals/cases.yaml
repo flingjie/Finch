@@ -1,0 +1,85 @@
+skill_name: idea-to-draft
+cases:
+  - id: 1
+    name: 已确认 idea 生成一篇原创草稿
+    input:
+      idea_id: idea_<sha256[:8]>
+      idea_status: confirmed
+      version: 1.0.0
+      format: original
+      voice_version: 1.0.0
+    expected_output:
+      draft: 1
+      kind: original
+      claims: []
+      position_statement: job.author_position.decision
+    assertions:
+      - name: 单一草稿
+        description: 产出恰好一篇 Draft，id 由 draft_generation_key 决定
+      - name: 立场原样
+        description: position_statement 等于 job 的 author_position.decision，未被改写
+
+  - id: 2
+    name: 未确认 idea 拒绝生成
+    input:
+      idea_id: idea_<sha256[:8]>
+      idea_status: proposed
+    expected_output:
+      draft: 0
+      error: needs_confirmation
+    assertions:
+      - name: 未确认报错
+        description: 未 confirmed 的 idea 抛 needs_confirmation，不生成草稿
+
+  - id: 3
+    name: 相同输入幂等返回同一草稿
+    input:
+      idea_id: idea_<sha256[:8]>
+      idea_status: confirmed
+      version: 1.0.0
+      format: original
+      voice_version: 1.0.0
+    expected_output:
+      deterministic: true
+      same_draft_id: true
+      no_second_generation: true
+    assertions:
+      - name: 幂等
+        description: 同 idea + 同生成配置重复创建返回同一 Draft，不重复调用 LLM
+
+  - id: 4
+    name: 补造个人亲历 → 丢弃
+    input:
+      idea_id: idea_<sha256[:8]>
+      idea_status: confirmed
+      draft_has_invented_personal_experience: true
+    expected_output:
+      draft: 0
+      outcome: needs_input
+    assertions:
+      - name: Safety 硬门禁
+        description: Safety 命中 invented_personal_experience → needs_input，草稿丢弃，不被平均分掩盖
+
+  - id: 5
+    name: 立场不得被改写
+    input:
+      idea_id: idea_<sha256[:8]>
+      idea_status: confirmed
+      rewrite_attempts_to_change_position: true
+    expected_output:
+      position_statement_unchanged: true
+    assertions:
+      - name: 不改变立场
+        description: rewrite 只改表达，claim/decision/tradeoff 不被推翻或替换
+
+  - id: 6
+    name: 不自动发布
+    input:
+      idea_id: idea_<sha256[:8]>
+      idea_status: confirmed
+    expected_output:
+      published: false
+      entered_review: true
+    assertions:
+      - name: 进入人工审核
+        description: 草稿落库后只进入 Review，任何自动化流程不发布
