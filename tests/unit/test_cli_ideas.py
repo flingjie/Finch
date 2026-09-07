@@ -521,6 +521,29 @@ def test_ideas_skip_records_reason(monkeypatch, tmp_path):
     assert updated.reject_reason == "not_now"
 
 
+def test_ideas_list_surfaces_legacy_row_warning(monkeypatch, tmp_path):
+    from sqlmodel import Session
+
+    from finch.storage.repositories import ContentJobRecord
+
+    settings = _paths_settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    _patch_settings(monkeypatch, settings)
+    _seed_candidate(store)
+    with Session(store.engine) as session:
+        session.merge(
+            ContentJobRecord(id="job_tp1", payload_json='{"id":"job_tp1","status":"ready"}')
+        )
+        session.commit()
+
+    r = CliRunner().invoke(app, ["ideas", "list"])
+    assert r.exit_code == 0, r.output
+    assert CORE_POINT in r.output          # 正常行仍在。
+    assert "系统警告" in r.output
+    assert "job_tp1" in r.output
+
+
 def test_ideas_skip_illegal_transition_exits(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
     store = Store(settings.paths.db_path)

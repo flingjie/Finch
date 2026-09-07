@@ -19,7 +19,7 @@ from .content.voice import (
     save_voice_profile,
 )
 from .content.writer import rewrite_with_instruction
-from .drafts.service import DraftService
+from .drafts.service import DraftCreateResult, DraftService
 from .engagement.metrics import (
     compute_metrics,
     render_metrics,
@@ -245,20 +245,28 @@ def ideas_search(
 
 @ideas_app.command("list")
 def ideas_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
-    """列出全部 idea 候选（ContentJob），一行一个。"""
+    """列出全部 idea 候选（ContentJob），一行一个；旧行在系统警告中提示。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
-    jobs = sorted(ContentJobRepository(store).list_jobs(), key=lambda j: j.id)
+    repo = ContentJobRepository(store)
+    jobs = sorted(repo.list_jobs(), key=lambda j: j.id)
+    failures = repo.list_job_parse_failures()
     if as_json:
         payload = [
             {"id": job.id, "status": job.status.value, "core_point": job.core_message}
             for job in jobs
         ]
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
-    else:
-        for job in jobs:
-            typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
+        return
+    for job in jobs:
+        typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
+    if failures:
+        preview = ", ".join(failures[:5]) + ("…" if len(failures) > 5 else "")
+        typer.echo(
+            f"\n系统警告：检测到 {len(failures)} 条旧版 job 记录无法解析（{preview}），"
+            "已跳过。建议运行 `finch init --prune` 清理。"
+        )
 
 
 @ideas_app.command("show")
@@ -357,10 +365,50 @@ def ideas_skip(
         typer.echo(f"{job.id}\t{job.status.value}")
 
 
+def _render_draft_result(result: DraftCreateResult) -> str:
+    draft = result.draft
+    passed = result.outcome == "pass"
+    verdict = "通过" if passed else f"未通过（重写 {result.critic_rounds} 轮后仍未满足）"
+    lines = [
+        "草稿已生成并通过质量检查，当前等待你的审核。" if passed
+        else "草稿已生成，但质量检查未完全通过，请人工判读。",
+        "",
+        f"> {draft.body}",
+        "",
+        f"质量检查：{verdict}",
+    ]
+    if result.adjustments:
+        lines.append(f"主要调整：{'；'.join(result.adjustments)}")
+    lines += [
+        "状态：未发布",
+        "",
+        "下一步：",
+        f"- 采用并进入发布意图：finch review approve {draft.id}",
+        f"- 继续修改：finch drafts revise {draft.id} --instruction \"…\"",
+        f"- 放弃草稿：finch review skip {draft.id} --reason \"…\"",
+    ]
+    return "\n".join(lines)
+
+
+def _render_run_details(result: DraftCreateResult) -> str:
+    draft = result.draft
+    return "\n".join(
+        [
+            "",
+            "运行详情：",
+            f"- draft_id: {draft.id}",
+            f"- idea_id: {draft.content_job_id}",
+            f"- critic_rounds: {result.critic_rounds}",
+            f"- outcome: {result.outcome}",
+        ]
+    )
+
+
 @drafts_app.command("create")
 def drafts_create(
     idea_id: str = typer.Argument(..., help="已确认的 idea id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),  # noqa: B008
+    verbose: bool = typer.Option(False, "--verbose", help="附带运行详情"),
 ) -> None:
     """从已确认 idea 生成草稿并落库 Draft + CriticReport（不自动发布）。"""
     settings = load_settings()
@@ -376,18 +424,26 @@ def drafts_create(
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
     )
     try:
-        draft = service.create(
+        result = service.create_result(
             idea_id, version="1.0.0", format="original", voice_version="1.0.0"
         )
     except (KeyError, ValueError, RuntimeError, StructuredOutputError) as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
     if as_json:
-        payload = {"draft_id": draft.id, "status": "drafted", "body": draft.body}
+        payload = {
+            "draft_id": result.draft.id,
+            "status": "drafted",
+            "body": result.draft.body,
+            "critic_rounds": result.critic_rounds,
+            "outcome": result.outcome,
+            "adjustments": result.adjustments,
+        }
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        typer.echo(f"{draft.id}\tdrafted")
-        typer.echo(draft.body)
+        typer.echo(_render_draft_result(result))
+        if verbose:
+            typer.echo(_render_run_details(result))
 
 
 @drafts_app.command("show")

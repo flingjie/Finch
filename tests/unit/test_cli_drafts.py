@@ -8,6 +8,7 @@ from finch import cli
 from finch.cli import app
 from finch.content.models import Draft, DraftKind
 from finch.content.voice import VoiceProfile
+from finch.drafts.service import DraftCreateResult
 from finch.settings import Paths, Settings
 from finch.storage.database import Store
 from finch.storage.repositories import DraftRepository
@@ -33,11 +34,7 @@ class _FakeDraftService:
         self.max_rewrite_rounds = max_rewrite_rounds
         self.voice_profile = voice_profile
 
-    def create(self, idea_id, *, version, format, voice_version):
-        type(self).created.append(
-            {"idea_id": idea_id, "version": version, "format": format,
-             "voice_version": voice_version}
-        )
+    def _draft(self, idea_id):
         return Draft(
             id="draft_fake1234",
             kind=DraftKind.ORIGINAL,
@@ -49,12 +46,34 @@ class _FakeDraftService:
             run_id="idea",
         )
 
+    def create(self, idea_id, *, version, format, voice_version):
+        type(self).created.append(
+            {"idea_id": idea_id, "version": version, "format": format,
+             "voice_version": voice_version}
+        )
+        return self._draft(idea_id)
+
+    def create_result(self, idea_id, *, version, format, voice_version):
+        type(self).created.append(
+            {"idea_id": idea_id, "version": version, "format": format,
+             "voice_version": voice_version}
+        )
+        return DraftCreateResult(
+            draft=self._draft(idea_id),
+            critic_rounds=2,
+            outcome="pass",
+            adjustments=["收紧了观点的适用边界"],
+        )
+
 
 class _RaisingDraftService:
     def __init__(self, *args, **kwargs):
         pass
 
     def create(self, idea_id, *, version, format, voice_version):
+        raise ValueError(f"idea {idea_id} needs_confirmation (status=proposed)")
+
+    def create_result(self, idea_id, *, version, format, voice_version):
         raise ValueError(f"idea {idea_id} needs_confirmation (status=proposed)")
 
 
@@ -79,6 +98,8 @@ def test_drafts_create_json_output(monkeypatch, tmp_path):
     assert payload["draft_id"] == "draft_fake1234"
     assert payload["status"] == "drafted"
     assert payload["body"] == "把编排器改成确定性图后，失败可以重放。"
+    assert payload["outcome"] == "pass"
+    assert payload["adjustments"] == ["收紧了观点的适用边界"]
 
     assert _FakeDraftService.created == [
         {"idea_id": IDEA_ID, "version": "1.0.0", "format": "original", "voice_version": "1.0.0"}
@@ -94,8 +115,12 @@ def test_drafts_create_non_json_output(monkeypatch, tmp_path):
 
     r = CliRunner().invoke(app, ["drafts", "create", IDEA_ID])
     assert r.exit_code == 0, r.output
-    assert "draft_fake1234" in r.output
-    assert "drafted" in r.output
+    assert "当前等待你的审核" in r.output
+    assert "质量检查：通过" in r.output
+    assert "下一步：" in r.output
+    assert "finch review approve draft_fake1234" in r.output
+    # 运行详情默认不出现。
+    assert "运行详情" not in r.output
 
 
 def test_drafts_create_unconfirmed_exits(monkeypatch, tmp_path):
