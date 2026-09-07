@@ -39,7 +39,6 @@ from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, Ma
 from finch.graph.content_nodes import (
     default_checker_suite,
     make_critique_node,
-    make_position_gate_node,
 )
 from finch.graph.context import items_payload
 from finch.graph.events import NodeResult
@@ -218,59 +217,6 @@ def _job(
 # --- the seven scenarios ----------------------------------------------------
 
 
-def test_scenario_1_strong_evidence_and_clear_position_routes_to_ready(tmp_path):
-    """强证据 + 清晰判断 → READY：完整立场放行到 ready_jobs，不进入 needs_input。"""
-    store = _store(tmp_path)
-    nodes = [
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([_job()])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        make_position_gate_node(),
-    ]
-    run = GraphRuntime(store, nodes).run()
-    assert run.state == "POSITIONS_READY"
-    rec = store.find_node(run.id, "position_gate", "default")
-    assert rec is not None
-    assert rec.status == "succeeded"
-    assert [j["id"] for j in json.loads(rec.output_json)["items"]] == ["job1"]
-
-
-def test_scenario_2_strong_evidence_without_author_position_needs_input(tmp_path):
-    """强证据 + 无作者判断 → NEEDS_INPUT：立场缺失挡在门禁处。"""
-    store = _store(tmp_path)
-    nodes = [
-        Seed(
-            name="define_jobs",
-            writes="content_jobs",
-            seed=items_payload([_job(position=None)]),
-        ),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        make_position_gate_node(),
-    ]
-    run = GraphRuntime(store, nodes).run()
-    assert run.state == "NEEDS_INPUT"
-    rec = store.find_node(run.id, "position_gate", "default")
-    assert rec is not None
-    assert rec.status == "needs_input"
-    assert [j["id"] for j in json.loads(rec.output_json)["items"]] == ["job1"]
-
-
-def test_scenario_3_do_not_write_is_silently_skipped(tmp_path):
-    """弱证据/无增量 → DO_NOT_WRITE：门禁静默跳过（empty ready_jobs，仍是正常成功）。"""
-    job = _job(status=ContentJobStatus.DO_NOT_WRITE, position=None)
-    store = _store(tmp_path)
-    nodes = [
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([job])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        make_position_gate_node(),
-    ]
-    run = GraphRuntime(store, nodes).run()
-    assert run.state == "POSITIONS_READY"
-    rec = store.find_node(run.id, "position_gate", "default")
-    assert rec is not None
-    assert rec.status == "succeeded"
-    assert json.loads(rec.output_json)["items"] == []
-
-
 def test_scenario_4_generic_ai_boilerplate_fails_portability_and_specificity():
     """通用 AI 套话 → Specificity（确定性）与 Portability（脚本化）均失败。"""
     body = "This is a great, powerful, seamless solution."
@@ -334,8 +280,7 @@ def test_scenario_7_unfixable_draft_dropped_after_two_rewrites(tmp_path):
         Seed(name="draft", writes="drafts", seed=items_payload([_draft()])),
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
-        Seed(name="position_gate", writes="ready_jobs", seed=items_payload([])),
+        Seed(name="select", writes="ready_jobs", seed=items_payload([])),
         make_critique_node(
             CodexRunner(), rewrite, QualityGates(max_rewrite_rounds=2), checkers=[checker]
         ),

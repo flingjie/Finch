@@ -22,9 +22,8 @@ from .content_nodes import (
     default_checker_suite,
     make_brief_node,
     make_critique_node,
-    make_define_jobs_node,
     make_draft_node,
-    make_position_gate_node,
+    make_select_node,
 )
 from .match_nodes import make_match_node, make_recall_node
 from .nodes import Node
@@ -49,8 +48,9 @@ def daily_nodes(
     voice_profile: VoiceProfile | None = None,
     inference_runners: dict[str, StructuredInferenceRunner | None] | None = None,
 ) -> list[Node]:
-    """组装每日 Graph：preflight → extract → collect → recall → match → draft →
-    critique → brief。提取节点对 groups_by_repo 中的预分组 group 提取事件并合并 Evidence Cards。
+    """组装每日 Graph：preflight → extract → collect → recall → match → select →
+    draft → critique → brief。提取节点对 groups_by_repo 中的预分组 group 提取事件并
+    合并 Evidence Cards。
     """
     def collect_fn() -> list[DiscussionCandidate]:
         builder = QueryBuilder(
@@ -90,14 +90,14 @@ def daily_nodes(
         make_collect_node(collect_fn),
         make_recall_node(settings.quality_gates),
         make_match_node(_resolve("match_evidence"), settings.quality_gates, settings.twitter),
-        make_define_jobs_node(
+        make_select_node(
             _resolve("plan_topics"),
             _resolve("expand_job"),
             expand_concurrency=settings.llm.for_node("expand_job").max_concurrency,
             jobs_repo=jobs_repo,
             budget=settings.daily_budget,
+            gates=settings.quality_gates,
         ),
-        make_position_gate_node(jobs_repo=jobs_repo),
         make_draft_node(runner, write_reply, write_original, settings.quality_gates),
         make_critique_node(
             runner, rewrite, settings.quality_gates,

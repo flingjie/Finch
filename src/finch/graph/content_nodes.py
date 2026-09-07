@@ -30,12 +30,10 @@ from ..content.jobs import (
     expand_content_job,
     plan_content_topics,
     select_planning_evidence,
-    select_primary_job,
 )
 from ..content.models import DailyBrief, Draft, DraftKind, DraftWarning
 from ..content.voice import VoiceProfile
-from ..evidence.models import EvidenceCard, MatchResult
-from ..gate.models import InputRequest, ProposedPosition
+from ..evidence.models import ClaimConfidence, EvidenceCard, MatchResult
 from ..llm.base import StructuredInferenceRunner
 from ..settings import DailyBudget, QualityGates
 from ..storage.repositories import ContentJobRepository
@@ -233,12 +231,11 @@ def make_critique_node(
             drafts = parse_items(ctx["drafts"], Draft)
             matches = parse_items(ctx["match_results"], MatchResult)
             cards = parse_items(ctx["evidence_cards"], EvidenceCard)
-            content_jobs = parse_items(ctx.get("content_jobs") or {}, ContentJob)
             ready_jobs = parse_items(ctx.get("ready_jobs") or {}, ContentJob)
 
             cards_by_id = {card.id: card for card in cards}
             match_by_candidate = {match.candidate_id: match for match in matches}
-            jobs_by_id = {job.id: job for job in [*content_jobs, *ready_jobs]}
+            jobs_by_id = {job.id: job for job in ready_jobs}
 
             kept: list[Draft] = []
             warnings: list[str] = []
@@ -361,7 +358,7 @@ def make_critique_node(
 
     return CritiqueNode(
         name="critique",
-        reads=["drafts", "match_results", "evidence_cards", "content_jobs", "ready_jobs"],
+        reads=["drafts", "match_results", "evidence_cards", "ready_jobs"],
         writes="drafts",
         succeeds_to="CRITIQUED",
     )
@@ -656,8 +653,8 @@ def make_brief_node(
 ) -> Node:
     """每日简报节点：渲染决策优先 DailyBrief 并写入动态终态（计划 Task 3.1/3.2/3.4）。
 
-    - 今日首选来自 position_gate 输出的 primary（``ready_jobs.items``）。
-    - NOT NOW 来自 position_gate 输出的 ``deferred``（job_id + reason）。
+    - 今日首选来自 select 输出的 primary（``ready_jobs.items``）。
+    - NOT NOW 来自 select 输出的 ``deferred``（job_id + reason）。
     - 无草稿时仍输出完整 10 段结构与「不建议写」具体原因，绝不返回空白。
     - 未解决风险只展示当前草稿的 DraftWarning（按 draft_id 归属）。
     """
@@ -665,7 +662,7 @@ def make_brief_node(
     class BriefNode(Node):
         def run(self, ctx: dict) -> NodeResult:
             drafts = parse_items(ctx["drafts"], Draft)
-            jobs = parse_items(ctx.get("content_jobs", []), ContentJob)
+            jobs = parse_items(ctx.get("ready_jobs", []), ContentJob)
             cards = parse_items(ctx.get("evidence_cards", []), EvidenceCard)
             candidates = parse_items(ctx.get("candidates", []), DiscussionCandidate)
             match_results = parse_items(ctx.get("match_results", []), MatchResult)
@@ -674,7 +671,7 @@ def make_brief_node(
             jobs_by_id = {job.id: job for job in jobs}
             candidates_by_id = {candidate.id: candidate for candidate in candidates}
 
-            # primary 与 deferred 来自 position_gate 输出（ready_jobs payload）。
+            # primary 与 deferred 来自 select 输出（ready_jobs payload）。
             gate = ctx.get("ready_jobs", {})
             primary_jobs = parse_items(gate, ContentJob)
             primary_job = _fresh_job(primary_jobs[0] if primary_jobs else None, jobs_repo)
@@ -687,7 +684,7 @@ def make_brief_node(
 
             deferred = gate.get("deferred", []) or []
             draft_warnings = _collect_draft_warnings(ctx["drafts"])
-            track_failures = list(ctx.get("content_jobs", {}).get("warnings", []))
+            track_failures = list(ctx.get("ready_jobs", {}).get("warnings", []))
 
             extra_drafts = [d for d in drafts if d is not primary_draft]
 
@@ -728,7 +725,6 @@ def make_brief_node(
         name="brief",
         reads=[
             "drafts",
-            "content_jobs",
             "evidence_cards",
             "ready_jobs",
             "candidates",
@@ -740,25 +736,51 @@ def make_brief_node(
     )
 
 
-def make_define_jobs_node(
+_STRONG_CONFIDENCE = {ClaimConfidence.VERIFIED, ClaimConfidence.SUPPORTED}
+
+
+def _topic_sort_key(
+    topic: TopicProposal,
+    cards_by_id: dict[str, EvidenceCard],
+) -> tuple[bool, float]:
+    """主题级确定性排序键（先选后写，展开前可用）：有讨论上下文 > 证据置信占比。
+
+    立场/why_now 只在 expand 后可得，故不参与主题级排序（spec §5 B 的务实落地）。
+    sort 稳定，id 顺序作为 tie-break。
+    """
+    ratio = 0.0
+    cards = [cards_by_id[cid] for cid in topic.card_ids if cid in cards_by_id]
+    if cards:
+        ratio = sum(1 for c in cards if c.confidence in _STRONG_CONFIDENCE) / len(cards)
+    return (topic.candidate_id is not None, ratio)
+
+
+def make_select_node(
     plan_runner: StructuredInferenceRunner,
     expand_runner: StructuredInferenceRunner,
     expand_concurrency: int = 4,
     jobs_repo: ContentJobRepository | None = None,
     budget: DailyBudget | None = None,
+    gates: QualityGates | None = None,
 ) -> Node:
-    """定义内容任务节点：match_results/evidence_cards/candidates → content_jobs。
+    """选择节点（先选后写，不阻塞）：match_results/evidence_cards/candidates → ready_jobs。
 
-    两阶段：先 ``plan_content_topics`` 一次性把证据卡聚类成主题，再并行
-    ``expand_content_job`` 把每个主题展开成完整 ContentJob（``pool.map`` 保序）。
-    对每个 job 验证：
-    - source_card_ids 是该 job 自身卡片范围的子集：candidate_id 非空时取该候选
-      match 的 card_ids；candidate_id 为空（original）时取全部 matched card_ids 的并集
-    - candidate_id（若非空）存在于 match_results 的 candidate ids 中
-    不合法的 job 被过滤。可选 jobs_repo 会把合法 job upsert 进 ContentJobRepository。
+    合并 define_jobs 的规划/预过滤/展开与 position_gate 的选择，去掉立场阻塞：
+    1. 无卡短路（绝不调用 runner）。
+    2. ``select_planning_evidence`` 裁剪 → ``plan_content_topics`` 一次聚类。
+    3. 预过滤（沿用 define_jobs）：candidate_id 必须在 match、card_ids 非空且属于可用
+       范围（reply 取 match 的 card_ids，original 取 all_card_ids）、topic.id 去重。
+    4. 确定性排序主题（``_topic_sort_key``：有讨论上下文 > 证据置信占比）。
+    5. 只展开 Top K（K = ``gates.max_daily_original_posts``，默认 1）；展开失败递补
+       下一个主题（最多一次）。
+    6. 校验去重（``validate_source_cards`` + job.id 去重）→ upsert（若 jobs_repo）。
+    7. 输出 ready_jobs（单一份）+ ``output["unexpanded_topics"]``（未展开主题标题，调试用）。
+
+    decision/tradeoff 为空时不阻塞：job 照常进入 ready_jobs；是否 must_ask 由 inbox 投影
+    在下游计算（spec §4.1）。
     """
 
-    class DefineJobsNode(Node):
+    class SelectNode(Node):
         def run(self, ctx: dict) -> NodeResult:
             match_results = parse_items(ctx["match_results"], MatchResult)
             cards = parse_items(ctx["evidence_cards"], EvidenceCard)
@@ -804,6 +826,16 @@ def make_define_jobs_node(
                     continue
                 kept_topics.append(topic)
 
+            # 确定性排序（先选后写）：有讨论上下文优先，其次证据置信占比；sort 稳定，
+            # id 顺序作为 tie-break。
+            ordered_topics = sorted(
+                kept_topics,
+                key=lambda topic: _topic_sort_key(topic, cards_by_id),
+                reverse=True,
+            )
+
+            k = gates.max_daily_original_posts if gates is not None else 1
+
             warnings: list[str] = []
 
             def _expand(topic: TopicProposal) -> ContentJob | None:
@@ -815,31 +847,28 @@ def make_define_jobs_node(
                 try:
                     return expand_content_job(expand_runner, topic, cards_by_id, candidate)
                 except Exception as exc:  # noqa: BLE001
-                    # 故障隔离：单个 topic 展开失败不拖垮整个节点，其余 topic 照常产出。
+                    # 故障隔离：单个 topic 展开失败不拖垮整个节点，并触发一次递补。
                     warnings.append(
-                        f"define_jobs: expand failed for topic {topic.id}: "
+                        f"select: expand failed for topic {topic.id}: "
                         f"{type(exc).__name__}: {exc}"
                     )
                     return None
 
-            # 并行展开：单个 topic 串行；多个 topic 用 ``pool.map`` 保证顺序与串行一致。
-            if not kept_topics:
-                expanded: list[ContentJob | None] = []
-            elif len(kept_topics) == 1:
-                expanded = [_expand(kept_topics[0])]
-            else:
-                with ThreadPoolExecutor(
-                    max_workers=min(len(kept_topics), expand_concurrency)
-                ) as pool:
-                    expanded = list(pool.map(_expand, kept_topics))
+            # 只展开前 K 个；展开失败递补下一个主题（最多一次）。
+            jobs: list[ContentJob] = []
+            index = 0
+            fallbacks = 0
+            while index < len(ordered_topics) and len(jobs) < k and fallbacks <= 1:
+                job = _expand(ordered_topics[index])
+                index += 1
+                if job is not None:
+                    jobs.append(job)
+                else:
+                    fallbacks += 1
 
-            jobs = [job for job in expanded if job is not None]
-
-            # Filter jobs: validate source_card_ids against the job's OWN card scope —
-            # its candidate's match card_ids when candidate_id is set, otherwise the union
-            # of all matched card_ids (original). A reply job carrying a card from a
-            # different candidate would later be dropped, so reject it here (F5).
-            # 再按 job.id 去重，避免重复 id 在 upsert 时互相覆盖、下游处理重复列表。
+            # 校验去重：source_card_ids 属于该 job 自身卡范围（candidate_id 非空取
+            # match 的 card_ids，original 取 all_card_ids）；再按 job.id 去重，避免重复
+            # id 在 upsert 时互相覆盖、下游处理重复列表。
             valid_jobs: list[ContentJob] = []
             seen_job_ids: set[str] = set()
             for job in jobs:
@@ -861,6 +890,7 @@ def make_define_jobs_node(
                 jobs_repo.upsert_jobs(valid_jobs)
 
             output = items_payload(cast(list[BaseModel], valid_jobs))
+            output["unexpanded_topics"] = [t.title for t in ordered_topics[index:]]
             if warnings:
                 output["warnings"] = warnings
             return NodeResult(
@@ -869,129 +899,10 @@ def make_define_jobs_node(
                 warnings=warnings,
             )
 
-    return DefineJobsNode(
-        name="define_jobs",
+    return SelectNode(
+        name="select",
         reads=["match_results", "evidence_cards", "candidates"],
-        writes="content_jobs",
-        succeeds_to="JOBS_DEFINED",
-    )
-
-
-def make_position_gate_node(
-    jobs_repo: ContentJobRepository | None = None,
-) -> Node:
-    """位置确认门：确定性选出唯一 primary，只有 primary 可阻塞内容生成。
-
-    - ``DO_NOT_WRITE`` job 永久拒绝，不参与选择。
-    - 只有 primary job 可进入 ``ready_jobs``；其余 job 保存为 proposed/deferred
-      （不删除、不永久 do_not_write），并附带 not now 理由。
-    - primary 缺失已确认立场时，只问最多 3 个问题（``missing_questions``）→
-      ``needs_input``。
-    - 用户拒绝 primary 后，确定性选择下一个 job，最多递补一次（避免无限循环）。
-
-    若提供 jobs_repo，则对每个 job 取 repo 里的最新版本（fallback 到 context），
-    这样 resume 时用户通过 jobs answer/confirm-position/reject 的编辑会被采纳。
-    """
-
-    class PositionGateNode(Node):
-        def run(self, ctx: dict) -> NodeResult:
-            context_jobs = parse_items(ctx["content_jobs"], ContentJob)
-            cards = parse_items(ctx.get("evidence_cards", {}), EvidenceCard)
-            cards_by_id = {card.id: card for card in cards}
-
-            # 取 repo 里的最新版本（resume 路径），回退到 context。
-            jobs: list[ContentJob] = []
-            for context_job in context_jobs:
-                job = context_job
-                if jobs_repo is not None:
-                    fresh = jobs_repo.get_job(context_job.id)
-                    if fresh is not None:
-                        job = fresh
-                jobs.append(job)
-
-            active = [job for job in jobs if job.status != ContentJobStatus.DO_NOT_WRITE]
-            # 只有「用户拒绝」的 job（DO_NOT_WRITE 且带 reject_reason）计入递补额度；
-            # 模型自行判定 do_not_write（无 reject_reason）不占用「递补一次」，否则
-            # 首日两个模型 do_not_write 主题就会误停剩余可写 job。
-            user_rejected = [
-                job
-                for job in jobs
-                if job.status == ContentJobStatus.DO_NOT_WRITE and job.reject_reason
-            ]
-
-            # 最多递补一次：primary 与其一次递补都被用户拒绝后停止提议，避免无限循环。
-            if len(user_rejected) > 1:
-                output = items_payload([])
-                output["deferred"] = [
-                    {"job_id": job.id, "reason": "fallback exhausted"}
-                    for job in active
-                ]
-                return NodeResult(
-                    status="succeeded",
-                    output=output,
-                    warnings=["position gate stopped after one fallback"],
-                )
-
-            primary, deferred = select_primary_job(active, cards_by_id=cards_by_id)
-
-            output = items_payload([])
-            if deferred:
-                output["deferred"] = [
-                    {"job_id": d.job.id, "reason": d.reason} for d in deferred
-                ]
-                if jobs_repo is not None:
-                    for d in deferred:
-                        # 保存为 proposed（not now，可恢复），不删除、不 do_not_write。
-                        jobs_repo.upsert_job(
-                            d.job.model_copy(
-                                update={"status": ContentJobStatus.PROPOSED}
-                            )
-                        )
-
-            if primary is None:
-                # 没有可提议的 job（全部 DO_NOT_WRITE 或为空）。
-                return NodeResult(status="succeeded", output=output)
-
-            position = primary.author_position
-            has_decision_tradeoff = (
-                position is not None
-                and bool(position.decision)
-                and bool(position.tradeoff)
-            )
-
-            # 立场不完整：无法起草，仍阻塞 + must_ask 信号（Phase 2 移除）。
-            if not has_decision_tradeoff:
-                pos = primary.author_position
-                output["items"] = [primary.model_dump(mode="json")]
-                output["questions"] = list(primary.missing_questions)[:3]
-                output["must_ask"] = ["position_incomplete"]
-                output["input_request"] = InputRequest(
-                    run_id=ctx.get("run_id", ""),
-                    job_id=primary.id,
-                    topic=primary.core_message or primary.reader_problem,
-                    why_now=primary.why_now,
-                    proposed_position=ProposedPosition(
-                        claim=(pos.claim if pos else ""),
-                        decision=(pos.decision if pos else ""),
-                        tradeoff=(pos.tradeoff if pos else ""),
-                        change_mind_if=(pos.change_mind_if if pos else None),
-                    ),
-                    evidence_card_ids=list(primary.source_card_ids),
-                    questions=list(primary.missing_questions)[:3],
-                ).model_dump(mode="json")
-                return NodeResult(
-                    status="needs_input",
-                    output=output,
-                    warnings=[f"primary job {primary.id} needs a confirmed position"],
-                )
-
-            # 立场完整：直接放行（已移除 confirmed/reuse/INFERRED 机制）。
-            output["items"] = [primary.model_dump(mode="json")]
-            return NodeResult(status="succeeded", output=output)
-
-    return PositionGateNode(
-        name="position_gate",
-        reads=["content_jobs", "evidence_cards"],
         writes="ready_jobs",
-        succeeds_to="POSITIONS_READY",
+        succeeds_to="JOBS_SELECTED",
     )
+

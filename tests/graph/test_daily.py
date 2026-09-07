@@ -6,11 +6,10 @@ from finch.github.gh_client import GhClient
 from finch.graph.daily import daily_nodes
 from finch.settings import Settings
 from finch.storage.database import Store
-from finch.storage.repositories import ContentJobRepository
 from finch.twitter.opencli_client import OpenCliClient
 
 
-def test_daily_nodes_has_ten_nodes(tmp_path):
+def test_daily_nodes_has_nine_nodes(tmp_path):
     store = Store(tmp_path / "db.sqlite")
     store.init()
     nodes = daily_nodes(
@@ -30,17 +29,15 @@ def test_daily_nodes_has_ten_nodes(tmp_path):
         "collect_tweets",
         "recall",
         "match_evidence",
-        "define_jobs",
-        "position_gate",
+        "select",
         "draft",
         "critique",
         "brief",
     ]
     assert nodes[5].reads == ["match_results", "evidence_cards", "candidates"]
-    assert nodes[6].reads == ["content_jobs", "evidence_cards"]
-    assert nodes[7].reads == ["ready_jobs", "evidence_cards", "candidates"]
-    assert nodes[9].writes == "brief"
-    assert nodes[9].terminal_state_key == "terminal_state"
+    assert nodes[6].reads == ["ready_jobs", "evidence_cards", "candidates"]
+    assert nodes[8].writes == "brief"
+    assert nodes[8].terminal_state_key == "terminal_state"
 
 
 def test_daily_nodes_order_and_contract(tmp_path):
@@ -60,15 +57,14 @@ def test_daily_nodes_order_and_contract(tmp_path):
     assert [n.name for n in nodes] == [
         "preflight", "extract_events",
         "collect_tweets", "recall", "match_evidence",
-        "define_jobs", "position_gate", "draft", "critique", "brief",
+        "select", "draft", "critique", "brief",
     ]
     assert nodes[3].reads == ["candidates", "evidence_cards"]
     assert nodes[4].writes == "match_results"
     assert nodes[4].reads == ["ranked_candidates", "evidence_cards", "candidates"]
-    assert nodes[5].writes == "content_jobs"
-    assert nodes[6].writes == "ready_jobs"
-    assert nodes[8].reads == [
-        "drafts", "match_results", "evidence_cards", "content_jobs", "ready_jobs",
+    assert nodes[5].writes == "ready_jobs"
+    assert nodes[7].reads == [
+        "drafts", "match_results", "evidence_cards", "ready_jobs",
     ]
 
 
@@ -241,35 +237,17 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path):
         )
 
     run = GraphRuntime(store, build()).run()
-    assert run.state == "NEEDS_INPUT"
-    calls_after_first = runner.calls
-    assert calls_after_first > 0
+    assert run.state == "WAITING_FOR_REVIEW"
+    # 单轮直达（select 不阻塞）：match(1) + select(plan 1 + expand 1) + draft(1) +
+    # critique(5) = 9 次 LLM 调用。critique 检查器套件 LLM 调用：evidence entailment +
+    # decision + portability + actionability + safety = 5 次；specificity/structure/voice
+    # 走确定性路径，不调 LLM。
+    assert runner.calls == 9
 
-    # 模拟人工补全取舍：补全 tradeoff 后立场完整才可放行。
-    jobs_repo = ContentJobRepository(store)
-    job = jobs_repo.get_job("job1")
-    assert job is not None and job.author_position is not None
-    jobs_repo.upsert_job(
-        job.model_copy(
-            update={
-                "author_position": job.author_position.model_copy(
-                    update={"tradeoff": "more memory"}
-                )
-            }
-        )
-    )
-
+    # resume 全绿：所有节点已成功，重放不新增 LLM 调用。
     run2 = GraphRuntime(store, build()).run(run_id=run.id)
     assert run2.state == "WAITING_FOR_REVIEW"
-    # resume 新增 draft(1) + critique 检查器套件 LLM 调用：evidence entailment +
-    # decision + portability + actionability + safety = 5 次。
-    # specificity（无套话）、structure（无结构问题）、voice（空画像）走确定性路径，不调 LLM。
-    assert runner.calls == calls_after_first + 6
-
-    calls_after_second = runner.calls
-    run3 = GraphRuntime(store, build()).run(run_id=run.id)
-    assert run3.state == "WAITING_FOR_REVIEW"
-    assert runner.calls == calls_after_second
+    assert runner.calls == 9
 
 
 def test_daily_no_evidence_completes_without_llm(tmp_path):

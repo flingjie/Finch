@@ -1,5 +1,5 @@
 # tests/unit/test_nodes.py
-from finch.graph.content_nodes import make_define_jobs_node
+from finch.graph.content_nodes import make_select_node
 from finch.graph.nodes import FailingNode, NoopNode
 from finch.settings import DailyBudget
 
@@ -41,7 +41,7 @@ class _EchoPlanRunner:
         return PlanTopicsOutput(items=[])
 
 
-def test_define_jobs_trims_planning_cards_when_budget_set():
+def test_select_trims_planning_cards_when_budget_set():
     from finch.evidence.models import ClaimConfidence, EvidenceCard
     from finch.graph.context import items_payload
 
@@ -51,8 +51,8 @@ def test_define_jobs_trims_planning_cards_when_budget_set():
         for i in range(30)
     ]
     runner = _EchoPlanRunner()
-    node = make_define_jobs_node(runner, runner, jobs_repo=None,
-                                 budget=DailyBudget(max_planning_events=5))
+    node = make_select_node(runner, runner, jobs_repo=None,
+                            budget=DailyBudget(max_planning_events=5))
     # 直接调用 run，传入仅有 evidence_cards 的 context（其余读键用空 payload）
     result = node.run({
         "evidence_cards": items_payload(cards),

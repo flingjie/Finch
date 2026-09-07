@@ -20,16 +20,15 @@ from finch.graph.content_nodes import (
     default_checker_suite,
     make_brief_node,
     make_critique_node,
-    make_define_jobs_node,
     make_draft_node,
-    make_position_gate_node,
+    make_select_node,
 )
 from finch.graph.context import items_payload, parse_items
 from finch.graph.events import NodeResult
 from finch.graph.nodes import Node
 from finch.graph.runtime import GraphRuntime
 from finch.settings import QualityGates
-from finch.storage.database import NodeRecord, Store
+from finch.storage.database import Store
 from finch.storage.repositories import ContentJobRepository
 from finch.twitter.models import DiscussionCandidate
 
@@ -56,14 +55,14 @@ def _brief_seeds(
     matches: dict | None = None,
     gate: dict | None = None,
 ) -> list[Node]:
-    """brief 节点上游全部 reads 的 Seed（Task 3.1 新增 ready_jobs/candidates/match_results）。"""
+    """brief 节点上游全部 reads 的 Seed（ready_jobs 为 select 产出的单一份）。"""
+    ready = gate if gate is not None else (jobs or items_payload([]))
     return [
         Seed(name="draft", writes="drafts", seed=drafts or items_payload([])),
         Seed(name="match_evidence", writes="match_results", seed=matches or items_payload([])),
-        Seed(name="define_jobs", writes="content_jobs", seed=jobs or items_payload([])),
         Seed(name="extract_events", writes="evidence_cards", seed=cards or items_payload([])),
         Seed(name="collect_tweets", writes="candidates", seed=candidates or items_payload([])),
-        Seed(name="position_gate", writes="ready_jobs", seed=gate or items_payload([])),
+        Seed(name="select", writes="ready_jobs", seed=ready),
     ]
 
 
@@ -332,8 +331,7 @@ def _critique_nodes(rewrite, checker, gates=None):
         Seed(name="draft", writes="drafts", seed=items_payload([_reply_draft()])),
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
-        Seed(name="position_gate", writes="ready_jobs", seed=items_payload([])),
+        Seed(name="select", writes="ready_jobs", seed=items_payload([])),
         make_critique_node(
             CodexRunner(), rewrite, gates or QualityGates(), checkers=[checker]
         ),
@@ -608,15 +606,14 @@ def test_critique_node_runs_checkers_in_parallel(tmp_path):
         Seed(name="draft", writes="drafts", seed=items_payload([_reply_draft()])),
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        Seed(name="define_jobs", writes="content_jobs", seed=items_payload([])),
-        Seed(name="position_gate", writes="ready_jobs", seed=items_payload([])),
+        Seed(name="select", writes="ready_jobs", seed=items_payload([])),
         make_critique_node(CodexRunner(), rewrite, QualityGates(), checkers=checkers),
     ]
     run = GraphRuntime(store, nodes).run()
     assert run.state == "CRITIQUED"
 
 
-def test_define_jobs_node_produces_and_filters_jobs(tmp_path):
+def test_select_node_produces_and_filters_jobs(tmp_path):
     good = _job(job_id="j1", candidate_id="t1", source_card_ids=("ev1",))
     bad = _job(job_id="j2", candidate_id=None, source_card_ids=("ev1", "ev_999"))
     runner = FakeJobsRunner([good, bad])
@@ -626,121 +623,18 @@ def test_define_jobs_node_produces_and_filters_jobs(tmp_path):
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner, runner),
+        make_select_node(runner, runner, gates=QualityGates()),
     ]
     run = GraphRuntime(store, nodes).run()
-    assert run.state == "JOBS_DEFINED"
-    rec = store.find_node(run.id, "define_jobs", "default")
+    assert run.state == "JOBS_SELECTED"
+    rec = store.find_node(run.id, "select", "default")
     assert rec is not None
     assert "j1" in rec.output_json
     assert "j2" not in rec.output_json
     assert runner.calls == 2  # 1 plan + 1 expand（bad 主题在预过滤阶段即被剔除）
 
 
-def test_position_gate_ready_when_position_complete():
-    node = make_position_gate_node()
-    result = node.run(
-        {"content_jobs": items_payload([_job(job_id="j1", position=_position())])}
-    )
-    assert result.status == "succeeded"
-    assert [j["id"] for j in result.output["items"]] == ["j1"]
-
-
-def test_position_gate_skips_do_not_write():
-    node = make_position_gate_node()
-    job = _job(job_id="j1", status=ContentJobStatus.DO_NOT_WRITE, position=None)
-    result = node.run({"content_jobs": items_payload([job])})
-    assert result.status == "succeeded"
-    assert result.output["items"] == []
-
-
-def test_position_gate_complete_position_passes():
-    """完整立场（decision+tradeoff 非空）非阻塞：直接放行。"""
-    node = make_position_gate_node()
-    job = _job(job_id="j1", position=_position())
-    result = node.run({"content_jobs": items_payload([job])})
-    assert result.status == "succeeded"
-    items = parse_items(result.output, ContentJob)
-    assert [j.id for j in items] == ["j1"]
-    assert "inferred_position" not in result.output
-
-
-def test_position_gate_missing_position_needs_input():
-    node = make_position_gate_node()
-    job = _job(job_id="j1", position=None)
-    result = node.run({"content_jobs": items_payload([job])})
-    assert result.status == "needs_input"
-    assert [j["id"] for j in result.output["items"]] == ["j1"]
-    assert result.output["must_ask"] == ["position_incomplete"]
-
-
-def test_position_gate_empty_decision_needs_input():
-    """回归：decision 为空必须 needs_input，不得通过门禁出草稿。"""
-    node = make_position_gate_node()
-    job = _job(job_id="j1", position=_position(decision=""))
-    result = node.run({"content_jobs": items_payload([job])})
-    assert result.status == "needs_input"
-    assert result.output["must_ask"] == ["position_incomplete"]
-    assert [j["id"] for j in result.output["items"]] == ["j1"]
-
-
-def test_position_gate_only_primary_blocks():
-    """Task 2.4：只有 primary job 可阻塞；其余 job 保存为 deferred，不触发 needs_input。"""
-    node = make_position_gate_node()
-    primary = _job(job_id="j1", candidate_id="t1", position=_position())
-    no_candidate = _job(job_id="j2", candidate_id=None, position=_position())
-    do_not_write = _job(
-        job_id="j3", status=ContentJobStatus.DO_NOT_WRITE, position=None
-    )
-    result = node.run(
-        {"content_jobs": items_payload([primary, no_candidate, do_not_write])}
-    )
-    # 只有 primary（j1，有讨论上下文）进入 ready_jobs。
-    assert result.status == "succeeded"
-    assert [j["id"] for j in result.output["items"]] == ["j1"]
-    # j2 被 deferred（not now），j3（DO_NOT_WRITE）不参与选择、也不出现在 deferred。
-    assert [d["job_id"] for d in result.output["deferred"]] == ["j2"]
-
-
-def test_position_gate_resume_proceeds_once_position_completed(tmp_path):
-    store = _store(tmp_path)
-    incomplete = _job(job_id="j1", candidate_id=None, position=None)
-    completed = _job(job_id="j1", candidate_id=None, position=_position())
-
-    def nodes():
-        return [
-            Seed(name="define_jobs", writes="content_jobs", seed=items_payload([incomplete])),
-            Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
-            make_position_gate_node(),
-            Seed(name="draft", writes="drafts", seed=items_payload([]), succeeds_to="DRAFTED"),
-        ]
-
-    run1 = GraphRuntime(store, nodes()).run()
-    assert run1.state == "NEEDS_INPUT"
-    gate_rec = store.find_node(run1.id, "position_gate", "default")
-    assert gate_rec is not None and gate_rec.status == "needs_input"
-
-    # Simulate the user completing the position by overwriting the persisted content_jobs.
-    define_rec = store.find_node(run1.id, "define_jobs", "default")
-    assert define_rec is not None
-    store.upsert_node(
-        NodeRecord(
-            id=define_rec.id,
-            run_id=run1.id,
-            node_name="define_jobs",
-            idempotency_key="default",
-            status="succeeded",
-            output_json=json.dumps(items_payload([completed])),
-        )
-    )
-
-    run2 = GraphRuntime(store, nodes()).run(run_id=run1.id)
-    assert run2.state == "DRAFTED"
-    gate_rec2 = store.find_node(run1.id, "position_gate", "default")
-    assert gate_rec2 is not None and gate_rec2.status == "succeeded"
-
-
-def test_define_jobs_rejects_job_with_unknown_candidate(tmp_path):
+def test_select_node_rejects_job_with_unknown_candidate(tmp_path):
     """candidate_id 必须存在于 match_results；否则过滤掉。"""
     good = _job(job_id="j1", candidate_id="t1", source_card_ids=("ev1",))
     unknown = _job(job_id="j2", candidate_id="t_unknown", source_card_ids=("ev1",))
@@ -751,17 +645,17 @@ def test_define_jobs_rejects_job_with_unknown_candidate(tmp_path):
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner, runner),
+        make_select_node(runner, runner, gates=QualityGates()),
     ]
     run = GraphRuntime(store, nodes).run()
-    assert run.state == "JOBS_DEFINED"
-    rec = store.find_node(run.id, "define_jobs", "default")
+    assert run.state == "JOBS_SELECTED"
+    rec = store.find_node(run.id, "select", "default")
     assert rec is not None
     assert "j1" in rec.output_json
     assert "j2" not in rec.output_json
 
 
-def test_define_jobs_rejects_cards_outside_own_candidate(tmp_path):
+def test_select_node_rejects_cards_outside_own_candidate(tmp_path):
     """F5: reply job 的 source_card_ids 必须属于其自身候选的 match；original 可引用任意卡。"""
     card2 = _card().model_copy(update={"id": "ev2"})
     match2 = _match().model_copy(update={"candidate_id": "t2", "card_ids": ["ev2"]})
@@ -777,18 +671,18 @@ def test_define_jobs_rejects_cards_outside_own_candidate(tmp_path):
         Seed(name="extract_events", writes="evidence_cards",
              seed=items_payload([_card(), card2])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner, runner),
+        make_select_node(runner, runner, gates=QualityGates()),
     ]
     run = GraphRuntime(store, nodes).run()
-    assert run.state == "JOBS_DEFINED"
-    rec = store.find_node(run.id, "define_jobs", "default")
+    assert run.state == "JOBS_SELECTED"
+    rec = store.find_node(run.id, "select", "default")
     assert rec is not None
     assert "j_orig" in rec.output_json
     assert "j_bad" not in rec.output_json
 
 
-def test_define_jobs_upserts_into_repo(tmp_path):
-    """D7: define_jobs 将每个 job 写入 ContentJobRepository。"""
+def test_select_node_upserts_into_repo(tmp_path):
+    """select 将每个合法 job 写入 ContentJobRepository。"""
     store = _store(tmp_path)
     repo = ContentJobRepository(store)
     job = _job(job_id="j1", candidate_id="t1", position=_position())
@@ -798,7 +692,7 @@ def test_define_jobs_upserts_into_repo(tmp_path):
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner, runner, jobs_repo=repo),
+        make_select_node(runner, runner, jobs_repo=repo, gates=QualityGates()),
     ]
     GraphRuntime(store, nodes).run()
     got = repo.get_job("j1")
@@ -807,164 +701,93 @@ def test_define_jobs_upserts_into_repo(tmp_path):
     assert got.author_position.decision == "use token bucket"
 
 
-def test_position_gate_reads_fresh_from_repo(tmp_path):
-    """D7: gate 从 repo 取最新版本，用户编辑后 context 里的旧版本不阻挡。"""
+def test_select_node_expands_only_top_k(tmp_path):
+    """先选后写：只展开 Top K（默认 1）个主题，其余主题标题进 unexpanded_topics。"""
+    job1 = _job(job_id="j1", candidate_id="t1", source_card_ids=("ev1",))
+    job2 = _job(job_id="j2", candidate_id="t1", source_card_ids=("ev1",))
+    runner = FakeJobsRunner([job1, job2])
+
     store = _store(tmp_path)
-    repo = ContentJobRepository(store)
-    stale = _job(job_id="j1", candidate_id=None, position=_position(decision="stale"))
-    fresh = _job(job_id="j1", candidate_id=None, position=_position(decision="fresh"))
-    repo.upsert_job(fresh)
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_select_node(runner, runner, gates=QualityGates()),  # max_daily_original_posts=1
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "JOBS_SELECTED"
+    rec = store.find_node(run.id, "select", "default")
+    payload = json.loads(rec.output_json)
+    assert [j["id"] for j in payload["items"]] == ["j1"]
+    assert len(payload["unexpanded_topics"]) == 1
+    assert runner.calls == 2  # 1 plan + 1 expand（只展开排序后的第一个主题）
 
-    node = make_position_gate_node(jobs_repo=repo)
-    result = node.run({"content_jobs": items_payload([stale])})
-    assert result.status == "succeeded"
-    items = parse_items(result.output, ContentJob)
-    assert [j.id for j in items] == ["j1"]
-    assert items[0].author_position.decision == "fresh"
 
+def test_select_node_sorts_reply_before_original(tmp_path):
+    """排序：有讨论上下文（candidate_id 非空）的主题优先于 original。"""
+    original = _job(job_id="j_orig", candidate_id=None, source_card_ids=("ev1",))
+    reply = _job(job_id="j_reply", candidate_id="t1", source_card_ids=("ev1",))
+    # 故意把 original 放前面：若忽略排序，稳定顺序会让 original 胜出。
+    runner = FakeJobsRunner([original, reply])
 
-def test_position_gate_falls_back_to_context_when_repo_missing(tmp_path):
-    """D7: repo 查不到时回退到 context 里的 job。"""
     store = _store(tmp_path)
-    repo = ContentJobRepository(store)
-    incomplete = _job(job_id="j1", candidate_id=None, position=None)
-
-    node = make_position_gate_node(jobs_repo=repo)
-    result = node.run({"content_jobs": items_payload([incomplete])})
-    assert result.status == "needs_input"
-    assert result.output["must_ask"] == ["position_incomplete"]
-
-
-def test_position_gate_asks_at_most_three_questions():
-    """Task 2.4：primary 缺立场时只问 missing_questions（模型已限 ≤3 个）。"""
-    node = make_position_gate_node()
-    job = _job(job_id="j1", position=None).model_copy(
-        update={"missing_questions": ["q1", "q2", "q3"]}
-    )
-    result = node.run({"content_jobs": items_payload([job])})
-    assert result.status == "needs_input"
-    assert result.output["questions"] == ["q1", "q2", "q3"]
-    assert [j["id"] for j in result.output["items"]] == ["j1"]
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_select_node(runner, runner, gates=QualityGates()),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    rec = store.find_node(run.id, "select", "default")
+    payload = json.loads(rec.output_json)
+    assert [j["id"] for j in payload["items"]] == ["j_reply"]
 
 
-def test_position_gate_emits_input_request():
-    node = make_position_gate_node()
-    job = _job(job_id="j1", position=None)
-    result = node.run(
-        {"content_jobs": items_payload([job]), "run_id": "r1"}
-    )
-    assert result.status == "needs_input"
-    req = result.output["input_request"]
-    assert req["type"] == "author_position_confirmation"
-    assert req["run_id"] == "r1"
-    assert req["job_id"] == "j1"
-    assert req["proposed_position"]["decision"] == ""
-    assert req["evidence_card_ids"] == ["ev1"]
+def test_select_node_falls_back_once_on_expand_failure(tmp_path):
+    """展开失败递补下一个主题（最多一次）。"""
+    first = _job(job_id="j1", candidate_id="t1", source_card_ids=("ev1",))
+    second = _job(job_id="j2", candidate_id="t1", source_card_ids=("ev1",))
 
+    class PartialFailRunner(FakeJobsRunner):
+        def run(self, prompt, output_model, **kw):
+            if output_model is ContentJob:
+                match = re.search(r'"id"\s*:\s*"(tp\d+)"', prompt)
+                if match and match.group(1) == "tp0":
+                    raise RuntimeError("boom")
+            return super().run(prompt, output_model, **kw)
 
-def test_position_gate_falls_back_once_after_reject(tmp_path):
-    """用户拒绝 primary 后，确定性选择下一个 job（一次递补）。"""
+    runner = PartialFailRunner([first, second])
     store = _store(tmp_path)
-    repo = ContentJobRepository(store)
-    rejected = _job(
-        job_id="A", candidate_id="t1", position=None, status=ContentJobStatus.DO_NOT_WRITE
-    ).model_copy(update={"reject_reason": "not now"})
-    fallback = _job(job_id="B", candidate_id="t1", position=None)
-    repo.upsert_job(rejected)
-    repo.upsert_job(fallback)
-
-    node = make_position_gate_node(jobs_repo=repo)
-    result = node.run({"content_jobs": items_payload([rejected, fallback])})
-    assert result.status == "needs_input"
-    assert [j["id"] for j in result.output["items"]] == ["B"]
-    assert result.output["must_ask"] == ["position_incomplete"]
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_select_node(runner, runner, gates=QualityGates()),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    rec = store.find_node(run.id, "select", "default")
+    payload = json.loads(rec.output_json)
+    assert [j["id"] for j in payload["items"]] == ["j2"]
+    assert any("expand failed" in w for w in payload.get("warnings", []))
 
 
-def test_position_gate_stops_after_one_fallback(tmp_path):
-    """primary 与一次递补都被拒后，不再提议第三个 job（避免无限循环）。"""
+def test_select_node_dedups_duplicate_job_ids(tmp_path):
+    """重复 job id（重复/重叠主题）在去重后只保留一个，避免 upsert 冲突与下游重复列表。"""
+    dupe1 = _job(job_id="dup", candidate_id="t1", source_card_ids=("ev1",))
+    dupe2 = _job(job_id="dup", candidate_id="t1", source_card_ids=("ev1",))
+    runner = FakeJobsRunner([dupe1, dupe2])
     store = _store(tmp_path)
-    repo = ContentJobRepository(store)
-    rejected_a = _job(
-        job_id="A", candidate_id="t1", position=None, status=ContentJobStatus.DO_NOT_WRITE
-    ).model_copy(update={"reject_reason": "not now"})
-    rejected_b = _job(
-        job_id="B", candidate_id="t1", position=None, status=ContentJobStatus.DO_NOT_WRITE
-    ).model_copy(update={"reject_reason": "still not now"})
-    active = _job(job_id="C", candidate_id=None, position=_position())
-    for job in (rejected_a, rejected_b, active):
-        repo.upsert_job(job)
-
-    node = make_position_gate_node(jobs_repo=repo)
-    result = node.run(
-        {"content_jobs": items_payload([rejected_a, rejected_b, active])}
-    )
-    assert result.status == "succeeded"
-    assert result.output["items"] == []
-    assert [d["job_id"] for d in result.output["deferred"]] == ["C"]
-
-
-def test_position_gate_model_do_not_write_does_not_exhaust_fallback():
-    """两个模型 DO_NOT_WRITE（无 reject_reason）不占用「递补一次」额度，剩余 READY 仍被提议。"""
-    node = make_position_gate_node()
-    dw1 = _job(
-        job_id="dw1", candidate_id=None, position=None, status=ContentJobStatus.DO_NOT_WRITE
-    )
-    dw2 = _job(
-        job_id="dw2", candidate_id=None, position=None, status=ContentJobStatus.DO_NOT_WRITE
-    )
-    active = _job(job_id="j1", candidate_id=None, position=None)
-    result = node.run({"content_jobs": items_payload([dw1, dw2, active])})
-    assert result.status == "needs_input"
-    assert [j["id"] for j in result.output["items"]] == ["j1"]
-
-
-def test_position_gate_evidence_ratio_breaks_tie():
-    """两 job 其余维度相同、仅证据占比不同：VERIFIED/SUPPORTED 占比高者当选 primary。"""
-    node = make_position_gate_node()
-    weak_card = _card().model_copy(
-        update={"id": "ev_weak", "confidence": ClaimConfidence.UNKNOWN}
-    )
-    strong_card = _card().model_copy(
-        update={"id": "ev_strong", "confidence": ClaimConfidence.VERIFIED}
-    )
-    weak = _job(
-        job_id="weak", candidate_id=None, source_card_ids=("ev_weak",),
-        position=None,
-    )
-    strong = _job(
-        job_id="strong", candidate_id=None, source_card_ids=("ev_strong",),
-        position=None,
-    )
-    # 故意把 weak 放前面：若忽略证据占比，稳定顺序会让 weak 胜出。
-    result = node.run({
-        "content_jobs": items_payload([weak, strong]),
-        "evidence_cards": items_payload([weak_card, strong_card]),
-    })
-    assert result.status == "needs_input"
-    assert [j["id"] for j in result.output["items"]] == ["strong"]
-
-
-def test_position_gate_defers_others_and_persists_proposed(tmp_path):
-    """其余 ready job 被 deferred 并以 PROPOSED 保存（不删除、不 do_not_write）。"""
-    store = _store(tmp_path)
-    repo = ContentJobRepository(store)
-    primary = _job(job_id="p", candidate_id="t1", position=_position())
-    secondary = _job(job_id="s", candidate_id=None, position=_position())
-    repo.upsert_job(primary)
-    repo.upsert_job(secondary)
-
-    node = make_position_gate_node(jobs_repo=repo)
-    result = node.run({"content_jobs": items_payload([primary, secondary])})
-    assert result.status == "succeeded"
-    assert [j["id"] for j in result.output["items"]] == ["p"]
-    assert [d["job_id"] for d in result.output["deferred"]] == ["s"]
-
-    # secondary 被保存为 proposed（not now，可恢复），而非 do_not_write。
-    saved = repo.get_job("s")
-    assert saved is not None
-    assert saved.status == ContentJobStatus.PROPOSED
-    # primary 状态不变。
-    assert repo.get_job("p").status == ContentJobStatus.READY
+    nodes = [
+        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
+        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
+        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
+        make_select_node(runner, runner, gates=QualityGates(max_daily_original_posts=2)),
+    ]
+    run = GraphRuntime(store, nodes).run()
+    assert run.state == "JOBS_SELECTED"
+    rec = store.find_node(run.id, "select", "default")
+    payload = json.loads(rec.output_json)
+    assert [j["id"] for j in payload["items"]] == ["dup"]
 
 
 def test_draft_node_caps_replies_and_originals(tmp_path):
@@ -1367,7 +1190,6 @@ def test_brief_uses_real_run_id(tmp_path):
         {
             "run_id": "abc-123",
             "drafts": items_payload([draft]),
-            "content_jobs": items_payload([job]),
             "evidence_cards": items_payload([_card()]),
             "ready_jobs": items_payload([job]),
             "candidates": items_payload([_candidate()]),
@@ -1418,115 +1240,26 @@ def test_critique_node_needs_input_via_safety_checker(tmp_path):
     assert any("safety" in w for w in result.warnings)
 
 
-def test_define_jobs_node_short_circuits_without_cards(tmp_path):
-    """Phase 0 回归：无证据卡时 define_jobs 节点不调用 runner，即使 match_results 非空。"""
+def test_select_node_short_circuits_without_cards(tmp_path):
+    """Phase 0 回归：无证据卡时 select 节点不调用 runner，即使 match_results 非空。"""
     runner = FakeJobsRunner([])  # run 被调用会返回空，但这里应当根本不被调用
     store = _store(tmp_path)
     nodes = [
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner, runner),
+        make_select_node(runner, runner, gates=QualityGates()),
     ]
     run = GraphRuntime(store, nodes).run()
-    assert run.state == "JOBS_DEFINED"
+    assert run.state == "JOBS_SELECTED"
     assert runner.calls == 0
-    rec = store.find_node(run.id, "define_jobs", "default")
+    rec = store.find_node(run.id, "select", "default")
     assert rec is not None
     assert json.loads(rec.output_json)["items"] == []
 
 
-def test_define_jobs_expands_in_parallel_and_preserves_order(tmp_path):
-    import threading
-    import time
-
-    # 串行实现会在第一个 expand 上阻塞至 barrier 超时（BrokenBarrierError）；并行后两个
-    # expand 同时到达 barrier。job1 故意慢于 job2，但输出顺序仍应等于 plan 顺序。
-    barrier = threading.Barrier(2, timeout=5)
-    jobs = [
-        _job(job_id="job1", candidate_id="t1", source_card_ids=("ev1",)),
-        _job(job_id="job2", candidate_id="t1", source_card_ids=("ev1",)),
-    ]
-
-    class BarrierJobsRunner(FakeJobsRunner):
-        def run(self, prompt, output_model, **kw):
-            if output_model is ContentJob:
-                barrier.wait()
-                match = re.search(r'"id"\s*:\s*"(tp\d+)"', prompt)
-                idx = int(match.group(1)[2:])
-                if idx == 0:
-                    time.sleep(0.05)
-                return self.jobs[idx]
-            return super().run(prompt, output_model, **kw)
-
-    runner = BarrierJobsRunner(jobs)
-    store = _store(tmp_path)
-    nodes = [
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner, runner),
-    ]
-    run = GraphRuntime(store, nodes).run()
-    assert run.state == "JOBS_DEFINED"
-    rec = store.find_node(run.id, "define_jobs", "default")
-    assert rec is not None
-    output_jobs = json.loads(rec.output_json)["items"]
-    assert [j["id"] for j in output_jobs] == ["job1", "job2"]
-
-
-def test_define_jobs_isolates_topic_expand_failure(tmp_path):
-    """单个 topic 展开失败（如 JSON 截断）被隔离，其余 topic 的合法 job 照常产出。"""
-    good = _job(job_id="j1", candidate_id="t1", source_card_ids=("ev1",))
-    bad = _job(job_id="j2", candidate_id="t1", source_card_ids=("ev1",))
-
-    class PartialFailRunner(FakeJobsRunner):
-        def run(self, prompt, output_model, **kw):
-            if output_model is ContentJob:
-                match = re.search(r'"id"\s*:\s*"(tp\d+)"', prompt)
-                if match and match.group(1) == "tp1":
-                    raise RuntimeError("boom")
-            return super().run(prompt, output_model, **kw)
-
-    runner = PartialFailRunner([good, bad])
-    store = _store(tmp_path)
-    nodes = [
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner, runner),
-    ]
-    run = GraphRuntime(store, nodes).run()
-    assert run.state == "JOBS_DEFINED"
-    rec = store.find_node(run.id, "define_jobs", "default")
-    assert rec is not None
-    payload = json.loads(rec.output_json)
-    assert [j["id"] for j in payload["items"]] == ["j1"]
-    assert any("expand failed" in w for w in payload.get("warnings", []))
-
-
-def test_define_jobs_dedups_duplicate_job_ids(tmp_path):
-    """重复 job id（重复/重叠主题）在去重后只保留一个，避免 upsert 冲突与下游重复列表。"""
-    dupe1 = _job(job_id="dup", candidate_id="t1", source_card_ids=("ev1",))
-    dupe2 = _job(job_id="dup", candidate_id="t1", source_card_ids=("ev1",))
-    runner = FakeJobsRunner([dupe1, dupe2])
-    store = _store(tmp_path)
-    nodes = [
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner, runner),
-    ]
-    run = GraphRuntime(store, nodes).run()
-    assert run.state == "JOBS_DEFINED"
-    rec = store.find_node(run.id, "define_jobs", "default")
-    assert rec is not None
-    payload = json.loads(rec.output_json)
-    assert [j["id"] for j in payload["items"]] == ["dup"]
-
-
 def test_original_flow_complete_position_produces_draft(tmp_path):
-    """Phase 0 回归：有证据卡 + 完整立场 → job 定义 → draft 产出 → 进入人工审核。"""
+    """Phase 0 回归：有证据卡 → select 选 job → draft 产出 → 进入人工审核。"""
     store = _store(tmp_path)
     repo = ContentJobRepository(store)
     repo.upsert_job(
@@ -1552,8 +1285,7 @@ def test_original_flow_complete_position_produces_draft(tmp_path):
         Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
         Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
         Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner, runner),  # 不传 repo，避免覆盖已确认的 job
-        make_position_gate_node(jobs_repo=repo),
+        make_select_node(runner, runner, gates=QualityGates()),
         make_draft_node(CodexRunner(), write_reply, write_original, QualityGates()),
         make_critique_node(
             CodexRunner(), rewrite, QualityGates(), checkers=[checker]
@@ -1567,5 +1299,6 @@ def test_original_flow_complete_position_produces_draft(tmp_path):
     assert draft_rec is not None
     assert "d1" in draft_rec.output_json
     assert "job1" in draft_rec.output_json
+
 
 

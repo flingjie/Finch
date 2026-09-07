@@ -14,7 +14,7 @@ def test_graph_node_build_returns_node():
     for name, expected_reads in {
         "recall": {"candidates", "evidence_cards"},
         "brief": {
-            "drafts", "content_jobs", "evidence_cards",
+            "drafts", "evidence_cards",
             "ready_jobs", "candidates", "match_results",
         },
     }.items():
