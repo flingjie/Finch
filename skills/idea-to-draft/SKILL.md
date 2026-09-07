@@ -2,7 +2,7 @@
 name: idea-to-draft
 description: >
   把已确认的 Idea（ContentJob）写成一篇中文原创草稿（Draft）。只依据 job 语境（读者问题 /
-  作者立场 / 核心主张 / scope）写正文，不搜索新来源、不绑定证据卡；草稿过 Critic（7 检查器，
+  作者立场 / 核心主张 / 边界）写正文，不搜索新来源、不绑定证据卡；草稿过 Critic（6 检查器，
   Safety 硬门禁）+ 有限 rewrite 后落库为 Draft + CriticReport。用于「把这个已确认的想法变成
   一篇可进入人工审核的草稿」类请求。
 ---
