@@ -5,14 +5,10 @@ import pytest
 from pydantic import ValidationError
 
 from finch.settings import (
-    AuthorAccountConfig,
-    DailyBudget,
-    DailyBudgetWeights,
     EngagementSettings,
     LLMNodeSettings,
     LLMSettings,
     QualityGates,
-    Settings,
     load_settings,
 )
 
@@ -40,14 +36,8 @@ def test_quality_gates_defaults_from_yaml():
     s = load_settings(Path("finch.example.yaml"))
     g = s.quality_gates
     assert isinstance(g, QualityGates)
-    assert g.max_daily_replies == 5
-    assert g.min_candidate_score == 0.65
-    assert g.min_evidence_score == 0.75
     assert g.min_quality_score == 0.75
-    assert g.min_discussability == 0.50
     assert g.max_rewrite_rounds == 2
-    assert g.match_top_k == 10
-    assert g.timing_default == 0.3
     assert s.twitter.high_value_authors == []
     assert s.twitter.blocked_authors == []
 
@@ -55,7 +45,7 @@ def test_quality_gates_defaults_from_yaml():
 def test_quality_gates_defaults_without_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     s = load_settings(tmp_path / "missing.yaml")
-    assert s.quality_gates.match_top_k == 10
+    assert s.quality_gates.min_quality_score == 0.75
     assert s.twitter.blocked_authors == []
 
 
@@ -106,38 +96,6 @@ def test_llm_node_settings_rejects_nonpositive_concurrency():
         LLMNodeSettings(max_concurrency=-1)
 
 
-def test_daily_budget_defaults():
-    s = load_settings(Path("finch.example.yaml"))
-    b = s.daily_budget
-    assert b.max_detail_fetches == 40
-    assert b.max_change_groups == 12
-    assert b.max_planning_events == 12
-    assert b.max_evidence_cards_for_planning == 36
-    assert b.max_estimated_prompt_bytes == 40000
-    assert b.age_bonus_max_days == 7
-    assert b.max_extract_retries == 3
-    w = b.sort_weights
-    assert isinstance(w, DailyBudgetWeights)
-    assert (w.core_source, w.churn, w.keyword) == (0.25, 0.20, 0.15)
-    assert (w.cross_module, w.novelty, w.age_bonus) == (0.10, 0.15, 0.15)
-
-
-def test_daily_budget_rejects_nonpositive():
-    with pytest.raises(ValidationError):
-        DailyBudget(max_change_groups=0)
-    with pytest.raises(ValidationError):
-        DailyBudget(max_extract_retries=0)
-
-
 def test_extraction_global_concurrency_default():
     s = load_settings(Path("finch.example.yaml"))
     assert s.extraction.global_max_concurrency == 4
-
-
-def test_settings_author_accounts_default_empty():
-    assert Settings().author_accounts == []
-
-
-def test_author_account_config_defaults():
-    cfg = AuthorAccountConfig(handle="flingjie")
-    assert cfg.platform == "x" and cfg.enabled is True and cfg.history_lookback_days == 90

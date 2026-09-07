@@ -3,8 +3,6 @@
 import json
 import os
 
-from finch.author.client import decode_author_post
-from finch.author.models import AuthorPost
 from finch.github.gh_client import _run
 from finch.opencli import run_opencli
 
@@ -129,8 +127,7 @@ def _raw_json(argv: list[str], timeout: float = 60.0) -> list[dict]:
     """执行 opencli 命令并返回原始 JSON 列表（不做 Tweet 模型转换）。
 
     保留原始字段：缺失字段不会被 Pydantic 默认值（如 ``likes=0``/``views=0``）
-    污染，``replies``/``reposts`` 也不会被丢弃。供 ``user_posts`` 直接解码为
-    AuthorPost 以守住「指标缺失 → None（绝不为 0）」的不变式。
+    污染。
     """
     _check_allowlist(argv)
     r = run_opencli(
@@ -223,12 +220,3 @@ class OpenCliClient:
             raise TwitterSourceUnavailable("whoami returned no data")
         t = tweets[0]
         return {"user_id": t.id, "handle": t.author}
-
-    def user_posts(self, handle: str, *, limit: int = 200) -> list[AuthorPost]:
-        """读取某用户自己发布的帖子（original/reply/quote）。"""
-        argv = [
-            "opencli", "twitter", "tweets", handle,
-            "--limit", str(limit), "-f", "json",
-        ]
-        raw = _raw_json(argv, timeout=60.0)
-        return [decode_author_post("x", handle, item) for item in raw]

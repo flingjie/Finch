@@ -32,7 +32,6 @@ def test_real_problem_yields_one_idea():
     assert len(ideas) == 1
     idea = ideas[0]
     assert idea.origin == "search"
-    assert idea.author_position.status == "proposed"
     assert "agent evals" in idea.core_point
     assert "broken" in idea.core_point
     assert idea.generator == IdeaGenerator(skill="search-to-idea", version="1.0.0")
@@ -117,7 +116,6 @@ def test_position_always_proposed():
     svc = _service()
     posts = [_post("Rate limiting on their API is a real problem for us.")]
     idea = svc.to_ideas(posts, topic="api")[0]
-    assert idea.author_position.status == "proposed"
     assert idea.author_position.decision
     assert idea.author_position.claim
 

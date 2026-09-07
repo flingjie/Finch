@@ -10,14 +10,12 @@ from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
     ContentJobStatus,
-    IntendedEffect,
 )
 from finch.content.models import DraftKind
 from finch.ideas.models import (
     IdeaBoundaries,
     IdeaCandidate,
     IdeaGenerator,
-    IdeaPosition,
     SourceRef,
 )
 from finch.ideas.service import IdeaService
@@ -42,11 +40,10 @@ def _candidate() -> IdeaCandidate:
         core_point=CORE_POINT,
         reader_problem="orchestrator was hard to rerun",
         why_worth_saying="failures can now be replayed",
-        author_position=IdeaPosition(
+        author_position=AuthorPosition(
             claim="failures can now be replayed",
             decision=CORE_POINT,
             tradeoff="orchestrator was hard to rerun",
-            status="proposed",
         ),
         source_refs=[
             SourceRef(type="commit", ref=COMMIT_URL, summary="feat: node-ize orchestrator")
@@ -173,11 +170,10 @@ def _search_candidate(topic: str = SEARCH_TOPIC) -> IdeaCandidate:
         core_point=f"{topic} 相关公开讨论暴露工程缺口：agent keeps failing",
         reader_problem="agent keeps failing on long context",
         why_worth_saying="公开讨论中出现的真实问题/缺口，值得写",
-        author_position=IdeaPosition(
+        author_position=AuthorPosition(
             claim=f"{topic} 相关公开讨论暴露真实工程缺口",
             decision="值得调研或回应这个缺口",
             tradeoff="不写则错失这个公共信号",
-            status="proposed",
         ),
         source_refs=[
             SourceRef(type="post", ref=SEARCH_POST_URL, summary="agent keeps failing")
@@ -324,11 +320,10 @@ def _make_candidate(core_point=CORE_POINT) -> IdeaCandidate:
         core_point=core_point,
         reader_problem="orchestrator was hard to rerun",
         why_worth_saying="failures can now be replayed",
-        author_position=IdeaPosition(
+        author_position=AuthorPosition(
             claim="failures can now be replayed",
             decision=core_point,
             tradeoff="orchestrator was hard to rerun",
-            status="proposed",
         ),
         source_refs=[
             SourceRef(type="commit", ref=COMMIT_URL, summary="feat: node-ize orchestrator")
@@ -344,10 +339,7 @@ def _manual_job(idea_id: str = "idea_manual000", status=ContentJobStatus.PROPOSE
         id=idea_id,
         source_card_ids=[],
         reader_problem="orchestrator was hard to rerun",
-        audience="",
-        intended_effect=IntendedEffect(understand=CORE_POINT),
         author_position=AuthorPosition(claim="claim", decision="decision", tradeoff="tradeoff"),
-        success_criteria=[],
         recommended_format=DraftKind.ORIGINAL,
         status=status,
         core_message=CORE_POINT,
@@ -404,8 +396,8 @@ def test_ideas_show_json_dumps_candidate(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["ideas", "show", job.id, "--json"])
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
-    assert payload["core_point"] == CORE_POINT
-    assert payload["author_position"]["status"] == "proposed"
+    assert payload["core_message"] == CORE_POINT
+    assert payload["author_position"]["decision"] == CORE_POINT
 
 
 def test_ideas_show_json_dumps_job_when_no_candidate(monkeypatch, tmp_path):

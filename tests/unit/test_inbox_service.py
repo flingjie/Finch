@@ -7,9 +7,6 @@ from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
     ContentJobStatus,
-    ContentScope,
-    IntendedEffect,
-    SuccessCriterion,
 )
 from finch.content.models import Draft, DraftKind
 from finch.engagement.models import (
@@ -35,15 +32,11 @@ def _job(candidate_id=None, decision="d", tradeoff="t", why_now="w", id="job_1")
         source_card_ids=["ev_1"],
         candidate_id=candidate_id,
         reader_problem="rp",
-        audience="aud",
-        intended_effect=IntendedEffect(understand="u"),
         author_position=AuthorPosition(claim="c", decision=decision, tradeoff=tradeoff),
-        success_criteria=[SuccessCriterion(id="s", description="d", measurement="human")],
         recommended_format=DraftKind.ORIGINAL,
         status=ContentJobStatus.CONFIRMED,
         core_message="core",
         why_now=why_now,
-        scope=ContentScope.BOUNDED_LESSON,
     )
 
 

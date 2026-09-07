@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from finch.content.jobs import ContentJob, ContentJobStatus, IntendedEffect
+from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.content.models import Draft, DraftKind
 from finch.inbox.models import DecisionAction, DecisionRecord
 from finch.learn.weekly import render_weekly, weekly_analysis
@@ -28,9 +28,8 @@ def _decision(store, job_id, draft_id, action, decided_at):
 def _seed_job_draft(store, job_id, draft_id):
     ContentJobRepository(store).upsert_job(
         ContentJob(
-            id=job_id, source_card_ids=[], reader_problem="rp", audience="a",
-            intended_effect=IntendedEffect(understand="u"), author_position=None,
-            success_criteria=[], recommended_format=DraftKind.ORIGINAL,
+            id=job_id, source_card_ids=[], reader_problem="rp",
+            author_position=None, recommended_format=DraftKind.ORIGINAL,
             status=ContentJobStatus.CONFIRMED,
         )
     )

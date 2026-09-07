@@ -14,34 +14,7 @@
 对外主张；INFERRED 必须先改写为带边界语言的陈述，UNKNOWN 不得进入草稿。
 """
 
-from finch.content.models import ClaimRef, Draft
-from finch.evidence.models import ClaimConfidence
-
-
-def bind_claim(
-    statement: str,
-    evidence_card_id: str,
-    confidence: ClaimConfidence,
-    *,
-    card_ids: set[str],
-) -> ClaimRef | None:
-    """仅当 claim 可对外发布时绑定为 ClaimRef。
-
-    门禁：evidence_card_id 非空、∈ card_ids、confidence.assertable。INFERRED 未带边界
-    语言、UNKNOWN 均非 assertable，因此不会被绑定。
-    """
-    # evidence_card_id 非空、∈ card_ids、confidence.assertable → ClaimRef；否则 None
-    if not evidence_card_id:
-        return None
-    if evidence_card_id not in card_ids:
-        return None
-    if not confidence.assertable:
-        return None
-    return ClaimRef(
-        statement=statement,
-        evidence_card_id=evidence_card_id,
-        confidence=confidence,
-    )
+from finch.content.models import Draft
 
 
 def validate_draft(draft: Draft, *, card_ids: set[str]) -> list[str]:

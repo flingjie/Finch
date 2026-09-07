@@ -14,7 +14,7 @@
   ``why_worth_saying`` ← ``result.statement``。
 - ``author_position``：``claim`` ← ``result.statement``（可验证的主张）、
   ``decision`` ← ``decision.statement``（主张的决策）、
-  ``tradeoff`` ← ``problem.statement``（被放弃的旧问题状态）；``status="proposed"``。
+  ``tradeoff`` ← ``problem.statement``（被放弃的旧问题状态）。
 - ``boundaries``：按置信度分桶，VERIFIED/SUPPORTED/USER_CONFIRMED → ``known``、
   INFERRED → ``inferred``、UNKNOWN → ``unknown``。
 
@@ -24,6 +24,7 @@
 
 import hashlib
 
+from finch.content.jobs import AuthorPosition
 from finch.evidence.extractor import Extractor, build_cards
 from finch.evidence.models import ClaimConfidence, EngineeringEvent
 from finch.evidence.safety import scan_cards
@@ -33,7 +34,6 @@ from finch.ideas.models import (
     IdeaBoundaries,
     IdeaCandidate,
     IdeaGenerator,
-    IdeaPosition,
     SourceRef,
 )
 
@@ -112,11 +112,10 @@ def _event_to_idea(
         core_point=core_point,
         reader_problem=event.problem.statement,
         why_worth_saying=event.result.statement,
-        author_position=IdeaPosition(
+        author_position=AuthorPosition(
             claim=event.result.statement,
             decision=event.decision.statement,
             tradeoff=event.problem.statement,
-            status="proposed",
         ),
         source_refs=source_refs,
         boundaries=_boundaries_from_event(event),

@@ -20,10 +20,9 @@ from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
     ContentJobStatus,
-    IntendedEffect,
 )
 from finch.content.models import DraftKind
-from finch.ideas.models import IdeaCandidate, IdeaPosition
+from finch.ideas.models import IdeaCandidate
 from finch.storage.repositories import ContentJobRepository
 
 # 稳定分隔符：ASCII unit separator，字段值几乎不可能包含该控制字符。
@@ -82,16 +81,7 @@ class IdeaService:
             id=f"idea_{fingerprint[:8]}",
             source_card_ids=[],
             reader_problem=idea.reader_problem,
-            audience="",
-            # IdeaCandidate 不携带完整 IntendedEffect 拆解，用核心主张作为 understand。
-            intended_effect=IntendedEffect(understand=idea.core_point),
-            author_position=AuthorPosition(
-                claim=idea.author_position.claim,
-                decision=idea.author_position.decision,
-                tradeoff=idea.author_position.tradeoff,
-                change_mind_if=None,
-            ),
-            success_criteria=[],
+            author_position=idea.author_position,
             recommended_format=_FORMAT_MAP[idea.recommended_format],
             status=ContentJobStatus.PROPOSED,
             core_message=idea.core_point,
@@ -101,13 +91,12 @@ class IdeaService:
             generator_name=idea.generator.skill,
             generator_version=idea.generator.version,
             content_fingerprint=fingerprint,
-            idea_candidate_json=idea.model_dump_json(),
         )
         self.jobs.upsert_job(job)
         return job
 
     def confirm_position(self, idea_id: str) -> ContentJob:
-        """PROPOSED → CONFIRMED；同步嵌入 JSON 的 ``author_position.status``。"""
+        """PROPOSED → CONFIRMED。"""
         job = self._get_job(idea_id)
         if job.status != ContentJobStatus.PROPOSED:
             raise ValueError(
@@ -115,45 +104,18 @@ class IdeaService:
                 "only proposed -> confirmed is legal"
             )
         job = job.model_copy(update={"status": ContentJobStatus.CONFIRMED})
-        if job.idea_candidate_json is not None:
-            candidate = IdeaCandidate.model_validate_json(job.idea_candidate_json)
-            candidate = candidate.model_copy(
-                update={
-                    "author_position": candidate.author_position.model_copy(
-                        update={"status": "confirmed"}
-                    )
-                }
-            )
-            job = job.model_copy(
-                update={"idea_candidate_json": candidate.model_dump_json()}
-            )
         self.jobs.upsert_job(job)
         return job
 
-    def revise_position(self, idea_id: str, position: IdeaPosition) -> ContentJob:
-        """更新立场（job 的 AuthorPosition 与嵌入 JSON 的 IdeaPosition），不改状态。"""
+    def revise_position(self, idea_id: str, position: AuthorPosition) -> ContentJob:
+        """更新立场（job 的 AuthorPosition），不改状态。"""
         job = self._get_job(idea_id)
         if job.status not in (ContentJobStatus.PROPOSED, ContentJobStatus.CONFIRMED):
             raise ValueError(
                 f"illegal transition: cannot revise position of idea {idea_id} "
                 f"in status {job.status.value}; revise is legal from proposed/confirmed"
             )
-        job = job.model_copy(
-            update={
-                "author_position": AuthorPosition(
-                    claim=position.claim,
-                    decision=position.decision,
-                    tradeoff=position.tradeoff,
-                    change_mind_if=None,
-                )
-            }
-        )
-        if job.idea_candidate_json is not None:
-            candidate = IdeaCandidate.model_validate_json(job.idea_candidate_json)
-            candidate = candidate.model_copy(update={"author_position": position})
-            job = job.model_copy(
-                update={"idea_candidate_json": candidate.model_dump_json()}
-            )
+        job = job.model_copy(update={"author_position": position})
         self.jobs.upsert_job(job)
         return job
 

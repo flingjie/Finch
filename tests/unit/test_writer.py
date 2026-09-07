@@ -4,14 +4,10 @@ from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
     ContentJobStatus,
-    ContentScope,
-    IntendedEffect,
-    SuccessCriterion,
 )
 from finch.content.models import ClaimRef, Draft, DraftKind
-from finch.content.writer import rewrite, write_original, write_reply
-from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
-from finch.twitter.models import DiscussionCandidate
+from finch.content.writer import rewrite
+from finch.evidence.models import ClaimConfidence, EvidenceCard
 
 
 class FakeRunner(CodexRunner):
@@ -35,174 +31,23 @@ def _good_draft():
                                              confidence=ClaimConfidence.VERIFIED)])
 
 
-def _match():
-    return MatchResult(candidate_id="t1", card_ids=["ev_1"],
-                       scores=JudgeScores(relevance=0.9, evidence_strength=0.9,
-                                          incremental_value=0.9, discussability=0.9),
-                       timing=1.0, relationship_value=0.5, score=0.9)
-
-
-def _candidate():
-    return DiscussionCandidate(id="t1", author_handle="u", text="t",
-                               url="https://x.com/u/status/1")
-
-
 def _job():
     return ContentJob(
         id="job_1",
         source_card_ids=["ev_1"],
         candidate_id="t1",
         reader_problem="readers don't know how to rate limit",
-        audience="backend engineers",
-        intended_effect=IntendedEffect(understand="token bucket rate limiting"),
         author_position=AuthorPosition(
             claim="use token bucket",
             decision="use token bucket",
             tradeoff="more memory",
             change_mind_if="if a library already covers it",
         ),
-        success_criteria=[
-            SuccessCriterion(id="c1", description="critic passes", measurement="critic")
-        ],
         recommended_format=DraftKind.REPLY,
         status=ContentJobStatus.CONFIRMED,
         core_message="use a token bucket for rate limiting",
         why_now="we hit rate limits this week",
-        scope=ContentScope.BUILD_LOG,
     )
-
-
-def test_write_reply_returns_draft():
-    r = FakeRunner(_good_draft())
-    d = write_reply(r, _match(), _candidate(), {"ev_1": _card()})
-    assert d is not None and d.id == "d"
-
-
-def test_write_reply_none_on_invalid_claim():
-    bad = _good_draft().model_copy(update={"claims": [
-        ClaimRef(statement="x", evidence_card_id="ev_999", confidence=ClaimConfidence.VERIFIED)]})
-    r = FakeRunner(bad)
-    assert write_reply(r, _match(), _candidate(), {"ev_1": _card()}) is None
-
-
-def test_write_reply_stamps_metadata():
-    # 模型返回的 Draft 缺 candidate_id —— write_reply 必须盖章，否则 reply 被误判为 original
-    unstamped = Draft(id="d", kind=DraftKind.REPLY, body="hi",
-                      claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
-                                       confidence=ClaimConfidence.VERIFIED)])
-    r = FakeRunner(unstamped)
-    d = write_reply(r, _match(), _candidate(), {"ev_1": _card()})
-    assert d is not None
-    assert d.candidate_id == "t1"
-    assert d.kind == DraftKind.REPLY
-    assert d.language == "en"
-
-
-def test_write_reply_job_path_stamps_metadata():
-    # match=None (job-based reply) must still stamp job id + position statement
-    unstamped = Draft(id="d", kind=DraftKind.REPLY, body="hi",
-                      claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
-                                       confidence=ClaimConfidence.VERIFIED)])
-    r = FakeRunner(unstamped)
-    d = write_reply(r, None, _candidate(), {"ev_1": _card()}, _job())
-    assert d is not None
-    assert d.candidate_id == "t1"
-    assert d.content_job_id == "job_1"
-    assert d.position_statement == "use token bucket"
-
-
-def test_write_reply_job_path_none_on_invalid_claim():
-    bad = _good_draft().model_copy(update={"claims": [
-        ClaimRef(statement="x", evidence_card_id="ev_999", confidence=ClaimConfidence.VERIFIED)]})
-    r = FakeRunner(bad)
-    assert write_reply(r, None, _candidate(), {"ev_1": _card()}, _job()) is None
-
-
-def test_write_reply_prompt_orders_instructions_before_candidate_data():
-    captured: list[str] = []
-
-    class CaptureRunner(CodexRunner):
-        def run(self, prompt, output_model, **kw):
-            captured.append(prompt)
-            return _good_draft()
-
-    write_reply(CaptureRunner(), _match(), _candidate(), {"ev_1": _card()})
-    prompt = captured[0]
-    assert "Instructions:" in prompt
-    assert "## Untrusted candidate data" in prompt
-    assert prompt.index("Instructions:") < prompt.index("## Untrusted candidate data")
-
-
-def test_write_reply_prompt_includes_job_context_and_candidate_fields():
-    captured: list[str] = []
-
-    class CaptureRunner(CodexRunner):
-        def run(self, prompt, output_model, **kw):
-            captured.append(prompt)
-            return _good_draft()
-
-    write_reply(CaptureRunner(), None, _candidate(), {"ev_1": _card()}, _job())
-    prompt = captured[0]
-    assert "use token bucket" in prompt
-    assert "more memory" in prompt
-    assert "use a token bucket for rate limiting" in prompt
-    assert "build_log" in prompt
-    assert "change_mind_if" in prompt
-    assert "author_handle: u" in prompt
-    assert "url: https://x.com/u/status/1" in prompt
-    assert "text: t" in prompt
-    assert "What this reply answers" in prompt
-    assert "Added value this reply provides" in prompt
-
-
-def test_write_original_returns_draft():
-    good = Draft(id="d", kind=DraftKind.ORIGINAL, candidate_id=None, language="zh",
-                 body="日记", claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
-                                               confidence=ClaimConfidence.VERIFIED)])
-    r = FakeRunner(good)
-    d = write_original(r, [_card()])
-    assert d is not None and d.id == "d" and d.kind == DraftKind.ORIGINAL
-
-
-def test_write_original_none_on_invalid_claim():
-    bad = Draft(id="d", kind=DraftKind.ORIGINAL, candidate_id=None, language="zh",
-                body="日记", claims=[ClaimRef(statement="x", evidence_card_id="ev_999",
-                                              confidence=ClaimConfidence.VERIFIED)])
-    r = FakeRunner(bad)
-    assert write_original(r, [_card()]) is None
-
-
-def test_write_original_stamps_metadata():
-    # 模型返回的 Draft 元数据错误 —— write_original 必须覆盖为 original/None/zh
-    wrong = Draft(id="d", kind=DraftKind.REPLY, candidate_id="t1", body="日记",
-                  claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
-                                   confidence=ClaimConfidence.VERIFIED)])
-    r = FakeRunner(wrong)
-    d = write_original(r, [_card()])
-    assert d is not None
-    assert d.kind == DraftKind.ORIGINAL
-    assert d.candidate_id is None
-    assert d.language == "zh"
-
-
-def test_write_original_prompt_includes_job_context():
-    captured: list[str] = []
-
-    class CaptureRunner(CodexRunner):
-        def run(self, prompt, output_model, **kw):
-            captured.append(prompt)
-            return Draft(id="d", kind=DraftKind.ORIGINAL, candidate_id=None, language="zh",
-                         body="日记", claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
-                                                       confidence=ClaimConfidence.VERIFIED)])
-
-    write_original(CaptureRunner(), [_card()], _job())
-    prompt = captured[0]
-    assert "use token bucket" in prompt
-    assert "more memory" in prompt
-    assert "use a token bucket for rate limiting" in prompt
-    assert "build_log" in prompt
-    assert "change_mind_if" in prompt
-    assert "Author's decision and intent" in prompt
 
 
 def _failed_check(
@@ -306,7 +151,7 @@ def test_rewrite_prompt_includes_job_context():
     prompt = captured[0]
     assert "use token bucket" in prompt
     assert "more memory" in prompt
-    assert "token bucket rate limiting" in prompt
+    assert "use a token bucket for rate limiting" in prompt
     assert "Author's decision and intent" in prompt
 
 
@@ -321,27 +166,6 @@ def test_rewrite_without_job_omits_job_context():
     rewrite(CaptureRunner(), _good_draft(), [_failed_check()], {"ev_1": _card()})
     prompt = captured[0]
     assert "Author's decision and intent" not in prompt
-
-
-def test_write_original_downgrades_model_user_confirmed():
-    # 模型不得自行产出 USER_CONFIRMED（Task 1.2）：writer 必须降级为 SUPPORTED。
-    draft = Draft(
-        id="d", kind=DraftKind.ORIGINAL, candidate_id=None, language="zh", body="日记",
-        claims=[ClaimRef(statement="x", evidence_card_id="ev_1",
-                         confidence=ClaimConfidence.USER_CONFIRMED)],
-    )
-    d = write_original(FakeRunner(draft), [_card()])
-    assert d is not None
-    assert d.claims[0].confidence == ClaimConfidence.SUPPORTED
-
-
-def test_write_reply_downgrades_model_user_confirmed():
-    draft = _good_draft().model_copy(update={"claims": [
-        ClaimRef(statement="x", evidence_card_id="ev_1",
-                 confidence=ClaimConfidence.USER_CONFIRMED)]})
-    d = write_reply(FakeRunner(draft), _match(), _candidate(), {"ev_1": _card()})
-    assert d is not None
-    assert d.claims[0].confidence == ClaimConfidence.SUPPORTED
 
 
 def test_rewrite_downgrades_model_user_confirmed():

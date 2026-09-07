@@ -68,40 +68,15 @@ class ExtractionSettings(BaseModel):
     max_group_prompt_bytes: int = Field(default=25000, ge=1)
 
 
-class DailyBudgetWeights(BaseModel):
-    """select_groups 的确定性排序权重（priority + age，和为 1）。"""
-
-    core_source: float = 0.25
-    churn: float = 0.20
-    keyword: float = 0.15
-    cross_module: float = 0.10
-    novelty: float = 0.15
-    age_bonus: float = 0.15
-
-
-class DailyBudget(BaseModel):
-    """每日深度处理预算（阶段 A：有界工作量）。"""
-
-    max_detail_fetches: int = Field(default=40, ge=1)
-    max_change_groups: int = Field(default=12, ge=1)
-    max_planning_events: int = Field(default=12, ge=1)
-    max_evidence_cards_for_planning: int = Field(default=36, ge=1)
-    max_estimated_prompt_bytes: int = Field(default=40000, ge=1)
-    age_bonus_max_days: int = Field(default=7, ge=1)
-    max_extract_retries: int = Field(default=3, ge=1)
-    sort_weights: DailyBudgetWeights = Field(default_factory=DailyBudgetWeights)
-
-
 class QualityGates(BaseModel):
-    max_daily_replies: int = 5
-    max_daily_original_posts: int = 1
-    min_candidate_score: float = 0.65
-    min_evidence_score: float = 0.75
+    """内容质量门禁：Critic 通过阈值 + 有限重写轮数。
+
+    ``min_quality_score`` 是 Critic 汇总分通过线；``max_rewrite_rounds`` 是
+    DraftService 定向重写的上限。
+    """
+
     min_quality_score: float = 0.75
-    min_discussability: float = 0.50
     max_rewrite_rounds: int = 1
-    match_top_k: int = 10
-    timing_default: float = 0.3
     llm_critique_mode: Literal["on_fail_or_gate", "always"] = "on_fail_or_gate"
 
 
@@ -117,15 +92,6 @@ class TwitterSettings(BaseModel):
     queries: list[dict] = Field(default_factory=list)
     high_value_authors: list[str] = Field(default_factory=list)
     blocked_authors: list[str] = Field(default_factory=list)
-
-
-class AuthorAccountConfig(BaseModel):
-    """作者账号配置（P0 自动关联发布）。"""
-
-    platform: str = "x"
-    handle: str = ""
-    enabled: bool = True
-    history_lookback_days: int = 90
 
 
 class ScoringWeights(BaseModel):
@@ -173,8 +139,6 @@ class Settings(BaseModel):
     interests: InterestsSettings = Field(default_factory=InterestsSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
-    daily_budget: DailyBudget = Field(default_factory=DailyBudget)
-    author_accounts: list[AuthorAccountConfig] = Field(default_factory=list)
 
 
 def load_settings(path: Path | None = None) -> Settings:

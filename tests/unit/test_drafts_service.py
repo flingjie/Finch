@@ -2,11 +2,10 @@
 
 import pytest
 
-from finch.content.checkers.actionability import _ActionabilityOutput
 from finch.content.checkers.decision import _DecisionOutput
 from finch.content.checkers.portability import _PortabilityOutput
 from finch.content.checkers.safety import _SafetyOutput
-from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus, IntendedEffect
+from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from finch.content.models import Draft, DraftKind
 from finch.drafts.service import DraftService, draft_generation_key
 
@@ -88,8 +87,6 @@ class FakeRunner:
             )
         if output_model is _PortabilityOutput:
             return _PortabilityOutput(generic_sentences=[])
-        if output_model is _ActionabilityOutput:
-            return _ActionabilityOutput(fulfills_effect=True, missing=[])
         if output_model is _SafetyOutput:
             return _SafetyOutput(
                 invented_personal_experience=self.safety[0],
@@ -104,15 +101,12 @@ def _idea(**overrides: object) -> ContentJob:
         source_card_ids=[],
         candidate_id=None,
         reader_problem="很多人只把 Graph 当可视化",
-        audience="",
-        intended_effect=IntendedEffect(understand="Graph 的价值是恢复与重放"),
         author_position=AuthorPosition(
             claim="Graph 主要价值是恢复与重放",
             decision="用可恢复性评价 Graph",
             tradeoff="需要持久化状态",
             change_mind_if=None,
         ),
-        success_criteria=[],
         recommended_format=DraftKind.ORIGINAL,
         status=ContentJobStatus.CONFIRMED,
         core_message="Graph 的价值是恢复与重放",

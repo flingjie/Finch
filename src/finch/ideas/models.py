@@ -15,18 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
-class IdeaPosition(BaseModel):
-    """作者立场：判断是否值得写，以及是否已被人工/指纹确认。
-
-    ``status`` 初始为 ``proposed``，经人工确认或命中已批准 fingerprint 后置为
-    ``confirmed``。
-    """
-
-    claim: str
-    decision: str
-    tradeoff: str
-    status: Literal["proposed", "confirmed"] = "proposed"
+from finch.content.jobs import AuthorPosition
 
 
 class SourceRef(BaseModel):
@@ -60,7 +49,7 @@ class IdeaCandidate(BaseModel):
     core_point: str
     reader_problem: str
     why_worth_saying: str
-    author_position: IdeaPosition
+    author_position: AuthorPosition
     source_refs: list[SourceRef]
     boundaries: IdeaBoundaries
     recommended_format: Literal["original", "reply", "thread"]

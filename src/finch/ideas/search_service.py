@@ -10,8 +10,7 @@
 - ``core_point`` ← ``话题 + 外部信号``（第三人口径，不写成作者亲历）；
 - ``reader_problem`` ← 外部帖子的原始问题表述（可追溯到 ``source_refs``）；
 - ``author_position``：``claim`` 是「公开讨论暴露真实缺口」这一可验证主张（帖子 URL 可查证）、
-  ``decision`` 是「值得调研/回应」的建议决策、``tradeoff`` 是「不写则错失公共信号」；
-  ``status="proposed"``。
+  ``decision`` 是「值得调研/回应」的建议决策、``tradeoff`` 是「不写则错失公共信号」。
 - ``boundaries``：外部信号未经作者一手验证 → 全部归入 ``inferred``（``known``/``unknown`` 为空）。
 
 本模块是纯领域逻辑：不访问 DB、不调用 opencli、不做重试。搜索与落库由 CLI 层完成，
@@ -24,11 +23,11 @@
 import hashlib
 import re
 
+from finch.content.jobs import AuthorPosition
 from finch.ideas.models import (
     IdeaBoundaries,
     IdeaCandidate,
     IdeaGenerator,
-    IdeaPosition,
     SourceRef,
 )
 from finch.twitter.models import Tweet
@@ -115,11 +114,10 @@ def _idea_for(post: Tweet, signal: str, topic: str) -> IdeaCandidate:
         core_point=_core_point(topic, neutral),
         reader_problem=neutral,
         why_worth_saying="公开讨论中出现的真实问题/缺口，值得写",
-        author_position=IdeaPosition(
+        author_position=AuthorPosition(
             claim=f"{topic} 相关公开讨论暴露真实工程缺口",
             decision="值得调研或回应这个缺口",
             tradeoff="不写则错失这个公共信号",
-            status="proposed",
         ),
         source_refs=[SourceRef(type="post", ref=post.url, summary=signal)],
         boundaries=IdeaBoundaries(known=[], inferred=[neutral], unknown=[]),

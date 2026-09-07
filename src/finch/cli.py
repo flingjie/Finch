@@ -10,6 +10,7 @@ import yaml
 
 from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
+from .content.jobs import AuthorPosition
 from .content.voice import (
     ApprovedExample,
     RejectedExample,
@@ -17,7 +18,6 @@ from .content.voice import (
     save_voice_profile,
 )
 from .content.writer import rewrite_with_instruction
-from .dev.cli import dev_app
 from .drafts.service import DraftService
 from .engagement.metrics import (
     compute_metrics,
@@ -29,7 +29,6 @@ from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient
 from .ideas.commit_service import CommitService
-from .ideas.models import IdeaPosition
 from .ideas.search_service import SearchService
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
@@ -65,8 +64,6 @@ app.add_typer(twitter_app, name="twitter")
 
 voice_app = typer.Typer(help="Manage the author voice profile (local, no auto-publish)")
 app.add_typer(voice_app, name="voice")
-
-app.add_typer(dev_app, name="dev")
 
 ideas_app = typer.Typer(help="Idea 候选流（commit/search 提炼 + 状态转换）")
 app.add_typer(ideas_app, name="ideas")
@@ -254,7 +251,7 @@ def ideas_show(
     idea_id: str = typer.Argument(..., help="idea id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """展示单个 idea 候选（--json 输出 ContentJob 或嵌入的 IdeaCandidate）。"""
+    """展示单个 idea 候选（--json 输出完整 ContentJob）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -263,10 +260,7 @@ def ideas_show(
         typer.echo(f"idea not found: {idea_id}")
         raise typer.Exit(code=1)
     if as_json:
-        if job.idea_candidate_json is not None:
-            typer.echo(job.idea_candidate_json)
-        else:
-            typer.echo(job.model_dump_json(indent=2))
+        typer.echo(job.model_dump_json(indent=2))
     else:
         typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
 
@@ -297,15 +291,15 @@ def ideas_confirm(
 @ideas_app.command("revise-position")
 def ideas_revise_position(
     idea_id: str = typer.Argument(..., help="idea id"),
-    position_file: str = typer.Option(..., "--file", help="IdeaPosition YAML 文件路径"),
+    position_file: str = typer.Option(..., "--file", help="AuthorPosition YAML 文件路径"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """从 YAML 读取 IdeaPosition 并更新立场（不改状态）。"""
+    """从 YAML 读取 AuthorPosition 并更新立场（不改状态）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
     try:
-        position = IdeaPosition.model_validate(
+        position = AuthorPosition.model_validate(
             yaml.safe_load(Path(position_file).read_text())
         )
     except (OSError, yaml.YAMLError, ValueError) as exc:

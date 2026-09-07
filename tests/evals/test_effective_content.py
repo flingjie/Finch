@@ -22,8 +22,6 @@ from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
     ContentJobStatus,
-    IntendedEffect,
-    SuccessCriterion,
 )
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard
@@ -67,7 +65,6 @@ _PASS_OUTPUTS = {
     "_PortabilityOutput": {"generic_sentences": []},
     "_VoiceOutput": {"matches_voice": True, "non_author_sentences": []},
     "_StructureOutput": {"confirmed_problems": []},
-    "_ActionabilityOutput": {"fulfills_effect": True, "missing": []},
     "_SafetyOutput": {"invented_personal_experience": False, "unsupported_metric": False},
 }
 
@@ -136,14 +133,10 @@ def _job(
         source_card_ids=list(source_card_ids),
         candidate_id="t1",
         reader_problem="readers don't know how to rate limit",
-        audience="backend engineers",
-        intended_effect=IntendedEffect(understand="token bucket rate limiting"),
         author_position=position,
-        success_criteria=[
-            SuccessCriterion(id="c1", description="critic passes", measurement="critic")
-        ],
         recommended_format=DraftKind.REPLY,
         status=status,
+        core_message="token bucket rate limiting",
     )
 
 

@@ -18,7 +18,7 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (typer sub-apps / commands): `finch ideas ...` (commit / search / list / show / confirm / revise-position / skip), `finch drafts ...` (create / show / revise), `finch next`, `finch decide <id> --action accept|skip|revise`, `finch draft "<text>"` (alias `finch idea`), `finch learn <draft_id>`, `finch weekly`, `finch voice ...`, `finch author sync`, `finch github reflect`, `finch twitter ...`, `finch init`, `finch diagnose`, `finch dev ...`.
+CLI surface (typer sub-apps / commands): `finch ideas ...` (commit / search / list / show / confirm / revise-position / skip), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch engagement ...` (list / show / approve / reject / edit / metrics), `finch weekly`, `finch voice ...` (show / approve-example / reject-example), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init`, `finch diagnose`.
 
 ## Architecture
 
@@ -35,24 +35,24 @@ src/finch/
   ideas/        IdeaService（ContentJob 状态机：PROPOSED→CONFIRMED→DRAFTED，或→SKIPPED）、
                 CommitService（commit→IdeaCandidate）、SearchService（帖子→IdeaCandidate）
   drafts/       DraftService（已确认 idea → Draft + CriticReport，幂等，不自动发布）
-  idea/         finch draft/idea 的纯函数：assess_idea / write_idea / run_idea_critic
+  idea/         finch drafts 复用的纯函数：rewrite_idea / idea_checker_suite（去掉 EvidenceChecker）
   content/      ContentJob、writer、critic 检查器、voice profile
-  inbox/        next / decide 单一决策点（原创 + 互动轨道投影，InboxDecisionService）
+  inbox/        原创 + 互动轨道的投影与决策（InboxDecisionService，供 review 命令）
   learn/        FeedbackService + weekly 周复盘
-  evidence/     Commit → EngineeringEvent → EvidenceCard extraction/judging/scoring
+  evidence/     Commit → EngineeringEvent → EvidenceCard 提取 + 安全扫描（scan_cards）
   github/       gh adapter (read-only): commit/PR/issue reading, repo discovery
   twitter/      opencli adapter (read-only): search/thread/bookmarks
   engagement/   engagement 轨道库（models 供 inbox 投影；search/scoring/proposals/guard/evidence_upgrade/metrics）
   storage/      SQLite via SQLModel: Store + repositories (payload_json pattern)
   settings.py   finch.yaml + env loading (Pydantic)
-  cli.py        typer app (ideas/drafts/next/decide/draft/learn/weekly/voice/author/github/twitter/init/diagnose/dev)
+  cli.py        typer app (ideas/drafts/review/engagement/weekly/voice/github/twitter/init/diagnose)
 ```
 
-Config lives in `finch.yaml` (repositories, repository_discovery, twitter, quality_gates, paths, engagement, interests, llm, extraction, daily_budget, author_accounts). Prompts live in `prompts/`.
+Config lives in `finch.yaml` (repositories, repository_discovery, twitter, quality_gates, paths, engagement, interests, llm, extraction). Prompts live in `prompts/`.
 
 ## Engagement track (library, not daily-orchestrated)
 
-The engagement module (`engagement/`) still exists as a library: search → prefilter → deterministic 5-dim scoring → ranked proposals → guarded execution → feedback → conversation evidence → verified upgrade to personal evidence. Its `InteractionCandidate`/`ConversationEvidence` models feed the inbox (`finch next` / `finch decide`). The previous daily dual-track orchestration (`run_daily` / `run_dual_track`) has been removed.
+The engagement module (`engagement/`) still exists as a library: search → prefilter → deterministic 5-dim scoring → ranked proposals → guarded execution → feedback → conversation evidence → verified upgrade to personal evidence. Its `InteractionCandidate`/`ConversationEvidence` models feed the inbox (`finch review` / `finch engagement`). The previous daily dual-track orchestration (`run_daily` / `run_dual_track`) has been removed.
 
 Pipeline files: `models.py` (domain types) → `search.py` (PostSearchProvider: X + Reddit stub) → `scoring.py` (weighted_total is the *only* place `total` is computed; the LLM never decides it) → `proposals.py` (choose_action + bounded drafts) → `guard.py` (execution precondition check) → `evidence_upgrade.py` (conversation→personal gate) → `metrics.py` (quality-first metrics).
 

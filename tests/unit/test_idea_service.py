@@ -1,7 +1,7 @@
 """Unit tests for the idea service (critic suite + rewrite)."""
 
 from finch.content.checkers.base import CheckResult
-from finch.content.jobs import ContentJob, ContentJobStatus, IntendedEffect
+from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.content.models import Draft, DraftKind
 from finch.idea.models import RewriteIdeaOutput
 from finch.idea.service import idea_checker_suite, rewrite_idea
@@ -19,9 +19,8 @@ class FakeRunner:
 
 def _job():
     return ContentJob(
-        id="idea_abc", source_card_ids=[], reader_problem="rp", audience="a",
-        intended_effect=IntendedEffect(understand="u"), author_position=None,
-        success_criteria=[], recommended_format=DraftKind.ORIGINAL,
+        id="idea_abc", source_card_ids=[], reader_problem="rp",
+        author_position=None, recommended_format=DraftKind.ORIGINAL,
         status=ContentJobStatus.CONFIRMED,
     )
 
@@ -37,7 +36,7 @@ def test_idea_checker_suite_drops_evidence():
     suite = idea_checker_suite(runner=None)
     names = [c.name for c in suite]
     assert "evidence" not in names
-    assert len(suite) == 7
+    assert len(suite) == 6
 
 
 def test_rewrite_idea_keeps_draft_identity_updates_body():

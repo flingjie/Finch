@@ -1,1 +1,1 @@
-# 占位模块：将在后续 Phase 实现。
+"""证据域：Commit → EngineeringEvent → EvidenceCard 提取、安全扫描与判断。"""

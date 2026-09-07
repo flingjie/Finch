@@ -2,7 +2,7 @@
 
 把已确认的 ``ContentJob``（idea 候选）生成统一 ``Draft``：加载 job → ``require_confirmed``
 语义 → ``draft_generation_key`` 幂等命中 → 生成正文（只依据 job 语境，不搜索新来源、
-不绑定证据卡）→ Critic（7 检查器，Safety 硬门禁）→ 有限 rewrite → 落库 ``Draft`` +
+不绑定证据卡）→ Critic（6 检查器，Safety 硬门禁）→ 有限 rewrite → 落库 ``Draft`` +
 ``CriticReport``。
 
 本模块是纯领域服务：只依赖注入的仓储与 runner，不直接访问 DB、不做自动重试、
@@ -106,7 +106,7 @@ class DraftService:
         """从已确认 idea 生成 Draft（幂等）：未确认抛 ValueError，命中已有 Draft 直接返回。
 
         生成正文只依据 job 语境（``write_original_from_job``，不搜索新来源、不绑定证据卡）；
-        Critic 用 7 检查器套件（去掉 EvidenceChecker），有限 rewrite 至多
+        Critic 用 6 检查器套件（去掉 EvidenceChecker），有限 rewrite 至多
         ``max_rewrite_rounds`` 轮。``pass`` 或 rewrite 用尽 → 落库并返回最终 Draft；
         ``reject``（hard_fail）/``needs_input`` → 丢弃（抛 ValueError，fail-closed）。
         """

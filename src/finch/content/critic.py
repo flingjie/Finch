@@ -12,7 +12,6 @@ from typing import cast
 from pydantic import BaseModel, Field
 
 from finch.codex.runner import CodexRunner
-from finch.content.checkers.actionability import ActionabilityChecker
 from finch.content.checkers.aggregate import aggregate_checks
 from finch.content.checkers.base import CheckContext, Checker, CheckResult
 from finch.content.checkers.decision import DecisionChecker
@@ -91,7 +90,7 @@ def default_checker_suite(
     runner: StructuredInferenceRunner | None,
     voice_profile: VoiceProfile | None = None,
 ) -> list[Checker]:
-    """Critic Suite 默认检查器套件（Task 6）：现有 4 个 + 新增 4 个 = 8 个。
+    """Critic Suite 默认检查器套件：7 个检查器。
 
     顺序即执行顺序；VoiceChecker 需要 VoiceProfile（默认空画像）。
     """
@@ -103,7 +102,6 @@ def default_checker_suite(
         PortabilityChecker(runner),
         VoiceChecker(runner, profile),
         StructureChecker(runner),
-        ActionabilityChecker(runner),
         SafetyChecker(runner),
     ]
 

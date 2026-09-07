@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 
 from finch import cli
 from finch.cli import app
-from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus, IntendedEffect
+from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from finch.content.models import Draft, DraftKind
 from finch.engagement.models import (
     ConversationScore,
@@ -40,14 +40,11 @@ def _job(job_id: str = "job_1") -> ContentJob:
         id=job_id,
         source_card_ids=[],
         reader_problem="orchestrator was hard to rerun",
-        audience="backend engineers",
-        intended_effect=IntendedEffect(understand="failures can be replayed"),
         author_position=AuthorPosition(
             claim="failures can be replayed",
             decision="deterministic graphs win",
             tradeoff="orchestrator was hard to rerun",
         ),
-        success_criteria=[],
         recommended_format=DraftKind.ORIGINAL,
         status=ContentJobStatus.DRAFTED,
         core_message="deterministic graphs",

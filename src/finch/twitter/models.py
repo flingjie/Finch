@@ -1,13 +1,9 @@
 """Twitter 数据模型（spec 5.3 / 7.3）"""
 
-from datetime import UTC, datetime
-from typing import Any, Literal
+from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
-
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
 
 
 class QuotedTweet(BaseModel):
@@ -61,20 +57,6 @@ class Tweet(BaseModel):
             return None
 
 
-class DiscussionCandidate(BaseModel):
-    """规范化后的讨论候选（spec 7.3）."""
-
-    id: str
-    source: Literal["twitter"] = "twitter"
-    author_handle: str
-    text: str
-    url: str
-    published_at: datetime | None = None
-    metrics: dict = Field(default_factory=dict)
-    query_id: str | None = None
-    captured_at: datetime = Field(default_factory=_utcnow)
-
-
 class TwitterError(RuntimeError):
     """Twitter 调用失败基类."""
 
@@ -104,16 +86,3 @@ class TwitterCommandBlocked(TwitterError):
 
     def __init__(self, message: str = "Twitter write command blocked") -> None:
         super().__init__(message, "COMMAND_BLOCKED")
-
-
-def to_candidate(tweet: Tweet, *, query_id: str | None = None) -> DiscussionCandidate:
-    """将原始 Tweet 转换为内部 DiscussionCandidate."""
-    return DiscussionCandidate(
-        id=tweet.id,
-        author_handle=tweet.author,
-        text=tweet.text,
-        url=tweet.url,
-        published_at=tweet.published_at(),
-        metrics={"likes": tweet.likes, "views": tweet.views},
-        query_id=query_id,
-    )

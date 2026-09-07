@@ -89,7 +89,6 @@ def test_clear_decision_yields_one_idea():
     assert len(ideas) == 1
     idea = ideas[0]
     assert idea.origin == "commit"
-    assert idea.author_position.status == "proposed"
     assert idea.core_point == "make the orchestrator a deterministic graph"
     assert idea.reader_problem == "orchestrator was hard to rerun"
     assert idea.why_worth_saying == "failures can now be replayed"
@@ -141,7 +140,6 @@ def test_inferred_decision_position_is_proposed():
     assert idea.author_position.claim == "failures can now be replayed"
     assert idea.author_position.decision == "make the orchestrator a deterministic graph"
     assert idea.author_position.tradeoff == "orchestrator was hard to rerun"
-    assert idea.author_position.status == "proposed"
 
 
 # ---- 置信度 → boundaries 映射 ----

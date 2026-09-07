@@ -1,4 +1,4 @@
-from finch.content.models import ClaimRef, Draft, DraftKind, DraftWarning
+from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence
 
 
@@ -44,11 +44,3 @@ def test_draft_run_id_defaults_empty():
     draft = Draft(id="d1", kind=DraftKind.ORIGINAL, body="hi")
     assert draft.run_id == ""
     assert draft.content_job_id is None
-
-
-def test_draft_warning_binds_to_draft():
-    """Task 3.4：DraftWarning 把警告归属到具体草稿，而非全局列表。"""
-    w = DraftWarning(draft_id="d1", checker="evidence", message="unsupported claim")
-    assert w.draft_id == "d1"
-    assert w.checker == "evidence"
-    assert w.message == "unsupported claim"

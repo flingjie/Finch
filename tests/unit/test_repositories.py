@@ -165,7 +165,7 @@ def test_draft_repository_list_by_job(tmp_path):
 
 
 def test_contentjob_find_by_generation_key(tmp_path):
-    from finch.content.jobs import ContentJob, ContentJobStatus, IntendedEffect
+    from finch.content.jobs import ContentJob, ContentJobStatus
     from finch.content.models import DraftKind
     from finch.storage.repositories import ContentJobRepository
 
@@ -177,10 +177,7 @@ def test_contentjob_find_by_generation_key(tmp_path):
         source_card_ids=["card_1"],
         candidate_id=None,
         reader_problem="Problem",
-        audience="Engineers",
-        intended_effect=IntendedEffect(understand="Solution"),
         author_position=None,
-        success_criteria=[],
         recommended_format=DraftKind.REPLY,
         status=ContentJobStatus.PROPOSED,
         origin="commit",

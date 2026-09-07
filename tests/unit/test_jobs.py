@@ -1,55 +1,13 @@
-"""Tests for ContentJob models and repositories (Spec §8)."""
+"""Tests for ContentJob models and repositories (idea 候选流实体)."""
 
-from finch.codex.runner import CodexRunner
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
     ContentJobStatus,
-    ContentScope,
-    IntendedEffect,
-    PlanTopicsOutput,
-    SuccessCriterion,
-    TopicProposal,
-    _render_prompt,
-    expand_content_job,
-    plan_content_topics,
-    select_planning_evidence,
 )
 from finch.content.models import DraftKind
-from finch.evidence.models import (
-    ClaimConfidence,
-    EvidenceCard,
-    JudgeScores,
-    MatchResult,
-)
-from finch.settings import DailyBudget
 from finch.storage.database import Store
 from finch.storage.repositories import ContentJobRepository
-from finch.twitter.models import DiscussionCandidate
-
-
-class TestIntendedEffect:
-    """Test IntendedEffect model."""
-
-    def test_basic_intended_effect(self):
-        effect = IntendedEffect(
-            understand="Connection pooling reduces latency",
-            believe=None,
-            action=None,
-        )
-        assert effect.understand == "Connection pooling reduces latency"
-        assert effect.believe is None
-        assert effect.action is None
-
-    def test_intended_effect_with_all_fields(self):
-        effect = IntendedEffect(
-            understand="What connection pooling is",
-            believe="It's worth the complexity",
-            action="Configure pool size based on load",
-        )
-        assert effect.understand == "What connection pooling is"
-        assert effect.believe == "It's worth the complexity"
-        assert effect.action == "Configure pool size based on load"
 
 
 class TestAuthorPosition:
@@ -73,30 +31,6 @@ class TestAuthorPosition:
         assert pos.change_mind_if is None
 
 
-class TestSuccessCriterion:
-    """Test SuccessCriterion model."""
-
-    def test_success_criterion_all_measurement_types(self):
-        c1 = SuccessCriterion(
-            id="crit_1",
-            description="Reader can explain the tradeoff",
-            measurement="critic",
-        )
-        c2 = SuccessCriterion(
-            id="crit_2",
-            description="Reader implements the pattern",
-            measurement="human",
-        )
-        c3 = SuccessCriterion(
-            id="crit_3",
-            description="System throughput increases by 10%",
-            measurement="outcome",
-        )
-        assert c1.measurement == "critic"
-        assert c2.measurement == "human"
-        assert c3.measurement == "outcome"
-
-
 class TestContentJob:
     """Test ContentJob model."""
 
@@ -107,31 +41,19 @@ class TestContentJob:
         assert ContentJobStatus.DRAFTED.value == "drafted"
         assert ContentJobStatus.SKIPPED.value == "skipped"
 
-    def test_content_scope_enum_values(self):
-        """Test ContentScope exposes the four scope values."""
-        assert ContentScope.GENERAL.value == "general"
-        assert ContentScope.BOUNDED_LESSON.value == "bounded_lesson"
-        assert ContentScope.BUILD_LOG.value == "build_log"
-        assert ContentScope.REPLY.value == "reply"
-
-    def test_content_job_scope_defaults(self):
-        """Test the new additive fields default to their minimal values."""
+    def test_content_job_core_defaults(self):
+        """Test the additive fields default to their minimal values."""
         job = ContentJob(
             id="job_1",
             source_card_ids=["card_1"],
             candidate_id=None,
             reader_problem="Problem",
-            audience="Engineers",
-            intended_effect=IntendedEffect(understand="Solution"),
             author_position=None,
-            success_criteria=[],
             recommended_format=DraftKind.REPLY,
             status=ContentJobStatus.PROPOSED,
         )
         assert job.core_message == ""
         assert job.why_now == ""
-        assert job.scope == ContentScope.BOUNDED_LESSON
-        assert job.audience_evidence is None
 
     def test_basic_content_job(self):
         job = ContentJob(
@@ -139,14 +61,7 @@ class TestContentJob:
             source_card_ids=["card_1", "card_2"],
             candidate_id=None,
             reader_problem="Readers don't know how to configure connection pooling",
-            audience="Backend engineers",
-            intended_effect=IntendedEffect(
-                understand="How to configure pool size",
-                believe=None,
-                action=None,
-            ),
             author_position=None,
-            success_criteria=[],
             recommended_format=DraftKind.REPLY,
             status=ContentJobStatus.PROPOSED,
         )
@@ -159,84 +74,16 @@ class TestContentJob:
             source_card_ids=["card_1"],
             candidate_id="cand_1",
             reader_problem="Readers face latency issues",
-            audience="SREs",
-            intended_effect=IntendedEffect(
-                understand="Connection pooling works",
-                believe=None,
-                action=None,
-            ),
             author_position=AuthorPosition(
                 claim="Pooling helps",
                 decision="Use 10 connections",
                 tradeoff="More memory",
             ),
-            success_criteria=[
-                SuccessCriterion(
-                    id="c1", description="Got it", measurement="critic"
-                )
-            ],
             recommended_format=DraftKind.ORIGINAL,
             status=ContentJobStatus.CONFIRMED,
         )
         assert job.author_position is not None
         assert job.author_position.decision == "Use 10 connections"
-
-    def test_validate_source_cards_subset_check(self):
-        """Test that source_card_ids must be a subset of available_card_ids."""
-        job = ContentJob(
-            id="job_1",
-            source_card_ids=["card_a", "card_b"],
-            candidate_id=None,
-            reader_problem="Problem",
-            audience="Engineers",
-            intended_effect=IntendedEffect(understand="Solution"),
-            author_position=None,
-            success_criteria=[],
-            recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.CONFIRMED,
-        )
-        # Valid: all source cards exist
-        assert job.validate_source_cards(["card_a", "card_b", "card_c"]) is True
-        # Invalid: card_d not in available
-        assert job.validate_source_cards(["card_a", "card_x"]) is False
-        # Valid: exact match
-        assert job.validate_source_cards(["card_a", "card_b"]) is True
-        # Invalid: source has more than available
-        assert job.validate_source_cards(["card_a"]) is False
-
-    def test_missing_questions_default_factory(self):
-        """Test missing_questions uses empty list by default."""
-        job = ContentJob(
-            id="job_1",
-            source_card_ids=["card_1"],
-            candidate_id=None,
-            reader_problem="Problem",
-            audience="Engineers",
-            intended_effect=IntendedEffect(understand="Solution"),
-            author_position=None,
-            success_criteria=[],
-            recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.CONFIRMED,
-        )
-        assert job.missing_questions == []
-
-    def test_missing_questions_max_length(self):
-        """Test that missing_questions can have at most 3 entries."""
-        # This should work - exactly 3 items
-        job = ContentJob(
-            id="job_1",
-            source_card_ids=["card_1"],
-            candidate_id=None,
-            reader_problem="Problem",
-            audience="Engineers",
-            intended_effect=IntendedEffect(understand="Solution"),
-            author_position=None,
-            success_criteria=[],
-            recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.CONFIRMED,
-            missing_questions=["q1", "q2", "q3"],
-        )
-        assert len(job.missing_questions) == 3
 
 
 class TestContentJobRepository:
@@ -253,10 +100,7 @@ class TestContentJobRepository:
             source_card_ids=["card_1"],
             candidate_id=None,
             reader_problem="Problem",
-            audience="Engineers",
-            intended_effect=IntendedEffect(understand="Solution"),
             author_position=None,
-            success_criteria=[],
             recommended_format=DraftKind.REPLY,
             status=ContentJobStatus.CONFIRMED,
         )
@@ -277,10 +121,7 @@ class TestContentJobRepository:
                 source_card_ids=["card_1"],
                 candidate_id=None,
                 reader_problem=f"Problem {i}",
-                audience="Engineers",
-                intended_effect=IntendedEffect(understand="Solution"),
                 author_position=None,
-                success_criteria=[],
                 recommended_format=DraftKind.REPLY,
                 status=ContentJobStatus.CONFIRMED,
             )
@@ -305,10 +146,7 @@ class TestContentJobRepository:
             source_card_ids=["card_1"],
             candidate_id=None,
             reader_problem="Problem v1",
-            audience="Engineers",
-            intended_effect=IntendedEffect(understand="Solution"),
             author_position=None,
-            success_criteria=[],
             recommended_format=DraftKind.REPLY,
             status=ContentJobStatus.CONFIRMED,
         )
@@ -332,10 +170,7 @@ class TestContentJobRepository:
             source_card_ids=["card_1"],
             candidate_id=None,
             reader_problem="Problem 1",
-            audience="Engineers",
-            intended_effect=IntendedEffect(understand="Solution 1"),
             author_position=None,
-            success_criteria=[],
             recommended_format=DraftKind.REPLY,
             status=ContentJobStatus.CONFIRMED,
         )
@@ -344,10 +179,7 @@ class TestContentJobRepository:
             source_card_ids=["card_2"],
             candidate_id=None,
             reader_problem="Problem 2",
-            audience="SREs",
-            intended_effect=IntendedEffect(understand="Solution 2"),
             author_position=None,
-            success_criteria=[],
             recommended_format=DraftKind.ORIGINAL,
             status=ContentJobStatus.SKIPPED,
         )
@@ -367,148 +199,3 @@ class TestContentJobRepository:
         repo = ContentJobRepository(store)
 
         assert repo.get_job("nonexistent") is None
-
-
-class _ExplodingRunner(CodexRunner):
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def run(self, prompt, output_model, **kwargs):
-        self.calls += 1
-        raise AssertionError("runner must not be called when there are no evidence cards")
-
-
-def test_plan_content_topics_skips_runner_when_no_cards():
-    runner = _ExplodingRunner()
-    out = plan_content_topics(runner, [], [], [])
-    assert out.items == []
-    assert runner.calls == 0
-
-
-def test_plan_content_topics_truncates_candidate_text():
-    class _CaptureRunner(CodexRunner):
-        prompt: str = ""
-
-        def run(self, prompt, output_model, **kw):
-            self.prompt = prompt
-            return PlanTopicsOutput(items=[])
-
-    long_text = "PREFIX_" + "A" * 5000 + "_SUFFIX"
-    candidate = DiscussionCandidate(
-        id="t1",
-        source="twitter",
-        author_handle="a",
-        text=long_text,
-        url="https://x.com/t1",
-    )
-    card = EvidenceCard(
-        id="ev1",
-        event_id="evt1",
-        claim="claim ev1",
-        sources=[],
-        confidence=ClaimConfidence.VERIFIED,
-        publishable=True,
-        topics=["agent"],
-    )
-    match = MatchResult(
-        candidate_id="t1",
-        card_ids=["ev1"],
-        scores=JudgeScores(
-            relevance=0.9,
-            evidence_strength=0.9,
-            incremental_value=0.9,
-            discussability=0.9,
-        ),
-        timing=0.3,
-        relationship_value=0.5,
-        score=0.9,
-    )
-    runner = _CaptureRunner()
-
-    plan_content_topics(runner, [card], [match], [candidate])
-
-    assert "PREFIX_" in runner.prompt
-    assert "_SUFFIX" not in runner.prompt
-
-
-def test_render_prompt_does_not_rescan_inserted_data():
-    """单遍替换：插入数据里的 `{candidate}` 字面量不得被二次替换（prompt 注入防护）。"""
-    template = "cards: {cards}\ncandidate: {candidate}\nnote: {unknown}"
-    values = {
-        "cards": '{"claim": "we benchmarked {candidate} vs baseline"}',
-        "candidate": '{"id": "t1"}',
-    }
-    out = _render_prompt(template, values)
-    # 模板里的 {candidate} 被替换
-    assert '{"id": "t1"}' in out
-    # cards 数据里的 {candidate} 字面量原样保留，未被二次替换
-    assert 'we benchmarked {candidate} vs baseline' in out
-    # 未命中的 {unknown} 原样保留
-    assert "{unknown}" in out
-
-
-def test_expand_content_job_preserves_author_position():
-    class _JobRunner(CodexRunner):
-        def run(self, prompt, output_model, **kw):
-            return ContentJob(
-                id="job1", source_card_ids=["ev1"], candidate_id="t1",
-                reader_problem="r", audience="a",
-                intended_effect=IntendedEffect(understand="u"),
-                author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"),
-                success_criteria=[], recommended_format=DraftKind.REPLY,
-                status=ContentJobStatus.CONFIRMED,
-            )
-
-    topic = TopicProposal(id="tp1", title="t", card_ids=["ev1"], candidate_id="t1")
-    card = EvidenceCard(
-        id="ev1", event_id="e", claim="token bucket", sources=[],
-        confidence=ClaimConfidence.VERIFIED, publishable=True, topics=["rate"],
-    )
-    job = expand_content_job(_JobRunner(), topic, {"ev1": card}, None)
-    assert job.author_position is not None
-    assert job.author_position.decision == "d"
-
-
-def _card(cid, event_id, confidence=ClaimConfidence.VERIFIED, publishable=True):
-    return EvidenceCard(
-        id=cid, event_id=event_id, claim=f"claim {cid}", sources=[],
-        confidence=confidence, publishable=publishable, topics=["agent"],
-    )
-
-
-def test_select_planning_evidence_caps_events_and_cards():
-    cards = []
-    for e in range(20):
-        for label in ("problem", "decision", "result"):
-            cards.append(_card(f"ev_{e}_{label}", f"evt_{e}"))
-    budget = DailyBudget(max_planning_events=3, max_evidence_cards_for_planning=36)
-    out = select_planning_evidence(cards, [], budget)
-    # 每 event 3 卡，3 events → 9 卡
-    assert len(out) == 9
-    assert {c.event_id for c in out} == {"evt_0", "evt_1", "evt_2"}
-
-
-def test_select_planning_evidence_prefers_matched_and_publishable():
-    matched = _card("ev_a_problem", "evt_a")
-    unmatched = _card("ev_b_problem", "evt_b")
-    mr = MatchResult(candidate_id="c1", card_ids=["ev_a_problem"],
-                     scores=JudgeScores(relevance=0.9, evidence_strength=0.9,
-                                        incremental_value=0.9, discussability=0.9),
-                     timing=0.3, relationship_value=0.5, score=0.9)
-    budget = DailyBudget(max_planning_events=1, max_evidence_cards_for_planning=10)
-    out = select_planning_evidence([unmatched, matched], [mr], budget)
-    assert out[0].event_id == "evt_a"
-
-
-def test_select_planning_evidence_empty():
-    assert select_planning_evidence([], [], DailyBudget()) == []
-
-
-def test_select_planning_evidence_respects_card_cap():
-    cards = []
-    for e in range(3):
-        for label in ("problem", "decision", "result"):
-            cards.append(_card(f"ev_{e}_{label}", f"evt_{e}"))
-    budget = DailyBudget(max_planning_events=3, max_evidence_cards_for_planning=5)
-    out = select_planning_evidence(cards, [], budget)
-    assert len(out) == 5

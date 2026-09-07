@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import pytest
 
 from finch.content.checkers import (
-    ActionabilityChecker,
     CheckContext,
     CheckResult,
     DecisionChecker,
@@ -17,7 +16,7 @@ from finch.content.checkers import (
     aggregate_checks,
 )
 from finch.content.checkers.base import split_sentences
-from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus, IntendedEffect
+from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard
 
@@ -78,12 +77,10 @@ def _job(decision: str = "Use pool size 10", tradeoff: str = "More memory") -> C
         source_card_ids=["ev_1"],
         candidate_id=None,
         reader_problem="p",
-        audience="engineers",
-        intended_effect=IntendedEffect(understand="u"),
         author_position=AuthorPosition(claim="c", decision=decision, tradeoff=tradeoff),
-        success_criteria=[],
         recommended_format=DraftKind.REPLY,
         status=ContentJobStatus.CONFIRMED,
+        core_message="use pool size 10",
     )
 
 
@@ -365,38 +362,6 @@ def test_structure_checker_upgrades_to_high_when_llm_confirms():
     result = checker.check(CheckContext(draft=draft, cards=[_card("ev_1")]))
     assert result.passed is False
     assert result.severity == "high"
-
-
-# --- ActionabilityChecker ---
-
-
-def test_actionability_checker_passes_legacy_draft_without_job():
-    checker = ActionabilityChecker()
-    result = checker.check(CheckContext(draft=_draft(), cards=[_card("ev_1")]))
-    assert result.passed is True
-
-
-def test_actionability_checker_requires_runner_for_job():
-    checker = ActionabilityChecker()
-    with pytest.raises(RuntimeError):
-        checker.check(CheckContext(draft=_draft(), cards=[_card("ev_1")], job=_job()))
-
-
-def test_actionability_checker_flags_ignored_effect():
-    runner = FakeRunner(SimpleNamespace(fulfills_effect=False, missing=["action"]))
-    checker = ActionabilityChecker(runner)
-    result = checker.check(CheckContext(draft=_draft(), cards=[_card("ev_1")], job=_job()))
-    assert result.passed is False
-    assert result.severity == "high"
-    assert any("intended effect" in i for i in result.issues)
-
-
-def test_actionability_checker_passes_fulfilled_effect():
-    runner = FakeRunner(SimpleNamespace(fulfills_effect=True, missing=[]))
-    checker = ActionabilityChecker(runner)
-    result = checker.check(CheckContext(draft=_draft(), cards=[_card("ev_1")], job=_job()))
-    assert result.passed is True
-    assert result.severity == "low"
 
 
 # --- SafetyChecker ---

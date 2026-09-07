@@ -2,14 +2,12 @@
 
 
 from finch.twitter.models import (
-    DiscussionCandidate,
     QuotedTweet,
     Tweet,
     TwitterCommandBlocked,
     TwitterError,
     TwitterRateLimited,
     TwitterSourceUnavailable,
-    to_candidate,
 )
 
 
@@ -85,27 +83,6 @@ def test_tweet_with_quoted_tweet():
     )
     assert t.quoted_tweet is not None
     assert t.quoted_tweet.author == "bob"
-
-
-def test_to_candidate_basic():
-    t = Tweet(id="1", author="a", text="hello", url="https://x.com/a/status/1")
-    c = to_candidate(t, query_id="q1")
-    assert isinstance(c, DiscussionCandidate)
-    assert c.id == "1"
-    assert c.author_handle == "a"
-    assert c.text == "hello"
-    assert c.query_id == "q1"
-    assert c.source == "twitter"
-
-
-def test_to_candidate_with_published_at():
-    t = Tweet(
-        id="1", author="a", text="hello",
-        created_at="Wed Sep 02 06:05:25 +0000 2026",
-        url="u",
-    )
-    c = to_candidate(t)
-    assert c.published_at is not None
 
 
 def test_error_codes():

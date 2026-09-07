@@ -26,11 +26,16 @@ uv run finch drafts create <id>          # 从已确认 idea 生成草稿（经 
 uv run finch drafts show <draft_id>
 uv run finch drafts revise <draft_id> --instruction "<指令>"
 
-uv run finch next                        # 下一条待决策卡（原创 + 互动）
-uv run finch decide <id> --action accept|skip|revise
+uv run finch review list                          # 列出待审核的原创草稿
+uv run finch review show <draft_id>
+uv run finch review approve <draft_id>            # 采用（不自动发布）
+uv run finch review revise <draft_id> --instruction "<指令>"
+uv run finch review skip <draft_id> --reason <理由>
 
-uv run finch draft "<想法>"              # 判断一个想法能否发，能发时生成样稿进收件箱
-uv run finch learn <draft_id> --url <URL> --metrics '<JSON>'
+uv run finch engagement list                      # 列出待审核的互动候选
+uv run finch engagement show <id>
+uv run finch engagement approve <id>              # 批准（不自动发布）
+
 uv run finch weekly                      # 周复盘
 ```
 
@@ -50,8 +55,8 @@ uv run finch ideas confirm <id>
 uv run finch drafts create <id>
 
 # 5. 人工审核
-uv run finch next
-uv run finch decide <id> --action accept
+uv run finch review list
+uv run finch review approve <draft_id>
 ```
 
 候选状态机：`PROPOSED → CONFIRMED → DRAFTED`，或 `PROPOSED/CONFIRMED → SKIPPED`。
@@ -68,10 +73,10 @@ skills/
 src/finch/
   ideas/            IdeaService（状态机）+ CommitService + SearchService
   drafts/           DraftService（已确认 idea → 草稿）
-  idea/             finch draft/idea 的纯函数（assess_idea / write_idea / run_idea_critic）
+  idea/             finch drafts 复用的纯函数（rewrite_idea / idea_checker_suite）
   content/          ContentJob、writer、critic 检查器、voice profile
-  inbox/            next / decide 单一决策点
-  learn/            FeedbackService + weekly 周复盘
+  inbox/            原创 + 互动轨道的投影与决策（InboxDecisionService）
+  learn/            反馈数据模型 + weekly 周复盘
   evidence/         Commit → EngineeringEvent → EvidenceCard
   github/ twitter/  只读 adapter（gh / opencli）
   storage/          SQLite via SQLModel

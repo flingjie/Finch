@@ -8,7 +8,6 @@ from finch.ideas.models import (
     IdeaBoundaries,
     IdeaCandidate,
     IdeaGenerator,
-    IdeaPosition,
     SourceRef,
 )
 from finch.ideas.service import IdeaService, idea_generation_key
@@ -40,11 +39,10 @@ def _candidate(**overrides) -> IdeaCandidate:
         core_point="Graph 的价值是恢复与重放",
         reader_problem="很多人只把 Graph 当可视化",
         why_worth_saying="它决定失败后能否重放",
-        author_position=IdeaPosition(
+        author_position=AuthorPosition(
             claim="Graph 主要价值是恢复与重放",
             decision="用可恢复性评价 Graph",
             tradeoff="需要持久化状态",
-            status="proposed",
         ),
         source_refs=[
             SourceRef(type="commit", ref="abc123", summary="引入 graph 运行时"),
@@ -103,12 +101,9 @@ def test_create_candidate_builds_job():
     assert job.core_message == "Graph 的价值是恢复与重放"
     assert job.why_now == "它决定失败后能否重放"
     assert job.reader_problem == "很多人只把 Graph 当可视化"
-    assert job.audience == ""
     assert job.recommended_format == DraftKind.ORIGINAL
     assert job.source_card_ids == []
-    assert job.success_criteria == []
     assert job.generation_key is not None
-    assert job.idea_candidate_json is not None
     assert job.author_position is not None
     assert job.author_position.claim == "Graph 主要价值是恢复与重放"
     assert job.author_position.change_mind_if is None
@@ -151,8 +146,6 @@ def test_confirm_position_moves_proposed_to_confirmed():
     job = svc.create_candidate(_candidate())
     confirmed = svc.confirm_position(job.id)
     assert confirmed.status == ContentJobStatus.CONFIRMED
-    candidate = IdeaCandidate.model_validate_json(confirmed.idea_candidate_json)
-    assert candidate.author_position.status == "confirmed"
 
 
 def test_confirm_position_illegal_from_confirmed():
@@ -189,14 +182,13 @@ def test_require_confirmed_returns_job_when_confirmed():
 # ---- revise_position ----
 
 
-def test_revise_position_updates_job_and_embedded_json():
+def test_revise_position_updates_job():
     svc, _ = _service()
     job = svc.create_candidate(_candidate())
-    new_position = IdeaPosition(
+    new_position = AuthorPosition(
         claim="新主张",
         decision="新决策",
         tradeoff="新权衡",
-        status="proposed",
     )
     revised = svc.revise_position(job.id, new_position)
     assert revised.status == ContentJobStatus.PROPOSED  # 不改状态
@@ -206,8 +198,6 @@ def test_revise_position_updates_job_and_embedded_json():
         tradeoff="新权衡",
         change_mind_if=None,
     )
-    candidate = IdeaCandidate.model_validate_json(revised.idea_candidate_json)
-    assert candidate.author_position == new_position
 
 
 def test_revise_position_legal_from_confirmed():
@@ -215,11 +205,9 @@ def test_revise_position_legal_from_confirmed():
     job = svc.confirm_position(svc.create_candidate(_candidate()).id)
     revised = svc.revise_position(
         job.id,
-        IdeaPosition(claim="c", decision="d", tradeoff="t", status="confirmed"),
+        AuthorPosition(claim="c", decision="d", tradeoff="t"),
     )
     assert revised.status == ContentJobStatus.CONFIRMED
-    candidate = IdeaCandidate.model_validate_json(revised.idea_candidate_json)
-    assert candidate.author_position.status == "confirmed"
 
 
 # ---- mark_drafted ----
