@@ -349,6 +349,12 @@ def test_portability_checker_drops_fabricated_sentences_not_in_body():
     assert result.severity == "low"
 
 
+def test_portability_checker_requires_runner():
+    checker = PortabilityChecker()
+    with pytest.raises(RuntimeError):
+        checker.check(CheckContext(draft=_draft(), cards=[_card("ev_1")]))
+
+
 def test_portability_prompt_declares_injection_guard():
     runner = FakeRunner(SimpleNamespace(findings=[]))
     checker = PortabilityChecker(runner)
