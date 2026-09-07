@@ -251,7 +251,6 @@ def ideas_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
     store.init()
     repo = ContentJobRepository(store)
     jobs = sorted(repo.list_jobs(), key=lambda j: j.id)
-    failures = repo.list_job_parse_failures()
     if as_json:
         payload = [
             {"id": job.id, "status": job.status.value, "core_point": job.core_message}
@@ -259,6 +258,7 @@ def ideas_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
         ]
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
+    failures = repo.list_job_parse_failures()
     for job in jobs:
         typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
     if failures:
@@ -367,11 +367,17 @@ def ideas_skip(
 
 def _render_draft_result(result: DraftCreateResult) -> str:
     draft = result.draft
-    passed = result.outcome == "pass"
-    verdict = "通过" if passed else f"未通过（重写 {result.critic_rounds} 轮后仍未满足）"
+    if result.outcome == "pass":
+        header = "草稿已生成并通过质量检查，当前等待你的审核。"
+        verdict = "通过"
+    elif result.outcome == "unknown":
+        header = "草稿已生成。"
+        verdict = "未知（无 Critic 报告）"
+    else:
+        header = "草稿已生成，但质量检查未完全通过，请人工判读。"
+        verdict = f"未通过（经过 {result.critic_rounds} 轮检查后仍未满足）"
     lines = [
-        "草稿已生成并通过质量检查，当前等待你的审核。" if passed
-        else "草稿已生成，但质量检查未完全通过，请人工判读。",
+        header,
         "",
         f"> {draft.body}",
         "",

@@ -108,7 +108,7 @@ def _idea_fingerprint(job: ContentJob) -> str:
         position.claim if position is not None else "",
         position.decision if position is not None else "",
         position.tradeoff if position is not None else "",
-        position.change_mind_if or "" if position is not None else "",
+        (position.change_mind_if or "") if position is not None else "",
     ]
     raw = _SEP.join(parts)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
