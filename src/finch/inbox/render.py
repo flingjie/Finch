@@ -15,7 +15,7 @@ _STATE_LABELS = {
 
 
 def state_label(state: str) -> str:
-    """把内部 GraphState 映射为面向用户的文案；未知名回退原值。"""
+    """把内部状态映射为面向用户的文案；未知名回退原值。"""
     return _STATE_LABELS.get(state, state)
 
 

@@ -4,7 +4,7 @@
 
 - **`proposed`**：自动生成（Skill/LLM 产出）的默认状态。表示「这是一个建议立场，未获授权」。
 - **`confirmed`**：只有两条路径可达：
-  1. 用户明确输入/确认（`IdeaService.confirm_position` / `finch run resolve --confirm`）；
+  1. 用户明确输入/确认（`IdeaService.confirm_position` / `finch ideas confirm <id>`）；
   2. 命中已批准 fingerprint（`position_fingerprint` 与 `PositionApprovalRepository.find_active` 逐字一致且未被撤销、`change_mind_if` 为空）。
 - 任何自动流程不得自行置 `confirmed`；LLM 输出的 `USER_CONFIRMED`/`confirmed` 由 Python 强制降级。
 
