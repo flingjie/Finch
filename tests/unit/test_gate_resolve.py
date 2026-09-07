@@ -1,10 +1,10 @@
 import pytest
 
-from finch.content.jobs import AuthorPosition, ContentJobStatus, position_fingerprint
+from finch.content.jobs import AuthorPosition, ContentJobStatus
 from finch.gate.models import InputAction, InputRequest, ProposedPosition
 from finch.gate.resolve import parse_position_yaml, position_yaml, resolve_input
 from finch.storage.database import Store
-from finch.storage.repositories import ContentJobRepository, PositionApprovalRepository
+from finch.storage.repositories import ContentJobRepository
 
 
 def _store(tmp_path):
@@ -13,16 +13,15 @@ def _store(tmp_path):
     return s
 
 
-def _seed(tmp_path, *, confirmed=False, change_mind_if=None):
+def _seed(tmp_path, *, change_mind_if=None):
     store = _store(tmp_path)
     jobs = ContentJobRepository(store)
     position = AuthorPosition(
-        claim="c", decision="d", tradeoff="t",
-        change_mind_if=change_mind_if, confirmed=confirmed,
+        claim="c", decision="d", tradeoff="t", change_mind_if=change_mind_if
     )
     job = _job(author_position=position)
     jobs.upsert_job(job)
-    return store, jobs, PositionApprovalRepository(store), job
+    return jobs, job
 
 
 def _job(author_position):
@@ -54,75 +53,26 @@ def _request(job):
     )
 
 
-def test_confirm_sets_confirmed_and_approves(tmp_path):
-    store, jobs, approvals, job = _seed(tmp_path)
-    msg = resolve_input(
-        _request(job), InputAction.CONFIRM, jobs_repo=jobs, approvals_repo=approvals
-    )
+def test_confirm_completes_without_error(tmp_path):
+    jobs, job = _seed(tmp_path)
+    msg = resolve_input(_request(job), InputAction.CONFIRM, jobs_repo=jobs)
     assert "confirmed" in msg
-    assert jobs.get_job("j1").author_position.confirmed is True
-    assert approvals.find_active(position_fingerprint(job.author_position)) is not None
 
 
-def test_edit_revokes_old_approves_new(tmp_path):
-    store, jobs, approvals, job = _seed(tmp_path)
-    approvals.approve(position_fingerprint(job.author_position), "j1")
+def test_edit_updates_position(tmp_path):
+    jobs, job = _seed(tmp_path)
     edited = ProposedPosition(claim="new", decision="d", tradeoff="t")
     msg = resolve_input(
-        _request(job), InputAction.EDIT, jobs_repo=jobs, approvals_repo=approvals,
-        edited_position=edited,
+        _request(job), InputAction.EDIT, jobs_repo=jobs, edited_position=edited
     )
     assert "edited" in msg
     assert jobs.get_job("j1").author_position.claim == "new"
-    assert approvals.find_active(position_fingerprint(job.author_position)) is None
-    assert approvals.find_active(position_fingerprint(
-        AuthorPosition(claim="new", decision="d", tradeoff="t")
-    )) is not None
-
-
-def test_edit_revokes_stored_fingerprint_when_request_diverges(tmp_path):
-    store, jobs, approvals, job = _seed(tmp_path)
-    stored_fp = position_fingerprint(job.author_position)  # "c/d/t"
-    approvals.approve(stored_fp, "j1")
-    # 请求里的提案与存储立场不一致（如 gate 停后 job 被 out-of-band 编辑）。
-    diverging_request = InputRequest(
-        run_id="r1", job_id="j1", topic="t",
-        proposed_position=ProposedPosition(claim="stale", decision="stale", tradeoff="stale"),
-    )
-    edited = ProposedPosition(claim="new", decision="d", tradeoff="t")
-    resolve_input(
-        diverging_request, InputAction.EDIT, jobs_repo=jobs, approvals_repo=approvals,
-        edited_position=edited,
-    )
-    # 撤销的是存储的旧立场 "c/d/t"，而非请求里的 "stale/stale/stale"。
-    assert approvals.find_active(stored_fp) is None
-    assert approvals.find_active(position_fingerprint(
-        AuthorPosition(claim="new", decision="d", tradeoff="t")
-    )) is not None
-
-
-def test_skip_revokes_stored_approval(tmp_path):
-    store, jobs, approvals, job = _seed(tmp_path)
-    approvals.approve(position_fingerprint(job.author_position), "j1")
-    resolve_input(
-        _request(job), InputAction.SKIP, jobs_repo=jobs, approvals_repo=approvals,
-        skip_reason="not relevant",
-    )
-    assert approvals.find_active(position_fingerprint(job.author_position)) is None
-
-
-def test_stop_revokes_stored_approval(tmp_path):
-    store, jobs, approvals, job = _seed(tmp_path)
-    approvals.approve(position_fingerprint(job.author_position), "j1")
-    resolve_input(_request(job), InputAction.STOP, jobs_repo=jobs, approvals_repo=approvals)
-    assert approvals.find_active(position_fingerprint(job.author_position)) is None
 
 
 def test_skip_marks_do_not_write(tmp_path):
-    store, jobs, approvals, job = _seed(tmp_path)
+    jobs, job = _seed(tmp_path)
     msg = resolve_input(
-        _request(job), InputAction.SKIP, jobs_repo=jobs, approvals_repo=approvals,
-        skip_reason="not relevant",
+        _request(job), InputAction.SKIP, jobs_repo=jobs, skip_reason="not relevant"
     )
     assert "skipped" in msg
     updated = jobs.get_job("j1")
@@ -131,26 +81,26 @@ def test_skip_marks_do_not_write(tmp_path):
 
 
 def test_stop_marks_all_active_do_not_write(tmp_path):
-    store, jobs, approvals, job = _seed(tmp_path)
-    msg = resolve_input(_request(job), InputAction.STOP, jobs_repo=jobs, approvals_repo=approvals)
+    jobs, job = _seed(tmp_path)
+    msg = resolve_input(_request(job), InputAction.STOP, jobs_repo=jobs)
     assert "stopped" in msg
     assert jobs.get_job("j1").status == ContentJobStatus.DO_NOT_WRITE
 
 
 def test_confirm_incomplete_position_raises(tmp_path):
-    store, jobs, approvals, job = _seed(tmp_path)
+    jobs, job = _seed(tmp_path)
     jobs.upsert_job(job.model_copy(update={"author_position": None}))
     request = InputRequest(
-        run_id="r1", job_id="j1", topic="t", proposed_position=ProposedPosition(),
+        run_id="r1", job_id="j1", topic="t", proposed_position=ProposedPosition()
     )
     with pytest.raises(ValueError):
-        resolve_input(request, InputAction.CONFIRM, jobs_repo=jobs, approvals_repo=approvals)
+        resolve_input(request, InputAction.CONFIRM, jobs_repo=jobs)
 
 
 def test_skip_without_reason_raises(tmp_path):
-    store, jobs, approvals, job = _seed(tmp_path)
+    jobs, job = _seed(tmp_path)
     with pytest.raises(ValueError):
-        resolve_input(_request(job), InputAction.SKIP, jobs_repo=jobs, approvals_repo=approvals)
+        resolve_input(_request(job), InputAction.SKIP, jobs_repo=jobs)
 
 
 def test_position_yaml_roundtrip():

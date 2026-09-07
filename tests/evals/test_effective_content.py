@@ -182,13 +182,11 @@ def _draft(
 def _position(
     decision: str = "Use pool size 10",
     tradeoff: str = "More memory",
-    confirmed: bool = True,
 ) -> AuthorPosition:
     return AuthorPosition(
         claim="pool size 10 is the right call",
         decision=decision,
         tradeoff=tradeoff,
-        confirmed=confirmed,
     )
 
 
@@ -220,8 +218,8 @@ def _job(
 # --- the seven scenarios ----------------------------------------------------
 
 
-def test_scenario_1_strong_evidence_and_confirmed_position_routes_to_ready(tmp_path):
-    """强证据 + 清晰判断 → READY：确认立场放行到 ready_jobs，不进入 needs_input。"""
+def test_scenario_1_strong_evidence_and_clear_position_routes_to_ready(tmp_path):
+    """强证据 + 清晰判断 → READY：完整立场放行到 ready_jobs，不进入 needs_input。"""
     store = _store(tmp_path)
     nodes = [
         Seed(name="define_jobs", writes="content_jobs", seed=items_payload([_job()])),

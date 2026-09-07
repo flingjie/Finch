@@ -11,10 +11,8 @@ from finch.content.jobs import (
     ContentJobStatus,
     IntendedEffect,
     PlanTopicsOutput,
-    PositionSource,
     SuccessCriterion,
     TopicProposal,
-    position_fingerprint,
 )
 from finch.content.models import ClaimRef, Draft, DraftKind, DraftWarning
 from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
@@ -32,7 +30,7 @@ from finch.graph.nodes import Node
 from finch.graph.runtime import GraphRuntime
 from finch.settings import QualityGates
 from finch.storage.database import NodeRecord, Store
-from finch.storage.repositories import ContentJobRepository, PositionApprovalRepository
+from finch.storage.repositories import ContentJobRepository
 from finch.twitter.models import DiscussionCandidate
 
 
@@ -145,12 +143,11 @@ def _reply_draft():
     )
 
 
-def _position(decision="use token bucket", tradeoff="more memory", confirmed=True):
+def _position(decision="use token bucket", tradeoff="more memory"):
     return AuthorPosition(
         claim="token bucket is the right call",
         decision=decision,
         tradeoff=tradeoff,
-        confirmed=confirmed,
     )
 
 
@@ -640,10 +637,10 @@ def test_define_jobs_node_produces_and_filters_jobs(tmp_path):
     assert runner.calls == 2  # 1 plan + 1 expand（bad 主题在预过滤阶段即被剔除）
 
 
-def test_position_gate_ready_when_confirmed():
+def test_position_gate_ready_when_position_complete():
     node = make_position_gate_node()
     result = node.run(
-        {"content_jobs": items_payload([_job(job_id="j1", position=_position(confirmed=True))])}
+        {"content_jobs": items_payload([_job(job_id="j1", position=_position())])}
     )
     assert result.status == "succeeded"
     assert [j["id"] for j in result.output["items"]] == ["j1"]
@@ -657,16 +654,15 @@ def test_position_gate_skips_do_not_write():
     assert result.output["items"] == []
 
 
-def test_position_gate_unconfirmed_inferable_passes_inferred():
-    """可推断立场（decision+tradeoff 非空）未确认时非阻塞：标记 INFERRED 放行。"""
+def test_position_gate_complete_position_passes():
+    """完整立场（decision+tradeoff 非空）非阻塞：直接放行。"""
     node = make_position_gate_node()
-    job = _job(job_id="j1", position=_position(confirmed=False))
+    job = _job(job_id="j1", position=_position())
     result = node.run({"content_jobs": items_payload([job])})
     assert result.status == "succeeded"
-    assert result.output["inferred_position"] is True
     items = parse_items(result.output, ContentJob)
     assert [j.id for j in items] == ["j1"]
-    assert items[0].author_position.position_source == PositionSource.INFERRED
+    assert "inferred_position" not in result.output
 
 
 def test_position_gate_missing_position_needs_input():
@@ -679,9 +675,9 @@ def test_position_gate_missing_position_needs_input():
 
 
 def test_position_gate_empty_decision_needs_input():
-    """回归：confirmed=True 但 decision 为空也必须 needs_input，不得通过门禁出草稿。"""
+    """回归：decision 为空必须 needs_input，不得通过门禁出草稿。"""
     node = make_position_gate_node()
-    job = _job(job_id="j1", position=_position(decision="", confirmed=True))
+    job = _job(job_id="j1", position=_position(decision=""))
     result = node.run({"content_jobs": items_payload([job])})
     assert result.status == "needs_input"
     assert result.output["must_ask"] == ["position_incomplete"]
@@ -691,25 +687,25 @@ def test_position_gate_empty_decision_needs_input():
 def test_position_gate_only_primary_blocks():
     """Task 2.4：只有 primary job 可阻塞；其余 job 保存为 deferred，不触发 needs_input。"""
     node = make_position_gate_node()
-    ready = _job(job_id="j1", candidate_id="t1", position=_position(confirmed=True))
-    unconfirmed = _job(job_id="j2", candidate_id=None, position=_position(confirmed=False))
+    primary = _job(job_id="j1", candidate_id="t1", position=_position())
+    no_candidate = _job(job_id="j2", candidate_id=None, position=_position())
     do_not_write = _job(
         job_id="j3", status=ContentJobStatus.DO_NOT_WRITE, position=None
     )
     result = node.run(
-        {"content_jobs": items_payload([ready, unconfirmed, do_not_write])}
+        {"content_jobs": items_payload([primary, no_candidate, do_not_write])}
     )
-    # 只有 primary（j1，已确认）进入 ready_jobs。
+    # 只有 primary（j1，有讨论上下文）进入 ready_jobs。
     assert result.status == "succeeded"
     assert [j["id"] for j in result.output["items"]] == ["j1"]
     # j2 被 deferred（not now），j3（DO_NOT_WRITE）不参与选择、也不出现在 deferred。
     assert [d["job_id"] for d in result.output["deferred"]] == ["j2"]
 
 
-def test_position_gate_resume_proceeds_once_confirmed(tmp_path):
+def test_position_gate_resume_proceeds_once_position_completed(tmp_path):
     store = _store(tmp_path)
     incomplete = _job(job_id="j1", candidate_id=None, position=None)
-    confirmed = _job(job_id="j1", candidate_id=None, position=_position(confirmed=True))
+    completed = _job(job_id="j1", candidate_id=None, position=_position())
 
     def nodes():
         return [
@@ -724,7 +720,7 @@ def test_position_gate_resume_proceeds_once_confirmed(tmp_path):
     gate_rec = store.find_node(run1.id, "position_gate", "default")
     assert gate_rec is not None and gate_rec.status == "needs_input"
 
-    # Simulate the user confirming the position by overwriting the persisted content_jobs.
+    # Simulate the user completing the position by overwriting the persisted content_jobs.
     define_rec = store.find_node(run1.id, "define_jobs", "default")
     assert define_rec is not None
     store.upsert_node(
@@ -734,7 +730,7 @@ def test_position_gate_resume_proceeds_once_confirmed(tmp_path):
             node_name="define_jobs",
             idempotency_key="default",
             status="succeeded",
-            output_json=json.dumps(items_payload([confirmed])),
+            output_json=json.dumps(items_payload([completed])),
         )
     )
 
@@ -742,29 +738,6 @@ def test_position_gate_resume_proceeds_once_confirmed(tmp_path):
     assert run2.state == "DRAFTED"
     gate_rec2 = store.find_node(run1.id, "position_gate", "default")
     assert gate_rec2 is not None and gate_rec2.status == "succeeded"
-
-
-def test_define_jobs_strips_model_confirmed_before_inferred_gate(tmp_path):
-    """模型输出的 confirmed=true 必须被剥除：未确认立场只能以 INFERRED 放行，不得伪装成人类确认。"""
-    store = _store(tmp_path)
-    repo = ContentJobRepository(store)
-    job = _job(job_id="j1", candidate_id="t1", position=_position(confirmed=True))
-    runner = FakeJobsRunner([job])
-
-    nodes = [
-        Seed(name="match_evidence", writes="match_results", seed=items_payload([_match()])),
-        Seed(name="extract_events", writes="evidence_cards", seed=items_payload([_card()])),
-        Seed(name="collect_tweets", writes="candidates", seed=items_payload([_candidate()])),
-        make_define_jobs_node(runner, runner, jobs_repo=repo),
-        make_position_gate_node(jobs_repo=repo),
-    ]
-    run = GraphRuntime(store, nodes).run()
-    assert run.state == "POSITIONS_READY"
-    gate_rec = store.find_node(run.id, "position_gate", "default")
-    assert gate_rec is not None
-    items = json.loads(gate_rec.output_json)["items"]
-    assert items[0]["author_position"]["confirmed"] is False
-    assert items[0]["author_position"]["position_source"] == PositionSource.INFERRED.value
 
 
 def test_define_jobs_rejects_job_with_unknown_candidate(tmp_path):
@@ -818,7 +791,7 @@ def test_define_jobs_upserts_into_repo(tmp_path):
     """D7: define_jobs 将每个 job 写入 ContentJobRepository。"""
     store = _store(tmp_path)
     repo = ContentJobRepository(store)
-    job = _job(job_id="j1", candidate_id="t1", position=_position(confirmed=False))
+    job = _job(job_id="j1", candidate_id="t1", position=_position())
     runner = FakeJobsRunner([job])
 
     nodes = [
@@ -831,21 +804,23 @@ def test_define_jobs_upserts_into_repo(tmp_path):
     got = repo.get_job("j1")
     assert got is not None
     assert got.author_position is not None
-    assert got.author_position.confirmed is False
+    assert got.author_position.decision == "use token bucket"
 
 
 def test_position_gate_reads_fresh_from_repo(tmp_path):
-    """D7: gate 从 repo 取最新版本，用户确认后 context 里的旧版本不阻挡。"""
+    """D7: gate 从 repo 取最新版本，用户编辑后 context 里的旧版本不阻挡。"""
     store = _store(tmp_path)
     repo = ContentJobRepository(store)
-    unconfirmed = _job(job_id="j1", candidate_id=None, position=_position(confirmed=False))
-    confirmed = _job(job_id="j1", candidate_id=None, position=_position(confirmed=True))
-    repo.upsert_job(confirmed)
+    stale = _job(job_id="j1", candidate_id=None, position=_position(decision="stale"))
+    fresh = _job(job_id="j1", candidate_id=None, position=_position(decision="fresh"))
+    repo.upsert_job(fresh)
 
     node = make_position_gate_node(jobs_repo=repo)
-    result = node.run({"content_jobs": items_payload([unconfirmed])})
+    result = node.run({"content_jobs": items_payload([stale])})
     assert result.status == "succeeded"
-    assert [j["id"] for j in result.output["items"]] == ["j1"]
+    items = parse_items(result.output, ContentJob)
+    assert [j.id for j in items] == ["j1"]
+    assert items[0].author_position.decision == "fresh"
 
 
 def test_position_gate_falls_back_to_context_when_repo_missing(tmp_path):
@@ -915,7 +890,7 @@ def test_position_gate_stops_after_one_fallback(tmp_path):
     rejected_b = _job(
         job_id="B", candidate_id="t1", position=None, status=ContentJobStatus.DO_NOT_WRITE
     ).model_copy(update={"reject_reason": "still not now"})
-    active = _job(job_id="C", candidate_id=None, position=_position(confirmed=False))
+    active = _job(job_id="C", candidate_id=None, position=_position())
     for job in (rejected_a, rejected_b, active):
         repo.upsert_job(job)
 
@@ -973,8 +948,8 @@ def test_position_gate_defers_others_and_persists_proposed(tmp_path):
     """其余 ready job 被 deferred 并以 PROPOSED 保存（不删除、不 do_not_write）。"""
     store = _store(tmp_path)
     repo = ContentJobRepository(store)
-    primary = _job(job_id="p", candidate_id="t1", position=_position(confirmed=True))
-    secondary = _job(job_id="s", candidate_id=None, position=_position(confirmed=True))
+    primary = _job(job_id="p", candidate_id="t1", position=_position())
+    secondary = _job(job_id="s", candidate_id=None, position=_position())
     repo.upsert_job(primary)
     repo.upsert_job(secondary)
 
@@ -1226,12 +1201,12 @@ def test_brief_uses_fresh_job_from_repo(tmp_path):
     fresh = _job(
         job_id="job1",
         candidate_id="t1",
-        position=_position(decision="fresh decision", confirmed=True),
+        position=_position(decision="fresh decision"),
     )
     stale = _job(
         job_id="job1",
         candidate_id="t1",
-        position=_position(decision="stale decision", confirmed=False),
+        position=_position(decision="stale decision"),
     )
     repo.upsert_job(fresh)
     draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
@@ -1263,7 +1238,7 @@ def test_brief_falls_back_to_context_job_when_repo_missing(tmp_path):
     context_job = _job(
         job_id="job1",
         candidate_id="t1",
-        position=_position(decision="context decision", confirmed=True),
+        position=_position(decision="context decision"),
     )
     draft = _reply_draft().model_copy(update={"content_job_id": "job1"})
 
@@ -1550,16 +1525,15 @@ def test_define_jobs_dedups_duplicate_job_ids(tmp_path):
     assert [j["id"] for j in payload["items"]] == ["dup"]
 
 
-def test_original_flow_confirmed_position_produces_draft(tmp_path):
-    """Phase 0 回归：有证据卡 + 已确认立场 → job 定义 → draft 产出 → 进入人工审核。"""
+def test_original_flow_complete_position_produces_draft(tmp_path):
+    """Phase 0 回归：有证据卡 + 完整立场 → job 定义 → draft 产出 → 进入人工审核。"""
     store = _store(tmp_path)
     repo = ContentJobRepository(store)
-    # 人工 confirm-position 后 repo 中为 confirmed 版本；模型输出会被剥除 confirmed。
     repo.upsert_job(
-        _job(job_id="job1", candidate_id="t1", position=_position(confirmed=True))
+        _job(job_id="job1", candidate_id="t1", position=_position())
     )
     runner = FakeJobsRunner(
-        [_job(job_id="job1", candidate_id="t1", position=_position(confirmed=False))]
+        [_job(job_id="job1", candidate_id="t1", position=_position())]
     )
 
     def write_reply(runner, match, candidate, cards_by_id, job):
@@ -1593,60 +1567,5 @@ def test_original_flow_confirmed_position_produces_draft(tmp_path):
     assert draft_rec is not None
     assert "d1" in draft_rec.output_json
     assert "job1" in draft_rec.output_json
-
-
-def test_position_gate_reuses_approved_position(tmp_path):
-    store = _store(tmp_path)
-    jobs_repo = ContentJobRepository(store)
-    approvals = PositionApprovalRepository(store)
-    job = _job(job_id="j1", position=_position(confirmed=False))
-    jobs_repo.upsert_job(job)
-    approvals.approve(position_fingerprint(job.author_position), "j1")
-
-    node = make_position_gate_node(jobs_repo=jobs_repo, approvals_repo=approvals)
-    result = node.run({"content_jobs": items_payload([job]), "run_id": "r1"})
-    assert result.status == "succeeded"
-    assert result.output["reused_approval"] == position_fingerprint(job.author_position)
-    items = parse_items(result.output, ContentJob)
-    assert items[0].author_position.position_source == PositionSource.REUSED
-    assert ContentJobRepository(store).get_job("j1").author_position.confirmed is True
-
-
-def test_position_gate_change_mind_if_skips_reuse(tmp_path):
-    """change_mind_if 阻止复用门禁：立场仍可推断，但绝不当作 REUSED 确认。"""
-    store = _store(tmp_path)
-    jobs_repo = ContentJobRepository(store)
-    approvals = PositionApprovalRepository(store)
-    pos = AuthorPosition(
-        claim="c", decision="d", tradeoff="t", change_mind_if="x", confirmed=False
-    )
-    job = _job(job_id="j1", position=pos)
-    jobs_repo.upsert_job(job)
-    approvals.approve(position_fingerprint(pos), "j1")
-
-    node = make_position_gate_node(jobs_repo=jobs_repo, approvals_repo=approvals)
-    result = node.run({"content_jobs": items_payload([job])})
-    assert result.status == "succeeded"
-    assert "reused_approval" not in result.output
-    items = parse_items(result.output, ContentJob)
-    assert items[0].author_position.position_source == PositionSource.INFERRED
-
-
-def test_position_gate_revoked_approval_falls_back_to_inferred(tmp_path):
-    """已撤销的批准不可复用：立场回退为 INFERRED，而非 REUSED 或阻塞。"""
-    store = _store(tmp_path)
-    jobs_repo = ContentJobRepository(store)
-    approvals = PositionApprovalRepository(store)
-    job = _job(job_id="j1", position=_position(confirmed=False))
-    jobs_repo.upsert_job(job)
-    approvals.approve(position_fingerprint(job.author_position), "j1")
-    approvals.revoke(position_fingerprint(job.author_position))
-
-    node = make_position_gate_node(jobs_repo=jobs_repo, approvals_repo=approvals)
-    result = node.run({"content_jobs": items_payload([job])})
-    assert result.status == "succeeded"
-    assert "reused_approval" not in result.output
-    items = parse_items(result.output, ContentJob)
-    assert items[0].author_position.position_source == PositionSource.INFERRED
 
 

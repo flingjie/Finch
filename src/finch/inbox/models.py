@@ -6,8 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from finch.content.jobs import PositionSource
-
 
 class InboxTrack(StrEnum):
     """收件箱轨道：原创（ContentJob+Draft）或互动（InteractionCandidate）。"""
@@ -41,17 +39,12 @@ class DecisionAction(StrEnum):
 
 
 class DecisionRecord(BaseModel):
-    """一次原子决策的唯一权威记录。
-
-    position_source / position_fingerprint 是立场机制残留（Phase 1 Task 6 删除）。
-    """
+    """一次原子决策的唯一权威记录。"""
 
     id: str                                   # "dec_<job_id>"（幂等键）
     job_id: str
     draft_id: str
     action: DecisionAction
-    position_source: PositionSource
-    position_fingerprint: str
     approved_content_hash: str                # 采用时绑定最终正文；revise 改变 hash → 旧批准失效
     revised_body: str | None = None
     diff: str | None = None

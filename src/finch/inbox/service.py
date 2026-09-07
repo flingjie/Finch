@@ -11,7 +11,7 @@ from typing import Literal
 from finch.author.models import PublicationIntent
 from finch.codex.runner import CodexRunner
 from finch.content.critic import critique
-from finch.content.jobs import ContentJob, ContentJobStatus, PositionSource, position_fingerprint
+from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.content.models import Draft
 from finch.content.writer import rewrite_with_instruction
 from finch.engagement.models import InteractionAction, InteractionCandidate
@@ -32,8 +32,7 @@ _STRONG = {ClaimConfidence.VERIFIED, ClaimConfidence.SUPPORTED}
 def original_score(job: ContentJob, cards_by_id: dict[str, EvidenceCard]) -> float:
     """原创轨道的确定性排序分（0–1，仅同轨可比，跨轨分数不可比）。
 
-    只反映「是否值得先写」的稳定维度，不依赖 confirmed/position_source
-    （Phase 2 将删除立场确认机制，本函数保持不变）。
+    只反映「是否值得先写」的稳定维度，不含立场确认机制。
     """
     cards = [cards_by_id[cid] for cid in job.source_card_ids if cid in cards_by_id]
     strong = sum(1 for c in cards if c.confidence in _STRONG) / len(cards) if cards else 0.0
@@ -208,15 +207,11 @@ class InboxDecisionService:
         if not drafts:
             raise KeyError(f"no draft for job {job_id}")
         draft = drafts[0]
-        position = job.author_position
-        fingerprint = position_fingerprint(position) if position is not None else ""
         record = DecisionRecord(
             id=f"dec_{job_id}",
             job_id=job_id,
             draft_id=draft.id,
             action=DecisionAction.ACCEPT,
-            position_source=PositionSource.HUMAN_CONFIRMED,
-            position_fingerprint=fingerprint,
             approved_content_hash=content_hash(draft.body),
             decided_at=datetime.now(UTC),
         )
@@ -246,15 +241,11 @@ class InboxDecisionService:
                 update={"status": ContentJobStatus.DO_NOT_WRITE, "reject_reason": reason}
             )
         )
-        position = job.author_position
-        fingerprint = position_fingerprint(position) if position is not None else ""
         record = DecisionRecord(
             id=f"dec_{job_id}",
             job_id=job_id,
             draft_id=draft.id,
             action=DecisionAction.SKIP,
-            position_source=PositionSource.INFERRED,
-            position_fingerprint=fingerprint,
             approved_content_hash="",
             decided_at=datetime.now(UTC),
         )
@@ -279,20 +270,12 @@ class InboxDecisionService:
         new_draft = rewrite_with_instruction(runner, draft, instruction, cards_by_id, job)
         critic = critique(runner, new_draft, cards_by_id)
         self.drafts.upsert_draft(new_draft)
-        position = job.author_position
-        fingerprint = position_fingerprint(position) if position is not None else ""
         self.decisions.save(
             DecisionRecord(
                 id=f"dec_{job_id}",
                 job_id=job_id,
                 draft_id=draft.id,
                 action=DecisionAction.REVISE,
-                position_source=(
-                    position.position_source
-                    if position is not None and position.position_source
-                    else PositionSource.INFERRED
-                ),
-                position_fingerprint=fingerprint,
                 approved_content_hash=content_hash(new_draft.body),
                 revised_body=new_draft.body,
                 diff=_diff(draft.body, new_draft.body),

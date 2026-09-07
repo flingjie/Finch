@@ -1,6 +1,5 @@
 """Content Job 模型（Spec §8）：定义内容目标与作者立场。"""
 
-import hashlib
 import re
 from enum import StrEnum
 from json import dumps
@@ -17,20 +16,20 @@ from finch.twitter.models import DiscussionCandidate
 
 
 class ContentJobStatus(StrEnum):
-    """Content Job 状态枚举。"""
+    """Content Job 状态枚举。
+
+    ``PROPOSED``/``NEEDS_INPUT``/``READY``/``DO_NOT_WRITE`` 属于旧 content 编排流；
+    ``CONFIRMED``/``DRAFTED``/``SKIPPED`` 属于 idea 候选流（IdeaCandidate 状态机：
+    ``PROPOSED → CONFIRMED → DRAFTED``，或 ``PROPOSED → SKIPPED``）。
+    """
 
     PROPOSED = "proposed"
     NEEDS_INPUT = "needs_input"
     READY = "ready"
     DO_NOT_WRITE = "do_not_write"
-
-
-class PositionSource(StrEnum):
-    """作者立场的确认来源：推断 / 人类确认 / 复用门禁确认。"""
-
-    INFERRED = "inferred"
-    HUMAN_CONFIRMED = "human_confirmed"
-    REUSED = "reused"
+    CONFIRMED = "confirmed"
+    DRAFTED = "drafted"
+    SKIPPED = "skipped"
 
 
 class IntendedEffect(BaseModel):
@@ -48,25 +47,6 @@ class AuthorPosition(BaseModel):
     decision: str
     tradeoff: str
     change_mind_if: str | None = None
-    confirmed: bool = False
-    position_source: PositionSource | None = None
-
-
-def position_fingerprint(position: AuthorPosition) -> str:
-    """返回 AuthorPosition 的确定性指纹（不含 ``confirmed``）。
-
-    指纹只覆盖内容字段（claim/decision/tradeoff/change_mind_if），因此同一立场
-    跨天以新 job_id 重生成时，只要内容逐字一致即可复用确认。
-    """
-    raw = dumps(
-        [
-            position.claim,
-            position.decision,
-            position.tradeoff,
-            position.change_mind_if or "",
-        ]
-    )
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class SuccessCriterion(BaseModel):
@@ -152,9 +132,8 @@ class DeferredJob(BaseModel):
 
 _STRONG_CONFIDENCE = {ClaimConfidence.VERIFIED, ClaimConfidence.SUPPORTED}
 
-# 与 _substantive_key 返回的前五维一一对应（不含稳定序 tie-break）。
+# 与 _substantive_key 返回的前四维一一对应（不含稳定序 tie-break）。
 _DEFER_LABELS = (
-    "position not confirmed or not ready",
     "no external discussion context",
     "lower verified/supported evidence ratio",
     "incomplete decision/tradeoff",
@@ -176,17 +155,15 @@ def _evidence_ratio(job: ContentJob, cards_by_id: dict[str, EvidenceCard]) -> fl
 
 def _substantive_key(
     job: ContentJob, cards_by_id: dict[str, EvidenceCard]
-) -> tuple[bool, bool, float, bool, bool]:
-    """§2.3 排序主键的前五维（不含「原始稳定顺序」tie-break）。"""
+) -> tuple[bool, float, bool, bool]:
+    """§2.3 排序主键的前四维（不含「原始稳定顺序」tie-break）。"""
     position = job.author_position
-    confirmed = position is not None and position.confirmed
     has_decision_tradeoff = (
         position is not None
         and bool(position.decision)
         and bool(position.tradeoff)
     )
     return (
-        job.status == ContentJobStatus.READY and confirmed,
         job.candidate_id is not None,
         _evidence_ratio(job, cards_by_id),
         has_decision_tradeoff,
@@ -215,12 +192,11 @@ def select_primary_job(
     """确定性选出单个 primary job（纯函数，无 LLM 节点，无小数主观评分）。
 
     排序顺序（计划 §2.3）：
-    1. ``status`` 为 READY 且 ``author_position.confirmed``；
-    2. 有 candidate / 外部讨论上下文（``candidate_id`` 非空）；
-    3. source cards 中 VERIFIED/SUPPORTED 占比更高；
-    4. ``decision`` 与 ``tradeoff`` 均非空；
-    5. ``why_now`` 非空；
-    6. 原始稳定顺序（输入顺序）作为 tie-break。
+    1. 有 candidate / 外部讨论上下文（``candidate_id`` 非空）；
+    2. source cards 中 VERIFIED/SUPPORTED 占比更高；
+    3. ``decision`` 与 ``tradeoff`` 均非空；
+    4. ``why_now`` 非空；
+    5. 原始稳定顺序（输入顺序）作为 tie-break。
 
     ``cards_by_id`` 用于第 3 维证据占比；缺省时该维对所有 job 持平，仍按其余
     维度确定性排序。返回 ``(primary, deferred)``；未选中的 job 只记录为
@@ -354,7 +330,7 @@ def expand_content_job(
     cards_by_id: dict[str, EvidenceCard],
     candidate: DiscussionCandidate | None,
 ) -> ContentJob:
-    """一次 flash 调用：把单个主题展开成完整 ContentJob，并强制 confirmed=False。"""
+    """一次 flash 调用：把单个主题展开成完整 ContentJob。"""
     cards = [cards_by_id[cid] for cid in topic.card_ids if cid in cards_by_id]
     template = Path("prompts/expand-content-job.md").read_text()
     prompt = _render_prompt(
@@ -367,7 +343,4 @@ def expand_content_job(
             ),
         },
     )
-    job = cast(ContentJob, runner.run(prompt, ContentJob))
-    if job.author_position is not None:
-        job.author_position = job.author_position.model_copy(update={"confirmed": False})
-    return job
+    return cast(ContentJob, runner.run(prompt, ContentJob))

@@ -3,7 +3,6 @@ from datetime import UTC, datetime
 from sqlalchemy import inspect
 
 from finch.content.checkers.base import CheckResult
-from finch.content.jobs import PositionSource
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard, Source
 from finch.inbox.models import DecisionAction, DecisionRecord
@@ -144,8 +143,7 @@ def test_decision_record_repository_roundtrip(tmp_path):
     rec = DecisionRecord(
         id="dec_j1", job_id="j1", draft_id="d1",
         action=DecisionAction.ACCEPT,
-        position_source=PositionSource.HUMAN_CONFIRMED,
-        position_fingerprint="fp", approved_content_hash="h",
+        approved_content_hash="h",
         decided_at=datetime.now(UTC),
     )
     repo.save(rec)

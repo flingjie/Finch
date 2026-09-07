@@ -80,7 +80,6 @@ from .storage.repositories import (
     EvidenceRepository,
     FeedbackRepository,
     InteractionRepository,
-    PositionApprovalRepository,
     PublicationIntentRepository,
     RepoCursorRepository,
 )
@@ -259,7 +258,6 @@ def _finish_daily(
         return
 
     jobs_repo = ContentJobRepository(store)
-    approvals_repo = PositionApprovalRepository(store)
     while True:
         typer.echo(
             render_daily_summary(
@@ -286,7 +284,6 @@ def _finish_daily(
                 request,
                 action,
                 jobs_repo=jobs_repo,
-                approvals_repo=approvals_repo,
                 edited_position=edited,
                 skip_reason=skip_reason,
             )

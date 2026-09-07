@@ -59,7 +59,7 @@ def test_idea_ready_persists_and_outputs_json(monkeypatch, tmp_path):
     jobs = ContentJobRepository(store).list_jobs()
     assert len(jobs) == 1
     assert jobs[0].author_position is not None
-    assert jobs[0].author_position.confirmed is True
+    assert jobs[0].author_position.decision == "用可恢复性评价 Graph"
 
 
 def test_idea_not_ready_no_persist(monkeypatch, tmp_path):

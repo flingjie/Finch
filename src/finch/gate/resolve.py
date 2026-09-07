@@ -1,20 +1,19 @@
-"""Gate 解析与决策落地：把一次作者决策落到 job/approval（不负责 replay）。"""
+"""Gate 解析与决策落地：把一次作者决策落到 job（不负责 replay）。"""
 
 import yaml
 
-from finch.content.jobs import AuthorPosition, ContentJobStatus, position_fingerprint
-from finch.storage.repositories import ContentJobRepository, PositionApprovalRepository
+from finch.content.jobs import AuthorPosition, ContentJobStatus
+from finch.storage.repositories import ContentJobRepository
 
 from .models import InputAction, InputRequest, ProposedPosition
 
 
-def _to_author_position(position: ProposedPosition, confirmed: bool = True) -> AuthorPosition:
+def _to_author_position(position: ProposedPosition) -> AuthorPosition:
     return AuthorPosition(
         claim=position.claim,
         decision=position.decision,
         tradeoff=position.tradeoff,
         change_mind_if=position.change_mind_if,
-        confirmed=confirmed,
     )
 
 
@@ -50,18 +49,13 @@ def resolve_input(
     action: InputAction,
     *,
     jobs_repo: ContentJobRepository,
-    approvals_repo: PositionApprovalRepository | None = None,
     edited_position: ProposedPosition | None = None,
     skip_reason: str | None = None,
 ) -> str:
-    """把一次决策落到 job/approval 上，返回人类可读摘要。不负责 replay。"""
+    """把一次决策落到 job 上，返回人类可读摘要。不负责 replay。"""
     job = jobs_repo.get_job(request.job_id)
     if job is None:
         raise ValueError(f"job not found: {request.job_id}")
-    stored_position = job.author_position
-    stored_fp = (
-        position_fingerprint(stored_position) if stored_position is not None else None
-    )
 
     if action is InputAction.CONFIRM:
         position = job.author_position
@@ -72,22 +66,13 @@ def resolve_input(
             or not position.tradeoff
         ):
             raise ValueError("position incomplete; use --edit or --file")
-        confirmed = position.model_copy(update={"confirmed": True})
-        jobs_repo.upsert_job(job.model_copy(update={"author_position": confirmed}))
-        if approvals_repo is not None:
-            approvals_repo.approve(position_fingerprint(confirmed), request.job_id)
         return f"confirmed {request.job_id}"
 
     if action is InputAction.EDIT:
         if edited_position is None or not edited_position.complete():
             raise ValueError("edited position incomplete")
-        position = _to_author_position(edited_position, confirmed=True)
+        position = _to_author_position(edited_position)
         jobs_repo.upsert_job(job.model_copy(update={"author_position": position}))
-        if approvals_repo is not None:
-            new_fp = position_fingerprint(position)
-            if stored_fp is not None and new_fp != stored_fp:
-                approvals_repo.revoke(stored_fp)
-            approvals_repo.approve(new_fp, request.job_id)
         return f"edited {request.job_id}"
 
     if action is InputAction.SKIP:
@@ -101,8 +86,6 @@ def resolve_input(
                 }
             )
         )
-        if approvals_repo is not None and stored_fp is not None:
-            approvals_repo.revoke(stored_fp)
         return f"skipped {request.job_id}"
 
     if action is InputAction.STOP:
@@ -116,8 +99,6 @@ def resolve_input(
                         }
                     )
                 )
-        if approvals_repo is not None and stored_fp is not None:
-            approvals_repo.revoke(stored_fp)
         return "stopped original track"
 
     raise ValueError(f"unsupported action: {action}")

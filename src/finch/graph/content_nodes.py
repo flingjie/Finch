@@ -26,11 +26,9 @@ from ..content.claims import validate_draft
 from ..content.jobs import (
     ContentJob,
     ContentJobStatus,
-    PositionSource,
     TopicProposal,
     expand_content_job,
     plan_content_topics,
-    position_fingerprint,
     select_planning_evidence,
     select_primary_job,
 )
@@ -40,7 +38,7 @@ from ..evidence.models import EvidenceCard, MatchResult
 from ..gate.models import InputRequest, ProposedPosition
 from ..llm.base import StructuredInferenceRunner
 from ..settings import DailyBudget, QualityGates
-from ..storage.repositories import ContentJobRepository, PositionApprovalRepository
+from ..storage.repositories import ContentJobRepository
 from ..twitter.models import DiscussionCandidate
 from .context import items_payload, parse_items
 from .events import NodeResult
@@ -881,7 +879,6 @@ def make_define_jobs_node(
 
 def make_position_gate_node(
     jobs_repo: ContentJobRepository | None = None,
-    approvals_repo: PositionApprovalRepository | None = None,
 ) -> Node:
     """位置确认门：确定性选出唯一 primary，只有 primary 可阻塞内容生成。
 
@@ -962,10 +959,7 @@ def make_position_gate_node(
                 and bool(position.tradeoff)
             )
 
-            # 立场不完整：无法起草，仍阻塞 + must_ask 信号。
-            # 该检查必须先于复用门禁与 confirmed 放行：confirm-position 可置
-            # confirmed=True 而不校验 decision/tradeoff 完整性，否则空立场会
-            # 绕过 needs_input 直接出草稿。
+            # 立场不完整：无法起草，仍阻塞 + must_ask 信号（Phase 2 移除）。
             if not has_decision_tradeoff:
                 pos = primary.author_position
                 output["items"] = [primary.model_dump(mode="json")]
@@ -991,41 +985,8 @@ def make_position_gate_node(
                     warnings=[f"primary job {primary.id} needs a confirmed position"],
                 )
 
-            # 复用门禁（P2）：逐字一致 + 未撤销 + 无 change_mind_if → 复用确认（REUSED）。
-            # has_decision_tradeoff 为真已在上方保证；position is not None 由该条件推导，
-            # 此处保留判断以满足类型检查并保护 fingerprint 调用。
-            if (
-                approvals_repo is not None
-                and jobs_repo is not None
-                and position is not None
-            ):
-                fingerprint = position_fingerprint(position)
-                approval = approvals_repo.find_active(fingerprint)
-                if approval is not None and not position.change_mind_if:
-                    confirmed_pos = position.model_copy(
-                        update={"confirmed": True, "position_source": PositionSource.REUSED}
-                    )
-                    confirmed_job = primary.model_copy(update={"author_position": confirmed_pos})
-                    jobs_repo.upsert_job(confirmed_job)
-                    output["items"] = [confirmed_job.model_dump(mode="json")]
-                    output["reused_approval"] = fingerprint
-                    return NodeResult(status="succeeded", output=output)
-
-            if position is not None and position.confirmed:
-                # 已人类确认：原样通过。
-                output["items"] = [primary.model_dump(mode="json")]
-                return NodeResult(status="succeeded", output=output)
-
-            # 可推断但未确认：非阻塞，标记 INFERRED 后通过（生成候选草稿）。
-            assert position is not None
-            inferred_pos = position.model_copy(
-                update={"position_source": PositionSource.INFERRED}
-            )
-            inferred_job = primary.model_copy(update={"author_position": inferred_pos})
-            if jobs_repo is not None:
-                jobs_repo.upsert_job(inferred_job)
-            output["items"] = [inferred_job.model_dump(mode="json")]
-            output["inferred_position"] = True
+            # 立场完整：直接放行（已移除 confirmed/reuse/INFERRED 机制）。
+            output["items"] = [primary.model_dump(mode="json")]
             return NodeResult(status="succeeded", output=output)
 
     return PositionGateNode(

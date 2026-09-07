@@ -17,7 +17,6 @@ from finch.content.jobs import (
     ContentJobStatus,
     ContentScope,
     IntendedEffect,
-    PositionSource,
     SuccessCriterion,
 )
 from finch.content.models import Draft, DraftKind
@@ -61,7 +60,7 @@ def recent_author_posts(posts: list[AuthorPost], limit: int = 25) -> list[Author
 
 
 def build_content_job(text: str, assessment: AssessIdeaOutput) -> ContentJob:
-    """把评估结果转换成已确认立场的 ContentJob（id 由文本哈希确定，幂等）。"""
+    """把评估结果转换成 ContentJob（id 由文本哈希确定，幂等）。"""
     job_id = "idea_" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
     return ContentJob(
         id=job_id,
@@ -79,8 +78,6 @@ def build_content_job(text: str, assessment: AssessIdeaOutput) -> ContentJob:
             decision=assessment.decision or "",
             tradeoff=assessment.tradeoff or "",
             change_mind_if=assessment.change_mind_if,
-            confirmed=True,
-            position_source=PositionSource.HUMAN_CONFIRMED,
         ),
         success_criteria=[_IDEA_SUCCESS_CRITERION],
         recommended_format=DraftKind.ORIGINAL,

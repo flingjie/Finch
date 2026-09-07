@@ -60,7 +60,6 @@ def _job():
             decision="use token bucket",
             tradeoff="more memory",
             change_mind_if="if a library already covers it",
-            confirmed=True,
         ),
         success_criteria=[
             SuccessCriterion(id="c1", description="critic passes", measurement="critic")

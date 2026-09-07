@@ -54,7 +54,8 @@ class Store:
         _enable_wal(self.engine)
 
     def init(self) -> None:
-        # Import repositories module to register EvidenceCardRecord before create_all
+        # Import repositories module to register all Record models (incl. ContentJobRecord
+        # 的 idea 候选投影列 origin/generation_key) before create_all.
         from finch.storage import repositories as _  # noqa: F401
 
         SQLModel.metadata.create_all(self.engine)

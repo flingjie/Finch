@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from finch.author.models import AuthorPost
 from finch.content.checkers.aggregate import AggregateOutcome
 from finch.content.checkers.base import CheckResult
-from finch.content.jobs import ContentJobStatus, ContentScope, PositionSource
+from finch.content.jobs import ContentJobStatus, ContentScope
 from finch.content.models import DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard
 from finch.idea.models import AssessIdeaOutput, IdeaAssessment, RewriteIdeaOutput, WriteIdeaOutput
@@ -41,7 +41,7 @@ def _assessment(**overrides) -> AssessIdeaOutput:
     return AssessIdeaOutput(**data)
 
 
-def test_build_content_job_confirms_human_position():
+def test_build_content_job_sets_author_position():
     job = build_content_job("我觉得 Agent Graph 的价值是恢复", _assessment())
     assert job.id.startswith("idea_")
     assert job.source_card_ids == ["ev_1"]
@@ -50,8 +50,6 @@ def test_build_content_job_confirms_human_position():
     assert job.status == ContentJobStatus.READY
     assert job.scope == ContentScope.BOUNDED_LESSON
     assert job.author_position is not None
-    assert job.author_position.confirmed is True
-    assert job.author_position.position_source == PositionSource.HUMAN_CONFIRMED
     assert job.author_position.decision == "用可恢复性而不是图的复杂度评价 Graph"
     assert job.intended_effect.understand == "Graph 的核心价值是恢复与重放"
     assert job.success_criteria[0].id == "idea_human_review"

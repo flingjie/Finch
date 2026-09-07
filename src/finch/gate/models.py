@@ -1,14 +1,9 @@
-"""Gate 交互层数据模型：结构化人工输入请求与立场批准记录。"""
+"""Gate 交互层数据模型：结构化人工输入请求。"""
 
-from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
-
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
 
 
 class InputAction(StrEnum):
@@ -43,12 +38,3 @@ class InputRequest(BaseModel):
     evidence_card_ids: list[str] = Field(default_factory=list)
     questions: list[str] = Field(default_factory=list)
     actions: list[InputAction] = Field(default_factory=lambda: list(InputAction))
-
-
-class PositionApproval(BaseModel):
-    """一次作者立场确认记录。按 fingerprint 复用（而非 job id），撤销后禁止复用。"""
-
-    position_fingerprint: str
-    source_job_id: str
-    approved_at: datetime = Field(default_factory=_utcnow)
-    revoked_at: datetime | None = None

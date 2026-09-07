@@ -1,7 +1,6 @@
 from finch.gate.models import (
     InputAction,
     InputRequest,
-    PositionApproval,
     ProposedPosition,
 )
 
@@ -23,8 +22,3 @@ def test_input_request_serializes_to_json():
     assert data["type"] == "author_position_confirmation"
     assert data["actions"] == [a.value for a in InputAction]
     assert InputRequest.model_validate(data) == request
-
-
-def test_position_approval_defaults():
-    approval = PositionApproval(position_fingerprint="abc", source_job_id="j1")
-    assert approval.revoked_at is None

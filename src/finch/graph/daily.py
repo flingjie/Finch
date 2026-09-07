@@ -13,7 +13,6 @@ from ..storage.repositories import (
     CommitIngestionRepository,
     ContentJobRepository,
     EvidenceRepository,
-    PositionApprovalRepository,
 )
 from ..twitter.models import DiscussionCandidate, to_candidate
 from ..twitter.normalizer import normalize_tweets
@@ -71,7 +70,6 @@ def daily_nodes(
         return candidates
 
     jobs_repo = ContentJobRepository(store)
-    approvals_repo = PositionApprovalRepository(store)
 
     def _resolve(node_name: str) -> StructuredInferenceRunner:
         if inference_runners is None:
@@ -99,7 +97,7 @@ def daily_nodes(
             jobs_repo=jobs_repo,
             budget=settings.daily_budget,
         ),
-        make_position_gate_node(jobs_repo=jobs_repo, approvals_repo=approvals_repo),
+        make_position_gate_node(jobs_repo=jobs_repo),
         make_draft_node(runner, write_reply, write_original, settings.quality_gates),
         make_critique_node(
             runner, rewrite, settings.quality_gates,

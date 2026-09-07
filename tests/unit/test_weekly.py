@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from finch.content.jobs import ContentJob, ContentJobStatus, IntendedEffect, PositionSource
+from finch.content.jobs import ContentJob, ContentJobStatus, IntendedEffect
 from finch.content.models import Draft, DraftKind
 from finch.inbox.models import DecisionAction, DecisionRecord
 from finch.learn.weekly import render_weekly, weekly_analysis
@@ -20,7 +20,6 @@ def _decision(store, job_id, draft_id, action, decided_at):
     DecisionRecordRepository(store).save(
         DecisionRecord(
             id=f"dec_{job_id}", job_id=job_id, draft_id=draft_id, action=action,
-            position_source=PositionSource.HUMAN_CONFIRMED, position_fingerprint="",
             approved_content_hash="h", decided_at=decided_at,
         )
     )

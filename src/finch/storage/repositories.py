@@ -26,7 +26,6 @@ from finch.engagement.models import (
     InteractionStatus,
 )
 from finch.evidence.models import EvidenceCard
-from finch.gate.models import PositionApproval
 from finch.github.models import CommitDetail, CommitSummary
 from finch.inbox.models import DecisionRecord
 from finch.learn.models import Feedback
@@ -849,60 +848,6 @@ class EngagementRunStatsRepository:
         with Session(self.store.engine) as session:
             records = list(session.exec(select(EngagementRunStatsRecord)))
             return [EngagementRunStats.model_validate_json(r.payload_json) for r in records]
-
-
-class PositionApprovalRecord(SQLModel, table=True):
-    """作者立场批准记录（P2：按 fingerprint 复用，而非 job）。"""
-
-    id: str = Field(primary_key=True)  # = position_fingerprint
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class PositionApprovalRepository:
-    """立场批准仓储：approve / find_active / revoke。"""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
-
-    def approve(self, fingerprint: str, job_id: str) -> PositionApproval:
-        """upsert 一条批准记录并清除撤销标记（幂等，刷新 approved_at）。"""
-        approval = PositionApproval(
-            position_fingerprint=fingerprint,
-            source_job_id=job_id,
-            approved_at=datetime.now(UTC),
-        )
-        record = PositionApprovalRecord(
-            id=fingerprint,
-            payload_json=approval.model_dump_json(),
-            updated_at=datetime.now(UTC),
-        )
-        with Session(self.store.engine) as session:
-            session.merge(record)
-            session.commit()
-        return approval
-
-    def find_active(self, fingerprint: str) -> PositionApproval | None:
-        """返回未被撤销的批准；不存在或已撤销返回 None。"""
-        with Session(self.store.engine) as session:
-            record = session.get(PositionApprovalRecord, fingerprint)
-            if record is None:
-                return None
-            approval = PositionApproval.model_validate_json(record.payload_json)
-            return approval if approval.revoked_at is None else None
-
-    def revoke(self, fingerprint: str) -> None:
-        """撤销一条批准（幂等；无记录时不操作）。"""
-        with Session(self.store.engine) as session:
-            record = session.get(PositionApprovalRecord, fingerprint)
-            if record is None:
-                return
-            approval = PositionApproval.model_validate_json(record.payload_json)
-            approval.revoked_at = datetime.now(UTC)
-            record.payload_json = approval.model_dump_json()
-            record.updated_at = datetime.now(UTC)
-            session.merge(record)
-            session.commit()
 
 
 class AuthorAccountRecord(SQLModel, table=True):

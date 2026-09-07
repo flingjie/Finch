@@ -14,7 +14,6 @@ from finch.content.jobs import (
     _render_prompt,
     expand_content_job,
     plan_content_topics,
-    position_fingerprint,
     select_planning_evidence,
     select_primary_job,
 )
@@ -64,9 +63,7 @@ class TestAuthorPosition:
             decision="Use pool size of 10 connections",
             tradeoff="Increased memory usage per connection",
             change_mind_if="Benchmarks show no improvement",
-            confirmed=False,
         )
-        assert pos.confirmed is False
         assert "pool size" in pos.decision
 
     def test_author_position_without_optional_fields(self):
@@ -76,36 +73,6 @@ class TestAuthorPosition:
             tradeoff="Stale data risk",
         )
         assert pos.change_mind_if is None
-        assert pos.confirmed is False
-
-
-def test_author_position_source_defaults_none():
-    pos = AuthorPosition(claim="c", decision="d", tradeoff="t")
-    assert pos.position_source is None
-    assert pos.confirmed is False
-
-
-def test_position_fingerprint_is_deterministic():
-    p = AuthorPosition(claim="c", decision="d", tradeoff="t")
-    assert position_fingerprint(p) == position_fingerprint(p)
-
-
-def test_position_fingerprint_ignores_confirmed():
-    a = AuthorPosition(claim="c", decision="d", tradeoff="t", confirmed=False)
-    b = AuthorPosition(claim="c", decision="d", tradeoff="t", confirmed=True)
-    assert position_fingerprint(a) == position_fingerprint(b)
-
-
-def test_position_fingerprint_changes_with_change_mind_if():
-    a = AuthorPosition(claim="c", decision="d", tradeoff="t", change_mind_if="x")
-    b = AuthorPosition(claim="c", decision="d", tradeoff="t", change_mind_if="y")
-    assert position_fingerprint(a) != position_fingerprint(b)
-
-
-def test_position_fingerprint_distinguishes_newline_boundaries():
-    a = AuthorPosition(claim="a\nb", decision="c", tradeoff="t")
-    b = AuthorPosition(claim="a", decision="b\nc", tradeoff="t")
-    assert position_fingerprint(a) != position_fingerprint(b)
 
 
 class TestSuccessCriterion:
@@ -464,7 +431,6 @@ def _primary_job(
     job_id="j",
     candidate_id=None,
     status=ContentJobStatus.READY,
-    confirmed=True,
     decision="decide",
     tradeoff="trade",
     why_now="",
@@ -479,7 +445,7 @@ def _primary_job(
         audience="engineers",
         intended_effect=IntendedEffect(understand="u"),
         author_position=AuthorPosition(
-            claim="claim", decision=decision, tradeoff=tradeoff, confirmed=confirmed
+            claim="claim", decision=decision, tradeoff=tradeoff
         ),
         success_criteria=[],
         recommended_format=DraftKind.ORIGINAL,
@@ -514,15 +480,6 @@ class TestSelectPrimaryJob:
         primary, deferred = select_primary_job([job])
         assert primary is job
         assert deferred == []
-
-    def test_ready_confirmed_beats_unconfirmed(self):
-        ready = _primary_job(job_id="a", status=ContentJobStatus.READY, confirmed=True)
-        unconfirmed = _primary_job(
-            job_id="b", status=ContentJobStatus.NEEDS_INPUT, confirmed=False
-        )
-        primary, deferred = select_primary_job([ready, unconfirmed])
-        assert primary is ready
-        assert [d.job.id for d in deferred] == ["b"]
 
     def test_candidate_context_beats_original(self):
         with_candidate = _primary_job(job_id="a", candidate_id="t1")
@@ -663,16 +620,14 @@ def test_render_prompt_does_not_rescan_inserted_data():
     assert "{unknown}" in out
 
 
-def test_expand_content_job_forces_confirmed_false():
+def test_expand_content_job_preserves_author_position():
     class _JobRunner(CodexRunner):
         def run(self, prompt, output_model, **kw):
             return ContentJob(
                 id="job1", source_card_ids=["ev1"], candidate_id="t1",
                 reader_problem="r", audience="a",
                 intended_effect=IntendedEffect(understand="u"),
-                author_position=AuthorPosition(
-                    claim="c", decision="d", tradeoff="t", confirmed=True,
-                ),
+                author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"),
                 success_criteria=[], recommended_format=DraftKind.REPLY,
                 status=ContentJobStatus.READY,
             )
@@ -684,7 +639,7 @@ def test_expand_content_job_forces_confirmed_false():
     )
     job = expand_content_job(_JobRunner(), topic, {"ev1": card}, None)
     assert job.author_position is not None
-    assert job.author_position.confirmed is False
+    assert job.author_position.decision == "d"
 
 
 def _card(cid, event_id, confidence=ClaimConfidence.VERIFIED, publishable=True):

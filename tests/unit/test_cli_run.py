@@ -12,7 +12,6 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
     IntendedEffect,
-    PositionSource,
     SuccessCriterion,
 )
 from finch.content.models import Draft, DraftKind
@@ -368,8 +367,6 @@ def _seed_accept_decision(store, draft_id, *, revised_body=None):
             job_id=f"job_{draft_id}",
             draft_id=draft_id,
             action=DecisionAction.ACCEPT,
-            position_source=PositionSource.HUMAN_CONFIRMED,
-            position_fingerprint="",
             approved_content_hash="h",
             revised_body=revised_body,
             decided_at=datetime.now(UTC),
