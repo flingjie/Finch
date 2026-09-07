@@ -47,7 +47,7 @@ def test_build_content_job_sets_author_position():
     assert job.source_card_ids == ["ev_1"]
     assert job.candidate_id is None
     assert job.recommended_format == DraftKind.ORIGINAL
-    assert job.status == ContentJobStatus.READY
+    assert job.status == ContentJobStatus.CONFIRMED
     assert job.scope == ContentScope.BOUNDED_LESSON
     assert job.author_position is not None
     assert job.author_position.decision == "用可恢复性而不是图的复杂度评价 Graph"

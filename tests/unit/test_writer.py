@@ -65,7 +65,7 @@ def _job():
             SuccessCriterion(id="c1", description="critic passes", measurement="critic")
         ],
         recommended_format=DraftKind.REPLY,
-        status=ContentJobStatus.READY,
+        status=ContentJobStatus.CONFIRMED,
         core_message="use a token bucket for rate limiting",
         why_now="we hit rate limits this week",
         scope=ContentScope.BUILD_LOG,

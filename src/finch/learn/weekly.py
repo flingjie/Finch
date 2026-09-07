@@ -9,7 +9,7 @@ Task 8 新增七个指标，回答「哪些内容任务有效/失败，失败发
 - human_correction_rate 人工修正率（需人工改事实/立场的已审草稿占比，看观点/事实）
 - job_completion_rate 任务完成率（结果评估 job_completed in {yes, partly} 的占比，看选题）
 - useful_reply_rate   有用回复率（回复中获得 useful_reply_count>0 的占比，看分发）
-- do_not_write_rate   不写率（DO_NOT_WRITE job 占比，信息性，非失败）
+- do_not_write_rate   不写率（SKIPPED job 占比，信息性，非失败）
 
 所有新指标只统计「非遗留」草稿（``content_job_id is not None``），遗留草稿只读、
 不参与新指标（仍参与既有 approval-rate 指标）。
@@ -450,13 +450,13 @@ def _useful_reply_rate(
 
 
 def _do_not_write_rate(jobs: list[ContentJob]) -> float:
-    """不写率：DO_NOT_WRITE job / 全部 job。
+    """不写率：SKIPPED job / 全部 job。
 
     ContentJob 无时间戳，「时间窗内」不可判定，故统计全部 job（信息性，非失败）。
     """
     if not jobs:
         return 0.0
-    return sum(1 for j in jobs if j.status == ContentJobStatus.DO_NOT_WRITE) / len(jobs)
+    return sum(1 for j in jobs if j.status == ContentJobStatus.SKIPPED) / len(jobs)
 
 
 def _rewrite_rounds(

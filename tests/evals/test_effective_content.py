@@ -6,9 +6,9 @@ LLM) to verify the SYSTEM's routing and deterministic aggregation on representat
 inputs — not the quality of real model output. One scenario = one clearly-named test.
 
 Scenario map:
-1. 强证据 + 清晰判断 → READY
+1. 强证据 + 清晰判断 → CONFIRMED
 2. 强证据 + 无作者判断 → NEEDS_INPUT
-3. 弱证据/无增量 → DO_NOT_WRITE (silently skipped)
+3. 弱证据/无增量 → SKIPPED (silently skipped)
 4. 通用 AI 套话 → Portability/Specificity fail
 5. 有数字但无证据 → hard fail (reject)
 6. 有明确取舍且风格自然 → pass
@@ -194,7 +194,7 @@ def _job(
     job_id: str = "job1",
     source_card_ids: tuple[str, ...] = ("ev1",),
     position: AuthorPosition | None = _DEFAULT_POSITION,
-    status: ContentJobStatus = ContentJobStatus.READY,
+    status: ContentJobStatus = ContentJobStatus.CONFIRMED,
 ) -> ContentJob:
     return ContentJob(
         id=job_id,

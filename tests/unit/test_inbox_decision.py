@@ -75,7 +75,7 @@ def _job(job_id="job_1"):
         id=job_id, source_card_ids=[], reader_problem="rp", audience="a",
         intended_effect=IntendedEffect(understand="u"), author_position=None,
         success_criteria=[], recommended_format=DraftKind.ORIGINAL,
-        status=ContentJobStatus.READY,
+        status=ContentJobStatus.CONFIRMED,
     )
 
 

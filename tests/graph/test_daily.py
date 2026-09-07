@@ -178,7 +178,7 @@ def test_daily_runtime_full_pipeline_and_hydration(tmp_path):
                         )
                     ],
                     recommended_format=DraftKind.REPLY,
-                    status=ContentJobStatus.READY,
+                    status=ContentJobStatus.CONFIRMED,
                 )
             if output_model is _EntailmentOutput:
                 return _EntailmentOutput(entailment_failed=[])

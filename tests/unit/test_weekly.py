@@ -31,7 +31,7 @@ def _seed_job_draft(store, job_id, draft_id):
             id=job_id, source_card_ids=[], reader_problem="rp", audience="a",
             intended_effect=IntendedEffect(understand="u"), author_position=None,
             success_criteria=[], recommended_format=DraftKind.ORIGINAL,
-            status=ContentJobStatus.READY,
+            status=ContentJobStatus.CONFIRMED,
         )
     )
     DraftRepository(store).upsert_draft(
@@ -74,7 +74,7 @@ def test_weekly_analysis_skip_reason_from_job(tmp_path):
     _seed_job_draft(store, "j1", "d1")
     ContentJobRepository(store).upsert_job(
         ContentJobRepository(store).get_job("j1").model_copy(
-            update={"status": ContentJobStatus.DO_NOT_WRITE, "reject_reason": "not_now"}
+            update={"status": ContentJobStatus.SKIPPED, "reject_reason": "not_now"}
         )
     )
     _decision(store, "j1", "d1", DecisionAction.SKIP, datetime(2026, 9, 1))

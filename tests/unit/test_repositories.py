@@ -162,3 +162,34 @@ def test_draft_repository_list_by_job(tmp_path):
     repo.upsert_draft(Draft(id="d2", kind=DraftKind.ORIGINAL, body="b", content_job_id="j2"))
     assert [d.id for d in repo.list_by_job("j1")] == ["d1"]
     assert repo.list_by_job("nope") == []
+
+
+def test_contentjob_find_by_generation_key(tmp_path):
+    from finch.content.jobs import ContentJob, ContentJobStatus, IntendedEffect
+    from finch.content.models import DraftKind
+    from finch.storage.repositories import ContentJobRepository
+
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = ContentJobRepository(store)
+    job = ContentJob(
+        id="job_1",
+        source_card_ids=["card_1"],
+        candidate_id=None,
+        reader_problem="Problem",
+        audience="Engineers",
+        intended_effect=IntendedEffect(understand="Solution"),
+        author_position=None,
+        success_criteria=[],
+        recommended_format=DraftKind.REPLY,
+        status=ContentJobStatus.PROPOSED,
+        origin="commit",
+        generation_key="gk_123",
+    )
+    repo.upsert_job(job)
+
+    found = repo.find_by_generation_key("gk_123")
+    assert found is not None
+    assert found.id == "job_1"
+    assert found.origin == "commit"
+    assert repo.find_by_generation_key("nope") is None

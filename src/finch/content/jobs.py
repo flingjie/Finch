@@ -16,16 +16,12 @@ from finch.twitter.models import DiscussionCandidate
 
 
 class ContentJobStatus(StrEnum):
-    """Content Job 状态枚举。
+    """Content Job 状态枚举（idea 候选流状态机）。
 
-    ``PROPOSED``/``READY``/``DO_NOT_WRITE`` 属于旧 content 编排流；
-    ``CONFIRMED``/``DRAFTED``/``SKIPPED`` 属于 idea 候选流（IdeaCandidate 状态机：
-    ``PROPOSED → CONFIRMED → DRAFTED``，或 ``PROPOSED → SKIPPED``）。
+    ``PROPOSED → CONFIRMED → DRAFTED``，或 ``PROPOSED → SKIPPED``。
     """
 
     PROPOSED = "proposed"
-    READY = "ready"
-    DO_NOT_WRITE = "do_not_write"
     CONFIRMED = "confirmed"
     DRAFTED = "drafted"
     SKIPPED = "skipped"
@@ -98,6 +94,13 @@ class ContentJob(BaseModel):
     why_now: str = ""
     scope: ContentScope = ContentScope.BOUNDED_LESSON
     audience_evidence: str | None = None
+    # ---- idea 候选流字段（Skill 架构 Step 1，均向后兼容可选）----
+    origin: Literal["commit", "search", "user"] | None = None
+    generation_key: str | None = None
+    generator_name: str | None = None
+    generator_version: str | None = None
+    content_fingerprint: str | None = None
+    idea_candidate_json: str | None = None
 
     def validate_source_cards(self, available_card_ids: list[str]) -> bool:
         """

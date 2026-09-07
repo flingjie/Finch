@@ -34,7 +34,7 @@
         {"id": "sc1", "description": "no industry-wide generalization", "measurement": "critic"}
       ],
       "recommended_format": "original",
-      "status": "ready",
+      "status": "confirmed",
       "core_message": "in this service, exponential backoff fixed our retry storm",
       "why_now": "we just shipped the change and want to log the bounded lesson",
       "scope": "bounded_lesson"

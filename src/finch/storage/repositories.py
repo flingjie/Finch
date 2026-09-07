@@ -393,6 +393,8 @@ class ContentJobRecord(SQLModel, table=True):
     """ContentJob 持久化模型（C8）。"""
 
     id: str = Field(primary_key=True)  # = job.id
+    origin: str | None = Field(default=None, index=True)
+    generation_key: str | None = Field(default=None, index=True)
     payload_json: str
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -408,6 +410,8 @@ class ContentJobRepository:
         payload_json = job.model_dump_json()
         record = ContentJobRecord(
             id=job.id,
+            origin=job.origin,
+            generation_key=job.generation_key,
             payload_json=payload_json,
             updated_at=datetime.now(UTC),
         )
@@ -424,6 +428,8 @@ class ContentJobRepository:
                 session.merge(
                     ContentJobRecord(
                         id=job.id,
+                        origin=job.origin,
+                        generation_key=job.generation_key,
                         payload_json=job.model_dump_json(),
                         updated_at=datetime.now(UTC),
                     )
@@ -434,6 +440,17 @@ class ContentJobRepository:
         """按 id 获取 ContentJob，不存在返回 None。"""
         with Session(self.store.engine) as session:
             record = session.get(ContentJobRecord, job_id)
+            if record is None:
+                return None
+            return ContentJob.model_validate_json(record.payload_json)
+
+    def find_by_generation_key(self, generation_key: str) -> ContentJob | None:
+        """按 generation_key 获取 ContentJob，不存在返回 None（幂等键查询）。"""
+        with Session(self.store.engine) as session:
+            stmt = select(ContentJobRecord).where(
+                ContentJobRecord.generation_key == generation_key
+            )
+            record = session.exec(stmt).first()
             if record is None:
                 return None
             return ContentJob.model_validate_json(record.payload_json)

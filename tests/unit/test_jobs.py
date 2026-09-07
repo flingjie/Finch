@@ -103,8 +103,9 @@ class TestContentJob:
     def test_content_job_status_enum_values(self):
         """Test ContentJobStatus enum string values."""
         assert ContentJobStatus.PROPOSED.value == "proposed"
-        assert ContentJobStatus.READY.value == "ready"
-        assert ContentJobStatus.DO_NOT_WRITE.value == "do_not_write"
+        assert ContentJobStatus.CONFIRMED.value == "confirmed"
+        assert ContentJobStatus.DRAFTED.value == "drafted"
+        assert ContentJobStatus.SKIPPED.value == "skipped"
 
     def test_content_scope_enum_values(self):
         """Test ContentScope exposes the four scope values."""
@@ -175,7 +176,7 @@ class TestContentJob:
                 )
             ],
             recommended_format=DraftKind.ORIGINAL,
-            status=ContentJobStatus.READY,
+            status=ContentJobStatus.CONFIRMED,
         )
         assert job.author_position is not None
         assert job.author_position.decision == "Use 10 connections"
@@ -192,7 +193,7 @@ class TestContentJob:
             author_position=None,
             success_criteria=[],
             recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.READY,
+            status=ContentJobStatus.CONFIRMED,
         )
         # Valid: all source cards exist
         assert job.validate_source_cards(["card_a", "card_b", "card_c"]) is True
@@ -215,7 +216,7 @@ class TestContentJob:
             author_position=None,
             success_criteria=[],
             recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.READY,
+            status=ContentJobStatus.CONFIRMED,
         )
         assert job.missing_questions == []
 
@@ -232,7 +233,7 @@ class TestContentJob:
             author_position=None,
             success_criteria=[],
             recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.READY,
+            status=ContentJobStatus.CONFIRMED,
             missing_questions=["q1", "q2", "q3"],
         )
         assert len(job.missing_questions) == 3
@@ -257,7 +258,7 @@ class TestContentJobRepository:
             author_position=None,
             success_criteria=[],
             recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.READY,
+            status=ContentJobStatus.CONFIRMED,
         )
         repo.upsert_job(job)
 
@@ -281,7 +282,7 @@ class TestContentJobRepository:
                 author_position=None,
                 success_criteria=[],
                 recommended_format=DraftKind.REPLY,
-                status=ContentJobStatus.READY,
+                status=ContentJobStatus.CONFIRMED,
             )
             for i in range(3)
         ]
@@ -309,7 +310,7 @@ class TestContentJobRepository:
             author_position=None,
             success_criteria=[],
             recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.READY,
+            status=ContentJobStatus.CONFIRMED,
         )
         repo.upsert_job(job1)
 
@@ -336,7 +337,7 @@ class TestContentJobRepository:
             author_position=None,
             success_criteria=[],
             recommended_format=DraftKind.REPLY,
-            status=ContentJobStatus.READY,
+            status=ContentJobStatus.CONFIRMED,
         )
         job2 = ContentJob(
             id="job_2",
@@ -348,7 +349,7 @@ class TestContentJobRepository:
             author_position=None,
             success_criteria=[],
             recommended_format=DraftKind.ORIGINAL,
-            status=ContentJobStatus.DO_NOT_WRITE,
+            status=ContentJobStatus.SKIPPED,
         )
 
         repo.upsert_job(job1)
@@ -455,7 +456,7 @@ def test_expand_content_job_preserves_author_position():
                 intended_effect=IntendedEffect(understand="u"),
                 author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"),
                 success_criteria=[], recommended_format=DraftKind.REPLY,
-                status=ContentJobStatus.READY,
+                status=ContentJobStatus.CONFIRMED,
             )
 
     topic = TopicProposal(id="tp1", title="t", card_ids=["ev1"], candidate_id="t1")

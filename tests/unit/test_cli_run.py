@@ -570,7 +570,7 @@ def test_decide_skip(monkeypatch, tmp_path):
         app, ["decide", "j1", "--action", "skip", "--reason", "not_now", "--json"]
     )
     assert r.exit_code == 0, r.output
-    assert ContentJobRepository(store).get_job("j1").status.value == "do_not_write"
+    assert ContentJobRepository(store).get_job("j1").status.value == "skipped"
     assert DecisionRecordRepository(store).get("j1").action.value == "skip"
 
 

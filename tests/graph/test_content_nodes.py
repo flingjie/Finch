@@ -105,7 +105,7 @@ def _job(
     candidate_id="t1",
     source_card_ids=("ev1",),
     position=_DEFAULT_POSITION,
-    status=ContentJobStatus.READY,
+    status=ContentJobStatus.CONFIRMED,
 ):
     return ContentJob(
         id=job_id,

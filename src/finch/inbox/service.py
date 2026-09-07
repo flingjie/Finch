@@ -242,7 +242,7 @@ class InboxDecisionService:
         draft = drafts[0]
         self.jobs.upsert_job(
             job.model_copy(
-                update={"status": ContentJobStatus.DO_NOT_WRITE, "reject_reason": reason}
+                update={"status": ContentJobStatus.SKIPPED, "reject_reason": reason}
             )
         )
         record = DecisionRecord(

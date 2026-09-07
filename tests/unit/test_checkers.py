@@ -83,7 +83,7 @@ def _job(decision: str = "Use pool size 10", tradeoff: str = "More memory") -> C
         author_position=AuthorPosition(claim="c", decision=decision, tradeoff=tradeoff),
         success_criteria=[],
         recommended_format=DraftKind.REPLY,
-        status=ContentJobStatus.READY,
+        status=ContentJobStatus.CONFIRMED,
     )
 
 

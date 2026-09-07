@@ -34,7 +34,7 @@
         {"id": "sc1", "description": "no verified/first-person fact for an inferred result", "measurement": "critic"}
       ],
       "recommended_format": "original",
-      "status": "ready",
+      "status": "confirmed",
       "core_message": "in this implementation, the retry change may reduce p99 latency",
       "why_now": "we are about to roll out the retry change",
       "scope": "bounded_lesson"

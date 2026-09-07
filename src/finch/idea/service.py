@@ -81,7 +81,7 @@ def build_content_job(text: str, assessment: AssessIdeaOutput) -> ContentJob:
         ),
         success_criteria=[_IDEA_SUCCESS_CRITERION],
         recommended_format=DraftKind.ORIGINAL,
-        status=ContentJobStatus.READY,
+        status=ContentJobStatus.CONFIRMED,
         scope=ContentScope.BOUNDED_LESSON,
     )
 

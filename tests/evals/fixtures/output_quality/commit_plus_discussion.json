@@ -34,7 +34,7 @@
         {"id": "sc1", "description": "reply names the point it answers", "measurement": "critic"}
       ],
       "recommended_format": "reply",
-      "status": "ready",
+      "status": "confirmed",
       "core_message": "a token bucket with a burst allowance fixed our rate limiting",
       "why_now": "we hit rate-limit spikes this week",
       "scope": "reply"
