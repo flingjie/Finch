@@ -27,6 +27,7 @@ from finch.content.checkers import (
     SpecificityChecker,
     aggregate_checks,
 )
+from finch.content.critic import default_checker_suite
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
@@ -36,10 +37,7 @@ from finch.content.jobs import (
 )
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
-from finch.graph.content_nodes import (
-    default_checker_suite,
-    make_write_node,
-)
+from finch.graph.write_nodes import make_write_node
 from finch.graph.context import items_payload
 from finch.graph.events import NodeResult
 from finch.graph.nodes import Node

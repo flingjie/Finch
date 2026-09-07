@@ -364,7 +364,7 @@ def test_persist_critique_reports_helper(tmp_path):
 def test_daily_persists_versions_and_reports(monkeypatch, tmp_path):
     from finch.codex.runner import CodexRunner
     from finch.evidence.models import ClaimConfidence, EvidenceCard
-    from finch.graph.content_nodes import make_write_node
+    from finch.graph.write_nodes import make_write_node
     from finch.graph.context import items_payload
     from finch.graph.events import NodeResult
     from finch.graph.nodes import Node

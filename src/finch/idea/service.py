@@ -11,6 +11,7 @@ from typing import cast
 from finch.author.models import AuthorPost
 from finch.content.checkers.aggregate import AggregateOutcome, aggregate_checks
 from finch.content.checkers.base import CheckContext, Checker, CheckResult
+from finch.content.critic import _run_checks, default_checker_suite
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
@@ -23,7 +24,6 @@ from finch.content.models import Draft, DraftKind
 from finch.content.voice import VoiceProfile
 from finch.content.writer import _render_failed_checks, _render_job_context
 from finch.evidence.models import EvidenceCard
-from finch.graph.content_nodes import _run_checks, default_checker_suite
 from finch.idea.models import AssessIdeaOutput, RewriteIdeaOutput, WriteIdeaOutput
 from finch.llm.base import StructuredInferenceRunner
 

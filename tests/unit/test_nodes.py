@@ -1,5 +1,5 @@
 # tests/unit/test_nodes.py
-from finch.graph.content_nodes import make_select_node
+from finch.graph.select_nodes import make_select_node
 from finch.graph.nodes import FailingNode, NoopNode
 from finch.settings import DailyBudget
 

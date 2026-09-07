@@ -15,12 +15,10 @@ from finch.content.jobs import (
     TopicProposal,
 )
 from finch.content.models import ClaimRef, Draft, DraftKind, DraftWarning
+from finch.content.critic import default_checker_suite
 from finch.evidence.models import ClaimConfidence, EvidenceCard, JudgeScores, MatchResult
-from finch.graph.content_nodes import (
-    default_checker_suite,
-    make_select_node,
-    make_write_node,
-)
+from finch.graph.select_nodes import make_select_node
+from finch.graph.write_nodes import make_write_node
 from finch.graph.context import items_payload, parse_items
 from finch.graph.events import NodeResult
 from finch.graph.nodes import Node

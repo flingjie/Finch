@@ -1,16 +1,31 @@
-"""Draft 语义审查（contract C5）：六维打分 + 三个语义 flag + 蕴含判定。"""
+"""Draft 语义审查（contract C5）：六维打分 + 三个语义 flag + 蕴含判定。
+
+同时承载 Critic Suite 默认检查器套件（``default_checker_suite``）与并行执行器
+（``_run_checks``），供 graph 的 write 节点与 idea 服务复用。
+"""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
 
 from pydantic import BaseModel, Field
 
 from finch.codex.runner import CodexRunner
+from finch.content.checkers.actionability import ActionabilityChecker
 from finch.content.checkers.aggregate import aggregate_checks
-from finch.content.checkers.base import CheckResult
+from finch.content.checkers.base import CheckContext, Checker, CheckResult
+from finch.content.checkers.decision import DecisionChecker
+from finch.content.checkers.evidence import EvidenceChecker
+from finch.content.checkers.portability import PortabilityChecker
+from finch.content.checkers.safety import SafetyChecker
+from finch.content.checkers.specificity import SpecificityChecker
+from finch.content.checkers.structure import StructureChecker
+from finch.content.checkers.voice import VoiceChecker
 from finch.content.models import Draft
+from finch.content.voice import VoiceProfile
 from finch.evidence.models import EvidenceCard
+from finch.llm.base import StructuredInferenceRunner
 from finch.settings import QualityGates
 
 _PROMPT_PATH = Path("prompts/critique-draft.md")
@@ -70,3 +85,36 @@ def evaluate_passed(result: CritiqueResult, gates: QualityGates) -> bool:
         and not result.unsupported_metric
         and not result.entailment_failed
     )
+
+
+def default_checker_suite(
+    runner: StructuredInferenceRunner | None,
+    voice_profile: VoiceProfile | None = None,
+) -> list[Checker]:
+    """Critic Suite 默认检查器套件（Task 6）：现有 4 个 + 新增 4 个 = 8 个。
+
+    顺序即执行顺序；VoiceChecker 需要 VoiceProfile（默认空画像）。
+    """
+    profile = voice_profile if voice_profile is not None else VoiceProfile()
+    return [
+        EvidenceChecker(runner),
+        DecisionChecker(runner),
+        SpecificityChecker(runner),
+        PortabilityChecker(runner),
+        VoiceChecker(runner, profile),
+        StructureChecker(runner),
+        ActionabilityChecker(runner),
+        SafetyChecker(runner),
+    ]
+
+
+def _run_checks(suite: list[Checker], check_ctx: CheckContext) -> list[CheckResult]:
+    """并行执行 Critic Suite，结果顺序与串行一致（``pool.map`` 保序）。
+
+    单个 checker 退化为串行；多个 checker 时以 ``len(suite)`` 个 worker 并行，
+    各自内部状态只读（CodexRunner 每次调用独立子进程 + 临时目录），线程安全。
+    """
+    if len(suite) <= 1:
+        return [checker.check(check_ctx) for checker in suite]
+    with ThreadPoolExecutor(max_workers=len(suite)) as pool:
+        return list(pool.map(lambda checker: checker.check(check_ctx), suite))
