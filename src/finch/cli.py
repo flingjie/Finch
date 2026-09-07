@@ -22,6 +22,7 @@ from .content.voice import (
     load_voice_profile,
     save_voice_profile,
 )
+from .content.writer import rewrite_with_instruction
 from .dev.cli import dev_app
 from .drafts.service import DraftService
 from .engagement.flow import run_discovery_engagement_flow
@@ -46,6 +47,7 @@ from .idea.service import (
     write_idea,
 )
 from .ideas.commit_service import CommitService
+from .ideas.models import IdeaPosition
 from .ideas.search_service import SearchService
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, DecisionRecord
@@ -415,6 +417,123 @@ def ideas_search(
             typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
 
 
+@ideas_app.command("list")
+def ideas_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """列出全部 idea 候选（ContentJob），一行一个。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    jobs = sorted(ContentJobRepository(store).list_jobs(), key=lambda j: j.id)
+    if as_json:
+        payload = [
+            {"id": job.id, "status": job.status.value, "core_point": job.core_message}
+            for job in jobs
+        ]
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        for job in jobs:
+            typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
+
+
+@ideas_app.command("show")
+def ideas_show(
+    idea_id: str = typer.Argument(..., help="idea id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """展示单个 idea 候选（--json 输出 ContentJob 或嵌入的 IdeaCandidate）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    job = ContentJobRepository(store).get_job(idea_id)
+    if job is None:
+        typer.echo(f"idea not found: {idea_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        if job.idea_candidate_json is not None:
+            typer.echo(job.idea_candidate_json)
+        else:
+            typer.echo(job.model_dump_json(indent=2))
+    else:
+        typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
+
+
+@ideas_app.command("confirm")
+def ideas_confirm(
+    idea_id: str = typer.Argument(..., help="idea id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """确认立场：proposed → confirmed。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    service = IdeaService(ContentJobRepository(store))
+    try:
+        job = service.confirm_position(idea_id)
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(
+            json.dumps({"id": job.id, "status": job.status.value}, ensure_ascii=False, indent=2)
+        )
+    else:
+        typer.echo(f"{job.id}\t{job.status.value}")
+
+
+@ideas_app.command("revise-position")
+def ideas_revise_position(
+    idea_id: str = typer.Argument(..., help="idea id"),
+    position_file: str = typer.Option(..., "--file", help="IdeaPosition YAML 文件路径"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """从 YAML 读取 IdeaPosition 并更新立场（不改状态）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    try:
+        position = IdeaPosition.model_validate(
+            yaml.safe_load(Path(position_file).read_text())
+        )
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        typer.echo(f"invalid position file: {exc}")
+        raise typer.Exit(code=1) from exc
+    service = IdeaService(ContentJobRepository(store))
+    try:
+        job = service.revise_position(idea_id, position)
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(
+            json.dumps({"id": job.id, "status": job.status.value}, ensure_ascii=False, indent=2)
+        )
+    else:
+        typer.echo(f"{job.id}\t{job.status.value}")
+
+
+@ideas_app.command("skip")
+def ideas_skip(
+    idea_id: str = typer.Argument(..., help="idea id"),
+    reason: str = typer.Option(..., "--reason", help="跳过理由"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """跳过 idea：proposed/confirmed → skipped。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    service = IdeaService(ContentJobRepository(store))
+    try:
+        job = service.skip(idea_id, reason)
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        payload = {"id": job.id, "status": job.status.value, "reason": reason}
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"{job.id}\t{job.status.value}")
+
+
 @drafts_app.command("create")
 def drafts_create(
     idea_id: str = typer.Argument(..., help="已确认的 idea id"),
@@ -446,6 +565,59 @@ def drafts_create(
     else:
         typer.echo(f"{draft.id}\tdrafted")
         typer.echo(draft.body)
+
+
+@drafts_app.command("show")
+def drafts_show(
+    draft_id: str = typer.Argument(..., help="draft id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """展示单个草稿。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    draft = DraftRepository(store).get_draft(draft_id)
+    if draft is None:
+        typer.echo(f"draft not found: {draft_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(draft.model_dump_json(indent=2))
+    else:
+        typer.echo(draft.id)
+        typer.echo(draft.body)
+
+
+@drafts_app.command("revise")
+def drafts_revise(
+    draft_id: str = typer.Argument(..., help="draft id"),
+    instruction: str = typer.Option(..., "--instruction", help="重写指令"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """按自然语言指令重写草稿正文并落库（不自动发布）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    draft_repo = DraftRepository(store)
+    draft = draft_repo.get_draft(draft_id)
+    if draft is None:
+        typer.echo(f"draft not found: {draft_id}")
+        raise typer.Exit(code=1)
+    job = None
+    if draft.content_job_id:
+        job = ContentJobRepository(store).get_job(draft.content_job_id)
+    cards_by_id = {c.id: c for c in EvidenceRepository(store).list_cards()}
+    runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
+    try:
+        revised = rewrite_with_instruction(runner, draft, instruction, cards_by_id, job)
+    except (RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    draft_repo.upsert_draft(revised)
+    if as_json:
+        payload = {"draft_id": revised.id, "body": revised.body}
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(revised.body)
 
 
 @twitter_app.command("search")
