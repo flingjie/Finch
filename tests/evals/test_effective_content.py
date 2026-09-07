@@ -18,6 +18,7 @@ from finch.content.checkers import (
     aggregate_checks,
 )
 from finch.content.critic import default_checker_suite
+from finch.content.checkers.portability import _PortabilityFinding
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
@@ -62,7 +63,7 @@ _PASS_OUTPUTS = {
     "_EntailmentOutput": {"entailment_failed": []},
     "_DecisionOutput": {"expresses_decision": True, "expresses_tradeoff": True, "missing": []},
     "_SpecificityOutput": {"filler_sentences": []},
-    "_PortabilityOutput": {"generic_sentences": []},
+    "_PortabilityOutput": {"findings": []},
     "_VoiceOutput": {"matches_voice": True, "non_author_sentences": []},
     "_StructureOutput": {"confirmed_problems": []},
     "_SafetyOutput": {"invented_personal_experience": False, "unsupported_metric": False},
@@ -153,7 +154,7 @@ def test_scenario_4_generic_ai_boilerplate_fails_portability_and_specificity():
     assert specificity.passed is False
     assert specificity.severity in ("medium", "high")
 
-    runner = FakeRunner(SimpleNamespace(generic_sentences=[body]))
+    runner = FakeRunner(SimpleNamespace(findings=[_PortabilityFinding(sentence=body, kind="boilerplate")]))
     portability = PortabilityChecker(runner).check(CheckContext(draft=draft, cards=cards))
     assert portability.passed is False
     assert portability.severity == "high"
