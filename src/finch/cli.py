@@ -22,6 +22,12 @@ from .content.voice import (
 from .content.writer import rewrite_with_instruction
 from .dev.cli import dev_app
 from .drafts.service import DraftService
+from .engagement.metrics import (
+    compute_metrics,
+    render_metrics,
+    render_run_stats,
+    summarize_run_stats,
+)
 from .engagement.models import InteractionCandidate
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
@@ -40,8 +46,8 @@ from .ideas.commit_service import CommitService
 from .ideas.models import IdeaPosition
 from .ideas.search_service import SearchService
 from .ideas.service import IdeaService
-from .inbox.models import DecisionAction, DecisionRecord
-from .inbox.service import InboxDecisionService, next_item
+from .inbox.models import DecisionAction, DecisionRecord, InboxTrack
+from .inbox.service import InboxDecisionService, list_items, next_item
 from .learn.models import OutcomeAssessment
 from .learn.service import FeedbackService
 from .learn.weekly import render_weekly, weekly_analysis
@@ -51,11 +57,14 @@ from .storage.database import Store
 from .storage.repositories import (
     AuthorPostRepository,
     ContentJobRepository,
+    ConversationEvidenceRepository,
     CriticReportRepository,
     DecisionRecordRepository,
     DraftRepository,
+    EngagementRunStatsRepository,
     EvidenceRepository,
     FeedbackRepository,
+    FeedbackSnapshotRepository,
     InteractionRepository,
     PublicationIntentRepository,
 )
@@ -85,6 +94,12 @@ app.add_typer(ideas_app, name="ideas")
 
 drafts_app = typer.Typer(help="Draft 生成（已确认 idea → 草稿，不自动发布）")
 app.add_typer(drafts_app, name="drafts")
+
+review_app = typer.Typer(help="Review original drafts (accept/revise/skip, no auto-publish)")
+app.add_typer(review_app, name="review")
+
+engagement_app = typer.Typer(help="Review engagement candidates (human-in-the-loop)")
+app.add_typer(engagement_app, name="engagement")
 
 
 @author_app.command("sync")
@@ -696,6 +711,315 @@ def next_cmd(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) 
             typer.echo("no pending items")
         else:
             typer.echo(payload.get("topic") or payload.get("id", ""))
+
+
+def _decision_service(store: Store) -> InboxDecisionService:
+    return InboxDecisionService(
+        jobs=ContentJobRepository(store),
+        drafts=DraftRepository(store),
+        decisions=DecisionRecordRepository(store),
+        publication_intents=PublicationIntentRepository(store),
+        interactions=InteractionRepository(store),
+    )
+
+
+def _draft_job_id(drafts: DraftRepository, draft_id: str) -> str:
+    """把 review 的 draft_id 映射到 InboxDecisionService 的 job_id。
+
+    ``InboxDecisionService`` 以 job_id 为键；idea 草稿均带 ``content_job_id``，
+    故先按 draft_id 读草稿再取其 job。无草稿或无 job 时抛 KeyError。
+    """
+    draft = drafts.get_draft(draft_id)
+    if draft is None:
+        raise KeyError(f"draft not found: {draft_id}")
+    if draft.content_job_id is None:
+        raise KeyError(f"draft has no content job: {draft_id}")
+    return draft.content_job_id
+
+
+@review_app.command("list")
+def review_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """列出待决策的原创草稿（未被 accept/skip 决策覆盖，按 next 的确定性顺序）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    items = list_items(
+        jobs=ContentJobRepository(store),
+        drafts=DraftRepository(store),
+        decisions=DecisionRecordRepository(store),
+        interactions=InteractionRepository(store),
+        cards=EvidenceRepository(store),
+    )
+    original = [i for i in items if i.track == InboxTrack.ORIGINAL]
+    if as_json:
+        payload = [
+            {
+                "draft_id": i.draft_id,
+                "job_id": i.id,
+                "content_type": i.content_type,
+                "score": i.score,
+                "draft": i.draft,
+            }
+            for i in original
+        ]
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not original:
+        typer.echo("no pending drafts")
+        return
+    for item in original:
+        snippet = " ".join(item.draft.split())[:80]
+        typer.echo(f"{item.draft_id}\t{item.content_type}\t{snippet}")
+
+
+@review_app.command("show")
+def review_show(
+    draft_id: str = typer.Argument(..., help="draft id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """展示草稿正文与（若存在）critic 报告。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    draft = DraftRepository(store).get_draft(draft_id)
+    if draft is None:
+        typer.echo(f"draft not found: {draft_id}")
+        raise typer.Exit(code=1)
+    reports = CriticReportRepository(store).list_reports(draft_id)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {"draft": draft.model_dump(mode="json"), "critic_reports": reports},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        typer.echo(draft.body)
+        if reports:
+            typer.echo("\n--- critic ---")
+            typer.echo(json.dumps(reports, ensure_ascii=False, indent=2))
+
+
+@review_app.command("approve")
+def review_approve(
+    draft_id: str = typer.Argument(..., help="draft id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """采用草稿（写 DecisionRecord + PublicationIntent，不自动发布）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    drafts = DraftRepository(store)
+    try:
+        job_id = _draft_job_id(drafts, draft_id)
+    except KeyError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    try:
+        result = _decision_service(store).accept(job_id)
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(result.model_dump_json(indent=2))
+    else:
+        typer.echo(f"approved {draft_id}")
+
+
+@review_app.command("revise")
+def review_revise(
+    draft_id: str = typer.Argument(..., help="draft id"),
+    instruction: str = typer.Option(..., "--instruction", help="重写指令"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """按自然语言指令重写草稿正文（经 critic 校验，不自动发布）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    drafts = DraftRepository(store)
+    try:
+        job_id = _draft_job_id(drafts, draft_id)
+    except KeyError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    cards_by_id = {c.id: c for c in EvidenceRepository(store).list_cards()}
+    runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
+    try:
+        result = _decision_service(store).revise(
+            job_id, instruction, runner=runner, cards_by_id=cards_by_id
+        )
+    except (RuntimeError, StructuredOutputError) as exc:
+        typer.echo(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False))
+        raise typer.Exit(code=1) from exc
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(result["new_body"])
+
+
+@review_app.command("skip")
+def review_skip(
+    draft_id: str = typer.Argument(..., help="draft id"),
+    reason: str = typer.Option(..., "--reason", help="跳过理由"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """跳过草稿并记录理由（不写）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    drafts = DraftRepository(store)
+    try:
+        job_id = _draft_job_id(drafts, draft_id)
+    except KeyError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    try:
+        result = _decision_service(store).skip(job_id, reason)
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(result.model_dump_json(indent=2))
+    else:
+        typer.echo(f"skipped {draft_id}")
+
+
+@engagement_app.command("list")
+def engagement_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """列出 pending 互动候选（id + action + 帖子 url/摘要）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    candidates = InteractionRepository(store).list_pending()
+    if as_json:
+        typer.echo(
+            json.dumps(
+                [c.model_dump(mode="json") for c in candidates],
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    if not candidates:
+        typer.echo("no pending candidates")
+        return
+    for candidate in candidates:
+        snippet = " ".join(candidate.post.content.split())[:60]
+        typer.echo(f"{candidate.id}\t{candidate.action.value}\t{candidate.post.url} — {snippet}")
+
+
+@engagement_app.command("show")
+def engagement_show(
+    candidate_id: str = typer.Argument(..., help="candidate id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """打印候选全文：原帖 + 作者 + 五维评分与理由 + 动作 + 草稿 + 事实风险。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    candidate = InteractionRepository(store).get(candidate_id)
+    if candidate is None:
+        typer.echo(f"candidate not found: {candidate_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(candidate.model_dump_json(indent=2))
+        return
+    score = candidate.score
+    typer.echo(f"id: {candidate.id}")
+    typer.echo(f"status: {candidate.status.value}")
+    typer.echo(f"action: {candidate.action.value}")
+    typer.echo(f"approval_required: {candidate.approval_required}")
+    typer.echo(f"post: {candidate.post.url}")
+    typer.echo(f"author: @{candidate.post.author_name} ({candidate.post.author_id})")
+    typer.echo(f"post_content: {candidate.post.content}")
+    typer.echo(
+        f"score: relevance={score.relevance:.3f} novelty={score.novelty:.3f} "
+        f"discussability={score.discussability:.3f} "
+        f"practical_evidence={score.practical_evidence:.3f} "
+        f"relationship_value={score.relationship_value:.3f} total={score.total:.3f}"
+    )
+    typer.echo(f"score_reasons: {', '.join(score.reasons)}")
+    typer.echo(f"draft: {candidate.draft or '(none)'}")
+    if candidate.revised_draft:
+        typer.echo(f"revised_draft: {candidate.revised_draft}")
+    typer.echo(f"intent: {candidate.intent or '(none)'}")
+    typer.echo(f"source_summary: {candidate.source_summary or '(none)'}")
+    typer.echo(f"factual_risks: {json.dumps(candidate.factual_risks)}")
+    if candidate.reject_reason:
+        typer.echo(f"reject_reason: {candidate.reject_reason}")
+
+
+@engagement_app.command("approve")
+def engagement_approve(candidate_id: str = typer.Argument(..., help="candidate id")) -> None:
+    """批准候选（PROPOSED→APPROVED，幂等，不自动发布）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    try:
+        InteractionRepository(store).approve(candidate_id)
+    except KeyError:
+        typer.echo(f"candidate not found: {candidate_id}")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"approved {candidate_id}")
+
+
+@engagement_app.command("reject")
+def engagement_reject(
+    candidate_id: str = typer.Argument(..., help="candidate id"),
+    reason: str = typer.Option(..., "--reason", help="拒绝理由"),
+) -> None:
+    """拒绝候选并记录理由（→ REJECTED）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    try:
+        InteractionRepository(store).reject(candidate_id, reason)
+    except KeyError:
+        typer.echo(f"candidate not found: {candidate_id}")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"rejected {candidate_id}")
+
+
+@engagement_app.command("edit")
+def engagement_edit(
+    candidate_id: str = typer.Argument(..., help="candidate id"),
+    path: str = typer.Option(..., "--file", help="人工修订后的草稿文件"),
+) -> None:
+    """保存人工修订草稿到 revised_draft（不自动批准、不改变发布权限）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    repo = InteractionRepository(store)
+    if repo.get(candidate_id) is None:
+        typer.echo(f"candidate not found: {candidate_id}")
+        raise typer.Exit(code=1)
+    try:
+        revised = Path(path).read_text()
+    except OSError as exc:
+        typer.echo(f"cannot read file: {exc}")
+        raise typer.Exit(code=1) from exc
+    repo.edit(candidate_id, revised)
+    typer.echo(f"edited {candidate_id}")
+
+
+@engagement_app.command("metrics")
+def engagement_metrics() -> None:
+    """汇总互动质量指标与运行级计数（质量优先，不优化互动数量）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    metrics = compute_metrics(
+        InteractionRepository(store).list_all(),
+        FeedbackSnapshotRepository(store).list_all(),
+        ConversationEvidenceRepository(store).list_all(),
+    )
+    typer.echo(render_metrics(metrics))
+    stats = EngagementRunStatsRepository(store).list_all()
+    typer.echo(render_run_stats(summarize_run_stats(stats)))
 
 
 @app.command("draft")
