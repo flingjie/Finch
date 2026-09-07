@@ -1,8 +1,12 @@
 """Unit tests for Store schema drift cleanup (prune_orphan_tables)."""
 
 from sqlalchemy import inspect
+from sqlmodel import Session
 
+from finch.content.jobs import ContentJob, ContentJobStatus
+from finch.content.models import DraftKind
 from finch.storage.database import Store
+from finch.storage.repositories import ContentJobRecord, ContentJobRepository
 
 
 def test_prune_orphan_tables_drops_unknown_table(tmp_path):
@@ -38,3 +42,30 @@ def test_prune_orphan_tables_is_idempotent(tmp_path):
 
     assert "orphan_table" in store.prune_orphan_tables()
     assert store.prune_orphan_tables() == []
+
+
+def test_prune_legacy_content_jobs_deletes_only_unparseable_rows(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    store.init()
+    repo = ContentJobRepository(store)
+    repo.upsert_job(
+        ContentJob(
+            id="job_ok",
+            source_card_ids=[],
+            reader_problem="p",
+            author_position=None,
+            recommended_format=DraftKind.REPLY,
+            status=ContentJobStatus.PROPOSED,
+            core_message="m",
+        )
+    )
+    with Session(store.engine) as session:
+        session.merge(
+            ContentJobRecord(id="job_tp1", payload_json='{"id":"job_tp1","status":"ready"}')
+        )
+        session.commit()
+
+    assert store.prune_legacy_content_jobs() == ["job_tp1"]
+    # 幂等：清理后再次调用无剩余。
+    assert store.prune_legacy_content_jobs() == []
+    assert [j.id for j in repo.list_jobs()] == ["job_ok"]

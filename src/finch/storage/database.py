@@ -53,3 +53,28 @@ class Store:
             for name in orphans:
                 conn.exec_driver_sql(f'DROP TABLE IF EXISTS "{name}"')
         return orphans
+
+    def prune_legacy_content_jobs(self) -> list[str]:
+        """删除 contentjobrecord 中 payload 无法解析为 ContentJob 的旧行（如 job_tp*）。
+
+        幂等：解析失败的行被删后再次调用返回空列表。返回被删除的 id（按名排序）。
+        """
+        from pydantic import ValidationError
+        from sqlmodel import Session, select
+
+        from finch.content.jobs import ContentJob
+        from finch.storage import repositories as _  # noqa: F401
+        from finch.storage.repositories import ContentJobRecord
+
+        with Session(self.engine) as session:
+            records = list(session.exec(select(ContentJobRecord)))
+            stale = []
+            for record in records:
+                try:
+                    ContentJob.model_validate_json(record.payload_json)
+                except ValidationError:
+                    stale.append(record)
+            for record in stale:
+                session.delete(record)
+            session.commit()
+        return sorted(record.id for record in stale)

@@ -106,6 +106,11 @@ def init(
             f"pruned orphan tables: {', '.join(dropped)}" if dropped
             else "no orphan tables to prune"
         )
+        legacy = store.prune_legacy_content_jobs()
+        typer.echo(
+            f"pruned legacy content jobs: {', '.join(legacy)}" if legacy
+            else "no legacy content jobs to prune"
+        )
     typer.echo(f"initialized: {settings.paths.db_path}")
 
 
