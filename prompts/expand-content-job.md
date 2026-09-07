@@ -35,7 +35,7 @@ these rules:
   is one of "critic", "human", or "outcome".
 - `recommended_format`: "reply" when replying to a candidate, "original" for a standalone
   post. Must be exactly "reply" or "original".
-- `status`: "proposed", "needs_input", "ready", or "do_not_write".
+- `status`: "proposed", "ready", or "do_not_write".
 - `missing_questions`: at most 3 open questions that need answers before writing. Leave empty
   if everything is clear.
 
@@ -46,12 +46,8 @@ Return `status: "do_not_write"` if:
 - The topic is too narrow or already well-documented elsewhere
 - There is insufficient discussion potential
 
-Return `status: "needs_input"` if:
-- `author_position` is missing, OR
-- `author_position.decision` is missing (what specific decision to advocate), OR
-- `author_position.tradeoff` is missing (what was sacrificed to make this decision)
-
-Otherwise return `status: "ready"`.
+Otherwise return `status: "ready"`. Always fill in `author_position` with a `decision` and
+`tradeoff`, inferring them from the evidence and topic when they are not explicit.
 
 ### Required fields
 
@@ -82,7 +78,7 @@ Otherwise return `status: "ready"`.
     }
   ],
   "recommended_format": "reply|original",
-  "status": "proposed|needs_input|ready|do_not_write",
+  "status": "proposed|ready|do_not_write",
   "missing_questions": ["<question_1>", "<question_2>", ...]
 }
 ```
@@ -103,10 +99,3 @@ If you determine nothing should be written:
 - Leave `author_position` as `null`
 - Set `missing_questions` to an empty list
 - Set `intended_effect` fields to empty strings
-
-### NEEDS_INPUT branch
-
-If position is missing or incomplete:
-- Set `status: "needs_input"`
-- Include the specific missing fields in `missing_questions`
-- Make `intended_effect` speculative but reasonable

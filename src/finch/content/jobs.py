@@ -18,13 +18,12 @@ from finch.twitter.models import DiscussionCandidate
 class ContentJobStatus(StrEnum):
     """Content Job 状态枚举。
 
-    ``PROPOSED``/``NEEDS_INPUT``/``READY``/``DO_NOT_WRITE`` 属于旧 content 编排流；
+    ``PROPOSED``/``READY``/``DO_NOT_WRITE`` 属于旧 content 编排流；
     ``CONFIRMED``/``DRAFTED``/``SKIPPED`` 属于 idea 候选流（IdeaCandidate 状态机：
     ``PROPOSED → CONFIRMED → DRAFTED``，或 ``PROPOSED → SKIPPED``）。
     """
 
     PROPOSED = "proposed"
-    NEEDS_INPUT = "needs_input"
     READY = "ready"
     DO_NOT_WRITE = "do_not_write"
     CONFIRMED = "confirmed"

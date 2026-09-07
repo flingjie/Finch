@@ -103,7 +103,6 @@ class TestContentJob:
     def test_content_job_status_enum_values(self):
         """Test ContentJobStatus enum string values."""
         assert ContentJobStatus.PROPOSED.value == "proposed"
-        assert ContentJobStatus.NEEDS_INPUT.value == "needs_input"
         assert ContentJobStatus.READY.value == "ready"
         assert ContentJobStatus.DO_NOT_WRITE.value == "do_not_write"
 

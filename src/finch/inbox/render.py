@@ -1,8 +1,7 @@
 """收件箱人类输出（不含 run_id / 节点名）。"""
 
-from finch.inbox.models import InboxItem, InboxTrack
+from finch.inbox.models import InboxItem
 
-_TRACK_LABEL = {InboxTrack.ORIGINAL: "原创", InboxTrack.ENGAGEMENT: "互动"}
 _CONTENT_LABEL = {"original": "原创", "reply": "回复", "quote": "引用"}
 
 _STATE_LABELS = {
@@ -18,19 +17,6 @@ _STATE_LABELS = {
 def state_label(state: str) -> str:
     """把内部 GraphState 映射为面向用户的文案；未知名回退原值。"""
     return _STATE_LABELS.get(state, state)
-
-
-def render_inbox(items: list[InboxItem]) -> str:
-    """「今天 N 条待决定」汇总。"""
-    if not items:
-        return "今天没有待决定的内容。"
-    lines = [f"今天 {len(items)} 条待决定。", ""]
-    for i, item in enumerate(items, start=1):
-        title = item.position.get("decision") if item.position else ""
-        title = title or item.why_now or item.draft[:40] or item.id
-        lines.append(f"{i}. [{_CONTENT_LABEL[item.content_type]}] {title}")
-    lines += ["", "finch next     # 看第 1 条"]
-    return "\n".join(lines)
 
 
 def _item_title(item: InboxItem) -> str:

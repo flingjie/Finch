@@ -156,7 +156,7 @@ def _job(job_id="job1", candidate_id=None, **overrides):
             SuccessCriterion(id="c1", description="critic passes", measurement="critic")
         ],
         recommended_format=DraftKind.REPLY,
-        status=ContentJobStatus.NEEDS_INPUT,
+        status=ContentJobStatus.PROPOSED,
     )
     kw.update(overrides)
     return ContentJob(**kw)
