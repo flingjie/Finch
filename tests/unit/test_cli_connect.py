@@ -171,6 +171,34 @@ def test_connect_record_unknown_proposal_exits(monkeypatch, tmp_path):
     assert "not found" in r.output
 
 
+# ---- finch connect create ----
+
+def test_connect_create_fetch_failure(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "fetch_post_by_url", lambda *a, **k: None)
+
+    r = CliRunner().invoke(app, ["connect", "create", "--input", "https://x.com/1"])
+    assert r.exit_code == 1
+    assert "could not fetch post" in r.output
+
+
+def test_connect_create_saves_proposal(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    candidate = _candidate()
+    monkeypatch.setattr(cli, "fetch_post_by_url", lambda *a, **k: _post())
+    monkeypatch.setattr(cli, "score_posts", lambda *a, **k: [])
+    monkeypatch.setattr(cli, "generate_proposals", lambda *a, **k: [candidate])
+
+    r = CliRunner().invoke(
+        app, ["connect", "create", "--input", "https://x.com/alice/status/1"]
+    )
+    assert r.exit_code == 0, r.output
+    assert InteractionRepository(ws).get(candidate.id) is not None
+
+
 # ---- finch connect daily ----
 
 def _daily_result() -> EngagementRunResult:

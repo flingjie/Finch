@@ -28,6 +28,9 @@ from .drafts.service import DraftCreateResult, DraftService
 from .engagement.flow import EngagementRunResult, run_discovery_engagement_flow
 from .engagement.metrics import compute_relationship_metrics
 from .engagement.models import InteractionRecord, InteractionStatus
+from .engagement.proposals import generate_proposals
+from .engagement.scoring import rank_candidates, score_posts
+from .engagement.search import fetch_post_by_url
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient
@@ -1222,6 +1225,38 @@ def connect_prepare(
     for c in result.candidates:
         snippet = " ".join(c.post.content.split())[:60]
         typer.echo(f"{c.id}\t{c.action.value}\t{c.peer_id or '-'}\t{snippet}")
+
+
+@connect_app.command("create")
+def connect_create(
+    input_url: str = typer.Option(..., "--input", help="帖子 URL"),
+    topic: str = typer.Option("", "--topic", help="帖子主题（可选）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """为一个具体帖子 URL 生成互动提案（抓取 → 评分 → 选动作 → 草稿 → 存为 PROPOSED）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    post = fetch_post_by_url(
+        input_url, opencli=OpenCliClient(), reddit_opencli=RedditOpenCliClient(), topic=topic
+    )
+    if post is None:
+        typer.echo(f"could not fetch post: {input_url}")
+        raise typer.Exit(code=1)
+    engagement = settings.engagement
+    scored = score_posts(runner, [post], engagement.weights, relationship_by_peer={})
+    ranked = rank_candidates(scored, min_candidate_score=engagement.min_candidate_score)
+    candidates = generate_proposals(runner, ranked, engagement)
+    if not candidates:
+        typer.echo("no proposal above threshold")
+        return
+    candidate = candidates[0]
+    InteractionRepository(ws).upsert(candidate, run_id="create")
+    if as_json:
+        typer.echo(candidate.model_dump_json(indent=2))
+    else:
+        typer.echo(f"{candidate.id}\t{candidate.action.value}\t{candidate.draft or ''}")
 
 
 @connect_app.command("approve")

@@ -153,6 +153,34 @@ def _to_external_post(tweet: Tweet, *, topic: str) -> ExternalPost | None:
     )
 
 
+def fetch_post_by_url(
+    url: str,
+    *,
+    opencli: OpenCliClient,
+    reddit_opencli: RedditOpenCliClient | None = None,
+    topic: str = "",
+) -> ExternalPost | None:
+    """按 URL 抓取单条帖子并映射为 ExternalPost（X 取 thread 首条；Reddit 取 post）。
+
+    抓取失败或时间无法解析返回 None（禁止伪造时间）。topic 为空时 ``matched_topics`` 为空。
+    """
+    if "reddit.com" in url:
+        if reddit_opencli is None:
+            return None
+        reddit_post = reddit_opencli.post(url)
+        if reddit_post is None:
+            return None
+        external = _reddit_to_external_post(reddit_post, topic=topic)
+    else:
+        tweets = opencli.thread(url)
+        if not tweets:
+            return None
+        external = _to_external_post(tweets[0], topic=topic)
+    if external is None:
+        return None
+    return external.model_copy(update={"matched_topics": [topic] if topic else []})
+
+
 def build_queries(interests: InterestsSettings) -> list[str]:
     """由稳定 + 探索兴趣生成查询词列表（每词一条查询，直接作为查询字符串）。"""
     queries: list[str] = []
