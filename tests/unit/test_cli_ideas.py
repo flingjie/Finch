@@ -12,6 +12,7 @@ from finch.content.jobs import (
     ContentJobStatus,
 )
 from finch.content.models import DraftKind
+from finch.engagement.models import ConversationEvidence
 from finch.ideas.models import (
     IdeaBoundaries,
     IdeaCandidate,
@@ -422,6 +423,9 @@ class _FakeFragmentService:
     def from_text(self, text):
         return _candidate()
 
+    def from_conversation(self, evidence):
+        return _candidate()
+
     def from_opportunity(self, opportunity):
         return _candidate()
 
@@ -479,3 +483,43 @@ def test_ideas_create_opportunity_persists(monkeypatch, tmp_path):
     payload = json.loads(r.output)
     assert payload["status"] == "proposed"
     assert ContentJobRepository(store).list_jobs()[0].core_message == CORE_POINT
+
+
+class _FakeConversationEvidenceRepo:
+    def __init__(self, store, *, verified=True):
+        self.store = store
+        self.verified = verified
+
+    def get(self, evidence_id):
+        return ConversationEvidence(
+            id=evidence_id, interaction_id="i1", post_id="p1", kind="question",
+            statement="某个机制到底怎么工作", verified=self.verified,
+        )
+
+
+def test_ideas_create_conversation_persists(monkeypatch, tmp_path):
+    settings = _settings(tmp_path, [])
+    store = Store(settings.paths.db_path)
+    store.init()
+    _patch_create_cli(monkeypatch, settings)
+    monkeypatch.setattr(cli, "ConversationEvidenceRepository", _FakeConversationEvidenceRepo)
+    r = CliRunner().invoke(app, ["ideas", "create", "--conversation", "ev_1", "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["status"] == "proposed"
+    assert ContentJobRepository(store).list_jobs()[0].core_message == CORE_POINT
+
+
+def test_ideas_create_conversation_unverified_rejected(monkeypatch, tmp_path):
+    settings = _settings(tmp_path, [])
+    store = Store(settings.paths.db_path)
+    store.init()
+    _patch_create_cli(monkeypatch, settings)
+    monkeypatch.setattr(
+        cli, "ConversationEvidenceRepository",
+        lambda store: _FakeConversationEvidenceRepo(store, verified=False),
+    )
+    r = CliRunner().invoke(app, ["ideas", "create", "--conversation", "ev_1", "--json"])
+    assert r.exit_code == 1
+    assert "not verified" in r.output
+    assert ContentJobRepository(store).list_jobs() == []

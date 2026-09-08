@@ -1,6 +1,6 @@
 # IdeaCandidate 契约
 
-Skill 层（commit-to-idea / search-to-idea / 用户输入）产出统一 `IdeaCandidate`，持久化复用 `ContentJob`（不新增 Idea 表）。领域服务见 `src/finch/ideas/`。
+Skill 层（idea-discovery / conversation-scout / 用户输入）产出统一 `IdeaCandidate`，持久化复用 `ContentJob`（不新增 Idea 表）。领域服务见 `src/finch/ideas/`。
 
 ## YAML 结构
 

@@ -79,6 +79,8 @@ class WeeklyReflectionService:
             "human_correction_rate": report.human_correction_rate,
             "job_completion_rate": report.job_completion_rate,
             "useful_reply_rate": report.useful_reply_rate,
+            "do_not_write_rate": report.do_not_write_rate,
+            "rewritten_drafts": report.rewritten_drafts,
         }
         profile = voice_profile if voice_profile is not None else VoiceProfile()
         return cast(

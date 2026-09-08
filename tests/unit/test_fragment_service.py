@@ -53,7 +53,7 @@ def test_from_conversation_origin_and_source_ref():
     assert idea.source_refs[0].summary == "某个机制到底怎么工作"
 
 
-def test_from_opportunity_external_neutralized():
+def test_from_opportunity_external_stays_external():
     opp = Opportunity(
         id="opp_1",
         source_post=SourcePostRef(
@@ -65,8 +65,20 @@ def test_from_opportunity_external_neutralized():
     svc = FragmentService(FakeRunner(_out()))
     idea = svc.from_opportunity(opp)
     assert idea.origin == "search"
-    assert idea.boundaries.known == []
-    assert idea.boundaries.inferred == ["I spent weeks debugging this"]
-    assert idea.boundaries.unknown == []
+    assert idea.boundaries.known == []  # 外部信号不归 known
     assert idea.source_refs[0].type == "post"
-    assert idea.source_refs[0].summary == "I spent weeks debugging this"
+    assert idea.source_refs[0].summary == "I spent weeks debugging this"  # 原文保留在来源，可追溯
+
+
+def test_from_conversation_unverified_rejected():
+    evidence = ConversationEvidence(
+        id="ev_1", interaction_id="i1", post_id="p1", kind="question",
+        statement="某个机制到底怎么工作", verified=False,
+    )
+    svc = FragmentService(FakeRunner(_out()))
+    try:
+        svc.from_conversation(evidence)
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError for unverified evidence")
+

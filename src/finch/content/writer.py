@@ -72,6 +72,9 @@ def _render_job_context(job: ContentJob | None) -> str:
         f"- reader_problem: {job.reader_problem}",
         f"- core_message: {job.core_message or '(none)'}",
         f"- why_now: {job.why_now or '(none)'}",
+        f"- observation: {job.observation or '(none)'}",
+        f"- intent: {job.intent}",
+        f"- open_question: {job.open_question or '(none)'}",
         "## Author's decision and intent",
     ]
     if position is not None:

@@ -47,6 +47,10 @@ You turn a scouted conversation opportunity into a single Idea candidate. The op
 came from external public discussion, so it must stay external: never write the external
 author's experience as the user's own first-person experience.
 
+Rules:
+- boundaries.known must be empty (external signal, not verified personal evidence).
+- Put the external signal (third-person, no first-person) into boundaries.inferred.
+
 ## Opportunity
 {opportunity}
 
@@ -111,7 +115,13 @@ class FragmentService:
         return _to_candidate(out, origin="user", source_refs=[])
 
     def from_conversation(self, evidence: ConversationEvidence) -> IdeaCandidate:
-        """已验证 ConversationEvidence → IdeaCandidate，origin=conversation。"""
+        """已验证 ConversationEvidence → IdeaCandidate，origin=conversation。
+
+        未验证（verified=False）的证据拒绝提炼（外部帖 ≠ 个人证据，防御性守卫；
+        CLI 层已拦，这里再兜底）。
+        """
+        if not evidence.verified:
+            raise ValueError(f"conversation evidence not verified: {evidence.id}")
         out = cast(
             IdeaDraftOutput,
             self.runner.run(
@@ -128,7 +138,14 @@ class FragmentService:
         return _to_candidate(out, origin="conversation", source_refs=source_refs)
 
     def from_opportunity(self, opportunity: Opportunity) -> IdeaCandidate:
-        """scout 机会 → IdeaCandidate，origin=search；外部信号强制中性化归入 inferred。"""
+        """scout 机会 → IdeaCandidate，origin=search。
+
+        外部帖子只是信号、不是个人证据：author 字段由 prompt 约束保持中性化（第三人口径），
+        source_refs 保留原文（外部、可追溯）；boundaries 由 LLM 输出决定（prompt 约束
+        known 为空、外部信号归 inferred）。不在此处代码强制 boundaries——它落库前即被
+        IdeaService.create_candidate 丢弃（ContentJob 无 boundaries 字段），与既有
+        commit/search 来源一致，属 prompt 级边界（见 spec「完成标准偏差」）。
+        """
         out = cast(
             IdeaDraftOutput,
             self.runner.run(
@@ -136,9 +153,6 @@ class FragmentService:
                 IdeaDraftOutput,
             ),
         )
-        neutral = " ".join(opportunity.source_post.text.split())
-        # 外部信号未经作者一手验证：强制 known 为空、inferred 承载中性化信号（不信任 LLM 边界）。
-        boundaries = IdeaBoundaries(known=[], inferred=[neutral], unknown=[])
         return _to_candidate(
             out, origin="search",
             source_refs=[
@@ -147,4 +161,4 @@ class FragmentService:
                     summary=opportunity.source_post.text,
                 )
             ],
-        ).model_copy(update={"boundaries": boundaries})
+        )

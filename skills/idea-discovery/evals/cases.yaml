@@ -1,4 +1,4 @@
-skill_name: commit-to-idea
+skill_name: idea-discovery
 cases:
   - id: 1
     name: 有决策的 commit 产出一个清晰 Idea
