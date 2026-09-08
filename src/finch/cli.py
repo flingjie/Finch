@@ -25,6 +25,7 @@ from .content.writer import rewrite_with_instruction
 from .conversations.service import ConversationService
 from .drafts.service import DraftCreateResult, DraftService
 from .engagement.flow import EngagementRunResult, run_discovery_engagement_flow
+from .engagement.metrics import compute_relationship_metrics
 from .engagement.models import InteractionRecord, InteractionStatus
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
@@ -45,13 +46,13 @@ from .settings import Settings, load_settings
 from .storage.database import Store
 from .storage.repositories import (
     ContentJobRepository,
-    ConversationEvidenceRepository,
     ConversationThreadRepository,
     CriticReportRepository,
     DecisionRecordRepository,
     DraftRepository,
     EvidenceRepository,
     FeedbackRepository,
+    FeedbackSnapshotRepository,
     InteractionRecordRepository,
     InteractionRepository,
     OpportunityRepository,
@@ -786,16 +787,24 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
     )
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     # 反馈按 recorded_at 对齐 7 天窗口（与 weekly_analysis 的 since 一致），避免复盘
-    # 输入随库无界膨胀。ConversationEvidence 无时间戳字段，无法按窗过滤，仍取全量
-    # （其量级受 verified/promote 门限约束）。
+    # 输入随库无界膨胀。
     window_feedbacks = [
         fb for fb in FeedbackRepository(store).list_feedbacks() if fb.recorded_at >= since
     ]
+    rel_metrics = compute_relationship_metrics(
+        peers=PeerRepository(store).list_all(),
+        interactions=InteractionRecordRepository(store).list_all(),
+        threads=ConversationThreadRepository(store).list_all(),
+        snapshots=FeedbackSnapshotRepository(store).list_all(),
+        jobs=ContentJobRepository(store).list_jobs(),
+        now=datetime.now(UTC),
+    )
     try:
         reflection = WeeklyReflectionService(runner).reflect(
             report,
+            relationship_metrics=rel_metrics,
             feedbacks=window_feedbacks,
-            conversation_evidence=ConversationEvidenceRepository(store).list_all(),
+            threads=ConversationThreadRepository(store).list_all(),
             voice_profile=load_voice_profile(settings.paths.voice_profile_path),
         )
     except (RuntimeError, StructuredOutputError) as exc:

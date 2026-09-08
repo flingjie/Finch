@@ -38,5 +38,5 @@ def test_render_reflection_contains_sections():
         next_practice="n", stop_doing="x", voice_update_candidate="v",
     )
     text = render_reflection(reflection)
-    assert "本周想清楚了什么" in text
+    assert "本周与谁形成了真正的来回交流" in text
     assert "下周训练重点" in text

@@ -20,8 +20,14 @@
 """
 
 import difflib
+from datetime import datetime
 
 from pydantic import BaseModel
+
+from finch.content.jobs import ContentJob
+from finch.conversations.models import ConversationThread
+from finch.conversations.service import ConversationService
+from finch.peers.models import PeerProfile, RelationshipStage
 
 from .models import (
     ConversationEvidence,
@@ -29,6 +35,7 @@ from .models import (
     FeedbackSnapshot,
     InteractionAction,
     InteractionProposal,
+    InteractionRecord,
     InteractionStatus,
 )
 
@@ -153,5 +160,67 @@ def render_run_stats(s: RunStatsSummary) -> str:
             f"- 累计扫描帖子: {s.total_posts_scanned}",
             f"- 运行次数: {s.total_runs}",
             f"- 无证据运行: {s.no_evidence_runs}",
+        ]
+    )
+
+
+class RelationshipMetrics(BaseModel):
+    """关系质量指标（连接优先改造 Phase 6，取代「帖子表现」作为周报核心）。
+
+    计数型指标，回答「建立了多少真实连接」而非「发了多少内容」。点赞/曝光/粉丝变化
+    不在此列（作为辅助数据，不进北极星）。
+    """
+
+    meaningful_interactions: int = 0       # 有实质反馈的互动（FeedbackSnapshot.meaningful）
+    continued_conversations: int = 0       # 有多于一次互动的对话线索
+    repeat_peers: int = 0                  # 互动超过一次的同行数
+    new_relevant_peers: int = 0            # 关系阶段已越过 DISCOVERED 的同行数
+    ideas_from_conversations: int = 0      # 由对话形成的观点候选数
+    collaboration_signals: int = 0         # 含 agreements 或 possible_experiments 的对话数
+    stale_conversations: int = 0           # 需要跟进（超期/有未解问题）的对话数
+
+
+def compute_relationship_metrics(
+    *,
+    peers: list[PeerProfile],
+    interactions: list[InteractionRecord],
+    threads: list[ConversationThread],
+    snapshots: list[FeedbackSnapshot],
+    jobs: list[ContentJob],
+    now: datetime,
+) -> RelationshipMetrics:
+    """从关系领域数据聚合关系质量指标（纯函数，无 IO）。"""
+    per_peer: dict[str, int] = {}
+    for rec in interactions:
+        per_peer[rec.peer_id] = per_peer.get(rec.peer_id, 0) + 1
+
+    svc = ConversationService()
+    return RelationshipMetrics(
+        meaningful_interactions=sum(1 for s in snapshots if s.meaningful),
+        continued_conversations=sum(1 for t in threads if len(t.interaction_ids) >= 2),
+        repeat_peers=sum(1 for n in per_peer.values() if n > 1),
+        new_relevant_peers=sum(
+            1 for p in peers if p.relationship_stage != RelationshipStage.DISCOVERED
+        ),
+        ideas_from_conversations=sum(1 for j in jobs if j.origin == "conversation"),
+        collaboration_signals=sum(1 for t in threads if t.agreements or t.possible_experiments),
+        stale_conversations=sum(1 for t in threads if svc.needs_follow_up(t, now=now)),
+    )
+
+
+def render_relationship_metrics(m: RelationshipMetrics) -> str:
+    """把关系质量指标渲染为 Markdown 列表。"""
+    return "\n".join(
+        [
+            "# Finch Relationship Metrics",
+            "",
+            "## 关系质量（首要）",
+            f"- 有实质反馈的互动: {m.meaningful_interactions}",
+            f"- 继续的对话: {m.continued_conversations}",
+            f"- 重复互动同行: {m.repeat_peers}",
+            f"- 新相关同行: {m.new_relevant_peers}",
+            f"- 对话形成的观点: {m.ideas_from_conversations}",
+            f"- 协作信号: {m.collaboration_signals}",
+            f"- 待跟进对话: {m.stale_conversations}",
         ]
     )
