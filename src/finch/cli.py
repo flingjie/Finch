@@ -67,7 +67,7 @@ from .twitter.opencli_client import OpenCliClient
 from .twitter.query_builder import QueryBuilder
 from .webfetch.fetcher import WebFetcher
 
-app = typer.Typer(help="Finch: evidence-driven builder companion.")
+app = typer.Typer(help="Finch: 同行连接与个人表达系统。")
 
 github_app = typer.Typer(help="GitHub 读取与工程事件提取")
 app.add_typer(github_app, name="github")
@@ -87,7 +87,7 @@ app.add_typer(drafts_app, name="drafts")
 review_app = typer.Typer(help="Review original drafts (accept/revise/skip, no auto-publish)")
 app.add_typer(review_app, name="review")
 
-connect_app = typer.Typer(help="连接主循环：daily / prepare / approve / reject / record")
+connect_app = typer.Typer(help="连接主循环：daily / prepare / approve / reject / edit / record")
 app.add_typer(connect_app, name="connect")
 
 peers_app = typer.Typer(help="同行档案与关系上下文")
@@ -736,7 +736,7 @@ def learn(
 
 @app.command("weekly")
 def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
-    """周复盘：确定性指标 + LLM 定性解读（一个训练重点）。"""
+    """周复盘：关系质量指标与周报指标由代码算，LLM 定性解读（五个关系问题）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()

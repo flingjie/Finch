@@ -29,7 +29,7 @@ uv run finch diagnose                    # 探测 gh / opencli 可用性
 uv run finch connect daily               # 今天该继续的对话 + 值得连接的同行 + 可贡献内容 + 观点候选
 uv run finch peers list / show <peer_id> # 同行档案与关系上下文
 uv run finch connect prepare         # 为具体同行/帖子准备互动建议
-uv run finch connect approve / reject / record  # 批准建议、拒绝、记录真实互动
+uv run finch connect approve / reject / edit / record  # 批准建议、拒绝、修订草稿、记录真实互动
 uv run finch conversations list --needs-follow-up / show / follow-up
 
 # —— 表达复利循环 ——
@@ -43,12 +43,17 @@ uv run finch review list / show / approve / revise / skip ...
 
 # —— 声音与复盘 ——
 uv run finch voice show / approve-example <draft_id> / reject-example <draft_id> --reason "<理由>"
+uv run finch voice propose / revoke-example <id>   # 从 diff 提取偏好候选 / 撤销错误样例
 uv run finch weekly                      # 关系质量 + 观点形成 + 表达反馈的定性周复盘
 uv run finch learn <draft_id> --url <URL> --metrics '<JSON>' --outcome '<JSON>' --learning '<文本>'
 
 # —— 独立训练工具 ——
 uv run finch practice start --idea <id> --attempt "<首稿>"   # 表达训练
 uv run finch style analyze --text "<文本>" | --file posts.md | --url "<链接>" [--compare-voice]
+
+# —— 只读证据读取 ——
+uv run finch github reflect             # 从 GitHub 提交/PR/测试提炼工程事件
+uv run finch twitter search / import-bookmarks / diagnose
 ```
 
 ## 从同行到观点

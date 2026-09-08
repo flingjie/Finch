@@ -1,20 +1,20 @@
-skill_name: conversation-scout
+skill_name: peer-discovery
 cases:
   - id: 1
-    name: 真实问题产出一个交流机会
+    name: 真实问题产出一个同行候选
     input:
       topic: agent evals
       posts:
         - url: https://x.com/acme/status/1
           text: "Our agent keeps failing on long context, it's broken."
     expected_output:
-      opportunities: 1
+      peers: 1
       source_post_url: https://x.com/acme/status/1
     assertions:
-      - name: 单机会
-        description: 产出恰好一个 Opportunity
+      - name: 单同行
+        description: 产出恰好一个 PeerProfile 候选
       - name: 可追溯来源
-        description: source_post.url 为帖子 URL，source_post.text 保留原文
+        description: source_refs 保留帖子 URL，作者按 platform+author_id 归一化
 
   - id: 2
     name: 新闻产出空列表
@@ -24,10 +24,10 @@ cases:
         - url: https://x.com/acme/status/2
           text: "Acme launches v2 of their agent framework today."
     expected_output:
-      opportunities: 0
+      peers: 0
     assertions:
       - name: 空结果
-        description: 新闻不产出 Opportunity
+        description: 新闻/发布不产出同行候选（promotion_risk 高）
 
   - id: 3
     name: 融资产出空列表
@@ -37,10 +37,10 @@ cases:
         - url: https://x.com/acme/status/3
           text: "Acme raised a $50M series A at a $1B valuation."
     expected_output:
-      opportunities: 0
+      peers: 0
     assertions:
       - name: 空结果
-        description: 融资不产出 Opportunity
+        description: 融资不产出同行候选
 
   - id: 4
     name: 纯情绪产出空列表
@@ -50,10 +50,10 @@ cases:
         - url: https://x.com/acme/status/4
           text: "This new framework is absolutely amazing and incredible."
     expected_output:
-      opportunities: 0
+      peers: 0
     assertions:
       - name: 空结果
-        description: 纯情绪不产出 Opportunity
+        description: 纯情绪/推广不产出同行候选
 
   - id: 5
     name: 外部亲历不写成用户亲历
@@ -63,26 +63,26 @@ cases:
         - url: https://x.com/acme/status/5
           text: "I spent 3 weeks debugging our agent and it still crashes."
     expected_output:
-      opportunities: 1
+      peers: 1
       source_post_keeps_original: true
     assertions:
       - name: 保持外部来源
-        description: source_post.text 保留原文（外部来源，可追溯），机会字段不采纳第一人称亲历
+        description: 外部作者只是信号，不写成用户亲历；原文保留在 source_refs
 
   - id: 6
-    name: 最近已表达去重
+    name: 同一作者多帖聚合
     input:
       topic: agent evals
       posts:
         - url: https://x.com/acme/status/6
           text: "Our agent keeps failing on long context, it's broken."
         - url: https://x.com/acme/status/7
-          text: "Our agent keeps failing on long context, it's broken."
+          text: "Reproduced it again with a longer prompt."
     expected_output:
-      opportunities: 1
+      peers: 1
     assertions:
-      - name: 去重
-        description: 重复帖子只产出一次
+      - name: 聚合
+        description: 同一作者多条帖子只产出一个 PeerProfile
 
   - id: 7
     name: 相同输入 → 相同结果
@@ -95,4 +95,4 @@ cases:
       deterministic: true
     assertions:
       - name: 确定性
-        description: 相同输入两次运行产出相同 Opportunity（id 一致）
+        description: 相同输入两次运行产出相同 peer id（platform+author_id 幂等）

@@ -18,7 +18,7 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (typer sub-apps / commands): `finch connect ...` (daily / prepare / approve / reject / record), `finch peers ...` (list / show), `finch conversations ...` (list / show / follow-up), `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init [--prune]`, `finch diagnose`.
+CLI surface (typer sub-apps / commands): `finch connect ...` (daily / prepare / approve / reject / edit / record), `finch peers ...` (list / show), `finch conversations ...` (list / show / follow-up), `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init [--prune]`, `finch diagnose`.
 
 ## Architecture
 
@@ -64,11 +64,11 @@ src/finch/
 
 Config lives in `finch.yaml` (repositories, repository_discovery, twitter, quality_gates, paths, engagement, interests, llm, extraction). Prompts live in `prompts/`.
 
-## Engagement track (library, not daily-orchestrated)
+## Engagement track (peer-discovery library)
 
-The engagement module (`engagement/`) still exists as a library: search → prefilter → deterministic 5-dim scoring → ranked proposals → guarded execution → feedback → conversation evidence → verified upgrade to personal evidence. Its `InteractionCandidate`/`ConversationEvidence` models feed the inbox (`finch review` / `finch engagement`). The previous daily dual-track orchestration (`run_daily` / `run_dual_track`) has been removed.
+The engagement module (`engagement/`) is the peer-discovery library: search → prefilter → peer aggregation → deterministic relationship scoring (`peer_value` / `relationship_value`) → 4-dim semantic scoring (LLM) → ranked proposals → guarded execution → feedback → conversation evidence → verified upgrade to personal evidence. `InteractionProposal` / `ConversationEvidence` feed the inbox (`finch review`); proposals and relationships are surfaced via `finch connect` / `finch peers` / `finch conversations`. The previous daily dual-track orchestration (`run_daily` / `run_dual_track`) has been removed.
 
-Pipeline files: `models.py` (domain types) → `search.py` (PostSearchProvider: X + Reddit stub) → `scoring.py` (weighted_total is the *only* place `total` is computed; the LLM never decides it) → `proposals.py` (choose_action + bounded drafts) → `guard.py` (execution precondition check) → `evidence_upgrade.py` (conversation→personal gate) → `metrics.py` (quality-first metrics).
+Pipeline files: `models.py` (domain types) → `search.py` (PostSearchProvider: X + Reddit) → `peer_aggregation.py` (aggregate posts by author) → `relationship.py` (deterministic peer_value + relationship_value) → `scoring.py` (weighted_total is the *only* place `total` is computed; the LLM never decides it) → `proposals.py` (choose_action + bounded drafts) → `guard.py` (execution precondition check) → `evidence_upgrade.py` (conversation→personal gate) → `metrics.py` (relationship-quality metrics).
 
 ## Invariants (do not violate)
 

@@ -35,7 +35,7 @@ description: >
 
 - 外部帖子不能直接变成个人观点（见 `_shared/evidence-policy.md`）。
 - 不生成草稿（→ `idea-to-draft` / `expression-practice`）。
-- 不负责搜索交流对象（→ `conversation-scout`）。
+- 不负责搜索交流对象（→ `peer-discovery`）。
 
 ## 参考
 
