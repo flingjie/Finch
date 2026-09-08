@@ -55,7 +55,6 @@ from .storage.repositories import (
     FeedbackSnapshotRepository,
     InteractionRecordRepository,
     InteractionRepository,
-    OpportunityRepository,
     PeerRepository,
     PracticeSessionRepository,
     PublicationIntentRepository,
@@ -79,7 +78,7 @@ app.add_typer(twitter_app, name="twitter")
 voice_app = typer.Typer(help="Manage the author voice profile (local, no auto-publish)")
 app.add_typer(voice_app, name="voice")
 
-ideas_app = typer.Typer(help="Idea 候选流（commit/search 提炼 + 状态转换）")
+ideas_app = typer.Typer(help="Idea 候选流（commit / 用户片段 / 对话提炼 + 状态转换）")
 app.add_typer(ideas_app, name="ideas")
 
 drafts_app = typer.Typer(help="Draft 生成（已确认 idea → 草稿，不自动发布）")
@@ -337,13 +336,12 @@ def ideas_commit(
 def ideas_create(
     text: str = typer.Option(None, "--text", help="用户输入的一句话/片段"),
     conversation: str = typer.Option(None, "--conversation", help="对话线索 id"),
-    opportunity: str = typer.Option(None, "--opportunity", help="交流机会 id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """把用户片段 / 交流证据 / 交流机会结构化为 idea 候选并落库。"""
-    provided = sum(x is not None for x in (text, conversation, opportunity))
+    """把用户片段 / 对话线索结构化为 idea 候选并落库。"""
+    provided = sum(x is not None for x in (text, conversation))
     if provided != 1:
-        typer.echo("exactly one of --text / --conversation / --opportunity is required")
+        typer.echo("exactly one of --text / --conversation is required")
         raise typer.Exit(code=1)
     settings = load_settings()
     store = Store(settings.paths.db_path)
@@ -353,19 +351,13 @@ def ideas_create(
     try:
         if text is not None:
             idea = service.from_text(text)
-        elif conversation is not None:
+        else:
             thread = ConversationThreadRepository(store).get(conversation)
             if thread is None:
                 typer.echo(f"conversation not found: {conversation}")
                 raise typer.Exit(code=1)
             interactions = InteractionRecordRepository(store).list_by_peer(thread.peer_id)
             idea = service.from_thread(thread, interactions=interactions)
-        else:
-            opp = OpportunityRepository(store).get(opportunity)
-            if opp is None:
-                typer.echo(f"opportunity not found: {opportunity}")
-                raise typer.Exit(code=1)
-            idea = service.from_opportunity(opp)
         job = IdeaService(ContentJobRepository(store)).create_candidate(idea)
     except (RuntimeError, StructuredOutputError, ValueError) as exc:
         typer.echo(str(exc))
@@ -1205,7 +1197,6 @@ def connect_daily(as_json: bool = typer.Option(False, "--json", help="输出 JSO
 
 @connect_app.command("prepare")
 def connect_prepare(
-    opportunity_id: str = typer.Argument(None, help="可选：已存 opportunity id（保留给定向准备）"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
     """为发现结果准备互动提案并落库（只读发现 + 落库，不做审批/执行）。"""
