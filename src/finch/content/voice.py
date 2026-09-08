@@ -74,3 +74,38 @@ def save_voice_profile(profile: VoiceProfile, path: Path | str) -> None:
             allow_unicode=True,
         )
     )
+
+
+class VoiceUpdateProposal(BaseModel):
+    """从样例 diff 提取的稳定偏好候选（只读，不写画像；由用户确认后才写入）。"""
+
+    avoid_phrases: list[str] = Field(default_factory=list)      # 用户删掉/改掉的表达
+    preferred_patterns: list[str] = Field(default_factory=list)  # 用户改向的表达
+
+
+def propose_voice_updates(profile: VoiceProfile) -> VoiceUpdateProposal:
+    """从 approved examples 的 diff 提取稳定偏好候选（确定性，无 LLM）。
+
+    把 unified diff 中被删除的行（``- ``）视为「用户删掉/改掉的表达」候选、被添加的行
+    （``+ ``）视为「用户偏好」候选，去重排序后返回。仅作候选，不写画像。
+    """
+    avoid: set[str] = set()
+    prefer: set[str] = set()
+    for example in profile.approved_examples:
+        if not example.diff:
+            continue
+        for line in example.diff.splitlines():
+            if line.startswith(("---", "+++")):
+                continue
+            if line.startswith("-"):
+                stripped = line[1:].strip()
+                if stripped:
+                    avoid.add(stripped)
+            elif line.startswith("+"):
+                stripped = line[1:].strip()
+                if stripped:
+                    prefer.add(stripped)
+    return VoiceUpdateProposal(
+        avoid_phrases=sorted(avoid),
+        preferred_patterns=sorted(prefer),
+    )

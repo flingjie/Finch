@@ -19,6 +19,7 @@ from .content.voice import (
     ApprovedExample,
     RejectedExample,
     load_voice_profile,
+    propose_voice_updates,
     save_voice_profile,
 )
 from .content.writer import rewrite_with_instruction
@@ -879,6 +880,23 @@ def voice_revoke_example(example_id: str = typer.Argument(..., help="样例 id")
         raise typer.Exit(code=1)
     save_voice_profile(profile, path)
     typer.echo(f"revoked example: {example_id}")
+
+
+@voice_app.command("propose")
+def voice_propose(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """从已批准样例的 diff 提取稳定偏好候选（只读，不写画像；由用户确认后写入）。"""
+    settings = load_settings()
+    profile = load_voice_profile(settings.paths.voice_profile_path)
+    proposal = propose_voice_updates(profile)
+    if as_json:
+        typer.echo(proposal.model_dump_json(indent=2))
+        return
+    typer.echo("## 建议避免的表达（用户曾删掉/改掉）")
+    for phrase in proposal.avoid_phrases:
+        typer.echo(f"- {phrase}")
+    typer.echo("## 建议偏好的表达（用户曾改向）")
+    for phrase in proposal.preferred_patterns:
+        typer.echo(f"- {phrase}")
 
 
 @voice_app.command("reject-example")

@@ -12,6 +12,7 @@ from finch.content.voice import (
     RejectedExample,
     VoiceProfile,
     load_voice_profile,
+    propose_voice_updates,
     save_voice_profile,
 )
 from finch.evidence.models import ClaimConfidence, EvidenceCard
@@ -94,6 +95,30 @@ def test_load_voice_profile_empty_file_returns_default(tmp_path):
 
 def test_default_profile_is_empty():
     assert VoiceProfile().is_empty() is True
+
+
+def test_propose_voice_updates_extracts_from_diff():
+    profile = VoiceProfile(
+        approved_examples=[
+            ApprovedExample(
+                id="d1", text="final", source="draft",
+                original_draft="model draft",
+                diff="--- \n+++ \n@@ -1 +1 @@\n-model draft\n+human revised draft\n",
+            ),
+        ]
+    )
+    proposal = propose_voice_updates(profile)
+    assert proposal.avoid_phrases == ["model draft"]
+    assert proposal.preferred_patterns == ["human revised draft"]
+
+
+def test_propose_voice_updates_empty_without_diff():
+    profile = VoiceProfile(
+        approved_examples=[ApprovedExample(id="d1", text="x", source="user_text")]
+    )
+    proposal = propose_voice_updates(profile)
+    assert proposal.avoid_phrases == []
+    assert proposal.preferred_patterns == []
 
 
 # --- VoiceChecker ---
