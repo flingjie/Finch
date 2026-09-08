@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.12, Pydantic 2, PyYAML (already a dep), Typer. Removes: sqlmodel, sqlalchemy, alembic.
 
+**Task boundaries note:** the storage backend is one atomic swap — removing the `*Record` SQLModel classes breaks the repository tests that import them, and rewiring `cli.py` breaks the CLI tests that seed via `Store`. So production code and its tests are changed together in each task, keeping every task independently green (full suite passes at the end of each task).
+
 ## Global Constraints
 
 - Python 3.12+; Pydantic 2 models (`StrEnum`/`Literal`/`Field`); SQLModel records removed entirely.
@@ -234,15 +236,17 @@ git commit -m "feat(storage): add Workspace (atomic write + YAML/frontmatter/JSO
 
 ---
 
-## Task 2: Rewrite `repositories.py` to file-based (keep interfaces)
+## Task 2: Storage swap — rewrite `repositories.py` + convert repo tests + delete DB tests
 
 **Files:**
 - Rewrite: `src/finch/storage/repositories.py`
-- Test: `tests/unit/test_file_repositories.py`
+- Create: `tests/unit/test_file_repositories.py`
+- Modify: `tests/unit/test_peer_repositories.py`, `tests/unit/test_author_repositories.py`, `tests/unit/test_feedback_repository.py`, `tests/unit/test_interaction_repository.py`, `tests/unit/test_interaction_record_repository.py`, `tests/unit/test_repositories.py`
+- Delete: `tests/unit/test_database.py`, `tests/unit/test_storage.py`, `tests/unit/test_alembic.py`
 
 **Interfaces:**
-- Consumes: `Workspace` from Task 1.
-- Produces: the same 16 repository classes with identical method signatures (see code). Filename = domain id; lookups are glob + filter.
+- Consumes: `Workspace` (Task 1).
+- Produces: the same 16 repository classes with identical method signatures (code below). Filename = domain id; lookups are glob + filter.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -253,12 +257,10 @@ git commit -m "feat(storage): add Workspace (atomic write + YAML/frontmatter/JSO
 
 from datetime import UTC, datetime
 
-import pytest
-
 from finch.author.models import PublicationIntent
 from finch.conversations.models import ConversationThread
 from finch.content.jobs import ContentJob, ContentJobStatus
-from finch.content.models import Draft, DraftKind, RecommendedFormat
+from finch.content.models import Draft, DraftKind
 from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
@@ -374,7 +376,7 @@ def test_publication_intent_get(tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/unit/test_file_repositories.py -v`
-Expected: FAIL — `ImportError` (repositories.py still imports `Store`) or `TypeError` (repos expect `Store`, not `Workspace`). If `InteractionProposal(...)` raises a Pydantic validation error, add the required fields (open `src/finch/engagement/models.py` and supply them).
+Expected: FAIL — `ImportError`/`TypeError` (repos still expect `Store`, not `Workspace`).
 
 - [ ] **Step 3: Write the implementation**
 
@@ -436,8 +438,6 @@ def _list_all(ws: Workspace, name: str, model_cls: type[T]) -> list[T]:
 
 
 class EvidenceRepository:
-    """EvidenceCard 仓储（C5）。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -456,8 +456,6 @@ class EvidenceRepository:
 
 
 class DraftRepository:
-    """Draft 仓储（frontmatter Markdown，单文件单真相）。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -487,8 +485,6 @@ class DraftRepository:
 
 
 class DecisionRecordRepository:
-    """DecisionRecord 仓储。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -503,8 +499,6 @@ class DecisionRecordRepository:
 
 
 class FeedbackRepository:
-    """Feedback 仓储（按 draft_id 幂等）。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -519,8 +513,6 @@ class FeedbackRepository:
 
 
 class ContentJobRepository:
-    """ContentJob 仓储（idea 状态机；跳过不可解析行并暴露失败 id）。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -563,8 +555,6 @@ class ContentJobRepository:
 
 
 class DraftVersionRepository:
-    """草稿版本仓储（frontmatter Markdown，按 round 排序）。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -585,8 +575,6 @@ class DraftVersionRepository:
 
 
 class CriticReportRepository:
-    """Critic 报告仓储（JSONL，每轮一行；ts 供时间窗过滤）。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -625,8 +613,6 @@ class CriticReportRepository:
 
 
 class InteractionRepository:
-    """互动候选审批队列仓储（状态机：PROPOSED→APPROVED/REJECTED/EXECUTED）。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -677,8 +663,6 @@ class InteractionRepository:
 
 
 class FeedbackSnapshotRepository:
-    """互动反馈快照仓储。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -694,8 +678,6 @@ class FeedbackSnapshotRepository:
 
 
 class ConversationEvidenceRepository:
-    """conversation 证据仓储。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -725,8 +707,6 @@ class ConversationEvidenceRepository:
 
 
 class EngagementRunStatsRepository:
-    """互动轨道运行级计数仓储。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -738,8 +718,6 @@ class EngagementRunStatsRepository:
 
 
 class PublicationIntentRepository:
-    """发布意图仓储。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -754,8 +732,6 @@ class PublicationIntentRepository:
 
 
 class PracticeSessionRepository:
-    """表达练习会话仓储。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -767,8 +743,6 @@ class PracticeSessionRepository:
 
 
 class PeerRepository:
-    """PeerProfile 仓储：按 id 幂等 upsert。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -783,8 +757,6 @@ class PeerRepository:
 
 
 class InteractionRecordRepository:
-    """已发生互动仓储（独立事实）。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -805,8 +777,6 @@ class InteractionRecordRepository:
 
 
 class ConversationThreadRepository:
-    """对话线索仓储。"""
-
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
 
@@ -826,32 +796,11 @@ class ConversationThreadRepository:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/unit/test_file_repositories.py -v`
-Expected: PASS. Fix any `InteractionProposal` required-field additions discovered in Step 2.
+Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Convert the six existing repository test files**
 
-```bash
-git add src/finch/storage/repositories.py tests/unit/test_file_repositories.py
-git commit -m "refactor(storage): rewrite repositories to file-based (keep interfaces)"
-```
-
----
-
-## Task 3: Convert existing repository unit tests
-
-**Files:**
-- Modify: `tests/unit/test_peer_repositories.py`, `tests/unit/test_author_repositories.py`, `tests/unit/test_feedback_repository.py`, `tests/unit/test_interaction_repository.py`, `tests/unit/test_interaction_record_repository.py`, `tests/unit/test_repositories.py`
-
-**Interfaces:**
-- Consumes: `Workspace`, file-based repositories (Task 2).
-
-These tests fall into two kinds:
-1. **Behavioral** (upsert/get roundtrip, idempotency, list filters) — only the fixture changes.
-2. **DB-internal** (assert row counts via `Session`/`select` on `*Record`, or read `platform`/`author_id` columns) — rewrite to assert on the repository public API.
-
-- [ ] **Step 1: Apply the mechanical fixture swap to every file**
-
-For each of the six files, apply these three edits:
+For each of the six files, apply the mechanical fixture swap:
 
 ```
 - from finch.storage.database import Store
@@ -867,50 +816,52 @@ For each of the six files, apply these three edits:
 + <Repo>(ws)
 ```
 
-And remove now-deleted imports: `from sqlmodel import Session, select` and any `from finch.storage.repositories import <X>Record` (the `*Record` classes are gone).
+And remove now-deleted imports: `from sqlmodel import Session, select` and any `from finch.storage.repositories import <X>Record`.
 
-- [ ] **Step 2: Rewrite DB-internal assertions to public-API assertions**
-
-For each test that inspects the DB directly, replace with a public-API assertion. Examples:
-
-In `test_peer_repositories.py`, a test named `test_same_author_across_posts_keeps_one_row` currently counts rows via `Session(store.engine)` and `select(PeerRecord)`. Replace the row-count block with:
+Rewrite DB-internal assertions to public-API assertions. Example — a `test_same_author_across_posts_keeps_one_row` that counted rows via `Session(store.engine)` / `select(PeerRecord)` becomes:
 
 ```python
 assert len(repo.list_all()) == 1
 assert repo.list_all()[0].display_name == "Alice Updated"
 ```
 
-Any test asserting `record.platform == "x"` / `record.author_id == "alice"` (denormalized columns) should instead assert on the returned `PeerProfile.platform_identities[0]`.
+Any assertion on denormalized columns (`record.platform`, `record.author_id`) should instead assert on the returned domain model (`PeerProfile.platform_identities[0].platform` / `.author_id`).
 
-- [ ] **Step 3: Run the converted tests**
-
-Run: `uv run pytest tests/unit/test_peer_repositories.py tests/unit/test_author_repositories.py tests/unit/test_feedback_repository.py tests/unit/test_interaction_repository.py tests/unit/test_interaction_record_repository.py tests/unit/test_repositories.py -v`
-Expected: PASS (all converted tests green). Fix any remaining `Store`/`*Record`/`Session` references the grep in Step 4 reveals.
-
-- [ ] **Step 4: Confirm no residual DB references**
-
-Run: `grep -rn "Store\|Session\|select\|Record" tests/unit/test_peer_repositories.py tests/unit/test_author_repositories.py tests/unit/test_feedback_repository.py tests/unit/test_interaction_repository.py tests/unit/test_interaction_record_repository.py tests/unit/test_repositories.py`
-Expected: no matches.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Delete the three dead DB-specific test files**
 
 ```bash
-git add tests/unit/test_peer_repositories.py tests/unit/test_author_repositories.py tests/unit/test_feedback_repository.py tests/unit/test_interaction_repository.py tests/unit/test_interaction_record_repository.py tests/unit/test_repositories.py
-git commit -m "test(storage): convert repository tests to file workspace"
+git rm tests/unit/test_database.py tests/unit/test_storage.py tests/unit/test_alembic.py
+```
+
+(`test_storage.py` asserts the WAL pragma, `test_database.py` asserts schema-drift pruning against `contentjobrecord`, `test_alembic.py` asserts migrations — all three concepts disappear with SQLite and the `*Record` classes.)
+
+- [ ] **Step 7: Run the full suite**
+
+Run: `uv run pytest`
+Expected: PASS. Fix any residual `Store`/`Session`/`select`/`*Record` references surfaced by:
+`grep -rn "Store\|Session\|select\|Record" tests/unit/ | grep -v test_cli_` (CLI tests are converted in Task 3; the grep above shows only remaining storage-test references, which must be zero).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/finch/storage/repositories.py tests/unit/
+git commit -m "refactor(storage): rewrite repositories to file-based; convert storage tests"
 ```
 
 ---
 
-## Task 4: Rewire `cli.py` (Store → Workspace)
+## Task 3: CLI swap — rewire `cli.py` + convert CLI tests
 
 **Files:**
 - Modify: `src/finch/cli.py`
+- Modify: `tests/unit/test_cli_run.py`, `tests/unit/test_cli_review_engagement.py`, `tests/unit/test_cli_connect.py`, `tests/unit/test_cli_ideas.py`, `tests/unit/test_cli_drafts.py`, `tests/unit/test_cli_learn.py`, `tests/unit/test_cli_practice.py`, `tests/unit/test_cli_style.py`, `tests/unit/test_cli_voice.py`, `tests/unit/test_connection_loop_e2e.py`
 
 **Interfaces:**
 - Consumes: `Workspace` (Task 1), file repositories (Task 2).
 
 - [ ] **Step 1: Swap the top-level import**
 
+In `src/finch/cli.py`:
 ```
 - from .storage.database import Store
 + from .storage.workspace import Workspace
@@ -918,7 +869,7 @@ git commit -m "test(storage): convert repository tests to file workspace"
 
 - [ ] **Step 2: Apply the mechanical pattern to every command body**
 
-There are 35 command functions that contain exactly:
+There are 35 command functions containing exactly:
 
 ```python
     store = Store(settings.paths.db_path)
@@ -932,13 +883,11 @@ Replace with:
     ws.ensure()
 ```
 
-Then, within each such function, rename every remaining `store` → `ws` (repository constructors and helper calls). The affected functions are, by line: `ideas_commit` (299), `ideas_create` (347), `ideas_list` (378), `ideas_show` (406), `ideas_confirm` (425), `ideas_revise_position` (450), `ideas_skip` (481), `drafts_create` (549), `drafts_show` (590), `drafts_revise` (610), `learn` (697), `run_weekly` (741), `voice_approve_example` (825, 8-space indent inside `else:`), `voice_reject_example` (901), `review_list` (948), `review_show` (987), `review_approve` (1025), `review_revise` (1052), `review_skip` (1086), `connect_daily` (1164), `connect_prepare` (1204), `connect_approve` (1226), `connect_reject` (1243), `connect_edit` (1260), `connect_record` (1283), `peers_list` (1313), `peers_show` (1337), `conversations_list` (1371), `conversations_show` (1397), `conversations_follow_up` (1424), `practice_start` (1457), `practice_diagnose` (1478), `practice_save` (1507), `practice_finish` (1535), `practice_show` (1562).
-
-Verify coverage afterward with: `grep -n "Store\|store\b" src/finch/cli.py` (expected: zero remaining, after Step 3–5 below).
+Then, within each such function, rename every remaining `store` → `ws`. The affected functions are: `ideas_commit`, `ideas_create`, `ideas_list`, `ideas_show`, `ideas_confirm`, `ideas_revise_position`, `ideas_skip`, `drafts_create`, `drafts_show`, `drafts_revise`, `learn`, `run_weekly`, `voice_approve_example` (8-space indent inside `else:`), `voice_reject_example`, `review_list`, `review_show`, `review_approve`, `review_revise`, `review_skip`, `connect_daily`, `connect_prepare`, `connect_approve`, `connect_reject`, `connect_edit`, `connect_record`, `peers_list`, `peers_show`, `conversations_list`, `conversations_show`, `conversations_follow_up`, `practice_start`, `practice_diagnose`, `practice_save`, `practice_finish`, `practice_show`.
 
 - [ ] **Step 3: Rewrite `init` (drops prune)**
 
-Replace the whole `init` command (lines 223–244) with:
+Replace the whole `init` command with:
 
 ```python
 @app.command()
@@ -952,7 +901,7 @@ def init() -> None:
 
 - [ ] **Step 4: Remove the dead `Store` line in `style_analyze`**
 
-In `style_analyze` (line ~1595), delete this line (it was a no-op schema init; style analysis persists nothing):
+Delete this line (a no-op schema init; style analysis persists nothing):
 
 ```python
     Store(settings.paths.db_path).init()
@@ -981,62 +930,37 @@ def _persist_discovery(ws: Workspace, result: EngagementRunResult) -> None:
         interactions.upsert(candidate, run_id=result.run_id)
 ```
 
-(`_draft_job_id` already takes `DraftRepository` and needs no change.)
+- [ ] **Step 6: Convert the ten CLI test files**
 
-- [ ] **Step 6: Run CLI smoke test (import + help)**
+Each CLI test seeds data via `Settings(paths=Paths(db_path=...))` + `Store(...)`. Convert:
+- `Paths(db_path=tmp_path / "finch.db")` → `Paths(var_dir=tmp_path)`
+- `Store(settings.paths.db_path)` + `.init()` → `Workspace(settings.paths.var_dir)` (+ `.ensure()` where the test explicitly inits)
+- Any `from finch.storage.database import Store` → `from finch.storage.workspace import Workspace`
+- Any direct repository seeding via `XxxRepository(store)` → `XxxRepository(ws)`
 
-Run: `uv run finch --help`
-Expected: prints help without `ImportError`. Then `uv run mypy src/finch/cli.py`
-Expected: no errors.
+Note: `Settings(paths=Paths(var_dir=tmp_path))` makes `load_settings()` (monkeypatched) return a `var_dir` under `tmp_path`, so the CLI reads/writes isolated files instead of the real `var/`.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Run the full suite**
+
+Run: `uv run pytest`
+Expected: PASS. Confirm no residual Store/db_path references with:
+`grep -rn "Store\|db_path\|storage.database" src/finch/cli.py tests/unit/` (expected: zero).
+
+- [ ] **Step 8: Run mypy on the CLI**
+
+Run: `uv run mypy src/finch/cli.py`
+Expected: clean.
+
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/finch/cli.py
-git commit -m "refactor(cli): wire Workspace instead of Store"
+git add src/finch/cli.py tests/unit/
+git commit -m "refactor(cli): wire Workspace; convert CLI tests"
 ```
 
 ---
 
-## Task 5: Convert CLI tests + delete dead DB tests
-
-**Files:**
-- Modify: `tests/unit/test_cli_run.py`, `tests/unit/test_cli_review_engagement.py`, `tests/unit/test_cli_connect.py`, `tests/unit/test_cli_ideas.py`, `tests/unit/test_cli_drafts.py`, `tests/unit/test_cli_learn.py`, `tests/unit/test_cli_practice.py`, `tests/unit/test_cli_style.py`, `tests/unit/test_cli_voice.py`, `tests/unit/test_connection_loop_e2e.py`
-- Delete: `tests/unit/test_database.py`, `tests/unit/test_storage.py`, `tests/unit/test_alembic.py`
-
-- [ ] **Step 1: Apply the fixture swap to every CLI test file**
-
-Same three edits as Task 3 Step 1:
-- `from finch.storage.database import Store` → `from finch.storage.workspace import Workspace`
-- `Store(settings.paths.db_path)` → `Workspace(settings.paths.var_dir)` and `Store(tmp_path / "...")` → `Workspace(tmp_path)`
-- `.init()` → `.ensure()`
-
-For files that construct `Store(tmp_path / "db.sqlite")` in a helper (e.g. `test_connection_loop_e2e.py`), change the helper body to `return Workspace(tmp_path)`.
-
-- [ ] **Step 2: Delete dead DB-specific test files**
-
-```bash
-git rm tests/unit/test_database.py tests/unit/test_storage.py tests/unit/test_alembic.py
-```
-
-(`test_storage.py` asserts the WAL pragma, `test_database.py` asserts schema-drift pruning, `test_alembic.py` asserts migrations — all three concepts disappear with SQLite.)
-
-- [ ] **Step 3: Run the converted CLI tests**
-
-Run: `uv run pytest tests/unit/test_cli_run.py tests/unit/test_cli_review_engagement.py tests/unit/test_cli_connect.py tests/unit/test_cli_ideas.py tests/unit/test_cli_drafts.py tests/unit/test_cli_learn.py tests/unit/test_cli_practice.py tests/unit/test_cli_style.py tests/unit/test_cli_voice.py tests/unit/test_connection_loop_e2e.py -v`
-Expected: PASS. Fix any remaining `Store`/`db_path` references surfaced by:
-`grep -rn "Store\|db_path\|\.init()" tests/unit/` (expected: no matches).
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add tests/unit/
-git commit -m "test(cli): convert CLI tests to file workspace; drop DB tests"
-```
-
----
-
-## Task 6: Delete database infrastructure
+## Task 4: Delete database infrastructure
 
 **Files:**
 - Delete: `src/finch/storage/database.py`, `alembic/` (entire dir), `alembic.ini`
@@ -1051,13 +975,13 @@ git rm -r alembic/
 
 - [ ] **Step 2: Remove `db_path` from `settings.py`**
 
-In `src/finch/settings.py`, delete the field:
+Delete the field:
 
 ```python
     db_path: Path = Field(default_factory=lambda: Path("var/finch.db"))
 ```
 
-and remove `self.db_path.parent` from the `ensure()` dirs tuple:
+and remove `self.db_path.parent` from `ensure()`:
 
 ```python
     def ensure(self) -> "Paths":
@@ -1069,25 +993,25 @@ and remove `self.db_path.parent` from the `ensure()` dirs tuple:
 
 - [ ] **Step 3: Drop the dependencies and the alembic lint exclude**
 
-In `pyproject.toml`, remove these dependency lines:
+In `pyproject.toml`, remove:
 
 ```toml
     "sqlmodel>=0.0.16",
     "alembic>=1.13",
 ```
 
-and remove the `extend-exclude = ["alembic/versions"]` line (and its comment) from the ruff config.
+and remove the `extend-exclude = ["alembic/versions"]` line (and its comment).
 
-- [ ] **Step 4: Re-sync deps and verify nothing imports the removed modules**
+- [ ] **Step 4: Re-sync deps and verify no dangling references**
 
 Run: `uv sync`
-Run: `grep -rn "sqlmodel\|sqlalchemy\|alembic\|storage.database\|from .storage import Store\|db_path" src/ tests/`
-Expected: no matches (except any legitimate unrelated mention in docs).
+Run: `grep -rn "sqlmodel\|sqlalchemy\|alembic\|storage.database\|db_path" src/ tests/`
+Expected: no matches.
 
-- [ ] **Step 5: Run lint + type-check**
+- [ ] **Step 5: Run the full suite + lint + type-check**
 
-Run: `uv run ruff check . && uv run mypy src`
-Expected: clean (mypy may flag `Workspace` generic-typing edges — fix with a `# type: ignore[arg-type]` if `_list_all`/`_read` generic bounds complain; keep it minimal).
+Run: `uv run pytest && uv run ruff check . && uv run mypy src`
+Expected: all clean. (If mypy flags the `_list_all`/`_read` generic bounds in `repositories.py`, add a `# type: ignore[arg-type]` at the specific line — keep it minimal.)
 
 - [ ] **Step 6: Commit**
 
@@ -1098,7 +1022,7 @@ git commit -m "chore: remove SQLite/SQLModel/Alembic infrastructure"
 
 ---
 
-## Task 7: Projections + `finch context`
+## Task 5: Projections + `finch context`
 
 **Files:**
 - Create: `src/finch/projections.py`
@@ -1276,7 +1200,7 @@ git commit -m "feat(context): add projections + finch context"
 
 ---
 
-## Task 8: `peers get` / `conversations get` aliases
+## Task 6: `peers get` / `conversations get` aliases
 
 **Files:**
 - Modify: `src/finch/cli.py`
@@ -1289,24 +1213,28 @@ git commit -m "feat(context): add projections + finch context"
 ```python
 """Agent 读取别名：peers get / conversations get 默认 JSON。"""
 
-from finch.cli import peers_get, conversations_get
+import typer
+
+from finch.cli import conversations_get, peers_get
 
 
-def test_peers_get_missing(tmp_path, capsys):
-    # 无 peer 时输出 not found 并退出码 1
-    import typer
-
-    from finch.cli import peers_show
-
+def test_peers_get_missing_exits_1(capsys):
     try:
-        peers_show("nope", as_json=True)
+        peers_get(peer_id="nope")
     except typer.Exit as exc:
         assert exc.exit_code == 1
     out = capsys.readouterr().out
     assert "peer not found" in out
-```
 
-Note: these alias commands call the existing `peers_show` / `conversations_show` directly. If `typer` callback signature quirks make a full CLI-run test awkward, assert the alias delegates by calling `peers_get(peer_id="nope")` and expecting a `typer.Exit(1)`.
+
+def test_conversations_get_missing_exits_1(capsys):
+    try:
+        conversations_get(conversation_id="nope")
+    except typer.Exit as exc:
+        assert exc.exit_code == 1
+    out = capsys.readouterr().out
+    assert "conversation not found" in out
+```
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1349,12 +1277,12 @@ git commit -m "feat(cli): add peers get / conversations get agent aliases"
 
 ---
 
-## Task 9: Full verification
+## Task 7: Full verification
 
 - [ ] **Step 1: Full test suite**
 
 Run: `uv run pytest`
-Expected: PASS (all tests green).
+Expected: PASS.
 
 - [ ] **Step 2: Lint + format**
 
@@ -1377,7 +1305,7 @@ uv run finch ideas list    # → empty (fresh start)
 
 Expected: each prints without error; no `.db` file is created anywhere under `var/`.
 
-- [ ] **Step 5: Final commit**
+- [ ] **Step 5: Final commit (if any uncommitted changes)**
 
 ```bash
 git add -A
@@ -1388,6 +1316,6 @@ git commit -m "refactor(storage): remove database, adopt file workspace + agent 
 
 ## Self-Review Notes (for the implementer)
 
-- **Spec coverage:** D1 (full bundle) = Tasks 1–9; D2 (fresh start) = Task 6 + Task 9 manual smoke; D3 (atomic write) = Task 1; D4/D6 (YAML/mixed + frontmatter draft) = Task 1/2; D5 (`var/` root) = Task 4/7; D7 (keep interfaces) = Task 2; D8 (filename = domain id) = Task 2.
+- **Spec coverage:** D1 (full bundle) = Tasks 1–7; D2 (fresh start) = Task 4 + Task 7 smoke; D3 (atomic write) = Task 1; D4/D6 (YAML/mixed + frontmatter draft) = Task 1/2; D5 (`var/` root) = Task 3/5; D7 (keep interfaces) = Task 2; D8 (filename = domain id) = Task 2.
 - **Behavior preserved:** `connect record` still only writes `InteractionRecord` (does NOT update `ConversationThread`); conversation `events.jsonl` is intentionally omitted (no current writer — future spec). `weekly-summary.json` is covered by existing `finch weekly --json`, not duplicated.
 - **Type consistency:** `Workspace.read_yaml`/`_read`/`_list_all` use `T = TypeVar("T", bound=BaseModel)`; `_list_all` filters `None` (corrupt files raise `ValidationError`/`YAMLError`, matching current behavior for non-ContentJob repos; ContentJob skips-and-reports).
