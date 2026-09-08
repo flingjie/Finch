@@ -40,6 +40,7 @@ from .learn.reflection import WeeklyReflectionService, render_reflection
 from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
 from .practice.service import PracticeService
+from .reddit.opencli_client import RedditOpenCliClient
 from .settings import load_settings
 from .storage.database import Store
 from .storage.repositories import (
@@ -57,9 +58,13 @@ from .storage.repositories import (
     PracticeSessionRepository,
     PublicationIntentRepository,
 )
+from .style.models import StyleReport
+from .style.service import WritingStyleService
+from .style.source_resolver import SourceResolver
 from .twitter.normalizer import normalize_tweets
 from .twitter.opencli_client import OpenCliClient
 from .twitter.query_builder import QueryBuilder
+from .webfetch.fetcher import WebFetcher
 
 app = typer.Typer(help="Finch: evidence-driven builder companion.")
 
@@ -89,6 +94,9 @@ app.add_typer(scout_app, name="scout")
 
 practice_app = typer.Typer(help="表达练习（expression-practice，skill 驱动 + 一次性 CLI 落库）")
 app.add_typer(practice_app, name="practice")
+
+style_app = typer.Typer(help="分析一段文本/链接的写作特点（writing-style-analysis）")
+app.add_typer(style_app, name="style")
 
 
 def _since_iso(since: str | None) -> str | None:
@@ -1248,6 +1256,72 @@ def practice_show(
         typer.echo(f"revisions: {json.dumps(session.revisions, ensure_ascii=False)}")
         typer.echo(f"final_expression: {session.final_expression}")
         typer.echo(f"lesson: {session.lesson}")
+
+
+@style_app.command("analyze")
+def style_analyze(
+    text: str = typer.Option(None, "--text", help="要分析的文本"),
+    file: str = typer.Option(None, "--file", help="文本文件（可用 --- 分隔多篇）"),
+    url: str = typer.Option(None, "--url", help="要分析的链接（X/Reddit/普通网页）"),
+    compare_voice: bool = typer.Option(False, "--compare-voice", help="追加对比我的画像"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """分析写作风格，产出 StyleReport（可选与 VoiceProfile 比较）。"""
+    provided = sum(x is not None for x in (text, file, url))
+    if provided != 1:
+        typer.echo("exactly one of --text / --file / --url is required")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    Store(settings.paths.db_path).init()
+    resolver = SourceResolver(OpenCliClient(), RedditOpenCliClient(), WebFetcher())
+    try:
+        if text is not None:
+            source = resolver.resolve_text(text)
+        elif file is not None:
+            source = resolver.resolve_file(file)
+        else:
+            source = resolver.resolve_url(url)
+        runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+        report = WritingStyleService(runner).analyze(source)
+    except (RuntimeError, StructuredOutputError, OSError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if compare_voice:
+        try:
+            runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+            voice = load_voice_profile(settings.paths.voice_profile_path)
+            comparison = WritingStyleService(runner).compare(report, voice)
+        except (RuntimeError, StructuredOutputError) as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1) from exc
+        if as_json:
+            typer.echo(json.dumps(
+                {"report": report.model_dump(mode="json"),
+                 "comparison": comparison.model_dump(mode="json")},
+                ensure_ascii=False, indent=2,
+            ))
+        else:
+            typer.echo(json.dumps(comparison.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    if as_json:
+        typer.echo(report.model_dump_json(indent=2))
+    else:
+        typer.echo(_render_report(report))
+
+
+def _render_report(report: StyleReport) -> str:
+    lines = [f"# 写作风格分析（{report.scope}，{report.overall_confidence}）"]
+    for name in ("opening", "structure", "rhythm", "word_choice", "stance",
+                 "concreteness", "reader_relationship", "rhetorical_patterns"):
+        for ev in getattr(report, name):
+            lines.append(f"- [{name}] {ev.observation}")
+    if report.transferable_techniques:
+        lines.append("\n可借鉴：")
+        lines += [f"- {t}" for t in report.transferable_techniques]
+    if report.experiments_for_me:
+        lines.append("\n可实验：")
+        lines += [f"- {e}" for e in report.experiments_for_me]
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
