@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
-from .content.jobs import AuthorPosition
+from .content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from .content.voice import (
     ApprovedExample,
     RejectedExample,
@@ -97,6 +97,82 @@ app.add_typer(practice_app, name="practice")
 
 style_app = typer.Typer(help="分析一段文本/链接的写作特点（writing-style-analysis）")
 app.add_typer(style_app, name="style")
+
+
+def _idea_meta_line(job: ContentJob) -> str:
+    """一行摘要：稳定、可扫描，也保留机器可解析的 tab 分隔结构。"""
+    return "\t".join(
+        [
+            job.id,
+            job.status.value,
+            job.origin or "-",
+            job.intent or "stance",
+            job.core_message,
+        ]
+    )
+
+
+def _render_idea_list(jobs: list[ContentJob]) -> str:
+    """人类可读的候选列表：带表头，仍保持一候选一行。"""
+    lines = ["id\tstatus\torigin\tintent\tcore_message"]
+    lines.extend(_idea_meta_line(job) for job in jobs)
+    return "\n".join(lines)
+
+
+def _idea_next_steps(job: ContentJob) -> list[str]:
+    """按状态给出下一步命令，避免每次都要翻 README。"""
+    if job.status == ContentJobStatus.PROPOSED:
+        return [
+            f"- 确认立场：finch ideas confirm {job.id}",
+            f"- 修改立场：finch ideas revise-position {job.id} --file <position.yaml>",
+            f"- 跳过：finch ideas skip {job.id} --reason \"...\"",
+        ]
+    if job.status == ContentJobStatus.CONFIRMED:
+        return [
+            f"- 生成草稿：finch drafts create {job.id}",
+            f"- 表达练习：finch practice start --idea {job.id} --attempt \"...\"",
+        ]
+    if job.status == ContentJobStatus.DRAFTED:
+        return ["- 查看草稿：finch drafts show <draft_id>"]
+    return []
+
+
+def _render_idea_detail(job: ContentJob) -> str:
+    """单个候选的完整可读视图。"""
+    lines = [
+        f"id: {job.id}",
+        f"status: {job.status.value}",
+        f"origin: {job.origin or '-'}",
+        f"intent: {job.intent or 'stance'}",
+        f"recommended_format: {job.recommended_format.value}",
+        "",
+        f"核心主张: {job.core_message or '-'}",
+    ]
+    if job.observation:
+        lines += ["", f"观察: {job.observation}"]
+    if job.reader_problem:
+        lines += ["", f"读者问题: {job.reader_problem}"]
+    if job.why_now:
+        lines += ["", f"为什么现在说: {job.why_now}"]
+    if job.author_position:
+        pos = job.author_position
+        lines += [
+            "",
+            "作者立场 (proposed):",
+            f"- claim: {pos.claim}",
+            f"- decision: {pos.decision}",
+            f"- tradeoff: {pos.tradeoff}",
+        ]
+        if pos.change_mind_if:
+            lines.append(f"- change_mind_if: {pos.change_mind_if}")
+    if job.open_question:
+        lines += ["", f"开放问题: {job.open_question}"]
+    if job.reject_reason:
+        lines += ["", f"跳过理由: {job.reject_reason}"]
+    steps = _idea_next_steps(job)
+    if steps:
+        lines += ["", "下一步:"] + steps
+    return "\n".join(lines)
 
 
 def _since_iso(since: str | None) -> str | None:
@@ -218,8 +294,7 @@ def ideas_commit(
         ]
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        for job in jobs:
-            typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
+        typer.echo(_render_idea_list(jobs))
 
 
 @ideas_app.command("create")
@@ -267,7 +342,7 @@ def ideas_create(
             ensure_ascii=False, indent=2,
         ))
     else:
-        typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
+        typer.echo(_render_idea_detail(job))
 
 
 @ideas_app.command("list")
@@ -286,8 +361,7 @@ def ideas_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
     failures = repo.list_job_parse_failures()
-    for job in jobs:
-        typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
+    typer.echo(_render_idea_list(jobs))
     if failures:
         preview = ", ".join(failures[:5]) + ("…" if len(failures) > 5 else "")
         typer.echo(
@@ -312,7 +386,7 @@ def ideas_show(
     if as_json:
         typer.echo(job.model_dump_json(indent=2))
     else:
-        typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
+        typer.echo(_render_idea_detail(job))
 
 
 @ideas_app.command("confirm")
@@ -335,7 +409,8 @@ def ideas_confirm(
             json.dumps({"id": job.id, "status": job.status.value}, ensure_ascii=False, indent=2)
         )
     else:
-        typer.echo(f"{job.id}\t{job.status.value}")
+        typer.echo(f"{job.id} -> {job.status.value}")
+        typer.echo(f"下一步：finch drafts create {job.id}")
 
 
 @ideas_app.command("revise-position")
@@ -366,7 +441,7 @@ def ideas_revise_position(
             json.dumps({"id": job.id, "status": job.status.value}, ensure_ascii=False, indent=2)
         )
     else:
-        typer.echo(f"{job.id}\t{job.status.value}")
+        typer.echo(f"{job.id} -> position updated ({job.status.value})")
 
 
 @ideas_app.command("skip")
@@ -389,7 +464,7 @@ def ideas_skip(
         payload = {"id": job.id, "status": job.status.value, "reason": reason}
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        typer.echo(f"{job.id}\t{job.status.value}")
+        typer.echo(f"{job.id} -> {job.status.value} (reason: {reason})")
 
 
 def _render_draft_result(result: DraftCreateResult) -> str:

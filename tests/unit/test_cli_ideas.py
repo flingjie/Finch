@@ -121,10 +121,13 @@ def test_ideas_commit_non_json_output(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["ideas", "commit"])
     assert r.exit_code == 0, r.output
     lines = [ln for ln in r.output.strip().splitlines() if ln]
-    assert len(lines) == 1
-    idea_id, status, core = lines[0].split("\t")
+    assert len(lines) == 2
+    assert lines[0].split("\t") == ["id", "status", "origin", "intent", "core_message"]
+    idea_id, status, origin, intent, core = lines[1].split("\t")
     assert idea_id.startswith("idea_")
     assert status == "proposed"
+    assert origin == "commit"
+    assert intent == "stance"
     assert core == CORE_POINT
 
 
@@ -235,10 +238,13 @@ def test_ideas_list_non_json_output(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["ideas", "list"])
     assert r.exit_code == 0, r.output
     lines = [ln for ln in r.output.strip().splitlines() if ln]
-    assert len(lines) == 1
-    idea_id, status, core = lines[0].split("\t")
+    assert len(lines) == 2
+    assert lines[0].split("\t") == ["id", "status", "origin", "intent", "core_message"]
+    idea_id, status, origin, intent, core = lines[1].split("\t")
     assert idea_id == job.id
     assert status == "proposed"
+    assert origin == "commit"
+    assert intent == "stance"
     assert core == CORE_POINT
 
 
@@ -281,7 +287,10 @@ def test_ideas_show_non_json_output(monkeypatch, tmp_path):
 
     r = CliRunner().invoke(app, ["ideas", "show", job.id])
     assert r.exit_code == 0, r.output
-    assert f"{job.id}\tproposed\t{CORE_POINT}" in r.output
+    assert f"id: {job.id}" in r.output
+    assert "status: proposed" in r.output
+    assert CORE_POINT in r.output
+    assert "下一步:" in r.output
 
 
 def test_ideas_show_unknown_exits(monkeypatch, tmp_path):

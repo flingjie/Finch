@@ -8,6 +8,7 @@ import hashlib
 import re
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
@@ -66,9 +67,11 @@ class SourceResolver:
         )
 
     def resolve_url(self, url: str) -> ResolvedSource:
-        if "x.com" in url or "twitter.com" in url:
+        # 按解析后的 host 精确路由（不用子串匹配），避免 http://evil.com/x.com 误路由。
+        host = (urlparse(url).hostname or "").lower()
+        if host == "x.com" or host == "twitter.com" or host.endswith((".x.com", ".twitter.com")):
             body = self._x_thread(url)
-        elif "reddit.com" in url:
+        elif host == "reddit.com" or host.endswith(".reddit.com"):
             body = self._reddit_post(url)
         else:
             body = self.web.fetch(url)
