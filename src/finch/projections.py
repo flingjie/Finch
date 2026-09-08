@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from finch.content.jobs import ContentJobStatus
 from finch.conversations.service import ConversationService
 from finch.engagement.models import InteractionStatus
+from finch.inbox.models import InboxTrack
 from finch.inbox.service import list_items
 from finch.storage.repositories import (
     ContentJobRepository,
@@ -63,5 +64,6 @@ def build_pending_actions(ws: Workspace) -> dict:
                 interactions=interactions,
                 cards=EvidenceRepository(ws),
             )
+            if i.track == InboxTrack.ORIGINAL
         ],
     }

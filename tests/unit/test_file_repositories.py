@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from finch.author.models import PublicationIntent
 from finch.content.jobs import ContentJob, ContentJobStatus
-from finch.content.models import Draft, DraftKind
+from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.conversations.models import ConversationThread
 from finch.engagement.models import (
     ConversationScore,
@@ -14,6 +14,7 @@ from finch.engagement.models import (
     InteractionRecord,
     InteractionStatus,
 )
+from finch.evidence.models import ClaimConfidence
 from finch.inbox.models import DecisionAction, DecisionRecord
 from finch.peers.models import PeerProfile, PlatformIdentity
 from finch.storage.repositories import (
@@ -99,6 +100,25 @@ def test_draft_frontmatter_roundtrip(tmp_path):
     got = repo.get_draft("draft_abc")
     assert got == draft
     assert [d.id for d in repo.list_by_job("idea_abc")] == ["draft_abc"]
+
+
+def test_draft_rich_fields_roundtrip(tmp_path):
+    repo = DraftRepository(Workspace(tmp_path))
+    draft = Draft(
+        id="draft_rich",
+        kind=DraftKind.REPLY,
+        candidate_id="cand_1",
+        language="en",
+        body="Reply body",
+        claims=[
+            ClaimRef(statement="s", evidence_card_id="e1", confidence=ClaimConfidence.SUPPORTED)
+        ],
+        content_job_id="idea_abc",
+        position_statement="my stance",
+        run_id="run_1",
+    )
+    repo.upsert_draft(draft)
+    assert repo.get_draft("draft_rich") == draft
 
 
 def test_decision_get_by_job_id(tmp_path):
