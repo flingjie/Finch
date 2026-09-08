@@ -11,7 +11,9 @@
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from finch.peers.models import PeerProfile
 
 from ..codex.runner import CodexRunner
 from ..reddit.opencli_client import RedditOpenCliClient
@@ -20,7 +22,12 @@ from ..twitter.opencli_client import OpenCliClient
 from .models import ExternalPost, InteractionProposal
 from .peer_aggregation import aggregate_by_peer
 from .proposals import generate_proposals
-from .relationship import PeerHistory, compute_relationship_value, rank_peers
+from .relationship import (
+    PeerHistory,
+    PeerValue,
+    compute_relationship_value,
+    rank_peers,
+)
 from .scoring import prefilter_posts, rank_candidates, score_posts
 from .search import (
     PostSearchFailure,
@@ -34,17 +41,26 @@ from .search import (
 _MIN_CONTENT_LENGTH = 20
 
 
+class RankedPeer(BaseModel):
+    """一个同行及其确定性 peer_value（供 CLI 展示「今天最值得连接的同行」）。"""
+
+    profile: PeerProfile
+    value: PeerValue
+
+
 class EngagementRunResult(BaseModel):
     """互动轨道单轮结果。
 
     ``candidates`` 持有 ``InteractionProposal``（Pydantic 模型，含 ``post``/``score``/
-    ``action``/``draft`` 等）；``posts_found`` 为搜索层返回（去重/排除/截断后、内容长度预过滤前）
-    的帖子数，便于区分「没搜到」与「搜到但无候选」。
+    ``action``/``draft`` 等）；``peers`` 持有关系评分后的同行榜单（限人限帖后的子集）；
+    ``posts_found`` 为搜索层返回（去重/排除/截断后、内容长度预过滤前）的帖子数，便于区分
+    「没搜到」与「搜到但无候选」。
     """
 
     run_id: str
     posts_found: int
     candidates: list[InteractionProposal]
+    peers: list[RankedPeer] = Field(default_factory=list)
     failures: list[PostSearchFailure]
     status: Literal["succeeded", "empty", "failed"]
     summary: str
@@ -197,6 +213,7 @@ def run_discovery_engagement_flow(
         run_id=run_id,
         posts_found=len(outcome.posts),
         candidates=candidates,
+        peers=[RankedPeer(profile=b.profile, value=v) for b, v in ranked_peers],
         failures=outcome.failures,
         status="succeeded",
         summary=_render_summary(
