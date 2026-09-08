@@ -118,7 +118,7 @@ def test_drafts_create_non_json_output(monkeypatch, tmp_path):
     assert "当前等待你的审核" in r.output
     assert "质量检查：通过" in r.output
     assert "下一步：" in r.output
-    assert "finch review approve draft_fake1234" in r.output
+    assert "采用并进入发布意图" in r.output
     # 运行详情默认不出现。
     assert "运行详情" not in r.output
 

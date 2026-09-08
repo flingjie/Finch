@@ -121,20 +121,13 @@ def _render_idea_list(jobs: list[ContentJob]) -> str:
 
 
 def _idea_next_steps(job: ContentJob) -> list[str]:
-    """按状态给出下一步命令，避免每次都要翻 README。"""
+    """按状态给出下一步动作（不含 CLI 命令）。"""
     if job.status == ContentJobStatus.PROPOSED:
-        return [
-            f"- 确认立场：finch ideas confirm {job.id}",
-            f"- 修改立场：finch ideas revise-position {job.id} --file <position.yaml>",
-            f"- 跳过：finch ideas skip {job.id} --reason \"...\"",
-        ]
+        return ["- 确认立场", "- 修改立场", "- 跳过"]
     if job.status == ContentJobStatus.CONFIRMED:
-        return [
-            f"- 生成草稿：finch drafts create {job.id}",
-            f"- 表达练习：finch practice start --idea {job.id} --attempt \"...\"",
-        ]
+        return ["- 生成草稿", "- 表达练习"]
     if job.status == ContentJobStatus.DRAFTED:
-        return ["- 查看草稿：finch drafts show <draft_id>"]
+        return ["- 查看草稿"]
     return []
 
 
@@ -188,9 +181,9 @@ def _render_draft(draft: Draft) -> str:
         lines.append(f"position_statement: {draft.position_statement}")
     lines += ["", draft.body, "", "下一步:"]
     lines += [
-        f"- 采用并进入发布意图：finch review approve {draft.id}",
-        f"- 继续修改：finch drafts revise {draft.id} --instruction \"...\"",
-        f"- 放弃草稿：finch review skip {draft.id} --reason \"...\"",
+        "- 采用并进入发布意图",
+        "- 继续修改",
+        "- 放弃草稿",
     ]
     return "\n".join(lines)
 
@@ -237,7 +230,7 @@ def _render_opportunity_detail(opp: Opportunity) -> str:
             f"relationship_value: {opp.relationship_value}",
             "",
             "下一步:",
-            f"- 转成 idea：finch ideas create --opportunity {opp.id}",
+            "- 转成 idea",
         ]
     )
 
@@ -433,7 +426,7 @@ def ideas_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
         preview = ", ".join(failures[:5]) + ("…" if len(failures) > 5 else "")
         typer.echo(
             f"\n系统警告：检测到 {len(failures)} 条旧版 job 记录无法解析（{preview}），"
-            "已跳过。建议运行 `finch init --prune` 清理。"
+            "已跳过。"
         )
 
 
@@ -477,7 +470,7 @@ def ideas_confirm(
         )
     else:
         typer.echo(f"{job.id} -> {job.status.value}")
-        typer.echo(f"下一步：finch drafts create {job.id}")
+        typer.echo("下一步：生成草稿")
 
 
 @ideas_app.command("revise-position")
@@ -558,9 +551,9 @@ def _render_draft_result(result: DraftCreateResult) -> str:
         "状态：未发布",
         "",
         "下一步：",
-        f"- 采用并进入发布意图：finch review approve {draft.id}",
-        f"- 继续修改：finch drafts revise {draft.id} --instruction \"…\"",
-        f"- 放弃草稿：finch review skip {draft.id} --reason \"…\"",
+        "- 采用并进入发布意图",
+        "- 继续修改",
+        "- 放弃草稿",
     ]
     return "\n".join(lines)
 
@@ -975,9 +968,9 @@ def review_show(
             typer.echo(critic)
         typer.echo("")
         typer.echo("下一步:")
-        typer.echo(f"- 采用：finch review approve {draft.id}")
-        typer.echo(f"- 修改：finch review revise {draft.id} --instruction \"...\"")
-        typer.echo(f"- 跳过：finch review skip {draft.id} --reason \"...\"")
+        typer.echo("- 采用")
+        typer.echo("- 修改")
+        typer.echo("- 跳过")
 
 
 @review_app.command("approve")
@@ -1294,7 +1287,7 @@ def practice_start(
         typer.echo(session.model_dump_json(indent=2))
     else:
         typer.echo(session.id)
-        typer.echo(f"下一步：finch practice diagnose {session.id}")
+        typer.echo("下一步：诊断本次表达")
 
 
 @practice_app.command("diagnose")
@@ -1323,7 +1316,7 @@ def practice_diagnose(
     else:
         typer.echo(f"diagnosis: {session.diagnosis}")
         typer.echo(f"question: {session.questions_asked[-1]}")
-        typer.echo(f"下一步：finch practice save {session_id} --revision \"...\"")
+        typer.echo("下一步：保存最终版")
 
 
 @practice_app.command("save")
@@ -1351,7 +1344,7 @@ def practice_save(
         typer.echo(session.model_dump_json(indent=2))
     else:
         typer.echo(f"revisions: {len(session.revisions)}")
-        typer.echo(f"下一步：finch practice diagnose {session_id}")
+        typer.echo("下一步：诊断本次表达")
 
 
 @practice_app.command("finish")
@@ -1379,7 +1372,7 @@ def practice_finish(
         typer.echo(session.model_dump_json(indent=2))
     else:
         typer.echo(f"lesson: {session.lesson}")
-        typer.echo(f"下一步：finch practice show {session_id}")
+        typer.echo("下一步：查看会话")
 
 
 @practice_app.command("show")
