@@ -13,7 +13,7 @@ from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
     InteractionAction,
-    InteractionCandidate,
+    InteractionProposal,
 )
 from finch.evidence.models import ClaimConfidence, EvidenceCard
 from finch.inbox.models import DecisionAction, DecisionRecord, InboxItem, InboxTrack
@@ -55,7 +55,7 @@ def _card(card_id="ev_1", conf=ClaimConfidence.SUPPORTED):
 
 
 def _candidate(cand_id="x:p1:reply", action=InteractionAction.DRAFT_REPLY, factual_risks=None):
-    return InteractionCandidate(
+    return InteractionProposal(
         id=cand_id,
         post=ExternalPost(
             id="p1", platform="x", url="https://x.com/u/1", author_id="a",

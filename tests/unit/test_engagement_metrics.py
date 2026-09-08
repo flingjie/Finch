@@ -17,7 +17,7 @@ from finch.engagement.models import (
     ExternalPost,
     FeedbackSnapshot,
     InteractionAction,
-    InteractionCandidate,
+    InteractionProposal,
     InteractionStatus,
 )
 
@@ -30,7 +30,7 @@ def _candidate(
     draft: str | None = "draft body",
     revised_draft: str | None = None,
     approval_required: bool = True,
-) -> InteractionCandidate:
+) -> InteractionProposal:
     post = ExternalPost(
         id=pid,
         platform="x",
@@ -49,7 +49,7 @@ def _candidate(
         total=0.8,
         reasons=["on topic"],
     )
-    return InteractionCandidate(
+    return InteractionProposal(
         id=f"x:{pid}:{action.value}",
         post=post,
         score=score,

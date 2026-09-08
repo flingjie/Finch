@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 
 class InboxTrack(StrEnum):
-    """收件箱轨道：原创（ContentJob+Draft）或互动（InteractionCandidate）。"""
+    """收件箱轨道：原创（ContentJob+Draft）或互动（InteractionProposal）。"""
 
     ORIGINAL = "original"
     ENGAGEMENT = "engagement"

@@ -9,7 +9,7 @@ from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
     InteractionAction,
-    InteractionCandidate,
+    InteractionProposal,
     InteractionStatus,
 )
 from finch.inbox.models import DecisionAction, DecisionRecord
@@ -84,7 +84,7 @@ def _draft(job_id="job_1"):
 
 
 def _candidate(cand_id="x:p1:reply"):
-    return InteractionCandidate(
+    return InteractionProposal(
         id=cand_id,
         post=ExternalPost(id="p1", platform="x", url="u", author_id="a", author_name="A",
                           content="x" * 30, published_at=datetime.now()),

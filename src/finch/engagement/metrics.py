@@ -28,7 +28,7 @@ from .models import (
     EngagementRunStats,
     FeedbackSnapshot,
     InteractionAction,
-    InteractionCandidate,
+    InteractionProposal,
     InteractionStatus,
 )
 
@@ -60,7 +60,7 @@ def _edit_distance(a: str, b: str) -> float:
 
 
 def compute_metrics(
-    interactions: list[InteractionCandidate],
+    interactions: list[InteractionProposal],
     feedback: list[FeedbackSnapshot],
     evidence: list[ConversationEvidence],
 ) -> EngagementMetrics:

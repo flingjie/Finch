@@ -17,7 +17,7 @@ from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
     InteractionAction,
-    InteractionCandidate,
+    InteractionProposal,
     InteractionStatus,
 )
 from finch.inbox.models import DecisionAction
@@ -80,8 +80,8 @@ def _post() -> ExternalPost:
     )
 
 
-def _candidate(candidate_id: str = "x:post_1:draft_reply") -> InteractionCandidate:
-    return InteractionCandidate(
+def _candidate(candidate_id: str = "x:post_1:draft_reply") -> InteractionProposal:
+    return InteractionProposal(
         id=candidate_id,
         post=_post(),
         score=ConversationScore(

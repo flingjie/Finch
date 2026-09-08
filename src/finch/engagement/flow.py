@@ -1,6 +1,6 @@
 """互动轨道流程胶水：搜索 → 预过滤 → 评分 → 排序 → 互动提案 → 结构化结果（执行计划 Phase 0–4）。
 
-只读：本轮输出互动提案（``InteractionCandidate``，含草稿类动作的草稿），不做审批/执行、
+只读：本轮输出互动提案（``InteractionProposal``，含草稿类动作的草稿），不做审批/执行、
 不持久化互动记录，也不计算指标。单条轨道失败不得抛到调用方；搜索层的部分失败会记录在
 ``failures`` 中。
 """
@@ -13,7 +13,7 @@ from ..codex.runner import CodexRunner
 from ..reddit.opencli_client import RedditOpenCliClient
 from ..settings import Settings
 from ..twitter.opencli_client import OpenCliClient
-from .models import ExternalPost, InteractionCandidate
+from .models import ExternalPost, InteractionProposal
 from .proposals import generate_proposals
 from .scoring import prefilter_posts, rank_candidates, score_posts
 from .search import (
@@ -31,14 +31,14 @@ _MIN_CONTENT_LENGTH = 20
 class EngagementRunResult(BaseModel):
     """互动轨道单轮结果。
 
-    ``candidates`` 持有 ``InteractionCandidate``（Pydantic 模型，含 ``post``/``score``/
+    ``candidates`` 持有 ``InteractionProposal``（Pydantic 模型，含 ``post``/``score``/
     ``action``/``draft`` 等）；``posts_found`` 为搜索层返回（去重/排除/截断后、内容长度预过滤前）
     的帖子数，便于区分「没搜到」与「搜到但无候选」。
     """
 
     run_id: str
     posts_found: int
-    candidates: list[InteractionCandidate]
+    candidates: list[InteractionProposal]
     failures: list[PostSearchFailure]
     status: Literal["succeeded", "empty", "failed"]
     summary: str
@@ -80,7 +80,7 @@ def _render_failures(failures: list[PostSearchFailure]) -> list[str]:
 def _render_summary(
     *,
     posts_found: int,
-    candidates: list[InteractionCandidate],
+    candidates: list[InteractionProposal],
     failures: list[PostSearchFailure],
 ) -> str:
     lines = [

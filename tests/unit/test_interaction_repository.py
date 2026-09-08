@@ -9,18 +9,18 @@ from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
     InteractionAction,
-    InteractionCandidate,
+    InteractionProposal,
     InteractionStatus,
 )
 from finch.storage.database import Store
-from finch.storage.repositories import InteractionCandidateRecord, InteractionRepository
+from finch.storage.repositories import InteractionProposalRecord, InteractionRepository
 
 
 def _candidate(
     pid: str = "p1",
     action: InteractionAction = InteractionAction.DRAFT_REPLY,
     **overrides,
-) -> InteractionCandidate:
+) -> InteractionProposal:
     post = ExternalPost(
         id=pid,
         platform="x",
@@ -48,7 +48,7 @@ def _candidate(
         approval_required=True,
     )
     data.update(overrides)
-    return InteractionCandidate(**data)
+    return InteractionProposal(**data)
 
 
 def _repo(tmp_path) -> InteractionRepository:
@@ -59,7 +59,7 @@ def _repo(tmp_path) -> InteractionRepository:
 
 def _row_count(store: Store) -> int:
     with Session(store.engine) as session:
-        return len(list(session.exec(select(InteractionCandidateRecord))))
+        return len(list(session.exec(select(InteractionProposalRecord))))
 
 
 def test_upsert_get_roundtrip(tmp_path):

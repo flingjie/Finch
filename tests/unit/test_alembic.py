@@ -27,6 +27,9 @@ ALL_TABLES = {
     "publicationintentrecord",
     "publicationlinkrecord",
     "authorsynccursorrecord",
+    "peerrecord",
+    "interactionrecordrecord",
+    "conversationthreadrecord",
 }
 
 

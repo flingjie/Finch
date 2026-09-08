@@ -6,23 +6,27 @@
 import json
 from datetime import UTC, datetime
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, Session, SQLModel, col, select
 
 from finch.author.models import PublicationIntent
 from finch.content.checkers.base import CheckResult
 from finch.content.jobs import ContentJob
 from finch.content.models import Draft
+from finch.conversations.models import ConversationThread
 from finch.engagement.models import (
     ConversationEvidence,
     EngagementRunStats,
     FeedbackSnapshot,
-    InteractionCandidate,
+    InteractionProposal,
+    InteractionRecord,
     InteractionStatus,
 )
 from finch.evidence.models import EvidenceCard
 from finch.ideas.opportunity import Opportunity
 from finch.inbox.models import DecisionRecord
 from finch.learn.models import Feedback
+from finch.peers.models import PeerProfile
 from finch.practice.models import PracticeSession
 from finch.storage.database import Store
 
@@ -415,14 +419,15 @@ class CriticReportRepository:
         return grouped
 
 
-class InteractionCandidateRecord(SQLModel, table=True):
-    """InteractionCandidate 持久化模型（Phase 5 审批队列）。"""
+class InteractionProposalRecord(SQLModel, table=True):
+    """InteractionProposal 持久化模型（Phase 5 审批队列）。"""
 
     id: str = Field(primary_key=True)  # = candidate.id（稳定幂等键）
     run_id: str = Field(index=True)
     post_id: str = Field(index=True)
     action: str  # InteractionAction.value
     status: str  # InteractionStatus.value
+    generation_key: str | None = Field(default=None, index=True)  # idempotency key
     payload_json: str
     execution_outcome: str | None = None  # ExecutionStatus.value（record_execution 时写入）
     execution_detail: str | None = None
@@ -442,62 +447,74 @@ class InteractionRepository:
         self.store = store
 
     @staticmethod
-    def _to_record(candidate: InteractionCandidate, run_id: str) -> InteractionCandidateRecord:
-        return InteractionCandidateRecord(
+    def _to_record(candidate: InteractionProposal, run_id: str) -> InteractionProposalRecord:
+        return InteractionProposalRecord(
             id=candidate.id,
             run_id=run_id,
             post_id=candidate.post.id,
             action=candidate.action.value,
             status=candidate.status.value,
+            generation_key=candidate.generation_key,
             payload_json=candidate.model_dump_json(),
             updated_at=datetime.now(UTC),
         )
 
-    def upsert(self, candidate: InteractionCandidate, run_id: str) -> None:
+    def upsert(self, candidate: InteractionProposal, run_id: str) -> None:
         """按 id merge 插入或更新候选（幂等，可重放）。"""
         with Session(self.store.engine) as session:
             session.merge(self._to_record(candidate, run_id=run_id))
             session.commit()
 
-    def get(self, candidate_id: str) -> InteractionCandidate | None:
+    def get(self, candidate_id: str) -> InteractionProposal | None:
         """按 id 获取候选，不存在返回 None。"""
         with Session(self.store.engine) as session:
-            record = session.get(InteractionCandidateRecord, candidate_id)
+            record = session.get(InteractionProposalRecord, candidate_id)
             if record is None:
                 return None
-            return InteractionCandidate.model_validate_json(record.payload_json)
+            return InteractionProposal.model_validate_json(record.payload_json)
 
-    def list_pending(self) -> list[InteractionCandidate]:
+    def find_by_generation_key(self, generation_key: str) -> InteractionProposal | None:
+        """按 generation_key 查询候选（幂等键：相同 key 不重复创建 Proposal）。"""
+        with Session(self.store.engine) as session:
+            stmt = select(InteractionProposalRecord).where(
+                InteractionProposalRecord.generation_key == generation_key
+            )
+            record = session.exec(stmt).first()
+            if record is None:
+                return None
+            return InteractionProposal.model_validate_json(record.payload_json)
+
+    def list_pending(self) -> list[InteractionProposal]:
         """列出全部仍处 PROPOSED 状态的候选（未批准、未拒绝、未执行）。"""
         with Session(self.store.engine) as session:
-            stmt = select(InteractionCandidateRecord).where(
-                InteractionCandidateRecord.status == InteractionStatus.PROPOSED.value
+            stmt = select(InteractionProposalRecord).where(
+                InteractionProposalRecord.status == InteractionStatus.PROPOSED.value
             )
             records = list(session.exec(stmt))
-            return [InteractionCandidate.model_validate_json(r.payload_json) for r in records]
+            return [InteractionProposal.model_validate_json(r.payload_json) for r in records]
 
-    def list_all(self) -> list[InteractionCandidate]:
+    def list_all(self) -> list[InteractionProposal]:
         """列出全部候选（含已批准/已拒绝/已执行，供指标聚合）。"""
         with Session(self.store.engine) as session:
-            records = list(session.exec(select(InteractionCandidateRecord)))
-            return [InteractionCandidate.model_validate_json(r.payload_json) for r in records]
+            records = list(session.exec(select(InteractionProposalRecord)))
+            return [InteractionProposal.model_validate_json(r.payload_json) for r in records]
 
-    def list_executed(self) -> list[InteractionCandidate]:
+    def list_executed(self) -> list[InteractionProposal]:
         """列出全部已执行（EXECUTED）候选。"""
         with Session(self.store.engine) as session:
-            stmt = select(InteractionCandidateRecord).where(
-                InteractionCandidateRecord.status == InteractionStatus.EXECUTED.value
+            stmt = select(InteractionProposalRecord).where(
+                InteractionProposalRecord.status == InteractionStatus.EXECUTED.value
             )
             records = list(session.exec(stmt))
-            return [InteractionCandidate.model_validate_json(r.payload_json) for r in records]
+            return [InteractionProposal.model_validate_json(r.payload_json) for r in records]
 
     def _update(self, candidate_id: str, **updates: object) -> None:
         """读回候选、应用 updates 后按同 run_id merge（幂等）。不存在时抛 KeyError。"""
         with Session(self.store.engine) as session:
-            record = session.get(InteractionCandidateRecord, candidate_id)
+            record = session.get(InteractionProposalRecord, candidate_id)
             if record is None:
                 raise KeyError(candidate_id)
-            candidate = InteractionCandidate.model_validate_json(record.payload_json)
+            candidate = InteractionProposal.model_validate_json(record.payload_json)
             candidate = candidate.model_copy(update=updates)
             session.merge(self._to_record(candidate, run_id=record.run_id))
             session.commit()
@@ -522,10 +539,10 @@ class InteractionRepository:
         只是被动的结果记录器。
         """
         with Session(self.store.engine) as session:
-            record = session.get(InteractionCandidateRecord, candidate_id)
+            record = session.get(InteractionProposalRecord, candidate_id)
             if record is None:
                 raise KeyError(candidate_id)
-            candidate = InteractionCandidate.model_validate_json(record.payload_json)
+            candidate = InteractionProposal.model_validate_json(record.payload_json)
             candidate = candidate.model_copy(update={"status": InteractionStatus.EXECUTED})
             merged = self._to_record(candidate, run_id=record.run_id)
             merged.execution_outcome = outcome
@@ -834,3 +851,175 @@ class PracticeSessionRepository:
             if record is None:
                 return None
             return PracticeSession.model_validate_json(record.payload_json)
+
+
+class PeerRecord(SQLModel, table=True):
+    """PeerProfile 持久化模型。``(platform, author_id)`` 唯一约束保证幂等归一化。"""
+
+    __table_args__ = (UniqueConstraint("platform", "author_id", name="uq_peer_platform_author"),)
+
+    id: str = Field(primary_key=True)  # = PeerProfile.id = peer_id_for(platform, author_id)
+    platform: str  # 主平台身份（platform_identities[0]）
+    author_id: str  # 主作者 id
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PeerRepository:
+    """PeerProfile 仓储：按 id merge 幂等 upsert，``(platform, author_id)`` 唯一约束兜底。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    @staticmethod
+    def _to_record(profile: PeerProfile) -> PeerRecord:
+        primary = profile.platform_identities[0]
+        return PeerRecord(
+            id=profile.id,
+            platform=primary.platform,
+            author_id=primary.author_id,
+            payload_json=profile.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+
+    def upsert(self, profile: PeerProfile) -> None:
+        """按 id merge 插入或更新 PeerProfile（幂等：同一作者跨多条帖子只留一个身份）。"""
+        with Session(self.store.engine) as session:
+            session.merge(self._to_record(profile))
+            session.commit()
+
+    def get(self, peer_id: str) -> PeerProfile | None:
+        """按 id 获取 PeerProfile，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            record = session.get(PeerRecord, peer_id)
+            if record is None:
+                return None
+            return PeerProfile.model_validate_json(record.payload_json)
+
+    def list_all(self) -> list[PeerProfile]:
+        """列出全部 PeerProfile（按 id 稳定排序）。"""
+        with Session(self.store.engine) as session:
+            stmt = select(PeerRecord).order_by(col(PeerRecord.id))
+            records = list(session.exec(stmt))
+            return [PeerProfile.model_validate_json(r.payload_json) for r in records]
+
+
+class InteractionRecordRecord(SQLModel, table=True):
+    """InteractionRecord 持久化模型（已发生互动的独立事实，不用 Proposal 状态替代）。"""
+
+    id: str = Field(primary_key=True)  # 约定 = rec_<proposal_id>（幂等键）
+    proposal_id: str = Field(index=True)
+    peer_id: str = Field(index=True)
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class InteractionRecordRepository:
+    """已发生互动仓储。``upsert`` 按 id merge 幂等；同一 proposal 用同 id，重复记录只覆盖
+    同一条，不会重复计为两次互动。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    @staticmethod
+    def _to_record(record: InteractionRecord) -> InteractionRecordRecord:
+        return InteractionRecordRecord(
+            id=record.id,
+            proposal_id=record.proposal_id,
+            peer_id=record.peer_id,
+            payload_json=record.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+
+    def upsert(self, record: InteractionRecord) -> None:
+        """按 id merge 插入或更新互动事实（幂等，可重放）。"""
+        with Session(self.store.engine) as session:
+            session.merge(self._to_record(record))
+            session.commit()
+
+    def get(self, record_id: str) -> InteractionRecord | None:
+        """按 id 获取互动事实，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            rec = session.get(InteractionRecordRecord, record_id)
+            if rec is None:
+                return None
+            return InteractionRecord.model_validate_json(rec.payload_json)
+
+    def list_by_proposal(self, proposal_id: str) -> list[InteractionRecord]:
+        """按 proposal_id 列出互动事实（通常 0 或 1 条）。"""
+        with Session(self.store.engine) as session:
+            stmt = select(InteractionRecordRecord).where(
+                InteractionRecordRecord.proposal_id == proposal_id
+            )
+            records = list(session.exec(stmt))
+            return [InteractionRecord.model_validate_json(r.payload_json) for r in records]
+
+    def list_by_peer(self, peer_id: str) -> list[InteractionRecord]:
+        """按 peer_id 列出该同行的全部互动事实。"""
+        with Session(self.store.engine) as session:
+            stmt = select(InteractionRecordRecord).where(
+                InteractionRecordRecord.peer_id == peer_id
+            )
+            records = list(session.exec(stmt))
+            return [InteractionRecord.model_validate_json(r.payload_json) for r in records]
+
+    def list_all(self) -> list[InteractionRecord]:
+        """列出全部互动事实。"""
+        with Session(self.store.engine) as session:
+            records = list(session.exec(select(InteractionRecordRecord)))
+            return [InteractionRecord.model_validate_json(r.payload_json) for r in records]
+
+
+class ConversationThreadRecord(SQLModel, table=True):
+    """ConversationThread 持久化模型。"""
+
+    id: str = Field(primary_key=True)  # = thread_id_for(peer_id, topic)
+    peer_id: str = Field(index=True)
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ConversationThreadRepository:
+    """对话线索仓储：按 id merge 幂等 upsert；与搜索运行解耦，删除/重跑搜索不丢关系上下文。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    @staticmethod
+    def _to_record(thread: ConversationThread) -> ConversationThreadRecord:
+        return ConversationThreadRecord(
+            id=thread.id,
+            peer_id=thread.peer_id,
+            payload_json=thread.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+
+    def upsert(self, thread: ConversationThread) -> None:
+        """按 id merge 插入或更新对话线索（幂等，可重放）。"""
+        with Session(self.store.engine) as session:
+            session.merge(self._to_record(thread))
+            session.commit()
+
+    def get(self, thread_id: str) -> ConversationThread | None:
+        """按 id 获取对话线索，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            rec = session.get(ConversationThreadRecord, thread_id)
+            if rec is None:
+                return None
+            return ConversationThread.model_validate_json(rec.payload_json)
+
+    def list_by_peer(self, peer_id: str) -> list[ConversationThread]:
+        """按 peer_id 列出该同行的全部对话线索。"""
+        with Session(self.store.engine) as session:
+            stmt = select(ConversationThreadRecord).where(
+                ConversationThreadRecord.peer_id == peer_id
+            )
+            records = list(session.exec(stmt))
+            return [ConversationThread.model_validate_json(r.payload_json) for r in records]
+
+    def list_all(self) -> list[ConversationThread]:
+        """列出全部对话线索（按 id 稳定排序）。"""
+        with Session(self.store.engine) as session:
+            stmt = select(ConversationThreadRecord).order_by(col(ConversationThreadRecord.id))
+            records = list(session.exec(stmt))
+            return [ConversationThread.model_validate_json(r.payload_json) for r in records]

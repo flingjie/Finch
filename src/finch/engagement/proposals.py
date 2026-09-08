@@ -1,6 +1,6 @@
 """互动策略与草稿生成（执行计划 Phase 4）。
 
-把已排序、过阈值的 ``ScoredPost`` 转成 ``InteractionCandidate``：
+把已排序、过阈值的 ``ScoredPost`` 转成 ``InteractionProposal``：
 1. 用纯函数 ``choose_action`` 确定性选择动作（bookmark / observe_author / 草稿类，无 LLM）；
 2. 对草稿类动作批量调用一次 Codex，生成有实质增量的草稿（draft + intent + source_summary
    + factual_risks）；
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from ..codex.runner import CodexRunner
 from ..settings import EngagementSettings
-from .models import ConversationScore, ExternalPost, InteractionAction, InteractionCandidate
+from .models import ConversationScore, ExternalPost, InteractionAction, InteractionProposal
 from .scoring import ScoredPost
 
 _PROMPT_PATH = Path("prompts/propose-engagement.md")
@@ -82,8 +82,8 @@ def generate_proposals(
     runner: CodexRunner,
     scored: list[ScoredPost],
     engagement: EngagementSettings,
-) -> list[InteractionCandidate]:
-    """把排序后的 ``ScoredPost`` 转为 ``InteractionCandidate``（只读提案）。
+) -> list[InteractionProposal]:
+    """把排序后的 ``ScoredPost`` 转为 ``InteractionProposal``（只读提案）。
 
     - 空输入 → 空输出，0 次 LLM 调用。
     - 动作由 ``choose_action`` 确定性决定；``total`` 低于 ``min_candidate_score`` 的帖子保守
@@ -137,7 +137,7 @@ def generate_proposals(
 
     # 4) 组装候选；草稿类若无对应草稿则丢弃。
     by_id = {sp.post.id: sp for sp in scored}
-    candidates: list[InteractionCandidate] = []
+    candidates: list[InteractionProposal] = []
     for post_id in keep_ids:
         sp = by_id[post_id]
         action = actions[post_id]
@@ -146,7 +146,7 @@ def generate_proposals(
             if proposal is None or not proposal.draft.strip():
                 continue
             candidates.append(
-                InteractionCandidate(
+                InteractionProposal(
                     id=f"{sp.post.platform}:{sp.post.id}:{action.value}",
                     post=sp.post,
                     score=sp.score,
@@ -160,7 +160,7 @@ def generate_proposals(
             )
         else:
             candidates.append(
-                InteractionCandidate(
+                InteractionProposal(
                     id=f"{sp.post.platform}:{sp.post.id}:{action.value}",
                     post=sp.post,
                     score=sp.score,

@@ -4,7 +4,7 @@ import pytest
 
 from finch.codex.runner import CodexRunner
 from finch.engagement.flow import run_discovery_engagement_flow
-from finch.engagement.models import InteractionAction, InteractionCandidate
+from finch.engagement.models import InteractionAction, InteractionProposal
 from finch.engagement.proposals import ProposalBatchOutput, ProposalItem
 from finch.engagement.scoring import ConversationScoreInput, ScoreBatchOutput, ScoreItem
 from finch.reddit.models import RedditPost
@@ -140,7 +140,7 @@ def test_found_posts_return_ranked_candidates_with_total_and_reasons():
     assert result.posts_found == 1
     assert len(result.candidates) == 1
     candidate = result.candidates[0]
-    assert isinstance(candidate, InteractionCandidate)
+    assert isinstance(candidate, InteractionProposal)
     assert candidate.post.id == "p1"
     assert candidate.score.total == pytest.approx(0.9)
     assert candidate.score.reasons == ["on topic", "debatable", "has code"]

@@ -55,7 +55,7 @@ class ScoreBatchOutput(BaseModel):
 
 @dataclass(frozen=True)
 class ScoredPost:
-    """帖子及其确定性计算后的总评分（InteractionCandidate 就绪）。"""
+    """帖子及其确定性计算后的总评分（InteractionProposal 就绪）。"""
 
     post: ExternalPost
     score: ConversationScore
