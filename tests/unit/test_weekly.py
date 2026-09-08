@@ -5,7 +5,7 @@ from datetime import datetime
 from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.content.models import Draft, DraftKind
 from finch.inbox.models import DecisionAction, DecisionRecord
-from finch.learn.weekly import render_weekly, weekly_analysis
+from finch.learn.weekly import weekly_analysis
 from finch.storage.database import Store
 from finch.storage.repositories import (
     ContentJobRepository,
@@ -64,7 +64,6 @@ def test_weekly_analysis_empty(tmp_path):
     store.init()
     report = _analyze(store)
     assert report.reviewed_drafts == 0
-    assert "evidence insufficient" in render_weekly(report)
 
 
 def test_weekly_analysis_skip_reason_from_job(tmp_path):

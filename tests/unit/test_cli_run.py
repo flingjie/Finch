@@ -13,6 +13,7 @@ from finch.content.voice import (
     save_voice_profile,
 )
 from finch.inbox.models import DecisionAction, DecisionRecord
+from finch.learn.reflection import WeeklyReflection
 from finch.settings import Paths, Settings
 from finch.storage.database import Store
 from finch.storage.repositories import (
@@ -21,16 +22,28 @@ from finch.storage.repositories import (
 )
 
 
+class _FakeReflectionService:
+    def __init__(self, runner):
+        self.runner = runner
+
+    def reflect(self, report, *, feedbacks=None, conversation_evidence=None, voice_profile=None):
+        return WeeklyReflection(
+            insight="i", strongest_expression="s", meaningful_connection="m",
+            next_practice="n", stop_doing="x", voice_update_candidate="v",
+        )
+
+
 def test_weekly_renders(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     store = Store(settings.paths.db_path)
     store.init()
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "WeeklyReflectionService", _FakeReflectionService)
 
     r = CliRunner().invoke(app, ["weekly"])
     assert r.exit_code == 0, r.output
-    assert "Finch Weekly Review" in r.output
-    assert "建议" in r.output
+    assert "Finch Weekly Reflection" in r.output
+    assert "下周训练重点" in r.output
 
 
 def _settings(tmp_path):

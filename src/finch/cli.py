@@ -36,7 +36,8 @@ from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
 from .inbox.service import InboxDecisionService, list_items
 from .learn.models import Feedback, OutcomeAssessment
-from .learn.weekly import render_weekly, weekly_analysis
+from .learn.reflection import WeeklyReflectionService, render_reflection
+from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
 from .practice.service import PracticeService
 from .settings import load_settings
@@ -621,8 +622,8 @@ def learn(
 
 
 @app.command("weekly")
-def run_weekly() -> None:
-    """周复盘：汇总最近 7 天的批准率、修改/跳过原因、内容效果指标与已发布候选。"""
+def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """周复盘：确定性指标 + LLM 定性解读（一个训练重点）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -635,7 +636,17 @@ def run_weekly() -> None:
         CriticReportRepository(store),
         since=since,
     )
-    typer.echo(render_weekly(report))
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    reflection = WeeklyReflectionService(runner).reflect(
+        report,
+        feedbacks=FeedbackRepository(store).list_feedbacks(),
+        conversation_evidence=ConversationEvidenceRepository(store).list_all(),
+        voice_profile=load_voice_profile(settings.paths.voice_profile_path),
+    )
+    if as_json:
+        typer.echo(reflection.model_dump_json(indent=2))
+    else:
+        typer.echo(render_reflection(reflection))
 
 
 def _voice_profile_path() -> Path:
