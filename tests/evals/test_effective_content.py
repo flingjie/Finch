@@ -186,7 +186,10 @@ def test_scenario_5_numbers_without_evidence_hard_fail():
 
 def test_scenario_6_concrete_decision_and_natural_style_pass():
     """有明确取舍且风格自然 → 全部检查器通过，聚合 → pass。"""
-    draft = _draft(body="We set the pool size to 10 to cut p99 latency by 40%.", job_id="job1")
+    draft = _draft(
+        body="We set the pool size to 10 to cut p99 latency by 40%. What pool size worked for you?",
+        job_id="job1",
+    )
     job = _job(position=_DEFAULT_POSITION)
     cards = [_card("ev1")]
 

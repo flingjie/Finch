@@ -36,7 +36,7 @@ def test_idea_checker_suite_drops_evidence():
     suite = idea_checker_suite(runner=None)
     names = [c.name for c in suite]
     assert "evidence" not in names
-    assert len(suite) == 6
+    assert len(suite) == 7
 
 
 def test_rewrite_idea_keeps_draft_identity_updates_body():
