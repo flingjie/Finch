@@ -7,8 +7,6 @@ requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12",
     "pydantic>=2.7",
-    "sqlmodel>=0.0.16",
-    "alembic>=1.13",
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
 ]
@@ -39,9 +37,6 @@ addopts = "-q"
 line-length = 100
 target-version = "py312"
 src = ["src"]
-# Alembic 迁移脚本由 autogenerate 生成，遵循 alembic 模板约定（Union/Sequence/单引号/长行），
-# 不按本项目 ruff 规则 lint。
-extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
