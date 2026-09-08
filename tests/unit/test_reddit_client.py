@@ -125,3 +125,23 @@ class TestRedditOpenCliClientSearch:
         monkeypatch.setattr("finch.reddit.opencli_client._run", fake_run)
         with pytest.raises(RedditSourceUnavailable):
             RedditOpenCliClient().search("hello")
+
+
+def test_post_returns_first_read_result(monkeypatch):
+    captured = {}
+
+    def fake_run(argv, timeout):
+        captured["argv"] = argv
+        return {
+            "ok": True, "exit_code": 0,
+            "stdout": json.dumps([{"id": "p1", "title": "t", "author": "a",
+                                   "url": "https://reddit.com/r/x/comments/p1"}]),
+            "stderr": "",
+        }
+
+    monkeypatch.setattr("finch.reddit.opencli_client._run", fake_run)
+    post = RedditOpenCliClient().post("https://reddit.com/r/x/comments/p1")
+    assert post is not None
+    assert post.id == "p1"
+    assert captured["argv"][1:4] == ["reddit", "read", "https://reddit.com/r/x/comments/p1"]
+    assert "-f" in captured["argv"] and "json" in captured["argv"]

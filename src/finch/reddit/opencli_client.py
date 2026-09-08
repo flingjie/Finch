@@ -114,3 +114,9 @@ class RedditOpenCliClient:
             "-f", "json",
         ]
         return _call(argv, timeout=60.0)
+
+    def post(self, url: str) -> RedditPost | None:
+        """按 URL 读取单帖（只读 ``reddit read``），失败返回 None（或抛来源异常）。"""
+        argv = ["opencli", "reddit", "read", url, "-f", "json"]
+        posts = _call(argv, timeout=60.0)
+        return posts[0] if posts else None
