@@ -18,7 +18,7 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (typer sub-apps / commands): `finch connect ...` (daily / prepare / approve / reject / edit / record), `finch peers ...` (list / show), `finch conversations ...` (list / show / follow-up), `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init [--prune]`, `finch diagnose`.
+CLI surface (typer sub-apps / commands): `finch connect ...` (daily / prepare / approve / reject / edit / record), `finch peers ...` (list / show / get), `finch conversations ...` (list / show / get / follow-up), `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
 
 ## Architecture
 
@@ -57,7 +57,7 @@ src/finch/
   github/        gh adapter (read-only): commit/PR/issue reading, repo discovery
   twitter/       opencli adapter (read-only): search/thread/bookmarks
   engagement/    peer-discovery 底层库：search/scoring/proposals/guard/evidence_upgrade/metrics
-  storage/       SQLite via SQLModel: Store + repositories (payload_json pattern)
+  storage/       file workspace: Workspace + repositories (YAML/Markdown/JSONL, atomic write)
   settings.py    finch.yaml + env loading (Pydantic)
   cli.py         typer app (connect/peers/conversations/ideas/practice/style/drafts/review/weekly/voice/github/twitter/init/diagnose)
 ```
@@ -80,7 +80,7 @@ Pipeline files: `models.py` (domain types) → `search.py` (PostSearchProvider: 
 
 ## Conventions
 
-- Python 3.12+; Pydantic 2 models (`StrEnum`/`Literal`/`Field`); SQLModel records store `payload_json` and upsert via `session.merge` (idempotent).
+- Python 3.12+; Pydantic 2 models (`StrEnum`/`Literal`/`Field`); domain models serialize to YAML/Markdown/JSONL files keyed by deterministic IDs, written via `Workspace.atomic_write` (idempotent overwrite).
 - Domain services are deterministic and single-threaded — state transitions, retries, and fault isolation (try/except) live in Python; no `asyncio.gather`. Bounded `ThreadPoolExecutor` parallelism is allowed *inside* a service step for independent I/O-bound subprocess calls (codex/git/opencli), always via `pool.map` so result order matches serial exactly.
 - Bilingual (Chinese/English) docstrings are common; match the surrounding file.
 - Ruff selects `E,F,I,B,UP`; alembic migration scripts are excluded from linting.
