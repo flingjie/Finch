@@ -7,6 +7,7 @@
 """
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from typing import Literal, cast
 
 from pydantic import BaseModel, Field
@@ -114,7 +115,9 @@ class OpportunityService:
         self.runner = runner
 
     def to_opportunities(self, posts: list[Tweet], *, topic: str) -> list[Opportunity]:
-        opportunities: list[Opportunity] = []
+        """posts → Opportunity；去重 + 噪音预过滤确定性串行，LLM 精判并行 + 逐帖容错。"""
+        # 确定性预过滤（纯 CPU，串行）：去重 + 机会信号预筛，噪音帖不进 LLM。
+        survivors: list[tuple[Tweet, str]] = []
         seen: set[str] = set()
         for post in posts:
             signal = _signal_text(post)
@@ -124,16 +127,19 @@ class OpportunityService:
             if key in seen:
                 continue
             seen.add(key)
-            if _classify(signal) != "opportunity":
-                continue
-            out = cast(
-                OpportunityDraft,
-                self.runner.run(
-                    _OPPORTUNITY_PROMPT.format(topic=topic, post=signal),
-                    OpportunityDraft,
-                ),
-            )
-            if not out.is_opportunity:
+            if _classify(signal) == "opportunity":
+                survivors.append((post, signal))
+
+        # 独立 I/O 的 LLM 精判：≥2 帖时用 pool.map 并行，结果顺序与串行一致。
+        if len(survivors) <= 1:
+            results = [self._judge(signal, topic) for _, signal in survivors]
+        else:
+            with ThreadPoolExecutor(max_workers=len(survivors)) as pool:
+                results = list(pool.map(lambda ps: self._judge(ps[1], topic), survivors))
+
+        opportunities: list[Opportunity] = []
+        for (post, signal), out in zip(survivors, results, strict=True):
+            if out is None or not out.is_opportunity:
                 continue
             opportunities.append(
                 Opportunity(
@@ -147,3 +153,16 @@ class OpportunityService:
                 )
             )
         return opportunities
+
+    def _judge(self, signal: str, topic: str) -> OpportunityDraft | None:
+        """单帖 LLM 精判；失败（超时/子进程/校验）返回 None，跳过该帖而非中止整轮。"""
+        try:
+            return cast(
+                OpportunityDraft,
+                self.runner.run(
+                    _OPPORTUNITY_PROMPT.format(topic=topic, post=signal),
+                    OpportunityDraft,
+                ),
+            )
+        except RuntimeError:
+            return None

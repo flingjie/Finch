@@ -82,7 +82,7 @@ class PracticeService:
 
     def diagnose(self, session_id: str, *, context: str = "") -> PracticeSession:
         """LLM 诊断最大问题 + 追问一个问题；追加到 questions_asked。"""
-        session = self._get(session_id)
+        session = self._require_started(session_id)
         out = cast(
             PracticeDiagnosis,
             self.runner.run(
@@ -107,7 +107,7 @@ class PracticeService:
 
     def save_revision(self, session_id: str, revision: str) -> PracticeSession:
         """追加一次修订。"""
-        session = self._get(session_id)
+        session = self._require_started(session_id)
         session = session.model_copy(
             update={
                 "revisions": [*session.revisions, revision],
@@ -119,7 +119,7 @@ class PracticeService:
 
     def finish(self, session_id: str, final_expression: str) -> PracticeSession:
         """记最终版 + LLM 生成 lesson，置 finished。"""
-        session = self._get(session_id)
+        session = self._require_started(session_id)
         lesson = cast(
             PracticeLesson,
             self.runner.run(
@@ -144,4 +144,14 @@ class PracticeService:
         session = self.sessions.get(session_id)
         if session is None:
             raise KeyError(session_id)
+        return session
+
+    def _require_started(self, session_id: str) -> PracticeSession:
+        """只允许对 started 会话做 diagnose/save_revision/finish（状态机 started→finished）。"""
+        session = self._get(session_id)
+        if session.status != "started":
+            raise ValueError(
+                f"illegal transition: session {session_id} in status {session.status}; "
+                "expected started"
+            )
         return session

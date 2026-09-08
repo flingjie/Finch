@@ -637,9 +637,15 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
         since=since,
     )
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    # 反馈按 recorded_at 对齐 7 天窗口（与 weekly_analysis 的 since 一致），避免复盘
+    # 输入随库无界膨胀。ConversationEvidence 无时间戳字段，无法按窗过滤，仍取全量
+    # （其量级受 verified/promote 门限约束）。
+    window_feedbacks = [
+        fb for fb in FeedbackRepository(store).list_feedbacks() if fb.recorded_at >= since
+    ]
     reflection = WeeklyReflectionService(runner).reflect(
         report,
-        feedbacks=FeedbackRepository(store).list_feedbacks(),
+        feedbacks=window_feedbacks,
         conversation_evidence=ConversationEvidenceRepository(store).list_all(),
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
     )

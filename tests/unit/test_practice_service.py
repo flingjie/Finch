@@ -60,3 +60,20 @@ def test_diagnose_missing_session_raises(tmp_path):
     except KeyError:
         return
     raise AssertionError("expected KeyError")
+
+
+def test_operations_on_finished_session_rejected(tmp_path):
+    svc = _service(tmp_path)
+    s = svc.start(idea_id="idea_1", initial_attempt="初稿")
+    s = svc.finish(s.id, "最终版")
+    assert s.status == "finished"
+    for op in (
+        lambda: svc.diagnose(s.id),
+        lambda: svc.save_revision(s.id, "修订"),
+        lambda: svc.finish(s.id, "再次最终"),
+    ):
+        try:
+            op()
+        except ValueError:
+            continue
+        raise AssertionError("expected ValueError on finished session")

@@ -63,3 +63,25 @@ def test_dedup():
              _post("Our agent keeps failing on long context.", id="2")]
     opps = svc.to_opportunities(posts, topic="agents")
     assert len(opps) == 1
+
+
+class _FailingRunner:
+    def __init__(self, fail_on):
+        self.fail_on = fail_on
+
+    def run(self, prompt, output_model, **kw):
+        if self.fail_on in prompt:
+            raise RuntimeError("boom")
+        return _draft()
+
+
+def test_llm_failure_skips_post_keeps_others():
+    svc = OpportunityService(_FailingRunner(fail_on="race condition"))
+    posts = [
+        _post("The scheduler has a nasty race condition bug.", id="1"),
+        _post("Our agent keeps failing on long context.", id="2"),
+    ]
+    opps = svc.to_opportunities(posts, topic="sched")
+    assert len(opps) == 1
+    assert opps[0].source_post.text == "Our agent keeps failing on long context."
+

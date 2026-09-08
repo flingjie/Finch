@@ -6,6 +6,7 @@
 """
 
 import hashlib
+import re
 from typing import Literal, cast
 
 from pydantic import BaseModel, Field
@@ -18,6 +19,21 @@ from finch.llm.base import StructuredInferenceRunner
 
 _GENERATOR_SKILL = "idea-discovery"
 _GENERATOR_VERSION = "1.0.0"
+
+# 第一人称代词（英文 + 中文）：外部作者亲历不得被采纳为作者亲历，提炼时剥离。
+_FIRST_PERSON_RE = re.compile(
+    r"\b(i|i'm|i've|i'd|i'll|we|we're|we've|we'd|we'll|my|our|mine|ours|me|us|"
+    r"myself|ourselves)\b",
+    re.IGNORECASE,
+)
+_CN_FIRST_PERSON_RE = re.compile(r"(我|我们|我的|我们的|咱|咱们)")
+
+
+def _neutralize(text: str) -> str:
+    """剥离第一人称代词，得到中性的问题/主张陈述（不采纳外部亲历）。"""
+    neutral = _FIRST_PERSON_RE.sub(" ", text)
+    neutral = _CN_FIRST_PERSON_RE.sub(" ", neutral)
+    return " ".join(neutral.split())
 
 _IDEA_DRAFT_PROMPT = """\
 You turn a raw fragment (or a verified conversation signal) into a single publishable
@@ -65,6 +81,9 @@ def _to_candidate(
     origin: Literal["commit", "search", "user", "conversation"],
     source_refs: list[SourceRef],
 ) -> IdeaCandidate:
+    # 注意：此处的 ``id`` 只是候选自带的展示性 id；真正的 ``ContentJob.id`` 由
+    # ``IdeaService.create_candidate`` 按同一公式（sha256(core_point)）重算并落库，
+    # 因此这里的 id 公式与 create_candidate 必须保持一致（不要单独改动其一）。
     core = out.core_point
     return IdeaCandidate(
         id=f"idea_{hashlib.sha256(core.encode('utf-8')).hexdigest()[:8]}",
@@ -80,6 +99,35 @@ def _to_candidate(
         boundaries=out.boundaries,
         recommended_format=out.recommended_format,
         generator=IdeaGenerator(skill=_GENERATOR_SKILL, version=_GENERATOR_VERSION),
+    )
+
+
+def _sanitize_external(out: "IdeaDraftOutput", signal: str) -> "IdeaDraftOutput":
+    """外部机会信号 → 确定性中性化（外部帖 ≠ 个人证据，不信任 LLM 边界）。
+
+    剥离作者字段（core_point/observation/reader_problem/open_question + 立场的
+    claim/decision/tradeoff）里的第一人称，并把 boundaries 强制为 known 空、
+    inferred 承载中性化信号。原文只保留在 source_refs（外部、可追溯）。
+    """
+    position = out.author_position
+    return out.model_copy(
+        update={
+            "core_point": _neutralize(out.core_point),
+            "observation": _neutralize(out.observation),
+            "reader_problem": _neutralize(out.reader_problem),
+            "open_question": _neutralize(out.open_question),
+            "author_position": AuthorPosition(
+                claim=_neutralize(position.claim),
+                decision=_neutralize(position.decision),
+                tradeoff=_neutralize(position.tradeoff),
+                change_mind_if=position.change_mind_if,
+            ),
+            "boundaries": IdeaBoundaries(
+                known=[],
+                inferred=[_neutralize(signal)],
+                unknown=out.boundaries.unknown,
+            ),
+        }
     )
 
 
@@ -140,11 +188,9 @@ class FragmentService:
     def from_opportunity(self, opportunity: Opportunity) -> IdeaCandidate:
         """scout 机会 → IdeaCandidate，origin=search。
 
-        外部帖子只是信号、不是个人证据：author 字段由 prompt 约束保持中性化（第三人口径），
-        source_refs 保留原文（外部、可追溯）；boundaries 由 LLM 输出决定（prompt 约束
-        known 为空、外部信号归 inferred）。不在此处代码强制 boundaries——它落库前即被
-        IdeaService.create_candidate 丢弃（ContentJob 无 boundaries 字段），与既有
-        commit/search 来源一致，属 prompt 级边界（见 spec「完成标准偏差」）。
+        外部帖子只是信号、不是个人证据：LLM 输出经 ``_sanitize_external`` 确定性
+        中性化（剥离作者字段第一人称 + boundaries.known 恒空），不信任 prompt 级约束。
+        source_refs 保留原文（外部、可追溯）。
         """
         out = cast(
             IdeaDraftOutput,
@@ -153,6 +199,7 @@ class FragmentService:
                 IdeaDraftOutput,
             ),
         )
+        out = _sanitize_external(out, opportunity.source_post.text)
         return _to_candidate(
             out, origin="search",
             source_refs=[
