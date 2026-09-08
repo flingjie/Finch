@@ -95,13 +95,32 @@ class TwitterSettings(BaseModel):
 
 
 class ScoringWeights(BaseModel):
-    """互动评分五维权重（执行计划 5 默认评分权重表）。"""
+    """互动评分五维权重（执行计划 5 默认评分权重表）。
+
+    ``relationship_value`` 不再是 LLM 评分维度，而由关系评分确定性计算；权重仍保留，
+    以便 ``weighted_total`` 汇总时与四维 LLM 分合成总分。
+    """
 
     relevance: float = 0.25
     novelty: float = 0.25
     discussability: float = 0.20
     practical_evidence: float = 0.20
     relationship_value: float = 0.10
+
+
+class PeerValueWeights(BaseModel):
+    """同行价值六维权重（连接优先改造 Phase 2）。
+
+    默认四个正向维度等权（各 0.25），惩罚项权重 1.0：``peer_value`` 基础分落在 [0,1]，
+    惩罚项在基础分上扣减后再钳制到 [0,1]。权重可配置，但汇总只在代码里算（LLM 不参与）。
+    """
+
+    topic_overlap: float = 0.25
+    practical_depth: float = 0.25
+    contribution_space: float = 0.25
+    continuity_potential: float = 0.25
+    repetition_penalty: float = 1.0
+    promotion_risk: float = 1.0
 
 
 class EngagementSettings(BaseModel):
@@ -117,8 +136,11 @@ class EngagementSettings(BaseModel):
     max_reply_drafts: int = 3
     max_public_replies: int = 2
     per_author_daily_limit: int = 1
+    max_peers_per_run: int = 5
+    max_posts_per_peer: int = 3
     public_expression_requires_approval: bool = True
     weights: ScoringWeights = Field(default_factory=ScoringWeights)
+    peer_value_weights: PeerValueWeights = Field(default_factory=PeerValueWeights)
 
 
 class InterestsSettings(BaseModel):

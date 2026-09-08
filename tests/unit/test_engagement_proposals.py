@@ -143,6 +143,28 @@ def test_generate_proposals_populates_draft_fields():
     assert c.factual_risks == ["assumes failure replay is available in their stack"]
 
 
+def test_generate_proposals_populates_peer_id_and_generation_key():
+    from finch.peers.service import peer_id_for
+
+    post = _scored("p1", score=_score(discussability=0.9, novelty=0.9, practical_evidence=0.9))
+    runner = FakeRunner(items=[_item("p1")])
+    c = generate_proposals(runner, [post], EngagementSettings())[0]
+
+    assert c.peer_id == peer_id_for("x", "u")
+    assert c.generation_key == f"{c.peer_id}:p1:draft_quote:1"
+
+
+def test_generation_key_is_stable_across_regeneration():
+    from finch.engagement.proposals import generation_key_for
+
+    a = generation_key_for(peer_id="peer_1", post_id="p1", action=InteractionAction.DRAFT_REPLY)
+    b = generation_key_for(peer_id="peer_1", post_id="p1", action=InteractionAction.DRAFT_REPLY)
+    assert a == b
+    assert a != generation_key_for(
+        peer_id="peer_1", post_id="p1", action=InteractionAction.DRAFT_QUOTE
+    )
+
+
 def test_generate_proposals_caps_bookmarks_and_reply_drafts():
     posts = [
         _scored(f"b{i}", score=_score(relevance=0.9, discussability=0.2, novelty=0.2))

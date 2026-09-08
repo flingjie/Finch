@@ -17,6 +17,8 @@ from typing import cast
 
 from pydantic import BaseModel, Field
 
+from finch.peers.service import peer_id_for
+
 from ..codex.runner import CodexRunner
 from ..settings import EngagementSettings
 from .models import ConversationScore, ExternalPost, InteractionAction, InteractionProposal
@@ -24,12 +26,20 @@ from .scoring import ScoredPost
 
 _PROMPT_PATH = Path("prompts/propose-engagement.md")
 
+# 提案 prompt 版本：generation_key 的一部分，升级 prompt 后旧 key 失效，允许重新生成。
+_PROMPT_VERSION = "1"
+
 # 确定性动作选择阈值（choose_action 的唯一事实来源，可单元测试）。
 _REPLY_MIN_DISCUSSABILITY = 0.60
 _REPLY_MIN_NOVELTY = 0.50
 _QUOTE_MIN_EVIDENCE = 0.60
 _OBSERVE_MIN_RELATIONSHIP = 0.80
 _BOOKMARK_MIN_RELEVANCE = 0.60
+
+
+def generation_key_for(*, peer_id: str, post_id: str, action: InteractionAction) -> str:
+    """幂等键 ``peer + source + action + prompt_version``：相同 key 不重复创建 Proposal。"""
+    return f"{peer_id}:{post_id}:{action.value}:{_PROMPT_VERSION}"
 
 
 class ProposalItem(BaseModel):
@@ -141,6 +151,10 @@ def generate_proposals(
     for post_id in keep_ids:
         sp = by_id[post_id]
         action = actions[post_id]
+        peer_id = peer_id_for(sp.post.platform, sp.post.author_id)
+        generation_key = generation_key_for(
+            peer_id=peer_id, post_id=sp.post.id, action=action
+        )
         if action in (InteractionAction.DRAFT_REPLY, InteractionAction.DRAFT_QUOTE):
             proposal = drafts.get(post_id)
             if proposal is None or not proposal.draft.strip():
@@ -156,6 +170,8 @@ def generate_proposals(
                     source_summary=proposal.source_summary,
                     factual_risks=proposal.factual_risks,
                     approval_required=True,
+                    peer_id=peer_id,
+                    generation_key=generation_key,
                 )
             )
         else:
@@ -166,6 +182,8 @@ def generate_proposals(
                     score=sp.score,
                     action=action,
                     approval_required=False,
+                    peer_id=peer_id,
+                    generation_key=generation_key,
                 )
             )
     return candidates

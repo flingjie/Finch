@@ -1,8 +1,12 @@
-"""互动轨道流程胶水：搜索 → 预过滤 → 评分 → 排序 → 互动提案 → 结构化结果（执行计划 Phase 0–4）。
+"""互动轨道流程胶水：搜索 → 预过滤 → 同行聚合 → 关系评分 → 逐帖评分 → 提案（Phase 0–4）。
 
 只读：本轮输出互动提案（``InteractionProposal``，含草稿类动作的草稿），不做审批/执行、
 不持久化互动记录，也不计算指标。单条轨道失败不得抛到调用方；搜索层的部分失败会记录在
 ``failures`` 中。
+
+连接优先改造（Phase 2）：预过滤后的帖子先按作者聚合为同行，做确定性关系评分，再限
+「推荐人数」与「每人帖数」，最后才逐帖四维语义评分并合成互动提案——避免榜单被单一作者
+占满，也让 relationship_value 从「单帖印象」变为「基于 PeerProfile 与历史」的确定值。
 """
 
 from typing import Literal
@@ -14,7 +18,9 @@ from ..reddit.opencli_client import RedditOpenCliClient
 from ..settings import Settings
 from ..twitter.opencli_client import OpenCliClient
 from .models import ExternalPost, InteractionProposal
+from .peer_aggregation import aggregate_by_peer
 from .proposals import generate_proposals
+from .relationship import PeerHistory, compute_relationship_value, rank_peers
 from .scoring import prefilter_posts, rank_candidates, score_posts
 from .search import (
     PostSearchFailure,
@@ -119,13 +125,16 @@ def run_discovery_engagement_flow(
     reddit_opencli: RedditOpenCliClient | None = None,
     run_id: str,
     skip_ids: set[str] | None = None,
+    history_by_peer: dict[str, PeerHistory] | None = None,
 ) -> EngagementRunResult:
-    """执行互动轨道：搜索 → 预过滤 → 评分 → 排序 → 互动提案，返回结构化结果。
+    """执行互动轨道：搜索 → 预过滤 → 同行聚合 → 关系评分 → 逐帖评分 → 提案。
 
     空帖子返回 ``status="empty"``（成功空结果，非错误）；顶层异常捕获为 ``status="failed"``，
-    不向外抛出。空输入不会调用 LLM（``score_posts`` 已短路，这里亦不传空列表）。
+    不向外抛出。空输入不会调用 LLM。``history_by_peer`` 提供同行的历史互动上下文（供关系
+    评分计算 continuity_potential / repetition_penalty），缺省视为首次发现。
     """
     engagement = settings.engagement
+    interests = [*settings.interests.stable, *settings.interests.exploring]
     providers = _build_providers(engagement.platforms, opencli, reddit_opencli)
     try:
         outcome = search_engagement_posts(
@@ -134,7 +143,32 @@ def run_discovery_engagement_flow(
         posts = prefilter_posts(
             outcome.posts, min_length=_MIN_CONTENT_LENGTH, skip_ids=skip_ids
         )
-        scored = score_posts(runner, posts, engagement.weights) if posts else []
+
+        # 同行聚合 + 关系评分 + 限人限帖（避免榜单被单一作者占满）。
+        bundles = aggregate_by_peer(posts)
+        ranked_peers = rank_peers(
+            bundles,
+            interests=interests,
+            history_by_peer=history_by_peer,
+            weights=engagement.peer_value_weights,
+        )[: engagement.max_peers_per_run]
+
+        relationship_by_peer: dict[str, float] = {}
+        selected_posts: list[ExternalPost] = []
+        for bundle, peer_value in ranked_peers:
+            relationship_by_peer[bundle.profile.id] = compute_relationship_value(peer_value)
+            selected_posts.extend(bundle.posts[: engagement.max_posts_per_peer])
+
+        scored = (
+            score_posts(
+                runner,
+                selected_posts,
+                engagement.weights,
+                relationship_by_peer=relationship_by_peer,
+            )
+            if selected_posts
+            else []
+        )
         ranked = rank_candidates(
             scored, min_candidate_score=engagement.min_candidate_score
         )

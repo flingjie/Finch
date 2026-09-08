@@ -1,11 +1,12 @@
 """互动价值评分：确定性规则过滤 + 确定性加权总分 + 模型逐维评分。
 
-对应执行计划 Phase 3：
+对应执行计划 Phase 3（连接优先改造后 relationship_value 改为确定性）：
 1. 先用确定性规则过滤（过短、纯转发、已互动帖子）；
-2. 再由模型对五个维度分别评分，并要求给出可审计理由；
-3. 在代码中确定性计算加权总分，模型不得直接决定最终总分；
-4. 仅保留 total >= min_candidate_score 的帖子；
-5. 最终排序优先考虑实践证据和可交流性，热度只作辅助特征。
+2. 再由模型对四个维度（relevance/novelty/discussability/practical_evidence）分别评分；
+3. relationship_value 由关系评分确定性计算（非 LLM）；
+4. 在代码中确定性计算加权总分，模型不得直接决定最终总分；
+5. 仅保留 total >= min_candidate_score 的帖子；
+6. 最终排序优先考虑实践证据和可交流性，热度只作辅助特征。
 """
 
 import json
@@ -15,6 +16,8 @@ from pathlib import Path
 from typing import cast
 
 from pydantic import BaseModel, Field
+
+from finch.peers.service import peer_id_for
 
 from ..codex.runner import CodexRunner
 from ..settings import ScoringWeights
@@ -30,13 +33,12 @@ _POPULARITY_KEYS = ("likes", "favorites", "replies", "reposts", "retweets", "com
 
 
 class ConversationScoreInput(BaseModel):
-    """模型返回的五维评分；不含 total（total 只能由 weighted_total 确定性计算）。"""
+    """模型返回的四维评分；不含 relationship_value（由关系评分确定性计算）与 total。"""
 
     relevance: float = Field(ge=0, le=1)
     novelty: float = Field(ge=0, le=1)
     discussability: float = Field(ge=0, le=1)
     practical_evidence: float = Field(ge=0, le=1)
-    relationship_value: float = Field(ge=0, le=1)
     reasons: list[str]
 
 
@@ -61,14 +63,22 @@ class ScoredPost:
     score: ConversationScore
 
 
-def weighted_total(dims: ConversationScoreInput, weights: ScoringWeights) -> float:
-    """确定性加权总分，钳制到 0..1；这是唯一计算 total 的位置。"""
+def weighted_total(
+    dims: ConversationScoreInput,
+    weights: ScoringWeights,
+    *,
+    relationship_value: float = 0.0,
+) -> float:
+    """确定性加权总分，钳制到 0..1；这是唯一计算 total 的位置。
+
+    ``relationship_value`` 由关系评分确定性计算（非 LLM），此处仅参与加权汇总。
+    """
     total = (
         weights.relevance * dims.relevance
         + weights.novelty * dims.novelty
         + weights.discussability * dims.discussability
         + weights.practical_evidence * dims.practical_evidence
-        + weights.relationship_value * dims.relationship_value
+        + weights.relationship_value * relationship_value
     )
     return max(0.0, min(1.0, total))
 
@@ -118,15 +128,19 @@ def _to_json_text(models: Sequence[BaseModel]) -> str:
 
 
 def _assemble(
-    post: ExternalPost, dims: ConversationScoreInput, weights: ScoringWeights
+    post: ExternalPost,
+    dims: ConversationScoreInput,
+    weights: ScoringWeights,
+    *,
+    relationship_value: float = 0.0,
 ) -> ScoredPost:
-    total = weighted_total(dims, weights)
+    total = weighted_total(dims, weights, relationship_value=relationship_value)
     score = ConversationScore(
         relevance=dims.relevance,
         novelty=dims.novelty,
         discussability=dims.discussability,
         practical_evidence=dims.practical_evidence,
-        relationship_value=dims.relationship_value,
+        relationship_value=relationship_value,
         total=total,
         reasons=dims.reasons,
     )
@@ -137,14 +151,17 @@ def score_posts(
     runner: CodexRunner,
     posts: list[ExternalPost],
     weights: ScoringWeights,
+    *,
+    relationship_by_peer: dict[str, float] | None = None,
 ) -> list[ScoredPost]:
-    """一次 Codex 调用完成整批帖子的五维评分；total 由 weighted_total 确定性计算。
+    """一次 Codex 调用完成整批帖子的四维评分；relationship_value 由调用方按 peer_id
+    提供（确定性），total 由 weighted_total 确定性计算。
 
-    posts 为空时不调用 runner，直接返回空列表（0 次调用）。
-    模型漏评的帖子保守丢弃，不参与后续排序。
+    posts 为空时不调用 runner，直接返回空列表（0 次调用）。模型漏评的帖子保守丢弃。
     """
     if not posts:
         return []
+    relationship_by_peer = relationship_by_peer or {}
     prompt = _PROMPT_PATH.read_text().format(posts=_to_json_text(posts))
     output = cast(ScoreBatchOutput, runner.run(prompt, ScoreBatchOutput))
     by_id = {item.post_id: item.scores for item in output.items}
@@ -153,7 +170,8 @@ def score_posts(
         dims = by_id.get(post.id)
         if dims is None:
             continue
-        scored.append(_assemble(post, dims, weights))
+        rel = relationship_by_peer.get(peer_id_for(post.platform, post.author_id), 0.0)
+        scored.append(_assemble(post, dims, weights, relationship_value=rel))
     return scored
 
 

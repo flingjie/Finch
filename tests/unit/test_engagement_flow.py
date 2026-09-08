@@ -94,7 +94,6 @@ def _dims(**overrides) -> ConversationScoreInput:
         novelty=0.9,
         discussability=0.9,
         practical_evidence=0.9,
-        relationship_value=0.9,
         reasons=["on topic", "debatable", "has code"],
     )
     data.update(overrides)
@@ -142,10 +141,13 @@ def test_found_posts_return_ranked_candidates_with_total_and_reasons():
     candidate = result.candidates[0]
     assert isinstance(candidate, InteractionProposal)
     assert candidate.post.id == "p1"
-    assert candidate.score.total == pytest.approx(0.9)
+    # relationship_value 由关系评分确定性计算：topic_overlap=1.0, continuity=0.0 → 0.5。
+    assert candidate.score.relationship_value == pytest.approx(0.5)
+    assert candidate.score.total == pytest.approx(0.9 * (0.25 + 0.25 + 0.20 + 0.20) + 0.10 * 0.5)
     assert candidate.score.reasons == ["on topic", "debatable", "has code"]
     assert candidate.action in (InteractionAction.DRAFT_REPLY, InteractionAction.DRAFT_QUOTE)
     assert candidate.draft == "Have you tried recording a failure replay and diffing it?"
+    assert candidate.peer_id is not None
     assert "p1" in result.summary
 
 
