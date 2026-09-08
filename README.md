@@ -28,7 +28,7 @@ uv run finch diagnose                    # 探测 gh / opencli 可用性
 # —— 连接主循环 ——
 uv run finch connect daily               # 今天该继续的对话 + 值得连接的同行 + 可贡献内容 + 观点候选
 uv run finch peers list / show <peer_id> # 同行档案与关系上下文
-uv run finch connect prepare <opportunity_id>   # 为具体同行/帖子准备互动建议
+uv run finch connect prepare         # 为具体同行/帖子准备互动建议
 uv run finch connect approve / reject / record  # 批准建议、拒绝、记录真实互动
 uv run finch conversations list --needs-follow-up / show / follow-up
 
@@ -58,7 +58,7 @@ uv run finch style analyze --text "<文本>" | --file posts.md | --url "<链接>
 uv run finch connect daily
 
 # 2. 为某个同行准备一次互动建议（批准 ≠ 已发布）
-uv run finch connect prepare <opportunity_id>
+uv run finch connect prepare
 uv run finch connect approve <proposal_id>
 
 # 3. 记录真实互动，收到回复后形成对话线索
@@ -97,7 +97,7 @@ skills/
 src/finch/
   peers/           PeerProfile 关系领域（按 platform+author_id 幂等归一化）
   conversations/   ConversationThread / InteractionRecord 关系领域
-  ideas/           观点状态机 + Commit/Fragment/Opportunity 服务
+  ideas/           观点状态机 + Commit/Fragment 服务
   drafts/          DraftService（已确认观点 → Draft + CriticReport）
   practice/        expression-practice 会话
   idea/            finch drafts 复用的纯函数

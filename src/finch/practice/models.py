@@ -11,7 +11,6 @@ class PracticeSession(BaseModel):
 
     id: str
     idea_id: str | None = None
-    opportunity_id: str | None = None
     initial_attempt: str = ""
     diagnosis: str = ""
     questions_asked: list[str] = Field(default_factory=list)

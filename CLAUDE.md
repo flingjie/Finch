@@ -44,7 +44,7 @@ src/finch/
   peers/         PeerProfile 关系领域（platform + author_id 幂等归一化）
   conversations/ ConversationThread / InteractionRecord 关系领域
   ideas/         IdeaService（AuthorIdea 状态机：PROPOSED→CONFIRMED→DRAFTED，或→SKIPPED）、
-                 CommitService、FragmentService、OpportunityService
+                 CommitService、FragmentService
   drafts/        DraftService（已确认观点 → Draft + CriticReport，幂等，不自动发布）
   practice/      PracticeService（expression-practice 会话）
   idea/          finch drafts 复用的纯函数：rewrite_idea / idea_checker_suite

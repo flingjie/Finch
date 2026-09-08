@@ -1449,20 +1449,16 @@ def conversations_follow_up(
 @practice_app.command("start")
 def practice_start(
     idea: str = typer.Option(None, "--idea", help="关联 idea id"),
-    opportunity: str = typer.Option(None, "--opportunity", help="关联 opportunity id"),
     attempt: str = typer.Option(..., "--attempt", help="用户首稿"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """开始一次表达练习（记 idea/opportunity + 首稿）。"""
-    if (idea is None) == (opportunity is None):
-        typer.echo("exactly one of --idea / --opportunity is required")
-        raise typer.Exit(code=1)
+    """开始一次表达练习（可选关联 idea + 首稿）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     session = PracticeService(PracticeSessionRepository(store), runner).start(
-        idea_id=idea, opportunity_id=opportunity, initial_attempt=attempt
+        idea_id=idea, initial_attempt=attempt
     )
     if as_json:
         typer.echo(session.model_dump_json(indent=2))
