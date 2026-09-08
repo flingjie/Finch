@@ -1366,6 +1366,12 @@ def peers_show(
     typer.echo(f"next_context: {peer.next_context or '-'}")
 
 
+@peers_app.command("get")
+def peers_get(peer_id: str = typer.Argument(..., help="peer id")) -> None:
+    """Agent 用确定性读取：等同 peers show --json。"""
+    peers_show(peer_id, as_json=True)
+
+
 @conversations_app.command("list")
 def conversations_list(
     needs_follow_up: bool = typer.Option(False, "--needs-follow-up", help="只列需要跟进的对话"),
@@ -1417,6 +1423,12 @@ def conversations_show(
     typer.echo(f"agreements: {', '.join(thread.agreements) or '-'}")
     typer.echo(f"disagreements: {', '.join(thread.disagreements) or '-'}")
     typer.echo(f"possible_experiments: {', '.join(thread.possible_experiments) or '-'}")
+
+
+@conversations_app.command("get")
+def conversations_get(conversation_id: str = typer.Argument(..., help="conversation id")) -> None:
+    """Agent 用确定性读取：等同 conversations show --json。"""
+    conversations_show(conversation_id, as_json=True)
 
 
 @conversations_app.command("follow-up")
