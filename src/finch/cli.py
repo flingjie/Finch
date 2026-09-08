@@ -38,6 +38,7 @@ from .inbox.service import InboxDecisionService, list_items
 from .learn.models import Feedback, OutcomeAssessment
 from .learn.weekly import render_weekly, weekly_analysis
 from .llm.openai_compatible import create_runner
+from .practice.service import PracticeService
 from .settings import load_settings
 from .storage.database import Store
 from .storage.repositories import (
@@ -52,6 +53,7 @@ from .storage.repositories import (
     FeedbackSnapshotRepository,
     InteractionRepository,
     OpportunityRepository,
+    PracticeSessionRepository,
     PublicationIntentRepository,
 )
 from .twitter.normalizer import normalize_tweets
@@ -83,6 +85,9 @@ app.add_typer(engagement_app, name="engagement")
 
 scout_app = typer.Typer(help="从公开讨论侦察交流机会（conversation-scout）")
 app.add_typer(scout_app, name="scout")
+
+practice_app = typer.Typer(help="表达练习（expression-practice，skill 驱动 + 一次性 CLI 落库）")
+app.add_typer(practice_app, name="practice")
 
 
 def _since_iso(since: str | None) -> str | None:
@@ -1086,6 +1091,129 @@ def scout_show(
         typer.echo(f"response_angles: {', '.join(opp.response_angles)}")
         typer.echo(f"knowledge_gap: {opp.knowledge_gap}")
         typer.echo(f"relationship_value: {opp.relationship_value}")
+
+
+@practice_app.command("start")
+def practice_start(
+    idea: str = typer.Option(None, "--idea", help="关联 idea id"),
+    opportunity: str = typer.Option(None, "--opportunity", help="关联 opportunity id"),
+    attempt: str = typer.Option(..., "--attempt", help="用户首稿"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """开始一次表达练习（记 idea/opportunity + 首稿）。"""
+    if (idea is None) == (opportunity is None):
+        typer.echo("exactly one of --idea / --opportunity is required")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    session = PracticeService(PracticeSessionRepository(store), runner).start(
+        idea_id=idea, opportunity_id=opportunity, initial_attempt=attempt
+    )
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        typer.echo(session.id)
+
+
+@practice_app.command("diagnose")
+def practice_diagnose(
+    session_id: str = typer.Argument(..., help="session id"),
+    context: str = typer.Option("", "--context", help="可选 idea 语境"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """诊断最大问题 + 追问一个问题（LLM）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    try:
+        session = PracticeService(PracticeSessionRepository(store), runner).diagnose(
+            session_id, context=context
+        )
+    except KeyError:
+        typer.echo(f"session not found: {session_id}")
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        typer.echo(f"diagnosis: {session.diagnosis}")
+        typer.echo(f"question: {session.questions_asked[-1]}")
+
+
+@practice_app.command("save")
+def practice_save(
+    session_id: str = typer.Argument(..., help="session id"),
+    revision: str = typer.Option(..., "--revision", help="修订后的表达"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """追加一次修订。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    try:
+        session = PracticeService(PracticeSessionRepository(store), runner).save_revision(
+            session_id, revision
+        )
+    except KeyError:
+        typer.echo(f"session not found: {session_id}")
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        typer.echo(f"revisions: {len(session.revisions)}")
+
+
+@practice_app.command("finish")
+def practice_finish(
+    session_id: str = typer.Argument(..., help="session id"),
+    final: str = typer.Option(..., "--final", help="最终表达"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """记最终版 + LLM 经验总结，置 finished。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    try:
+        session = PracticeService(PracticeSessionRepository(store), runner).finish(
+            session_id, final
+        )
+    except KeyError:
+        typer.echo(f"session not found: {session_id}")
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        typer.echo(f"lesson: {session.lesson}")
+
+
+@practice_app.command("show")
+def practice_show(
+    session_id: str = typer.Argument(..., help="session id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """展示会话（首稿 / 诊断 / 追问 / 修订 / 最终版 / lesson）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    session = PracticeSessionRepository(store).get(session_id)
+    if session is None:
+        typer.echo(f"session not found: {session_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        typer.echo(f"id: {session.id}")
+        typer.echo(f"status: {session.status}")
+        typer.echo(f"initial_attempt: {session.initial_attempt}")
+        typer.echo(f"diagnosis: {session.diagnosis}")
+        typer.echo(f"questions_asked: {json.dumps(session.questions_asked, ensure_ascii=False)}")
+        typer.echo(f"revisions: {json.dumps(session.revisions, ensure_ascii=False)}")
+        typer.echo(f"final_expression: {session.final_expression}")
+        typer.echo(f"lesson: {session.lesson}")
 
 
 if __name__ == "__main__":

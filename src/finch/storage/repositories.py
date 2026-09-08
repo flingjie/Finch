@@ -23,6 +23,7 @@ from finch.evidence.models import EvidenceCard
 from finch.ideas.opportunity import Opportunity
 from finch.inbox.models import DecisionRecord
 from finch.learn.models import Feedback
+from finch.practice.models import PracticeSession
 from finch.storage.database import Store
 
 
@@ -801,3 +802,35 @@ class PublicationIntentRepository:
             records = list(session.exec(select(PublicationIntentRecord)))
             return [PublicationIntent.model_validate_json(r.payload_json) for r in records]
 
+
+
+class PracticeSessionRecord(SQLModel, table=True):
+    """PracticeSession（表达练习会话）持久化模型。"""
+
+    id: str = Field(primary_key=True)
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PracticeSessionRepository:
+    """表达练习会话仓储：按 id merge 幂等 upsert。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def upsert(self, session: PracticeSession) -> None:
+        record = PracticeSessionRecord(
+            id=session.id,
+            payload_json=session.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session_ctx:
+            session_ctx.merge(record)
+            session_ctx.commit()
+
+    def get(self, session_id: str) -> PracticeSession | None:
+        with Session(self.store.engine) as session_ctx:
+            record = session_ctx.get(PracticeSessionRecord, session_id)
+            if record is None:
+                return None
+            return PracticeSession.model_validate_json(record.payload_json)
