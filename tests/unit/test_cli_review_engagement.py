@@ -12,13 +12,12 @@ from typer.testing import CliRunner
 from finch import cli
 from finch.cli import app
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
-from finch.content.models import Draft, DraftKind
+from finch.content.models import Draft, DraftKind, RecommendedFormat
 from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
     InteractionAction,
-    InteractionCandidate,
-    InteractionStatus,
+    InteractionProposal,
 )
 from finch.inbox.models import DecisionAction
 from finch.settings import Paths, Settings
@@ -45,7 +44,7 @@ def _job(job_id: str = "job_1") -> ContentJob:
             decision="deterministic graphs win",
             tradeoff="orchestrator was hard to rerun",
         ),
-        recommended_format=DraftKind.ORIGINAL,
+        recommended_format=RecommendedFormat.SHORT_POST,
         status=ContentJobStatus.DRAFTED,
         core_message="deterministic graphs",
         why_now="failures can now be replayed",
@@ -80,8 +79,8 @@ def _post() -> ExternalPost:
     )
 
 
-def _candidate(candidate_id: str = "x:post_1:draft_reply") -> InteractionCandidate:
-    return InteractionCandidate(
+def _candidate(candidate_id: str = "x:post_1:draft_reply") -> InteractionProposal:
+    return InteractionProposal(
         id=candidate_id,
         post=_post(),
         score=ConversationScore(
@@ -253,135 +252,3 @@ def test_review_revise_rewrites_via_service(monkeypatch, tmp_path):
     )
     assert r.exit_code == 0, r.output
     assert "revised make it shorter" in r.output
-
-
-# ---- finch engagement list / show ----
-
-def test_engagement_list_json(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_candidate(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["engagement", "list", "--json"])
-    assert r.exit_code == 0, r.output
-    payload = json.loads(r.output)
-    assert [c["id"] for c in payload] == ["x:post_1:draft_reply"]
-
-
-def test_engagement_list_non_json(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_candidate(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["engagement", "list"])
-    assert r.exit_code == 0, r.output
-    assert "x:post_1:draft_reply" in r.output
-    assert "draft_reply" in r.output
-
-
-def test_engagement_show(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_candidate(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["engagement", "show", "x:post_1:draft_reply"])
-    assert r.exit_code == 0, r.output
-    assert "x:post_1:draft_reply" in r.output
-    assert "a draft reply" in r.output
-    assert "total=0.620" in r.output
-
-
-def test_engagement_show_unknown_exits(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["engagement", "show", "nope"])
-    assert r.exit_code == 1
-    assert "candidate not found" in r.output
-
-
-# ---- finch engagement approve / reject / edit ----
-
-def test_engagement_approve_flips_status(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_candidate(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["engagement", "approve", "x:post_1:draft_reply"])
-    assert r.exit_code == 0, r.output
-    assert InteractionRepository(store).get("x:post_1:draft_reply").status == (
-        InteractionStatus.APPROVED
-    )
-
-
-def test_engagement_reject_records_reason(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_candidate(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(
-        app, ["engagement", "reject", "x:post_1:draft_reply", "--reason", "not_relevant"]
-    )
-    assert r.exit_code == 0, r.output
-    candidate = InteractionRepository(store).get("x:post_1:draft_reply")
-    assert candidate.status == InteractionStatus.REJECTED
-    assert candidate.reject_reason == "not_relevant"
-
-
-def test_engagement_edit_saves_revised_draft(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_candidate(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    revised_file = tmp_path / "revised.md"
-    revised_file.write_text("the human-edited reply")
-
-    r = CliRunner().invoke(
-        app, ["engagement", "edit", "x:post_1:draft_reply", "--file", str(revised_file)]
-    )
-    assert r.exit_code == 0, r.output
-    candidate = InteractionRepository(store).get("x:post_1:draft_reply")
-    assert candidate.revised_draft == "the human-edited reply"
-    assert candidate.status == InteractionStatus.PROPOSED  # edit does not approve
-
-
-def test_engagement_edit_unknown_exits(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    revised_file = tmp_path / "revised.md"
-    revised_file.write_text("body")
-
-    r = CliRunner().invoke(
-        app, ["engagement", "edit", "nope", "--file", str(revised_file)]
-    )
-    assert r.exit_code == 1
-    assert "candidate not found" in r.output
-
-
-# ---- finch engagement metrics ----
-
-def test_engagement_metrics_renders(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_candidate(store)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["engagement", "metrics"])
-    assert r.exit_code == 0, r.output
-    assert "Finch Engagement Metrics" in r.output

@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from finch.content.jobs import ContentJob, ContentJobStatus
-from finch.content.models import Draft, DraftKind
+from finch.content.models import Draft, DraftKind, RecommendedFormat
 from finch.inbox.models import DecisionAction, DecisionRecord
 from finch.learn.weekly import weekly_analysis
 from finch.storage.database import Store
@@ -29,7 +29,7 @@ def _seed_job_draft(store, job_id, draft_id):
     ContentJobRepository(store).upsert_job(
         ContentJob(
             id=job_id, source_card_ids=[], reader_problem="rp",
-            author_position=None, recommended_format=DraftKind.ORIGINAL,
+            author_position=None, recommended_format=RecommendedFormat.SHORT_POST,
             status=ContentJobStatus.CONFIRMED,
         )
     )

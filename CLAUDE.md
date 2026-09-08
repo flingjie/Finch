@@ -4,7 +4,7 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 
 ## Project
 
-Finch is an evidence-driven builder companion. It reads GitHub evidence via `gh` and Twitter/X via `opencli`, extracts engineering events into evidence cards, matches them to public technical discussion, and produces human-reviewed replies and original content. It also runs an independent engagement track that searches by interest and proposes bounded interactions (bookmark / observe / reply / quote), all gated behind human approval.
+Finch is a peer-connection and personal-expression system, not a content-generation tool. It discovers peers worth long-term conversation via `gh` (GitHub evidence) and `opencli` (Twitter/X), understands the problems they're solving, prepares valuable interactions, and threads those into ongoing relationship context — then forms the user's own viewpoints from practice and conversation and writes content that sounds like them. Content production is the *result* of connection, not the goal. The north-star metric is how many "contextual, continuable" peer relationships are added or deepened each week. Canonical definition: `docs/product-contract.md`. Finch is fully standalone — no builderDNA dependency.
 
 ## Commands
 
@@ -18,44 +18,48 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (typer sub-apps / commands): `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch scout ...` (search / list / show), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch engagement ...` (list / show / approve / reject / edit / metrics), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init [--prune]`, `finch diagnose`.
+CLI surface (typer sub-apps / commands): `finch connect ...` (daily / prepare / approve / reject / record), `finch peers ...` (list / show), `finch conversations ...` (list / show / follow-up), `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init [--prune]`, `finch diagnose`.
 
 ## Architecture
 
-Skill + domain services, not an LLM agent loop and not a graph runtime. Nine skills cover the cognitive tasks (idea discovery / conversation scouting / expression practice / drafting / voice / reflection / feynman / sticky-message / writing-style-analysis); ordering, state, retries, and idempotency live in deterministic Python domain services. Codex (`codex exec`) is called as a subprocess only at specific "smart" steps (assess / write / critic).
+Skill + domain services, not an LLM agent loop and not a graph runtime. Seven core-loop skills cover the connection + expression tasks (peer discovery / interaction preparation / conversation follow-up / idea discovery / drafting / voice / weekly reflection), plus four independent training tools (expression practice / writing-style analysis / feynman / sticky-message) that never enter the default pipeline. Ordering, state, retries, and idempotency live in deterministic Python domain services. Codex (`codex exec`) is called as a subprocess only at specific "smart" steps (assess / write / critic).
 
 ```
 skills/
-  idea-discovery/       Commit/PR/测试 + 用户片段 + ConversationEvidence → IdeaCandidate（finch ideas commit / create）
-  conversation-scout/   公开讨论帖子 → Opportunity → finch scout search
-  expression-practice/  表达训练（诊断+追问，skill 驱动 + finch practice 落库）
-  idea-to-draft/        已确认 idea → Draft + CriticReport → finch drafts create（Assist 模式）
-  voice-profile/        个人表达画像（finch voice）
-  weekly-reflection/    定性周复盘（finch weekly）
-  feynman-practice/     费曼技巧（检查理解）
-  sticky-message/       检查想法是否清晰易记
-  writing-style-analysis/  分析文本/链接写作特点（finch style analyze，只读不写画像）
-  _shared/              idea-contract / evidence-policy / author-position / expression-contract / publication-safety
+  peer-discovery/         公开内容 → PeerProfile 候选（finch connect daily / peers）
+  interaction-preparation/ 同行 + 帖子 + 用户证据 → 互动建议（finch connect prepare）
+  conversation-follow-up/  恢复对话上下文 → 下一步（finch conversations follow-up）
+  idea-discovery/         Commit/PR/测试 + 用户片段 + 已验证对话 → AuthorIdea（finch ideas）
+  idea-to-draft/          已确认观点 → Draft + CriticReport（finch drafts create）
+  voice-profile/          个人表达画像，只从用户认可样本更新（finch voice）
+  weekly-reflection/      关系质量/观点形成/表达反馈复盘（finch weekly）
+  # —— 独立训练工具（不进入默认流水线）——
+  expression-practice/    表达训练（finch practice）
+  writing-style-analysis/ 分析他人写作风格，只读不写画像（finch style analyze）
+  feynman-practice/       费曼技巧（检查理解）
+  sticky-message/         检查想法是否清晰易记
+  _shared/                idea-contract / evidence-policy / author-position / expression-contract / publication-safety
 
 src/finch/
-  ideas/        IdeaService（ContentJob 状态机：PROPOSED→CONFIRMED→DRAFTED，或→SKIPPED）、
-                CommitService（commit→IdeaCandidate）、FragmentService（用户/ConversationEvidence/Opportunity→IdeaCandidate）、
-                OpportunityService（帖子→Opportunity）
-  drafts/       DraftService（已确认 idea → Draft + CriticReport，幂等，不自动发布）
-  practice/     PracticeService（expression-practice 会话：start/diagnose/save_revision/finish）
-  idea/         finch drafts 复用的纯函数：rewrite_idea / idea_checker_suite（去掉 EvidenceChecker）
-  content/      ContentJob、writer、critic 检查器、voice profile
-  style/        writing-style-analysis：StyleReport/StyleComparison + SourceResolver
-  webfetch/     通用网页正文提取器（只读 adapter，fail-closed）
-  inbox/        原创 + 互动轨道的投影与决策（InboxDecisionService，供 review 命令）
-  learn/        Feedback 模型 + weekly_analysis 指标 + WeeklyReflectionService 定性复盘 + finch learn
-  evidence/     Commit → EngineeringEvent → EvidenceCard 提取 + 安全扫描（scan_cards）
-  github/       gh adapter (read-only): commit/PR/issue reading, repo discovery
-  twitter/      opencli adapter (read-only): search/thread/bookmarks
-  engagement/   engagement 轨道库（models 供 inbox 投影；search/scoring/proposals/guard/evidence_upgrade/metrics）
-  storage/      SQLite via SQLModel: Store + repositories (payload_json pattern)
-  settings.py   finch.yaml + env loading (Pydantic)
-  cli.py        typer app (ideas/scout/practice/style/drafts/review/engagement/weekly/voice/github/twitter/init/diagnose)
+  peers/         PeerProfile 关系领域（platform + author_id 幂等归一化）
+  conversations/ ConversationThread / InteractionRecord 关系领域
+  ideas/         IdeaService（AuthorIdea 状态机：PROPOSED→CONFIRMED→DRAFTED，或→SKIPPED）、
+                 CommitService、FragmentService
+  drafts/        DraftService（已确认观点 → Draft + CriticReport，幂等，不自动发布）
+  practice/      PracticeService（expression-practice 会话）
+  idea/          finch drafts 复用的纯函数：rewrite_idea / idea_checker_suite
+  content/       ContentJob（AuthorIdea 内部状态实现）、writer、critic 检查器、voice profile
+  style/         writing-style-analysis：StyleReport/StyleComparison + SourceResolver
+  webfetch/      通用网页正文提取器（只读 adapter，fail-closed）
+  inbox/         连接 + 表达循环的只读统一投影与决策（InboxDecisionService，供 review 命令）
+  learn/         Feedback 模型 + weekly 指标 + WeeklyReflectionService 定性复盘 + finch learn
+  evidence/      Commit → EngineeringEvent → EvidenceCard 提取 + 安全扫描（scan_cards）
+  github/        gh adapter (read-only): commit/PR/issue reading, repo discovery
+  twitter/       opencli adapter (read-only): search/thread/bookmarks
+  engagement/    peer-discovery 底层库：search/scoring/proposals/guard/evidence_upgrade/metrics
+  storage/       SQLite via SQLModel: Store + repositories (payload_json pattern)
+  settings.py    finch.yaml + env loading (Pydantic)
+  cli.py         typer app (connect/peers/conversations/ideas/practice/style/drafts/review/weekly/voice/github/twitter/init/diagnose)
 ```
 
 Config lives in `finch.yaml` (repositories, repository_discovery, twitter, quality_gates, paths, engagement, interests, llm, extraction). Prompts live in `prompts/`.

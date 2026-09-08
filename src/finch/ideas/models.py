@@ -15,7 +15,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from finch.content.jobs import AuthorPosition
+from finch.content.jobs import AuthorPosition, CommunicationGoal
+from finch.content.models import RecommendedFormat
 
 
 class SourceRef(BaseModel):
@@ -55,5 +56,6 @@ class IdeaCandidate(BaseModel):
     author_position: AuthorPosition
     source_refs: list[SourceRef]
     boundaries: IdeaBoundaries
-    recommended_format: Literal["original", "reply", "thread"]
+    recommended_format: RecommendedFormat
+    communication_goal: CommunicationGoal | None = None
     generator: IdeaGenerator

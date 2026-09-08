@@ -19,11 +19,18 @@ def _patch(monkeypatch, settings):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
 
-def test_practice_start_requires_exactly_one_source(monkeypatch, tmp_path):
-    _patch(monkeypatch, _settings(tmp_path))
+def test_practice_start_without_idea_is_unlinked(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    store = Store(settings.paths.db_path)
+    store.init()
+    _patch(monkeypatch, settings)
     r = CliRunner().invoke(app, ["practice", "start", "--attempt", "hello"])
-    assert r.exit_code == 1
-    assert "exactly one of" in r.output
+    assert r.exit_code == 0, r.output
+    session_id = r.output.strip().splitlines()[0].removeprefix("id: ")
+    session = PracticeSessionRepository(store).get(session_id)
+    assert session is not None
+    assert session.idea_id is None
+    assert session.initial_attempt == "hello"
 
 
 def test_practice_start_persists(monkeypatch, tmp_path):

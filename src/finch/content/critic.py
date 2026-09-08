@@ -17,6 +17,7 @@ from finch.content.checkers.base import CheckContext, Checker, CheckResult
 from finch.content.checkers.decision import DecisionChecker
 from finch.content.checkers.evidence import EvidenceChecker
 from finch.content.checkers.portability import PortabilityChecker
+from finch.content.checkers.responsiveness import ResponsivenessChecker
 from finch.content.checkers.safety import SafetyChecker
 from finch.content.checkers.specificity import SpecificityChecker
 from finch.content.checkers.structure import StructureChecker
@@ -103,6 +104,7 @@ def default_checker_suite(
         VoiceChecker(runner, profile),
         StructureChecker(runner),
         SafetyChecker(runner),
+        ResponsivenessChecker(),
     ]
 
 

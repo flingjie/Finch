@@ -21,18 +21,11 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
 )
-from finch.content.models import DraftKind
 from finch.ideas.models import IdeaCandidate
 from finch.storage.repositories import ContentJobRepository
 
 # 稳定分隔符：ASCII unit separator，字段值几乎不可能包含该控制字符。
 _SEP = "\x1f"
-
-_FORMAT_MAP = {
-    "original": DraftKind.ORIGINAL,
-    "reply": DraftKind.REPLY,
-    "thread": DraftKind.REPLY,
-}
 
 
 def idea_generation_key(
@@ -87,7 +80,7 @@ class IdeaService:
             source_card_ids=[],
             reader_problem=idea.reader_problem,
             author_position=idea.author_position,
-            recommended_format=_FORMAT_MAP[idea.recommended_format],
+            recommended_format=idea.recommended_format,
             status=ContentJobStatus.PROPOSED,
             core_message=idea.core_point,
             why_now=idea.why_worth_saying,
@@ -95,6 +88,7 @@ class IdeaService:
             observation=idea.observation,
             intent=idea.intent,
             open_question=idea.open_question,
+            communication_goal=idea.communication_goal,
             generation_key=key,
             generator_name=idea.generator.skill,
             generator_version=idea.generator.version,

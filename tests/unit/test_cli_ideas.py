@@ -11,15 +11,14 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
 )
-from finch.content.models import DraftKind
-from finch.engagement.models import ConversationEvidence
+from finch.content.models import RecommendedFormat
+from finch.conversations.models import ConversationThread
 from finch.ideas.models import (
     IdeaBoundaries,
     IdeaCandidate,
     IdeaGenerator,
     SourceRef,
 )
-from finch.ideas.opportunity import Opportunity, SourcePostRef
 from finch.ideas.service import IdeaService
 from finch.settings import Paths, Settings
 from finch.storage.database import Store
@@ -49,7 +48,7 @@ def _candidate() -> IdeaCandidate:
             SourceRef(type="commit", ref=COMMIT_URL, summary="feat: node-ize orchestrator")
         ],
         boundaries=IdeaBoundaries(),
-        recommended_format="original",
+        recommended_format=RecommendedFormat.SHORT_POST,
         generator=IdeaGenerator(skill="commit-to-idea", version="1.0.0"),
     )
 
@@ -188,7 +187,7 @@ def _make_candidate(core_point=CORE_POINT) -> IdeaCandidate:
             SourceRef(type="commit", ref=COMMIT_URL, summary="feat: node-ize orchestrator")
         ],
         boundaries=IdeaBoundaries(),
-        recommended_format="original",
+        recommended_format=RecommendedFormat.SHORT_POST,
         generator=IdeaGenerator(skill="commit-to-idea", version="1.0.0"),
     )
 
@@ -199,7 +198,7 @@ def _manual_job(idea_id: str = "idea_manual000", status=ContentJobStatus.PROPOSE
         source_card_ids=[],
         reader_problem="orchestrator was hard to rerun",
         author_position=AuthorPosition(claim="claim", decision="decision", tradeoff="tradeoff"),
-        recommended_format=DraftKind.ORIGINAL,
+        recommended_format=RecommendedFormat.SHORT_POST,
         status=status,
         core_message=CORE_POINT,
         why_now="failures can now be replayed",
@@ -435,29 +434,13 @@ class _FakeFragmentService:
     def from_conversation(self, evidence):
         return _candidate()
 
-    def from_opportunity(self, opportunity):
+    def from_thread(self, thread, *, interactions=None):
         return _candidate()
 
 
 def _patch_create_cli(monkeypatch, settings):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "FragmentService", _FakeFragmentService)
-
-
-_OPPORTUNITY = Opportunity(
-    id="opp_1",
-    source_post=SourcePostRef(url="https://x.com/a/status/9", author="a", text="post text"),
-    shared_tension="t", why_relevant="w", response_angles=["ask_mechanism"],
-    knowledge_gap="g", relationship_value="v",
-)
-
-
-class _FakeOpportunityRepo:
-    def __init__(self, store):
-        self.store = store
-
-    def get(self, opportunity_id):
-        return _OPPORTUNITY
 
 
 def test_ideas_create_requires_exactly_one_source(monkeypatch, tmp_path):
@@ -481,29 +464,20 @@ def test_ideas_create_text_persists(monkeypatch, tmp_path):
     assert ContentJobRepository(store).list_jobs()[0].core_message == CORE_POINT
 
 
-def test_ideas_create_opportunity_persists(monkeypatch, tmp_path):
-    settings = _settings(tmp_path, [])
-    store = Store(settings.paths.db_path)
-    store.init()
-    _patch_create_cli(monkeypatch, settings)
-    monkeypatch.setattr(cli, "OpportunityRepository", _FakeOpportunityRepo)
-    r = CliRunner().invoke(app, ["ideas", "create", "--opportunity", "opp_1", "--json"])
-    assert r.exit_code == 0, r.output
-    payload = json.loads(r.output)
-    assert payload["status"] == "proposed"
-    assert ContentJobRepository(store).list_jobs()[0].core_message == CORE_POINT
-
-
-class _FakeConversationEvidenceRepo:
-    def __init__(self, store, *, verified=True):
+class _FakeConversationThreadRepo:
+    def __init__(self, store):
         self.store = store
-        self.verified = verified
 
-    def get(self, evidence_id):
-        return ConversationEvidence(
-            id=evidence_id, interaction_id="i1", post_id="p1", kind="question",
-            statement="某个机制到底怎么工作", verified=self.verified,
-        )
+    def get(self, thread_id):
+        return ConversationThread(id=thread_id, peer_id="peer_abc", topic="agent evals")
+
+
+class _MissingThreadRepo:
+    def __init__(self, store):
+        self.store = store
+
+    def get(self, thread_id):
+        return None
 
 
 def test_ideas_create_conversation_persists(monkeypatch, tmp_path):
@@ -511,24 +485,21 @@ def test_ideas_create_conversation_persists(monkeypatch, tmp_path):
     store = Store(settings.paths.db_path)
     store.init()
     _patch_create_cli(monkeypatch, settings)
-    monkeypatch.setattr(cli, "ConversationEvidenceRepository", _FakeConversationEvidenceRepo)
-    r = CliRunner().invoke(app, ["ideas", "create", "--conversation", "ev_1", "--json"])
+    monkeypatch.setattr(cli, "ConversationThreadRepository", _FakeConversationThreadRepo)
+    r = CliRunner().invoke(app, ["ideas", "create", "--conversation", "thread_1", "--json"])
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert payload["status"] == "proposed"
     assert ContentJobRepository(store).list_jobs()[0].core_message == CORE_POINT
 
 
-def test_ideas_create_conversation_unverified_rejected(monkeypatch, tmp_path):
+def test_ideas_create_conversation_missing_rejected(monkeypatch, tmp_path):
     settings = _settings(tmp_path, [])
     store = Store(settings.paths.db_path)
     store.init()
     _patch_create_cli(monkeypatch, settings)
-    monkeypatch.setattr(
-        cli, "ConversationEvidenceRepository",
-        lambda store: _FakeConversationEvidenceRepo(store, verified=False),
-    )
-    r = CliRunner().invoke(app, ["ideas", "create", "--conversation", "ev_1", "--json"])
+    monkeypatch.setattr(cli, "ConversationThreadRepository", _MissingThreadRepo)
+    r = CliRunner().invoke(app, ["ideas", "create", "--conversation", "nope", "--json"])
     assert r.exit_code == 1
-    assert "not verified" in r.output
+    assert "conversation not found" in r.output
     assert ContentJobRepository(store).list_jobs() == []

@@ -1,6 +1,6 @@
 """互动策略与草稿生成（执行计划 Phase 4）。
 
-把已排序、过阈值的 ``ScoredPost`` 转成 ``InteractionCandidate``：
+把已排序、过阈值的 ``ScoredPost`` 转成 ``InteractionProposal``：
 1. 用纯函数 ``choose_action`` 确定性选择动作（bookmark / observe_author / 草稿类，无 LLM）；
 2. 对草稿类动作批量调用一次 Codex，生成有实质增量的草稿（draft + intent + source_summary
    + factual_risks）；
@@ -17,12 +17,17 @@ from typing import cast
 
 from pydantic import BaseModel, Field
 
+from finch.peers.service import peer_id_for
+
 from ..codex.runner import CodexRunner
 from ..settings import EngagementSettings
-from .models import ConversationScore, ExternalPost, InteractionAction, InteractionCandidate
+from .models import ConversationScore, ExternalPost, InteractionAction, InteractionProposal
 from .scoring import ScoredPost
 
 _PROMPT_PATH = Path("prompts/propose-engagement.md")
+
+# 提案 prompt 版本：generation_key 的一部分，升级 prompt 后旧 key 失效，允许重新生成。
+_PROMPT_VERSION = "1"
 
 # 确定性动作选择阈值（choose_action 的唯一事实来源，可单元测试）。
 _REPLY_MIN_DISCUSSABILITY = 0.60
@@ -30,6 +35,11 @@ _REPLY_MIN_NOVELTY = 0.50
 _QUOTE_MIN_EVIDENCE = 0.60
 _OBSERVE_MIN_RELATIONSHIP = 0.80
 _BOOKMARK_MIN_RELEVANCE = 0.60
+
+
+def generation_key_for(*, peer_id: str, post_id: str, action: InteractionAction) -> str:
+    """幂等键 ``peer + source + action + prompt_version``：相同 key 不重复创建 Proposal。"""
+    return f"{peer_id}:{post_id}:{action.value}:{_PROMPT_VERSION}"
 
 
 class ProposalItem(BaseModel):
@@ -82,8 +92,8 @@ def generate_proposals(
     runner: CodexRunner,
     scored: list[ScoredPost],
     engagement: EngagementSettings,
-) -> list[InteractionCandidate]:
-    """把排序后的 ``ScoredPost`` 转为 ``InteractionCandidate``（只读提案）。
+) -> list[InteractionProposal]:
+    """把排序后的 ``ScoredPost`` 转为 ``InteractionProposal``（只读提案）。
 
     - 空输入 → 空输出，0 次 LLM 调用。
     - 动作由 ``choose_action`` 确定性决定；``total`` 低于 ``min_candidate_score`` 的帖子保守
@@ -137,16 +147,20 @@ def generate_proposals(
 
     # 4) 组装候选；草稿类若无对应草稿则丢弃。
     by_id = {sp.post.id: sp for sp in scored}
-    candidates: list[InteractionCandidate] = []
+    candidates: list[InteractionProposal] = []
     for post_id in keep_ids:
         sp = by_id[post_id]
         action = actions[post_id]
+        peer_id = peer_id_for(sp.post.platform, sp.post.author_id)
+        generation_key = generation_key_for(
+            peer_id=peer_id, post_id=sp.post.id, action=action
+        )
         if action in (InteractionAction.DRAFT_REPLY, InteractionAction.DRAFT_QUOTE):
             proposal = drafts.get(post_id)
             if proposal is None or not proposal.draft.strip():
                 continue
             candidates.append(
-                InteractionCandidate(
+                InteractionProposal(
                     id=f"{sp.post.platform}:{sp.post.id}:{action.value}",
                     post=sp.post,
                     score=sp.score,
@@ -156,16 +170,20 @@ def generate_proposals(
                     source_summary=proposal.source_summary,
                     factual_risks=proposal.factual_risks,
                     approval_required=True,
+                    peer_id=peer_id,
+                    generation_key=generation_key,
                 )
             )
         else:
             candidates.append(
-                InteractionCandidate(
+                InteractionProposal(
                     id=f"{sp.post.platform}:{sp.post.id}:{action.value}",
                     post=sp.post,
                     score=sp.score,
                     action=action,
                     approval_required=False,
+                    peer_id=peer_id,
+                    generation_key=generation_key,
                 )
             )
     return candidates

@@ -48,7 +48,7 @@ class InteractionAction(StrEnum):
 
 
 class InteractionStatus(StrEnum):
-    """互动候选审批/执行状态（执行计划 5 审批与执行保护）。"""
+    """互动建议审批/执行状态。"""
 
     PROPOSED = "proposed"
     APPROVED = "approved"
@@ -57,14 +57,29 @@ class InteractionStatus(StrEnum):
     EXPIRED = "expired"
 
 
-class InteractionCandidate(BaseModel):
-    """互动候选：帖子 + 评分 + 建议动作 + 草稿 + 审批状态。
+class ContributionType(StrEnum):
+    """互动建议的贡献类型：这一次互动打算给对方带去什么。"""
+
+    EXPERIENCE = "experience"
+    QUESTION = "question"
+    ADDITION = "addition"
+    COUNTEREXAMPLE = "counterexample"
+    RESOURCE = "resource"
+
+
+class InteractionProposal(BaseModel):
+    """互动建议：待批准的候选，不是已发生的互动。
 
     ``id`` 是稳定幂等键（``<platform>:<post_id>:<action>``，同一帖子同一动作恒定），
     用于审批队列的去重与执行防重复发送。``draft`` 是纯正文字符串；``intent``/
-    ``source_summary``/``factual_risks`` 记录草稿意图、所回应的帖子片段摘要与事实风险标记
-    （执行计划 4 Phase 4）。``revised_draft`` 保存人工修订版本（不改变发布权限）；
-    ``reject_reason`` 记录拒绝理由（镜像 ``ContentJob.reject_reason``）。
+    ``source_summary``/``factual_risks`` 记录草稿意图、所回应的帖子片段摘要与事实风险标记。
+    ``revised_draft`` 保存人工修订版本（不改变发布权限）；``reject_reason`` 记录拒绝理由。
+
+    ``peer_id`` / ``contribution_type`` / ``relationship_context`` / ``why_this_person`` /
+    ``why_now`` / ``expected_conversation_opening`` 是连接优先新增的关系字段（Phase 2 的
+    同行发现填充）。``generation_key`` 编码 ``peer + source + action + prompt_version``，
+    用于幂等：相同 key 不重复调用 LLM 或创建 Proposal。真正发生的互动记录在
+    :class:`InteractionRecord`，不得用本建议的状态替代事实。
     """
 
     id: str
@@ -79,13 +94,41 @@ class InteractionCandidate(BaseModel):
     reject_reason: str | None = None
     approval_required: bool
     status: InteractionStatus = InteractionStatus.PROPOSED
+    peer_id: str | None = None
+    contribution_type: ContributionType | None = None
+    relationship_context: str | None = None
+    why_this_person: str | None = None
+    why_now: str | None = None
+    expected_conversation_opening: str | None = None
+    generation_key: str | None = None
+
+
+class InteractionRecord(BaseModel):
+    """已发生的互动事实：单独记录，不得用 Proposal 状态替代。
+
+    ``proposal_id`` 回溯到已批准的 ``InteractionProposal``；``published_body`` 是真正发出
+    的正文；``occurred_at`` 是互动发生时间；``outcome`` 记录执行结果（ExecutionStatus 值或
+    后续回复状态）；``reply_refs`` 保存对方回复的引用（URL / 帖子 id）；``follow_up_status``
+    标记是否已跟进（``none`` / ``pending`` / ``replied`` / ``closed``）。
+    """
+
+    id: str
+    proposal_id: str
+    peer_id: str
+    platform: str
+    source_url: str
+    published_body: str = ""
+    occurred_at: datetime
+    outcome: str = ""
+    reply_refs: list[str] = Field(default_factory=list)
+    follow_up_status: str = "none"
 
 
 class FeedbackSnapshot(BaseModel):
     """互动结果反馈快照（执行计划 Phase 6 反馈回流）。
 
     记录一次互动执行后的回复/点赞数量，以及是否获得实质回复（``meaningful``）。
-    ``interaction_id`` 回溯到 ``InteractionCandidate.id``，与 ``ConversationEvidence``
+    ``interaction_id`` 回溯到 ``InteractionProposal.id``，与 ``ConversationEvidence``
     共享同一 id 链路，构成 candidate → snapshot → conversation evidence → personal
     evidence 的可追溯闭环。
     """

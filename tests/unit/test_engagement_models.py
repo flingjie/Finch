@@ -8,7 +8,7 @@ from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
     InteractionAction,
-    InteractionCandidate,
+    InteractionProposal,
     InteractionStatus,
 )
 from finch.settings import Settings, load_settings
@@ -113,7 +113,7 @@ def test_interaction_candidate_default_status():
     score = ConversationScore(
         **_score_kwargs(relevance=0.8, novelty=0.7, total=0.72)
     )
-    candidate = InteractionCandidate(
+    candidate = InteractionProposal(
         id="x:post_1:bookmark",
         post=post, score=score, action=InteractionAction.BOOKMARK, approval_required=False,
     )

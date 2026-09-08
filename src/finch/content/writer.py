@@ -9,7 +9,7 @@ from typing import cast
 from finch.codex.runner import CodexRunner
 from finch.content.checkers.base import CheckResult
 from finch.content.jobs import ContentJob
-from finch.content.models import Draft, DraftKind
+from finch.content.models import Draft, draft_kind_for
 from finch.evidence.models import EvidenceCard, sanitize_model_confidence
 
 _FROM_JOB_PROMPT_PATH = Path("prompts/draft-from-job.md")
@@ -116,11 +116,7 @@ def write_original_from_job(runner: CodexRunner, job: ContentJob) -> Draft:
     draft = _sanitize_draft_claims(cast(Draft, runner.run(prompt, Draft)))
     return draft.model_copy(
         update={
-            "kind": (
-                DraftKind.REPLY
-                if job.recommended_format == DraftKind.REPLY
-                else DraftKind.ORIGINAL
-            ),
+            "kind": draft_kind_for(job.recommended_format),
             "candidate_id": None,
             "language": "zh",
             "claims": [],

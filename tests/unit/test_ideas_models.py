@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from finch.content.jobs import AuthorPosition
+from finch.content.models import RecommendedFormat
 from finch.ideas.models import (
     IdeaBoundaries,
     IdeaCandidate,
@@ -33,7 +34,7 @@ def _candidate(**overrides) -> IdeaCandidate:
             inferred=["用户需要恢复"],
             unknown=["性能影响"],
         ),
-        recommended_format="original",
+        recommended_format=RecommendedFormat.SHORT_POST,
         generator=IdeaGenerator(skill="commit-to-idea", version="0.1.0"),
     )
     data.update(overrides)
@@ -87,5 +88,5 @@ def test_idea_candidate_requires_author_position_and_generator():
             why_worth_saying="w",
             source_refs=[],
             boundaries=IdeaBoundaries(),
-            recommended_format="reply",
+            recommended_format=RecommendedFormat.REPLY,
         )

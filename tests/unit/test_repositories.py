@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from sqlalchemy import inspect
 
 from finch.content.checkers.base import CheckResult
-from finch.content.models import ClaimRef, Draft, DraftKind
+from finch.content.models import ClaimRef, Draft, DraftKind, RecommendedFormat
 from finch.evidence.models import ClaimConfidence, EvidenceCard, Source
 from finch.inbox.models import DecisionAction, DecisionRecord
 from finch.learn.models import Feedback
@@ -166,7 +166,6 @@ def test_draft_repository_list_by_job(tmp_path):
 
 def test_contentjob_find_by_generation_key(tmp_path):
     from finch.content.jobs import ContentJob, ContentJobStatus
-    from finch.content.models import DraftKind
     from finch.storage.repositories import ContentJobRepository
 
     store = Store(tmp_path / "db.sqlite")
@@ -178,7 +177,7 @@ def test_contentjob_find_by_generation_key(tmp_path):
         candidate_id=None,
         reader_problem="Problem",
         author_position=None,
-        recommended_format=DraftKind.REPLY,
+        recommended_format=RecommendedFormat.REPLY,
         status=ContentJobStatus.PROPOSED,
         origin="commit",
         generation_key="gk_123",
@@ -196,7 +195,6 @@ def test_list_jobs_skips_unparseable_legacy_rows(tmp_path):
     from sqlmodel import Session
 
     from finch.content.jobs import ContentJob, ContentJobStatus
-    from finch.content.models import DraftKind
     from finch.storage.database import Store
     from finch.storage.repositories import ContentJobRecord, ContentJobRepository
 
@@ -209,7 +207,7 @@ def test_list_jobs_skips_unparseable_legacy_rows(tmp_path):
             source_card_ids=[],
             reader_problem="p",
             author_position=None,
-            recommended_format=DraftKind.REPLY,
+            recommended_format=RecommendedFormat.REPLY,
             status=ContentJobStatus.PROPOSED,
             core_message="m",
         )

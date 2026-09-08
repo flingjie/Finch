@@ -1,4 +1,4 @@
-"""收件箱服务：投影 + 确定性选择 + 双轨决策。
+"""收件箱服务：投影 + 确定性选择 + 决策。
 
 不依赖 finch.cli，避免循环导入。
 """
@@ -14,7 +14,7 @@ from finch.content.critic import critique
 from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.content.models import Draft
 from finch.content.writer import rewrite_with_instruction
-from finch.engagement.models import InteractionAction, InteractionCandidate
+from finch.engagement.models import InteractionAction, InteractionProposal
 from finch.evidence.models import ClaimConfidence, EvidenceCard
 from finch.inbox.models import DecisionAction, DecisionRecord, InboxItem, InboxTrack
 from finch.storage.repositories import (
@@ -93,8 +93,8 @@ def build_original_item(
     )
 
 
-def build_engagement_item(candidate: InteractionCandidate) -> InboxItem:
-    """把 InteractionCandidate 投影成 InboxItem（engagement 轨道）。"""
+def build_engagement_item(candidate: InteractionProposal) -> InboxItem:
+    """把 InteractionProposal 投影成 InboxItem（engagement 轨道）。"""
     content_type: Literal["reply", "quote"] = (
         "quote" if candidate.action == InteractionAction.DRAFT_QUOTE else "reply"
     )
@@ -146,7 +146,7 @@ class InboxDecisionService:
     """把一次「采用/跳过/修订」落到唯一权威记录（DecisionRecord）或互动候选状态。
 
     original 走 DecisionRecord + PublicationIntent；engagement 走
-    InteractionCandidate.status。先查 ContentJob，再查 InteractionCandidate
+    InteractionProposal.status。先查 ContentJob，再查 InteractionProposal
     （冲突 id 以 ContentJob 为准）。
     """
 
@@ -165,7 +165,7 @@ class InboxDecisionService:
         self.publication_intents = publication_intents
         self.interactions = interactions
 
-    def accept(self, item_id: str) -> DecisionRecord | InteractionCandidate:
+    def accept(self, item_id: str) -> DecisionRecord | InteractionProposal:
         job = self.jobs.get_job(item_id)
         if job is not None:
             return self._accept_original(item_id)
@@ -175,7 +175,7 @@ class InboxDecisionService:
             return self.interactions.get(item_id)  # type: ignore[return-value]
         raise KeyError(item_id)
 
-    def skip(self, item_id: str, reason: str) -> DecisionRecord | InteractionCandidate:
+    def skip(self, item_id: str, reason: str) -> DecisionRecord | InteractionProposal:
         job = self.jobs.get_job(item_id)
         if job is not None:
             return self._skip_original(item_id, reason)

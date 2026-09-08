@@ -16,7 +16,7 @@
 from enum import StrEnum
 
 from ..settings import EngagementSettings
-from .models import InteractionCandidate, InteractionStatus
+from .models import InteractionProposal, InteractionStatus
 
 
 class ExecutionStatus(StrEnum):
@@ -29,7 +29,7 @@ class ExecutionStatus(StrEnum):
 
 
 def evaluate_execution(
-    candidate: InteractionCandidate,
+    candidate: InteractionProposal,
     *,
     post_available: bool | None,
     draft_unchanged: bool,

@@ -1,5 +1,7 @@
 """Finch CLI（spec 10）。"""
 
+import difflib
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -17,22 +19,20 @@ from .content.voice import (
     ApprovedExample,
     RejectedExample,
     load_voice_profile,
+    propose_voice_updates,
     save_voice_profile,
 )
 from .content.writer import rewrite_with_instruction
+from .conversations.service import ConversationService
 from .drafts.service import DraftCreateResult, DraftService
-from .engagement.metrics import (
-    compute_metrics,
-    render_metrics,
-    render_run_stats,
-    summarize_run_stats,
-)
+from .engagement.flow import EngagementRunResult, run_discovery_engagement_flow
+from .engagement.metrics import compute_relationship_metrics
+from .engagement.models import InteractionRecord, InteractionStatus
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient
 from .ideas.commit_service import CommitService
 from .ideas.fragment_service import FragmentService
-from .ideas.opportunity import Opportunity, OpportunityService
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
 from .inbox.service import InboxDecisionService, list_items
@@ -42,20 +42,20 @@ from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
 from .practice.service import PracticeService
 from .reddit.opencli_client import RedditOpenCliClient
-from .settings import load_settings
+from .settings import Settings, load_settings
 from .storage.database import Store
 from .storage.repositories import (
     ContentJobRepository,
-    ConversationEvidenceRepository,
+    ConversationThreadRepository,
     CriticReportRepository,
     DecisionRecordRepository,
     DraftRepository,
-    EngagementRunStatsRepository,
     EvidenceRepository,
     FeedbackRepository,
     FeedbackSnapshotRepository,
+    InteractionRecordRepository,
     InteractionRepository,
-    OpportunityRepository,
+    PeerRepository,
     PracticeSessionRepository,
     PublicationIntentRepository,
 )
@@ -78,7 +78,7 @@ app.add_typer(twitter_app, name="twitter")
 voice_app = typer.Typer(help="Manage the author voice profile (local, no auto-publish)")
 app.add_typer(voice_app, name="voice")
 
-ideas_app = typer.Typer(help="Idea 候选流（commit/search 提炼 + 状态转换）")
+ideas_app = typer.Typer(help="Idea 候选流（commit / 用户片段 / 对话提炼 + 状态转换）")
 app.add_typer(ideas_app, name="ideas")
 
 drafts_app = typer.Typer(help="Draft 生成（已确认 idea → 草稿，不自动发布）")
@@ -87,11 +87,14 @@ app.add_typer(drafts_app, name="drafts")
 review_app = typer.Typer(help="Review original drafts (accept/revise/skip, no auto-publish)")
 app.add_typer(review_app, name="review")
 
-engagement_app = typer.Typer(help="Review engagement candidates (human-in-the-loop)")
-app.add_typer(engagement_app, name="engagement")
+connect_app = typer.Typer(help="连接主循环：daily / prepare / approve / reject / record")
+app.add_typer(connect_app, name="connect")
 
-scout_app = typer.Typer(help="从公开讨论侦察交流机会")
-app.add_typer(scout_app, name="scout")
+peers_app = typer.Typer(help="同行档案与关系上下文")
+app.add_typer(peers_app, name="peers")
+
+conversations_app = typer.Typer(help="对话线索与跟进")
+app.add_typer(conversations_app, name="conversations")
 
 practice_app = typer.Typer(help="表达练习")
 app.add_typer(practice_app, name="practice")
@@ -205,34 +208,6 @@ def _render_critic_reports(reports: list[dict]) -> str:
                 line += f" — {detail}"
             lines.append(line)
     return "\n".join(lines)
-
-
-def _render_opportunity_list(opps: list[Opportunity]) -> str:
-    """交流机会列表：带表头，仍保持一机会一行。"""
-    lines = ["id\turl\tshared_tension"]
-    lines.extend(f"{opp.id}\t{opp.source_post.url}\t{opp.shared_tension}" for opp in opps)
-    return "\n".join(lines)
-
-
-def _render_opportunity_detail(opp: Opportunity) -> str:
-    """单个交流机会的完整可读视图。"""
-    return "\n".join(
-        [
-            f"id: {opp.id}",
-            f"url: {opp.source_post.url}",
-            f"author: @{opp.source_post.author}",
-            f"source_text: {opp.source_post.text}",
-            "",
-            f"shared_tension: {opp.shared_tension}",
-            f"why_relevant: {opp.why_relevant}",
-            f"response_angles: {', '.join(opp.response_angles)}",
-            f"knowledge_gap: {opp.knowledge_gap}",
-            f"relationship_value: {opp.relationship_value}",
-            "",
-            "下一步:",
-            "- 转成 idea",
-        ]
-    )
 
 
 def _since_iso(since: str | None) -> str | None:
@@ -360,14 +335,13 @@ def ideas_commit(
 @ideas_app.command("create")
 def ideas_create(
     text: str = typer.Option(None, "--text", help="用户输入的一句话/片段"),
-    conversation: str = typer.Option(None, "--conversation", help="已验证的交流证据 id"),
-    opportunity: str = typer.Option(None, "--opportunity", help="交流机会 id"),
+    conversation: str = typer.Option(None, "--conversation", help="对话线索 id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """把用户片段 / 交流证据 / 交流机会结构化为 idea 候选并落库。"""
-    provided = sum(x is not None for x in (text, conversation, opportunity))
+    """把用户片段 / 对话线索结构化为 idea 候选并落库。"""
+    provided = sum(x is not None for x in (text, conversation))
     if provided != 1:
-        typer.echo("exactly one of --text / --conversation / --opportunity is required")
+        typer.echo("exactly one of --text / --conversation is required")
         raise typer.Exit(code=1)
     settings = load_settings()
     store = Store(settings.paths.db_path)
@@ -377,21 +351,13 @@ def ideas_create(
     try:
         if text is not None:
             idea = service.from_text(text)
-        elif conversation is not None:
-            evidence = ConversationEvidenceRepository(store).get(conversation)
-            if evidence is None:
-                typer.echo(f"conversation evidence not found: {conversation}")
-                raise typer.Exit(code=1)
-            if not evidence.verified:
-                typer.echo(f"conversation evidence not verified: {conversation}")
-                raise typer.Exit(code=1)
-            idea = service.from_conversation(evidence)
         else:
-            opp = OpportunityRepository(store).get(opportunity)
-            if opp is None:
-                typer.echo(f"opportunity not found: {opportunity}")
+            thread = ConversationThreadRepository(store).get(conversation)
+            if thread is None:
+                typer.echo(f"conversation not found: {conversation}")
                 raise typer.Exit(code=1)
-            idea = service.from_opportunity(opp)
+            interactions = InteractionRecordRepository(store).list_by_peer(thread.peer_id)
+            idea = service.from_thread(thread, interactions=interactions)
         job = IdeaService(ContentJobRepository(store)).create_candidate(idea)
     except (RuntimeError, StructuredOutputError, ValueError) as exc:
         typer.echo(str(exc))
@@ -785,16 +751,24 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
     )
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     # 反馈按 recorded_at 对齐 7 天窗口（与 weekly_analysis 的 since 一致），避免复盘
-    # 输入随库无界膨胀。ConversationEvidence 无时间戳字段，无法按窗过滤，仍取全量
-    # （其量级受 verified/promote 门限约束）。
+    # 输入随库无界膨胀。
     window_feedbacks = [
         fb for fb in FeedbackRepository(store).list_feedbacks() if fb.recorded_at >= since
     ]
+    rel_metrics = compute_relationship_metrics(
+        peers=PeerRepository(store).list_all(),
+        interactions=InteractionRecordRepository(store).list_all(),
+        threads=ConversationThreadRepository(store).list_all(),
+        snapshots=FeedbackSnapshotRepository(store).list_all(),
+        jobs=ContentJobRepository(store).list_jobs(),
+        now=datetime.now(UTC),
+    )
     try:
         reflection = WeeklyReflectionService(runner).reflect(
             report,
+            relationship_metrics=rel_metrics,
             feedbacks=window_feedbacks,
-            conversation_evidence=ConversationEvidenceRepository(store).list_all(),
+            threads=ConversationThreadRepository(store).list_all(),
             voice_profile=load_voice_profile(settings.paths.voice_profile_path),
         )
     except (RuntimeError, StructuredOutputError) as exc:
@@ -820,33 +794,101 @@ def voice_show() -> None:
     )
 
 
+def _diff_text(before: str, after: str) -> str:
+    """模型初稿 → 最终文本的 unified diff。"""
+    return "\n".join(
+        difflib.unified_diff(before.splitlines(), after.splitlines(), lineterm="")
+    )
+
+
 @voice_app.command("approve-example")
-def voice_approve_example(draft_id: str) -> None:
-    """把草稿追加为 approved example（按 id 去重；已接受即入库）。"""
+def voice_approve_example(
+    draft_id: str = typer.Argument(None, help="草稿 id（从已批准草稿采纳）"),
+    text: str = typer.Option(None, "--text", help="用户亲写文本"),
+) -> None:
+    """把已批准草稿或用户亲写文本追加为 approved example（按 id 去重）。
+
+    只接受用户明确批准的最终文本：从草稿采纳时要求 DecisionRecord=ACCEPT 且优先用人工
+    修订版本；用户亲写文本经 --text 直接采纳。记录模型初稿 → 最终文本的 diff。
+    """
+    if (draft_id is None) == (text is None):
+        typer.echo("exactly one of draft_id / --text is required")
+        raise typer.Exit(code=1)
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    draft = DraftRepository(store).get_draft(draft_id)
-    if draft is None:
-        typer.echo(f"draft not found: {draft_id}")
-        raise typer.Exit(code=1)
-    decisions = {d.draft_id: d for d in DecisionRecordRepository(store).list()}
-    decision = decisions.get(draft_id)
-    if decision is None or decision.action != DecisionAction.ACCEPT:
-        typer.echo(f"not accepted: {draft_id}")
-        raise typer.Exit(code=1)
-    text = decision.revised_body or draft.body
     path = settings.paths.voice_profile_path
     profile = load_voice_profile(path)
-    if any(ex.id == draft_id for ex in profile.approved_examples):
-        typer.echo(f"already approved: {draft_id}")
+
+    if text is not None:
+        example_id = f"text_{hashlib.sha256(text.encode('utf-8')).hexdigest()[:8]}"
+        example = ApprovedExample(id=example_id, text=text, source="user_text")
+    else:
+        store = Store(settings.paths.db_path)
+        store.init()
+        draft = DraftRepository(store).get_draft(draft_id)
+        if draft is None:
+            typer.echo(f"draft not found: {draft_id}")
+            raise typer.Exit(code=1)
+        decisions = {d.draft_id: d for d in DecisionRecordRepository(store).list()}
+        decision = decisions.get(draft_id)
+        if decision is None or decision.action != DecisionAction.ACCEPT:
+            typer.echo(f"not accepted: {draft_id}")
+            raise typer.Exit(code=1)
+        final_text = decision.revised_body or draft.body
+        example = ApprovedExample(
+            id=draft_id,
+            text=final_text,
+            source="draft",
+            original_draft=draft.body,
+            diff=_diff_text(draft.body, final_text) if draft.body != final_text else None,
+        )
+
+    if any(ex.id == example.id for ex in profile.approved_examples):
+        typer.echo(f"already approved: {example.id}")
         return
     profile.rejected_examples = [
-        ex for ex in profile.rejected_examples if ex.id != draft_id
+        ex for ex in profile.rejected_examples if ex.id != example.id
     ]
-    profile.approved_examples.append(ApprovedExample(id=draft_id, text=text))
+    profile.approved_examples.append(example)
     save_voice_profile(profile, path)
-    typer.echo(f"approved example: {draft_id}")
+    typer.echo(f"approved example: {example.id}")
+
+
+@voice_app.command("revoke-example")
+def voice_revoke_example(example_id: str = typer.Argument(..., help="样例 id")) -> None:
+    """撤销一个错误样例并从画像移除（移除后画像重新计算偏好）。"""
+    settings = load_settings()
+    path = settings.paths.voice_profile_path
+    profile = load_voice_profile(path)
+    before = len(profile.approved_examples) + len(profile.rejected_examples)
+    profile.approved_examples = [
+        ex for ex in profile.approved_examples if ex.id != example_id
+    ]
+    profile.rejected_examples = [
+        ex for ex in profile.rejected_examples if ex.id != example_id
+    ]
+    after = len(profile.approved_examples) + len(profile.rejected_examples)
+    if before == after:
+        typer.echo(f"example not found: {example_id}")
+        raise typer.Exit(code=1)
+    save_voice_profile(profile, path)
+    typer.echo(f"revoked example: {example_id}")
+
+
+@voice_app.command("propose")
+def voice_propose(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """从已批准样例的 diff 提取稳定偏好候选（只读，不写画像；由用户确认后写入）。"""
+    settings = load_settings()
+    profile = load_voice_profile(settings.paths.voice_profile_path)
+    proposal = propose_voice_updates(profile)
+    if as_json:
+        typer.echo(proposal.model_dump_json(indent=2))
+        return
+    typer.echo("## 建议避免的表达（用户曾删掉/改掉）")
+    for phrase in proposal.avoid_phrases:
+        typer.echo(f"- {phrase}")
+    typer.echo("## 建议偏好的表达（用户曾改向）")
+    for phrase in proposal.preferred_patterns:
+        typer.echo(f"- {phrase}")
 
 
 @voice_app.command("reject-example")
@@ -1060,106 +1102,157 @@ def review_skip(
         typer.echo(f"skipped {draft_id} (reason: {reason})")
 
 
-@engagement_app.command("list")
-def engagement_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
-    """列出 pending 互动候选（id + action + 帖子 url/摘要）。"""
+def _run_discovery(settings: Settings) -> EngagementRunResult:
+    """执行一次只读发现流程（搜索 → 同行聚合 → 关系评分 → 提案）。"""
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    return run_discovery_engagement_flow(
+        settings,
+        OpenCliClient(),
+        runner,
+        reddit_opencli=RedditOpenCliClient(),
+        run_id=f"daily_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}",
+    )
+
+
+def _persist_discovery(store: Store, result: EngagementRunResult) -> None:
+    """把发现结果的同行与提案落库（只读流程的落库，供 peers show / connect approve 进入）。"""
+    peers = PeerRepository(store)
+    interactions = InteractionRepository(store)
+    for ranked in result.peers:
+        peers.upsert(ranked.profile)
+    for candidate in result.candidates:
+        interactions.upsert(candidate, run_id=result.run_id)
+
+
+def _render_daily(needs_follow_up, peers, contributions, idea_candidates) -> str:
+    lines = ["## 需要继续的对话"]
+    if needs_follow_up:
+        for t in needs_follow_up:
+            lines.append(f"- {t.id}\t{t.topic}\t{t.status.value}")
+    else:
+        lines.append("- (none)")
+    lines.append("")
+    lines.append("## 今天最值得连接的同行")
+    if peers:
+        for rp in peers:
+            name = rp.profile.display_name or rp.profile.id
+            lines.append(f"- {name}\tpeer_value={rp.value.total:.2f}")
+    else:
+        lines.append("- (none)")
+    lines.append("")
+    lines.append("## 可贡献的具体内容")
+    if contributions:
+        for c in contributions:
+            snippet = " ".join(c.post.content.split())[:60]
+            lines.append(f"- {c.id}\t[{c.action.value}]\t{snippet}")
+    else:
+        lines.append("- (none)")
+    lines.append("")
+    lines.append("## 从近期交流产生的观点候选")
+    if idea_candidates:
+        for j in idea_candidates:
+            lines.append(f"- {j.id}\t{j.core_message}")
+    else:
+        lines.append("- (none)")
+    return "\n".join(lines)
+
+
+@connect_app.command("daily")
+def connect_daily(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """连接主循环每日入口：需要继续的对话 → 最值得连接的同行 → 可贡献内容 → 观点候选。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
-    candidates = InteractionRepository(store).list_pending()
+    result = _run_discovery(settings)
+    _persist_discovery(store, result)
+
+    now = datetime.now(UTC)
+    threads = ConversationThreadRepository(store).list_all()
+    needs_follow_up = [
+        t for t in threads if ConversationService().needs_follow_up(t, now=now)
+    ]
+    idea_candidates = [
+        j for j in ContentJobRepository(store).list_jobs()
+        if j.status == ContentJobStatus.PROPOSED
+    ]
+
     if as_json:
-        typer.echo(
-            json.dumps(
-                [c.model_dump(mode="json") for c in candidates],
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        typer.echo(json.dumps({
+            "run_id": result.run_id,
+            "posts_found": result.posts_found,
+            "failures": [
+                {"platform": f.platform, "query": f.query, "reason": f.reason}
+                for f in result.failures
+            ],
+            "conversations_needing_follow_up": [
+                t.model_dump(mode="json") for t in needs_follow_up
+            ],
+            "peers": [rp.profile.model_dump(mode="json") for rp in result.peers],
+            "contributions": [c.model_dump(mode="json") for c in result.candidates],
+            "idea_candidates": [j.model_dump(mode="json") for j in idea_candidates],
+        }, ensure_ascii=False, indent=2))
         return
-    if not candidates:
-        typer.echo("no pending candidates")
-        return
-    typer.echo("id\taction\turl\tpreview")
-    for candidate in candidates:
-        snippet = " ".join(candidate.post.content.split())[:60]
-        typer.echo(f"{candidate.id}\t{candidate.action.value}\t{candidate.post.url}\t{snippet}")
+    typer.echo(_render_daily(needs_follow_up, result.peers, result.candidates, idea_candidates))
 
 
-@engagement_app.command("show")
-def engagement_show(
-    candidate_id: str = typer.Argument(..., help="candidate id"),
+@connect_app.command("prepare")
+def connect_prepare(
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """打印候选全文：原帖 + 作者 + 五维评分与理由 + 动作 + 草稿 + 事实风险。"""
+    """为发现结果准备互动提案并落库（只读发现 + 落库，不做审批/执行）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
-    candidate = InteractionRepository(store).get(candidate_id)
-    if candidate is None:
-        typer.echo(f"candidate not found: {candidate_id}")
-        raise typer.Exit(code=1)
+    result = _run_discovery(settings)
+    _persist_discovery(store, result)
     if as_json:
-        typer.echo(candidate.model_dump_json(indent=2))
+        typer.echo(json.dumps(
+            [c.model_dump(mode="json") for c in result.candidates],
+            ensure_ascii=False, indent=2,
+        ))
         return
-    score = candidate.score
-    typer.echo(f"id: {candidate.id}")
-    typer.echo(f"status: {candidate.status.value}")
-    typer.echo(f"action: {candidate.action.value}")
-    typer.echo(f"approval_required: {candidate.approval_required}")
-    typer.echo(f"post: {candidate.post.url}")
-    typer.echo(f"author: @{candidate.post.author_name} ({candidate.post.author_id})")
-    typer.echo(f"post_content: {candidate.post.content}")
-    typer.echo(
-        f"score: relevance={score.relevance:.3f} novelty={score.novelty:.3f} "
-        f"discussability={score.discussability:.3f} "
-        f"practical_evidence={score.practical_evidence:.3f} "
-        f"relationship_value={score.relationship_value:.3f} total={score.total:.3f}"
-    )
-    typer.echo(f"score_reasons: {', '.join(score.reasons)}")
-    typer.echo(f"draft: {candidate.draft or '(none)'}")
-    if candidate.revised_draft:
-        typer.echo(f"revised_draft: {candidate.revised_draft}")
-    typer.echo(f"intent: {candidate.intent or '(none)'}")
-    typer.echo(f"source_summary: {candidate.source_summary or '(none)'}")
-    typer.echo(f"factual_risks: {json.dumps(candidate.factual_risks)}")
-    if candidate.reject_reason:
-        typer.echo(f"reject_reason: {candidate.reject_reason}")
+    if not result.candidates:
+        typer.echo("no interaction proposals")
+        return
+    for c in result.candidates:
+        snippet = " ".join(c.post.content.split())[:60]
+        typer.echo(f"{c.id}\t{c.action.value}\t{c.peer_id or '-'}\t{snippet}")
 
 
-@engagement_app.command("approve")
-def engagement_approve(candidate_id: str = typer.Argument(..., help="candidate id")) -> None:
-    """批准候选（PROPOSED→APPROVED，幂等，不自动发布）。"""
+@connect_app.command("approve")
+def connect_approve(proposal_id: str = typer.Argument(..., help="proposal id")) -> None:
+    """批准提案（PROPOSED→APPROVED，幂等；批准只创建发布意图，不等于已发布）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
     try:
-        InteractionRepository(store).approve(candidate_id)
+        InteractionRepository(store).approve(proposal_id)
     except KeyError:
-        typer.echo(f"candidate not found: {candidate_id}")
+        typer.echo(f"proposal not found: {proposal_id}")
         raise typer.Exit(code=1) from None
-    typer.echo(f"approved {candidate_id}")
+    typer.echo(f"approved {proposal_id}")
 
 
-@engagement_app.command("reject")
-def engagement_reject(
-    candidate_id: str = typer.Argument(..., help="candidate id"),
+@connect_app.command("reject")
+def connect_reject(
+    proposal_id: str = typer.Argument(..., help="proposal id"),
     reason: str = typer.Option(..., "--reason", help="拒绝理由"),
 ) -> None:
-    """拒绝候选并记录理由（→ REJECTED）。"""
+    """拒绝提案并记录理由（→ REJECTED）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
     try:
-        InteractionRepository(store).reject(candidate_id, reason)
+        InteractionRepository(store).reject(proposal_id, reason)
     except KeyError:
-        typer.echo(f"candidate not found: {candidate_id}")
+        typer.echo(f"proposal not found: {proposal_id}")
         raise typer.Exit(code=1) from None
-    typer.echo(f"rejected {candidate_id}")
+    typer.echo(f"rejected {proposal_id}")
 
 
-@engagement_app.command("edit")
-def engagement_edit(
-    candidate_id: str = typer.Argument(..., help="candidate id"),
+@connect_app.command("edit")
+def connect_edit(
+    proposal_id: str = typer.Argument(..., help="proposal id"),
     path: str = typer.Option(..., "--file", help="人工修订后的草稿文件"),
 ) -> None:
     """保存人工修订草稿到 revised_draft（不自动批准、不改变发布权限）。"""
@@ -1167,121 +1260,205 @@ def engagement_edit(
     store = Store(settings.paths.db_path)
     store.init()
     repo = InteractionRepository(store)
-    if repo.get(candidate_id) is None:
-        typer.echo(f"candidate not found: {candidate_id}")
+    if repo.get(proposal_id) is None:
+        typer.echo(f"proposal not found: {proposal_id}")
         raise typer.Exit(code=1)
     try:
         revised = Path(path).read_text()
     except OSError as exc:
         typer.echo(f"cannot read file: {exc}")
         raise typer.Exit(code=1) from exc
-    repo.edit(candidate_id, revised)
-    typer.echo(f"edited {candidate_id}")
+    repo.edit(proposal_id, revised)
+    typer.echo(f"edited {proposal_id}")
 
 
-@engagement_app.command("metrics")
-def engagement_metrics() -> None:
-    """汇总互动质量指标与运行级计数（质量优先，不优化互动数量）。"""
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    metrics = compute_metrics(
-        InteractionRepository(store).list_all(),
-        FeedbackSnapshotRepository(store).list_all(),
-        ConversationEvidenceRepository(store).list_all(),
-    )
-    typer.echo(render_metrics(metrics))
-    stats = EngagementRunStatsRepository(store).list_all()
-    typer.echo(render_run_stats(summarize_run_stats(stats)))
-
-
-@scout_app.command("search")
-def scout_search(
-    topic: str = typer.Option(None, "--topic", help="搜索话题（默认 settings.twitter.queries[0]）"),
+@connect_app.command("record")
+def connect_record(
+    proposal_id: str = typer.Argument(..., help="proposal id"),
+    url: str = typer.Option(..., "--url", help="实际发布/互动的 URL"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """从公开讨论搜索交流机会并落库（不生成 idea）。"""
+    """记录一次真实互动为 InteractionRecord（需先批准；同一 proposal 幂等，不重复计两次）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
-    builder = QueryBuilder(
-        settings.twitter.queries, per_query_limit=settings.twitter.per_query_limit
+    proposal = InteractionRepository(store).get(proposal_id)
+    if proposal is None:
+        typer.echo(f"proposal not found: {proposal_id}")
+        raise typer.Exit(code=1)
+    if proposal.status != InteractionStatus.APPROVED:
+        typer.echo(f"proposal not approved (approve first): {proposal_id}")
+        raise typer.Exit(code=1)
+    record = InteractionRecord(
+        id=f"rec_{proposal_id}",
+        proposal_id=proposal_id,
+        peer_id=proposal.peer_id or "",
+        platform=proposal.post.platform,
+        source_url=url,
+        published_body=proposal.revised_draft or proposal.draft or "",
+        occurred_at=datetime.now(UTC),
+        outcome="published",
     )
-    opencli = OpenCliClient()
-    if topic is None:
-        if not builder.configs:
-            typer.echo("--topic is required (no twitter queries configured)")
-            raise typer.Exit(code=1)
-        topic = builder.configs[0].text
-    tweets = opencli.search(topic, product="top", limit=builder.per_query_limit)
-    posts = normalize_tweets(tweets)
-    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
-    opps = OpportunityService(runner).to_opportunities(posts, topic=topic)
-    repo = OpportunityRepository(store)
-    for opp in opps:
-        repo.upsert(opp)
+    InteractionRecordRepository(store).upsert(record)
     if as_json:
-        typer.echo(
-            json.dumps([o.model_dump(mode="json") for o in opps], ensure_ascii=False, indent=2)
-        )
+        typer.echo(record.model_dump_json(indent=2))
     else:
-        typer.echo(_render_opportunity_list(opps))
+        typer.echo(f"recorded {record.id}")
 
 
-@scout_app.command("list")
-def scout_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
-    """列出全部交流机会。"""
+@peers_app.command("list")
+def peers_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """列出全部同行档案（按 peer id 稳定排序）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
-    opps = OpportunityRepository(store).list_all()
+    peers = PeerRepository(store).list_all()
     if as_json:
-        typer.echo(
-            json.dumps([o.model_dump(mode="json") for o in opps], ensure_ascii=False, indent=2)
-        )
+        typer.echo(json.dumps(
+            [p.model_dump(mode="json") for p in peers], ensure_ascii=False, indent=2
+        ))
         return
-    if not opps:
-        typer.echo("no opportunities")
+    if not peers:
+        typer.echo("no peers")
         return
-    typer.echo(_render_opportunity_list(opps))
+    typer.echo("id\tdisplay_name\tstage\tshared_topics")
+    for p in peers:
+        topics = ",".join(p.shared_topics)
+        typer.echo(f"{p.id}\t{p.display_name or '-'}\t{p.relationship_stage.value}\t{topics}")
 
 
-@scout_app.command("show")
-def scout_show(
-    opportunity_id: str = typer.Argument(..., help="opportunity id"),
+@peers_app.command("show")
+def peers_show(
+    peer_id: str = typer.Argument(..., help="peer id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """展示单个交流机会。"""
+    """展示同行档案：身份、共同主题、互动历史与下一步。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
-    opp = OpportunityRepository(store).get(opportunity_id)
-    if opp is None:
-        typer.echo(f"opportunity not found: {opportunity_id}")
+    peer = PeerRepository(store).get(peer_id)
+    if peer is None:
+        typer.echo(f"peer not found: {peer_id}")
         raise typer.Exit(code=1)
     if as_json:
-        typer.echo(opp.model_dump_json(indent=2))
-    else:
-        typer.echo(_render_opportunity_detail(opp))
+        payload = peer.model_dump(mode="json")
+        payload["interactions"] = [
+            r.model_dump(mode="json")
+            for r in InteractionRecordRepository(store).list_by_peer(peer_id)
+        ]
+        payload["threads"] = [
+            t.model_dump(mode="json")
+            for t in ConversationThreadRepository(store).list_by_peer(peer_id)
+        ]
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"id: {peer.id}")
+    typer.echo(f"display_name: {peer.display_name or '-'}")
+    typer.echo(f"stage: {peer.relationship_stage.value}")
+    typer.echo(f"expertise_topics: {', '.join(peer.expertise_topics) or '-'}")
+    typer.echo(f"shared_topics: {', '.join(peer.shared_topics) or '-'}")
+    typer.echo(f"why_relevant: {peer.why_relevant or '-'}")
+    typer.echo(f"next_context: {peer.next_context or '-'}")
+
+
+@conversations_app.command("list")
+def conversations_list(
+    needs_follow_up: bool = typer.Option(False, "--needs-follow-up", help="只列需要跟进的对话"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """列出对话线索（可只列需要跟进的）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    threads = ConversationThreadRepository(store).list_all()
+    if needs_follow_up:
+        now = datetime.now(UTC)
+        threads = [t for t in threads if ConversationService().needs_follow_up(t, now=now)]
+    if as_json:
+        typer.echo(json.dumps(
+            [t.model_dump(mode="json") for t in threads], ensure_ascii=False, indent=2
+        ))
+        return
+    if not threads:
+        typer.echo("no conversations")
+        return
+    typer.echo("id\tpeer_id\ttopic\tstatus")
+    for t in threads:
+        typer.echo(f"{t.id}\t{t.peer_id}\t{t.topic}\t{t.status.value}")
+
+
+@conversations_app.command("show")
+def conversations_show(
+    conversation_id: str = typer.Argument(..., help="conversation id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """展示对话线索全文：open questions / agreements / disagreements / experiments。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    thread = ConversationThreadRepository(store).get(conversation_id)
+    if thread is None:
+        typer.echo(f"conversation not found: {conversation_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(thread.model_dump_json(indent=2))
+        return
+    typer.echo(f"id: {thread.id}")
+    typer.echo(f"peer_id: {thread.peer_id}")
+    typer.echo(f"topic: {thread.topic}")
+    typer.echo(f"status: {thread.status.value}")
+    typer.echo(f"interactions: {', '.join(thread.interaction_ids) or '-'}")
+    typer.echo(f"open_questions: {', '.join(thread.open_questions) or '-'}")
+    typer.echo(f"agreements: {', '.join(thread.agreements) or '-'}")
+    typer.echo(f"disagreements: {', '.join(thread.disagreements) or '-'}")
+    typer.echo(f"possible_experiments: {', '.join(thread.possible_experiments) or '-'}")
+
+
+@conversations_app.command("follow-up")
+def conversations_follow_up(
+    conversation_id: str = typer.Argument(..., help="conversation id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """恢复对话上下文并提出下一步（确定性恢复；语义建议由 conversation-follow-up 补充）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    thread = ConversationThreadRepository(store).get(conversation_id)
+    if thread is None:
+        typer.echo(f"conversation not found: {conversation_id}")
+        raise typer.Exit(code=1)
+    open_questions = thread.open_questions
+    next_step = (
+        "回答未解问题或提出实验"
+        if open_questions
+        else "已无未解问题；确认是否关闭或延续新主题"
+    )
+    if as_json:
+        typer.echo(json.dumps({
+            "conversation_id": thread.id,
+            "topic": thread.topic,
+            "open_questions": open_questions,
+            "next_step": next_step,
+        }, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"conversation: {thread.id} ({thread.topic})")
+    typer.echo(f"open_questions: {', '.join(open_questions) or '-'}")
+    typer.echo(f"next_step: {next_step}")
 
 
 @practice_app.command("start")
 def practice_start(
     idea: str = typer.Option(None, "--idea", help="关联 idea id"),
-    opportunity: str = typer.Option(None, "--opportunity", help="关联 opportunity id"),
     attempt: str = typer.Option(..., "--attempt", help="用户首稿"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """开始一次表达练习（记 idea/opportunity + 首稿）。"""
-    if (idea is None) == (opportunity is None):
-        typer.echo("exactly one of --idea / --opportunity is required")
-        raise typer.Exit(code=1)
+    """开始一次表达练习（可选关联 idea + 首稿）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     session = PracticeService(PracticeSessionRepository(store), runner).start(
-        idea_id=idea, opportunity_id=opportunity, initial_attempt=attempt
+        idea_id=idea, initial_attempt=attempt
     )
     if as_json:
         typer.echo(session.model_dump_json(indent=2))

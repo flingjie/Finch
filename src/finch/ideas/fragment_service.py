@@ -1,39 +1,25 @@
-"""FragmentService：把用户片段 / 已验证 ConversationEvidence 结构化为一 IdeaCandidate。
+"""FragmentService：把用户片段 / 完整对话线索 / 已验证证据 结构化为 IdeaCandidate。
 
-（idea-discovery 的 user / conversation 来源；opportunity 来源在 Task 4 加入。）
+（idea-discovery 的 user / conversation 来源。）
 
 本模块是纯领域逻辑：不访问 DB、不落库。``IdeaService.create_candidate`` 负责后续幂等落库。
 """
 
 import hashlib
-import re
+import json
 from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
-from finch.content.jobs import AuthorPosition
-from finch.engagement.models import ConversationEvidence
+from finch.content.jobs import AuthorPosition, CommunicationGoal
+from finch.content.models import RecommendedFormat
+from finch.conversations.models import ConversationThread
+from finch.engagement.models import ConversationEvidence, InteractionRecord
 from finch.ideas.models import IdeaBoundaries, IdeaCandidate, IdeaGenerator, SourceRef
-from finch.ideas.opportunity import Opportunity
 from finch.llm.base import StructuredInferenceRunner
 
 _GENERATOR_SKILL = "idea-discovery"
 _GENERATOR_VERSION = "1.0.0"
-
-# 第一人称代词（英文 + 中文）：外部作者亲历不得被采纳为作者亲历，提炼时剥离。
-_FIRST_PERSON_RE = re.compile(
-    r"\b(i|i'm|i've|i'd|i'll|we|we're|we've|we'd|we'll|my|our|mine|ours|me|us|"
-    r"myself|ourselves)\b",
-    re.IGNORECASE,
-)
-_CN_FIRST_PERSON_RE = re.compile(r"(我|我们|我的|我们的|咱|咱们)")
-
-
-def _neutralize(text: str) -> str:
-    """剥离第一人称代词，得到中性的问题/主张陈述（不采纳外部亲历）。"""
-    neutral = _FIRST_PERSON_RE.sub(" ", text)
-    neutral = _CN_FIRST_PERSON_RE.sub(" ", neutral)
-    return " ".join(neutral.split())
 
 _IDEA_DRAFT_PROMPT = """\
 You turn a raw fragment (or a verified conversation signal) into a single publishable
@@ -46,7 +32,9 @@ Rules:
   complete conclusion yet). Choose "exploration" when there is no complete conclusion.
 - author_position carries claim / decision / tradeoff; mark nothing as confirmed.
 - boundaries: known (verified), inferred (with hedging), unknown (do not assert).
-- recommended_format: original | reply | thread.
+- recommended_format: reply | quote | short_post | thread | dm | do_not_publish.
+- communication_goal: continue_discussion | invite_counterexample | summarize_practice |
+  find_collaborators (how this content should advance the conversation; null if none applies).
 
 ## Source type
 
@@ -58,20 +46,26 @@ Rules:
 """
 
 
-_FROM_OPPORTUNITY_PROMPT = """\
-You turn a scouted conversation opportunity into a single Idea candidate. The opportunity
-came from external public discussion, so it must stay external: never write the external
-author's experience as the user's own first-person experience.
+_THREAD_PROMPT = """\
+You turn a full conversation thread into a single Idea candidate. The conversation is the
+user's own ongoing exchange, so verified conclusions (agreements, experiments) may form the
+user's viewpoint; open questions and the other party's claims must stay attributed and not
+be rewritten as the user's own experience.
 
 Rules:
-- boundaries.known must be empty (external signal, not verified personal evidence).
-- Put the external signal (third-person, no first-person) into boundaries.inferred.
+- Only form a stance from the user's own experience, the user's explicit judgments, or
+  verified conversation conclusions. External author viewpoints stay third-person.
+- boundaries.known only holds verified conclusions; unresolved disagreements go to
+  boundaries.unknown.
+- communication_goal: continue_discussion | invite_counterexample | summarize_practice |
+  find_collaborators.
 
-## Opportunity
-{opportunity}
+## Conversation thread
 
-Return JSON matching the same schema as before (core_point / observation / reader_problem /
-why_worth_saying / intent / open_question / author_position / boundaries / recommended_format).
+{thread}
+
+Return JSON matching the schema (core_point / observation / reader_problem / why_worth_saying /
+intent / open_question / author_position / boundaries / recommended_format / communication_goal).
 """
 
 
@@ -98,37 +92,8 @@ def _to_candidate(
         source_refs=source_refs,
         boundaries=out.boundaries,
         recommended_format=out.recommended_format,
+        communication_goal=out.communication_goal,
         generator=IdeaGenerator(skill=_GENERATOR_SKILL, version=_GENERATOR_VERSION),
-    )
-
-
-def _sanitize_external(out: "IdeaDraftOutput", signal: str) -> "IdeaDraftOutput":
-    """外部机会信号 → 确定性中性化（外部帖 ≠ 个人证据，不信任 LLM 边界）。
-
-    剥离作者字段（core_point/observation/reader_problem/open_question + 立场的
-    claim/decision/tradeoff）里的第一人称，并把 boundaries 强制为 known 空、
-    inferred 承载中性化信号。原文只保留在 source_refs（外部、可追溯）。
-    """
-    position = out.author_position
-    return out.model_copy(
-        update={
-            "core_point": _neutralize(out.core_point),
-            "observation": _neutralize(out.observation),
-            "reader_problem": _neutralize(out.reader_problem),
-            "why_worth_saying": _neutralize(out.why_worth_saying),
-            "open_question": _neutralize(out.open_question),
-            "author_position": AuthorPosition(
-                claim=_neutralize(position.claim),
-                decision=_neutralize(position.decision),
-                tradeoff=_neutralize(position.tradeoff),
-                change_mind_if=position.change_mind_if,
-            ),
-            "boundaries": IdeaBoundaries(
-                known=[],
-                inferred=[_neutralize(signal)],
-                unknown=out.boundaries.unknown,
-            ),
-        }
     )
 
 
@@ -143,7 +108,8 @@ class IdeaDraftOutput(BaseModel):
     open_question: str = ""
     author_position: AuthorPosition
     boundaries: IdeaBoundaries = Field(default_factory=IdeaBoundaries)
-    recommended_format: Literal["original", "reply", "thread"] = "original"
+    recommended_format: RecommendedFormat = RecommendedFormat.SHORT_POST
+    communication_goal: CommunicationGoal | None = None
 
 
 class FragmentService:
@@ -186,27 +152,35 @@ class FragmentService:
         ]
         return _to_candidate(out, origin="conversation", source_refs=source_refs)
 
-    def from_opportunity(self, opportunity: Opportunity) -> IdeaCandidate:
-        """scout 机会 → IdeaCandidate，origin=search。
+    def from_thread(
+        self,
+        thread: ConversationThread,
+        *,
+        interactions: list[InteractionRecord] | None = None,
+    ) -> IdeaCandidate:
+        """完整 ConversationThread → IdeaCandidate，origin=conversation。
 
-        外部帖子只是信号、不是个人证据：LLM 输出经 ``_sanitize_external`` 确定性
-        中性化（剥离作者字段第一人称 + boundaries.known 恒空），不信任 prompt 级约束。
-        source_refs 保留原文（外部、可追溯）。
+        与 ``from_conversation``（单条已验证证据）不同：读取完整对话线索（open_questions /
+        agreements / disagreements / possible_experiments），来源可追溯到 thread 与原始互动。
         """
+        interactions = interactions or []
+        thread_text = json.dumps(
+            {
+                "topic": thread.topic,
+                "open_questions": thread.open_questions,
+                "agreements": thread.agreements,
+                "disagreements": thread.disagreements,
+                "possible_experiments": thread.possible_experiments,
+            },
+            ensure_ascii=False,
+        )
         out = cast(
             IdeaDraftOutput,
-            self.runner.run(
-                _FROM_OPPORTUNITY_PROMPT.format(opportunity=opportunity.model_dump_json()),
-                IdeaDraftOutput,
-            ),
+            self.runner.run(_THREAD_PROMPT.format(thread=thread_text), IdeaDraftOutput),
         )
-        out = _sanitize_external(out, opportunity.source_post.text)
-        return _to_candidate(
-            out, origin="search",
-            source_refs=[
-                SourceRef(
-                    type="post", ref=opportunity.source_post.url,
-                    summary=opportunity.source_post.text,
-                )
-            ],
+        source_refs = [SourceRef(type="conversation", ref=thread.id, summary=thread.topic)]
+        source_refs.extend(
+            SourceRef(type="conversation", ref=rec.id, summary=rec.source_url)
+            for rec in interactions
         )
+        return _to_candidate(out, origin="conversation", source_refs=source_refs)

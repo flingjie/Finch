@@ -64,7 +64,6 @@ class PracticeService:
         self,
         *,
         idea_id: str | None = None,
-        opportunity_id: str | None = None,
         initial_attempt: str,
     ) -> PracticeSession:
         """创建会话，记 initial_attempt。"""
@@ -72,7 +71,6 @@ class PracticeService:
         session = PracticeSession(
             id=f"practice_{uuid4().hex[:8]}",
             idea_id=idea_id,
-            opportunity_id=opportunity_id,
             initial_attempt=initial_attempt,
             created_at=now,
             updated_at=now,

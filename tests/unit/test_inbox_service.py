@@ -8,12 +8,12 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
 )
-from finch.content.models import Draft, DraftKind
+from finch.content.models import Draft, DraftKind, RecommendedFormat
 from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
     InteractionAction,
-    InteractionCandidate,
+    InteractionProposal,
 )
 from finch.evidence.models import ClaimConfidence, EvidenceCard
 from finch.inbox.models import DecisionAction, DecisionRecord, InboxItem, InboxTrack
@@ -33,7 +33,7 @@ def _job(candidate_id=None, decision="d", tradeoff="t", why_now="w", id="job_1")
         candidate_id=candidate_id,
         reader_problem="rp",
         author_position=AuthorPosition(claim="c", decision=decision, tradeoff=tradeoff),
-        recommended_format=DraftKind.ORIGINAL,
+        recommended_format=RecommendedFormat.SHORT_POST,
         status=ContentJobStatus.CONFIRMED,
         core_message="core",
         why_now=why_now,
@@ -55,7 +55,7 @@ def _card(card_id="ev_1", conf=ClaimConfidence.SUPPORTED):
 
 
 def _candidate(cand_id="x:p1:reply", action=InteractionAction.DRAFT_REPLY, factual_risks=None):
-    return InteractionCandidate(
+    return InteractionProposal(
         id=cand_id,
         post=ExternalPost(
             id="p1", platform="x", url="https://x.com/u/1", author_id="a",

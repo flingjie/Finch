@@ -1,4 +1,4 @@
-"""互动价值评分单元测试（Phase 3）。"""
+"""互动价值评分单元测试（Phase 3，连接优先改造后 relationship_value 改为确定性）。"""
 
 from datetime import datetime
 
@@ -23,7 +23,6 @@ _DIM_FIELDS = [
     "novelty",
     "discussability",
     "practical_evidence",
-    "relationship_value",
 ]
 
 
@@ -91,7 +90,6 @@ def _scored(
         ("novelty", 0.25),
         ("discussability", 0.20),
         ("practical_evidence", 0.20),
-        ("relationship_value", 0.10),
     ],
 )
 def test_weighted_total_uses_documented_weights(field, expected):
@@ -101,28 +99,36 @@ def test_weighted_total_uses_documented_weights(field, expected):
     assert weighted_total(dims, ScoringWeights()) == pytest.approx(expected)
 
 
+def test_weighted_total_includes_deterministic_relationship_value():
+    dims = _dims()  # 四维全 0.5
+    total = weighted_total(dims, ScoringWeights(), relationship_value=1.0)
+    expected = 0.25 * 0.5 + 0.25 * 0.5 + 0.20 * 0.5 + 0.20 * 0.5 + 0.10 * 1.0
+    assert total == pytest.approx(expected)
+
+
 def test_weighted_total_clamps_to_unit_interval():
-    dims = _dims(relevance=1.0, novelty=1.0, discussability=1.0,
-                 practical_evidence=1.0, relationship_value=1.0)
+    dims = _dims(relevance=1.0, novelty=1.0, discussability=1.0, practical_evidence=1.0)
     over = ScoringWeights(
         relevance=0.6, novelty=0.6, discussability=0.6,
         practical_evidence=0.6, relationship_value=0.6,
     )
-    assert weighted_total(dims, over) == 1.0
+    assert weighted_total(dims, over, relationship_value=1.0) == 1.0
 
     neg = ScoringWeights(
         relevance=-1.0, novelty=-1.0, discussability=-1.0,
         practical_evidence=-1.0, relationship_value=-1.0,
     )
-    assert weighted_total(dims, neg) == 0.0
+    assert weighted_total(dims, neg, relationship_value=1.0) == 0.0
 
 
 def test_weighted_total_is_deterministic():
-    dims = _dims(relevance=0.8, novelty=0.6, discussability=0.5,
-                 practical_evidence=0.9, relationship_value=0.4)
-    expected = 0.25 * 0.8 + 0.25 * 0.6 + 0.20 * 0.5 + 0.20 * 0.9 + 0.10 * 0.4
-    assert weighted_total(dims, ScoringWeights()) == weighted_total(dims, ScoringWeights())
-    assert weighted_total(dims, ScoringWeights()) == pytest.approx(expected)
+    dims = _dims(relevance=0.8, novelty=0.6, discussability=0.5, practical_evidence=0.9)
+    rel = 0.4
+    expected = 0.25 * 0.8 + 0.25 * 0.6 + 0.20 * 0.5 + 0.20 * 0.9 + 0.10 * rel
+    assert weighted_total(dims, ScoringWeights(), relationship_value=rel) == pytest.approx(expected)
+    assert weighted_total(dims, ScoringWeights(), relationship_value=rel) == weighted_total(
+        dims, ScoringWeights(), relationship_value=rel
+    )
 
 
 # ---- prefilter_posts ----
@@ -149,7 +155,6 @@ def test_prefilter_drops_whitespace_only_and_strips_before_length_check():
         _make_post(id="exact", content="1234567890"),
     ]
     kept = prefilter_posts(posts, min_length=10, skip_ids=set())
-    # "padded" 去掉空白后只有 2 个字符；"exact" 恰好 10 个字符，保留。
     assert [p.id for p in kept] == ["exact"]
 
 
@@ -169,8 +174,7 @@ def test_score_posts_computes_total_and_preserves_reasons():
         novelty=0.6,
         discussability=0.5,
         practical_evidence=0.9,
-        relationship_value=0.4,
-        reasons=["on topic", "new", "debatable", "has code", "known author"],
+        reasons=["on topic", "new", "debatable", "has code"],
     )
     runner = FakeRunner(items=[ScoreItem(post_id="p1", scores=dims)])
     scored = score_posts(runner, [post], ScoringWeights())
@@ -184,9 +188,25 @@ def test_score_posts_computes_total_and_preserves_reasons():
     assert sp.score.total == pytest.approx(weighted_total(dims, ScoringWeights()))
 
 
-def test_llm_output_model_has_no_total_field():
-    # 模型输出结构里没有 total 字段，模型无法覆盖代码计算的总分。
+def test_score_posts_injects_deterministic_relationship_value():
+    post = _make_post(id="p1", content="A substantive post with real cases and code.")
+    dims = _dims()
+    runner = FakeRunner(items=[ScoreItem(post_id="p1", scores=dims)])
+    from finch.peers.service import peer_id_for
+
+    rel_by_peer = {peer_id_for("x", "alice"): 0.7}
+    scored = score_posts(runner, [post], ScoringWeights(), relationship_by_peer=rel_by_peer)
+
+    assert scored[0].score.relationship_value == 0.7
+    assert scored[0].score.total == pytest.approx(
+        weighted_total(dims, ScoringWeights(), relationship_value=0.7)
+    )
+
+
+def test_llm_output_model_has_no_total_or_relationship_value():
+    # 模型输出结构里没有 total / relationship_value，模型无法覆盖代码计算的分数。
     assert "total" not in ConversationScoreInput.model_fields
+    assert "relationship_value" not in ConversationScoreInput.model_fields
     assert "total" not in ScoreItem.model_fields
 
 
@@ -208,7 +228,6 @@ def test_rank_candidates_filters_by_threshold_and_ranks_evidence_first():
         _scored("popular", practical=0.3, discussability=0.3, total=0.9, likes=100000),
     ]
     ranked = rank_candidates(scored, min_candidate_score=0.72)
-    # "below" 未过阈值；"evidence" 实践证据+可交流性更高，排在纯热度帖 "popular" 之前。
     assert [sp.post.id for sp in ranked] == ["evidence", "popular"]
 
 

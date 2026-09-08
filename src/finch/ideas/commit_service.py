@@ -25,6 +25,7 @@
 import hashlib
 
 from finch.content.jobs import AuthorPosition
+from finch.content.models import RecommendedFormat
 from finch.evidence.extractor import Extractor, build_cards
 from finch.evidence.models import ClaimConfidence, EngineeringEvent
 from finch.evidence.safety import scan_cards
@@ -119,7 +120,7 @@ def _event_to_idea(
         ),
         source_refs=source_refs,
         boundaries=_boundaries_from_event(event),
-        recommended_format="original",
+        recommended_format=RecommendedFormat.SHORT_POST,
         generator=IdeaGenerator(skill=_GENERATOR_SKILL, version=_GENERATOR_VERSION),
     )
 

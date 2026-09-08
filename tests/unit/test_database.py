@@ -4,7 +4,7 @@ from sqlalchemy import inspect
 from sqlmodel import Session
 
 from finch.content.jobs import ContentJob, ContentJobStatus
-from finch.content.models import DraftKind
+from finch.content.models import RecommendedFormat
 from finch.storage.database import Store
 from finch.storage.repositories import ContentJobRecord, ContentJobRepository
 
@@ -54,7 +54,7 @@ def test_prune_legacy_content_jobs_deletes_only_unparseable_rows(tmp_path):
             source_card_ids=[],
             reader_problem="p",
             author_position=None,
-            recommended_format=DraftKind.REPLY,
+            recommended_format=RecommendedFormat.REPLY,
             status=ContentJobStatus.PROPOSED,
             core_message="m",
         )

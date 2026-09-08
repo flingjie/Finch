@@ -7,7 +7,7 @@ from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
     InteractionAction,
-    InteractionCandidate,
+    InteractionProposal,
     InteractionStatus,
 )
 from finch.settings import EngagementSettings
@@ -17,7 +17,7 @@ def _candidate(
     *,
     status: InteractionStatus = InteractionStatus.APPROVED,
     action: InteractionAction = InteractionAction.DRAFT_REPLY,
-) -> InteractionCandidate:
+) -> InteractionProposal:
     post = ExternalPost(
         id="p1",
         platform="x",
@@ -36,7 +36,7 @@ def _candidate(
         total=0.8,
         reasons=["on topic"],
     )
-    return InteractionCandidate(
+    return InteractionProposal(
         id=f"x:{post.id}:{action.value}",
         post=post,
         score=score,

@@ -6,7 +6,7 @@ from finch.content.checkers.decision import _DecisionOutput
 from finch.content.checkers.portability import _PortabilityOutput
 from finch.content.checkers.safety import _SafetyOutput
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
-from finch.content.models import Draft, DraftKind
+from finch.content.models import Draft, DraftKind, RecommendedFormat
 from finch.drafts.service import (
     DraftCreateResult,
     DraftService,
@@ -113,7 +113,7 @@ def _idea(**overrides: object) -> ContentJob:
             tradeoff="需要持久化状态",
             change_mind_if=None,
         ),
-        recommended_format=DraftKind.ORIGINAL,
+        recommended_format=RecommendedFormat.SHORT_POST,
         status=ContentJobStatus.CONFIRMED,
         core_message="Graph 的价值是恢复与重放",
         content_fingerprint="fp_abc123",

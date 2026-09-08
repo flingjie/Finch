@@ -1,10 +1,13 @@
 """FragmentService：user / conversation 来源 → IdeaCandidate。"""
 
+from datetime import datetime
+
 from finch.content.jobs import AuthorPosition
-from finch.engagement.models import ConversationEvidence
+from finch.content.models import RecommendedFormat
+from finch.conversations.models import ConversationThread
+from finch.engagement.models import ConversationEvidence, InteractionRecord
 from finch.ideas.fragment_service import FragmentService, IdeaDraftOutput
 from finch.ideas.models import IdeaBoundaries
-from finch.ideas.opportunity import Opportunity, SourcePostRef
 
 
 class FakeRunner:
@@ -27,7 +30,7 @@ def _out() -> IdeaDraftOutput:
         open_question="问题",
         author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"),
         boundaries=IdeaBoundaries(known=[], inferred=[], unknown=[]),
-        recommended_format="original",
+        recommended_format=RecommendedFormat.SHORT_POST,
     )
 
 
@@ -53,57 +56,6 @@ def test_from_conversation_origin_and_source_ref():
     assert idea.source_refs[0].summary == "某个机制到底怎么工作"
 
 
-def test_from_opportunity_external_stays_external():
-    opp = Opportunity(
-        id="opp_1",
-        source_post=SourcePostRef(
-            url="https://x.com/a/status/9", author="a", text="I spent weeks debugging this"
-        ),
-        shared_tension="t", why_relevant="w", response_angles=["ask_mechanism"],
-        knowledge_gap="g", relationship_value="v",
-    )
-    svc = FragmentService(FakeRunner(_out()))
-    idea = svc.from_opportunity(opp)
-    assert idea.origin == "search"
-    assert idea.boundaries.known == []  # 外部信号不归 known
-    assert idea.source_refs[0].type == "post"
-    assert idea.source_refs[0].summary == "I spent weeks debugging this"  # 原文保留在来源，可追溯
-
-
-def test_from_opportunity_neutralizes_first_person():
-    """LLM 返回第一人称时，确定性中性化兜底（外部帖 ≠ 个人证据）。"""
-    opp = Opportunity(
-        id="opp_2",
-        source_post=SourcePostRef(
-            url="https://x.com/a/status/10", author="a", text="I spent weeks debugging this"
-        ),
-        shared_tension="t", why_relevant="w", response_angles=["ask_mechanism"],
-        knowledge_gap="g", relationship_value="v",
-    )
-    first_person = IdeaDraftOutput(
-        core_point="I think our agent is broken",
-        observation="I spent weeks debugging it",
-        reader_problem="we can't reproduce the crash",
-        why_worth_saying="worth writing because I hit this crash",
-        intent="stance",
-        open_question="why does it crash",
-        author_position=AuthorPosition(
-            claim="I saw the failure", decision="I will fix it", tradeoff="I lose time"
-        ),
-        boundaries=IdeaBoundaries(known=["I know this"], inferred=[], unknown=[]),
-        recommended_format="original",
-    )
-    svc = FragmentService(FakeRunner(first_person))
-    idea = svc.from_opportunity(opp)
-    assert "I think" not in idea.core_point
-    assert "I spent" not in idea.observation
-    assert "we" not in idea.reader_problem.lower()
-    assert "I hit" not in idea.why_worth_saying
-    assert "I saw" not in idea.author_position.claim
-    assert idea.boundaries.known == []  # LLM 的 known 被强制清空
-    assert idea.source_refs[0].summary == "I spent weeks debugging this"  # 原文保留在来源
-
-
 def test_from_conversation_unverified_rejected():
     evidence = ConversationEvidence(
         id="ev_1", interaction_id="i1", post_id="p1", kind="question",
@@ -115,4 +67,31 @@ def test_from_conversation_unverified_rejected():
     except ValueError:
         return
     raise AssertionError("expected ValueError for unverified evidence")
+
+
+def test_from_thread_traces_to_thread_and_interactions():
+    thread = ConversationThread(
+        id="thread_1", peer_id="peer_abc", topic="agent evals",
+        open_questions=["how to reproduce?"],
+        agreements=["replays help"],
+        possible_experiments=["diff failure replays"],
+    )
+    interaction = InteractionRecord(
+        id="rec_1", proposal_id="p1", peer_id="peer_abc", platform="x",
+        source_url="https://x.com/alice/status/1", occurred_at=datetime(2026, 9, 1),
+    )
+    svc = FragmentService(FakeRunner(_out()))
+    idea = svc.from_thread(thread, interactions=[interaction])
+    assert idea.origin == "conversation"
+    refs = {(r.type, r.ref) for r in idea.source_refs}
+    assert ("conversation", "thread_1") in refs
+    assert ("conversation", "rec_1") in refs
+
+
+def test_from_thread_preserves_communication_goal():
+    thread = ConversationThread(id="thread_1", peer_id="p", topic="t")
+    out = _out().model_copy(update={"communication_goal": "invite_counterexample"})
+    svc = FragmentService(FakeRunner(out))
+    idea = svc.from_thread(thread)
+    assert idea.communication_goal == "invite_counterexample"
 

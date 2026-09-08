@@ -4,12 +4,12 @@ from datetime import datetime
 
 from finch.author.models import PublicationIntent
 from finch.content.jobs import ContentJob, ContentJobStatus
-from finch.content.models import Draft, DraftKind
+from finch.content.models import Draft, DraftKind, RecommendedFormat
 from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
     InteractionAction,
-    InteractionCandidate,
+    InteractionProposal,
     InteractionStatus,
 )
 from finch.inbox.models import DecisionAction, DecisionRecord
@@ -73,7 +73,7 @@ class _Interactions:
 def _job(job_id="job_1"):
     return ContentJob(
         id=job_id, source_card_ids=[], reader_problem="rp",
-        author_position=None, recommended_format=DraftKind.ORIGINAL,
+        author_position=None, recommended_format=RecommendedFormat.SHORT_POST,
         status=ContentJobStatus.CONFIRMED,
     )
 
@@ -84,7 +84,7 @@ def _draft(job_id="job_1"):
 
 
 def _candidate(cand_id="x:p1:reply"):
-    return InteractionCandidate(
+    return InteractionProposal(
         id=cand_id,
         post=ExternalPost(id="p1", platform="x", url="u", author_id="a", author_name="A",
                           content="x" * 30, published_at=datetime.now()),
