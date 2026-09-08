@@ -189,7 +189,7 @@ def run_discovery_engagement_flow(
             scored, min_candidate_score=engagement.min_candidate_score
         )
         candidates = generate_proposals(runner, ranked, engagement)
-    except Exception as exc:  # noqa: BLE001 - 顶层防御，双轨调度侧仍会二次隔离
+    except Exception as exc:  # noqa: BLE001 - 顶层防御，调用方仍会二次隔离
         return EngagementRunResult(
             run_id=run_id,
             posts_found=0,

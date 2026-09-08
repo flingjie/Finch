@@ -32,7 +32,6 @@ from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient
 from .ideas.commit_service import CommitService
 from .ideas.fragment_service import FragmentService
-from .ideas.opportunity import Opportunity
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
 from .inbox.service import InboxDecisionService, list_items
@@ -209,34 +208,6 @@ def _render_critic_reports(reports: list[dict]) -> str:
                 line += f" — {detail}"
             lines.append(line)
     return "\n".join(lines)
-
-
-def _render_opportunity_list(opps: list[Opportunity]) -> str:
-    """交流机会列表：带表头，仍保持一机会一行。"""
-    lines = ["id\turl\tshared_tension"]
-    lines.extend(f"{opp.id}\t{opp.source_post.url}\t{opp.shared_tension}" for opp in opps)
-    return "\n".join(lines)
-
-
-def _render_opportunity_detail(opp: Opportunity) -> str:
-    """单个交流机会的完整可读视图。"""
-    return "\n".join(
-        [
-            f"id: {opp.id}",
-            f"url: {opp.source_post.url}",
-            f"author: @{opp.source_post.author}",
-            f"source_text: {opp.source_post.text}",
-            "",
-            f"shared_tension: {opp.shared_tension}",
-            f"why_relevant: {opp.why_relevant}",
-            f"response_angles: {', '.join(opp.response_angles)}",
-            f"knowledge_gap: {opp.knowledge_gap}",
-            f"relationship_value: {opp.relationship_value}",
-            "",
-            "下一步:",
-            "- 转成 idea",
-        ]
-    )
 
 
 def _since_iso(since: str | None) -> str | None:
