@@ -625,6 +625,14 @@ class ConversationEvidenceRepository:
             session.merge(self._to_record(evidence))
             session.commit()
 
+    def get(self, evidence_id: str) -> ConversationEvidence | None:
+        """按 id 获取证据，不存在返回 None。"""
+        with Session(self.store.engine) as session:
+            record = session.get(ConversationEvidenceRecord, evidence_id)
+            if record is None:
+                return None
+            return ConversationEvidence.model_validate_json(record.payload_json)
+
     def list_unverified(self) -> list[ConversationEvidence]:
         """列出全部未验证（``verified=False``）的证据。"""
         with Session(self.store.engine) as session:

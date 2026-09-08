@@ -555,3 +555,40 @@ def test_ideas_skip_illegal_transition_exits(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["ideas", "skip", job.id, "--reason", "not_now"])
     assert r.exit_code == 1
     assert "illegal transition" in r.output
+
+
+# ---- finch ideas create ----
+
+
+class _FakeFragmentService:
+    def __init__(self, runner):
+        self.runner = runner
+
+    def from_text(self, text):
+        return _candidate()
+
+
+def _patch_create_cli(monkeypatch, settings):
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "FragmentService", _FakeFragmentService)
+
+
+def test_ideas_create_requires_exactly_one_source(monkeypatch, tmp_path):
+    settings = _settings(tmp_path, [])
+    _patch_create_cli(monkeypatch, settings)
+    r = CliRunner().invoke(app, ["ideas", "create"])
+    assert r.exit_code == 1
+    assert "exactly one of" in r.output
+
+
+def test_ideas_create_text_persists(monkeypatch, tmp_path):
+    settings = _settings(tmp_path, [])
+    store = Store(settings.paths.db_path)
+    store.init()
+    _patch_create_cli(monkeypatch, settings)
+    r = CliRunner().invoke(app, ["ideas", "create", "--text", "hello", "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["status"] == "proposed"
+    # _FakeFragmentService 复用 _candidate()（origin="commit"），仅验证落库链路。
+    assert ContentJobRepository(store).list_jobs()[0].core_message == CORE_POINT

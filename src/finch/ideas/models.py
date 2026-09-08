@@ -1,6 +1,6 @@
 """Idea 候选流领域模型（Skill 架构领域核心）。
 
-统一 `IdeaCandidate` 契约：Skill 层（commit-to-idea / search-to-idea）产出同一个
+统一 `IdeaCandidate` 契约：Skill 层（idea-discovery / search-to-idea）产出同一个
 `IdeaCandidate`，领域服务再把它持久化到 ``ContentJob``（不新增 Idea 表）。
 
 契约不变量（plan §3）：

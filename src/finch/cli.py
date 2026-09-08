@@ -30,6 +30,7 @@ from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient
 from .ideas.commit_service import CommitService
+from .ideas.fragment_service import FragmentService
 from .ideas.search_service import SearchService
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
@@ -201,6 +202,44 @@ def ideas_commit(
     else:
         for job in jobs:
             typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
+
+
+@ideas_app.command("create")
+def ideas_create(
+    text: str = typer.Option(None, "--text", help="用户输入的一句话/片段"),
+    conversation: str = typer.Option(None, "--conversation", help="已验证 ConversationEvidence id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """把用户片段或已验证 ConversationEvidence 结构化为 IdeaCandidate 并落库。"""
+    if (text is None) == (conversation is None):
+        typer.echo("exactly one of --text / --conversation is required")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
+    service = FragmentService(runner)
+    if text is not None:
+        idea = service.from_text(text)
+    else:
+        evidence = ConversationEvidenceRepository(store).get(conversation)
+        if evidence is None:
+            typer.echo(f"conversation evidence not found: {conversation}")
+            raise typer.Exit(code=1)
+        if not evidence.verified:
+            typer.echo(f"conversation evidence not verified: {conversation}")
+            raise typer.Exit(code=1)
+        idea = service.from_conversation(evidence)
+    job = IdeaService(ContentJobRepository(store)).create_candidate(idea)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {"id": job.id, "origin": job.origin, "status": job.status.value},
+                ensure_ascii=False, indent=2,
+            )
+        )
+    else:
+        typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
 
 
 @ideas_app.command("search")

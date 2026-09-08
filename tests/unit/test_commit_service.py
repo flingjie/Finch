@@ -93,7 +93,7 @@ def test_clear_decision_yields_one_idea():
     assert idea.reader_problem == "orchestrator was hard to rerun"
     assert idea.why_worth_saying == "failures can now be replayed"
     assert idea.recommended_format == "original"
-    assert idea.generator == IdeaGenerator(skill="commit-to-idea", version="1.0.0")
+    assert idea.generator == IdeaGenerator(skill="idea-discovery", version="1.0.0")
 
 
 def test_source_refs_use_commit_url():

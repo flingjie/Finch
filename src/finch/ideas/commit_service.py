@@ -37,7 +37,7 @@ from finch.ideas.models import (
     SourceRef,
 )
 
-_GENERATOR_SKILL = "commit-to-idea"
+_GENERATOR_SKILL = "idea-discovery"
 _GENERATOR_VERSION = "1.0.0"
 
 # ClaimConfidence → IdeaBoundaries 桶。USER_CONFIRMED 与 VERIFIED/SUPPORTED 同属
