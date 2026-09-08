@@ -3,14 +3,13 @@
 from datetime import UTC, datetime
 
 from finch.author.models import PublicationIntent
-from finch.storage.database import Store
 from finch.storage.repositories import PublicationIntentRepository
+from finch.storage.workspace import Workspace
 
 
 def test_publication_intent_upsert_idempotent(tmp_path):
-    store = Store(tmp_path / "finch.db")
-    store.init()
-    repo = PublicationIntentRepository(store)
+    ws = Workspace(tmp_path)
+    repo = PublicationIntentRepository(ws)
     intent = PublicationIntent(
         source_type="draft", source_id="d1", approved_body="b", content_hash="h",
         approved_at=datetime.now(UTC), expected_kind="original",

@@ -10,14 +10,14 @@ from finch.content.models import Draft, DraftKind
 from finch.content.voice import load_voice_profile
 from finch.inbox.models import DecisionAction, DecisionRecord
 from finch.settings import Paths, Settings
-from finch.storage.database import Store
 from finch.storage.repositories import DecisionRecordRepository, DraftRepository
+from finch.storage.workspace import Workspace
 
 
 def _settings(tmp_path) -> Settings:
     return Settings(
         paths=Paths(
-            db_path=tmp_path / "finch.db",
+            var_dir=tmp_path,
             voice_profile_path=tmp_path / "voice.yaml",
         )
     )
@@ -39,12 +39,11 @@ def test_voice_approve_example_text(monkeypatch, tmp_path):
 
 def test_voice_approve_example_from_draft_records_diff(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    DraftRepository(store).upsert_draft(
+    ws = Workspace(settings.paths.var_dir)
+    DraftRepository(ws).upsert_draft(
         Draft(id="draft_1", kind=DraftKind.ORIGINAL, body="model draft")
     )
-    DecisionRecordRepository(store).save(
+    DecisionRecordRepository(ws).save(
         DecisionRecord(
             id="dec_1", job_id="job_1", draft_id="draft_1",
             action=DecisionAction.ACCEPT, approved_content_hash="h",

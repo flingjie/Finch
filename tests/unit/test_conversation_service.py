@@ -4,8 +4,8 @@ from datetime import datetime
 
 from finch.conversations.models import ThreadStatus
 from finch.conversations.service import ConversationService, thread_id_for
-from finch.storage.database import Store
 from finch.storage.repositories import ConversationThreadRepository
+from finch.storage.workspace import Workspace
 
 
 def test_thread_id_for_stable():
@@ -80,9 +80,8 @@ def test_closed_thread_never_needs_follow_up():
 
 
 def test_thread_repository_roundtrip(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = ConversationThreadRepository(store)
+    ws = Workspace(tmp_path)
+    repo = ConversationThreadRepository(ws)
     thread = ConversationService().open_thread(peer_id="peer_abc", topic="agent evals")
 
     repo.upsert(thread)
@@ -100,9 +99,8 @@ def test_thread_repository_roundtrip(tmp_path):
 
 def test_thread_repository_deleting_search_does_not_lose_context(tmp_path):
     # 对话线索独立持久化：不依赖 run_id / 搜索运行，重跑搜索不影响已存关系上下文。
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = ConversationThreadRepository(store)
+    ws = Workspace(tmp_path)
+    repo = ConversationThreadRepository(ws)
     thread = ConversationService().open_thread(peer_id="peer_abc", topic="t")
     repo.upsert(thread)
 

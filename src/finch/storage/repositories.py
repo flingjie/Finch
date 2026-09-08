@@ -1,13 +1,12 @@
 """文件工作区仓储：领域模型 → YAML / frontmatter-Markdown / JSONL。
 
 保留原公有方法签名，只把 ``Session.merge/commit`` 换成文件原子写；构造入参由
-``Store`` 改为 ``Workspace``。二级查找（find_by_generation_key / list_by_* /
+旧的 SQLite 存储改为 ``Workspace``。二级查找（find_by_generation_key / list_by_* /
 list_pending）由「同类独立目录 + glob + Python 过滤」实现。
 """
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TypeVar
 
 import yaml
 from pydantic import BaseModel, ValidationError
@@ -32,18 +31,16 @@ from finch.peers.models import PeerProfile
 from finch.practice.models import PracticeSession
 from finch.storage.workspace import Workspace
 
-T = TypeVar("T", bound=BaseModel)
-
 
 def _write(ws: Workspace, name: str, key: str, model: BaseModel) -> None:
     ws.write_yaml(ws.dir(name) / f"{ws.safe_filename(key)}.yaml", model)
 
 
-def _read(ws: Workspace, name: str, key: str, model_cls: type[T]) -> T | None:
+def _read[T: BaseModel](ws: Workspace, name: str, key: str, model_cls: type[T]) -> T | None:
     return ws.read_yaml(ws.dir(name) / f"{ws.safe_filename(key)}.yaml", model_cls)
 
 
-def _list_all(ws: Workspace, name: str, model_cls: type[T]) -> list[T]:
+def _list_all[T: BaseModel](ws: Workspace, name: str, model_cls: type[T]) -> list[T]:
     out: list[T] = []
     for path in sorted(ws.dir(name).glob("*.yaml")):
         obj = ws.read_yaml(path, model_cls)

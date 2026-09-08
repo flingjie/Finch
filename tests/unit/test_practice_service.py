@@ -2,8 +2,8 @@
 
 from finch.practice.models import PracticeDiagnosis, PracticeLesson
 from finch.practice.service import PracticeService
-from finch.storage.database import Store
 from finch.storage.repositories import PracticeSessionRepository
+from finch.storage.workspace import Workspace
 
 
 class FakeRunner:
@@ -20,10 +20,9 @@ class FakeRunner:
 
 
 def _service(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
+    ws = Workspace(tmp_path)
     return PracticeService(
-        PracticeSessionRepository(store),
+        PracticeSessionRepository(ws),
         FakeRunner(
             PracticeDiagnosis(diagnosis="最大问题是空泛", question="具体发生在哪一步？"),
             PracticeLesson(lesson="先讲具体场景再下判断"),
@@ -46,10 +45,9 @@ def test_full_session(tmp_path):
 
 
 def test_diagnose_missing_session_raises(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
+    ws = Workspace(tmp_path)
     svc = PracticeService(
-        PracticeSessionRepository(store),
+        PracticeSessionRepository(ws),
         FakeRunner(
             PracticeDiagnosis(diagnosis="d", question="q"),
             PracticeLesson(lesson="l"),

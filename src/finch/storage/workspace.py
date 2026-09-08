@@ -1,6 +1,6 @@
 """文件工作区：确定性原子读写 + YAML / frontmatter-Markdown / JSONL 序列化。
 
-替换 ``Store``（SQLite）。单用户本地 CLI，原子写（临时文件 + ``os.replace``）是
+替换旧的 SQLite 存储。单用户本地 CLI，原子写（临时文件 + ``os.replace``）是
 唯一一致性机制；不设文件锁。领域模型仍用 Pydantic 校验读写。
 """
 

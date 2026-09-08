@@ -15,11 +15,11 @@ from finch.content.voice import (
 from finch.inbox.models import DecisionAction, DecisionRecord
 from finch.learn.reflection import WeeklyReflection
 from finch.settings import Paths, Settings
-from finch.storage.database import Store
 from finch.storage.repositories import (
     DecisionRecordRepository,
     DraftRepository,
 )
+from finch.storage.workspace import Workspace
 
 
 class _FakeReflectionService:
@@ -38,8 +38,6 @@ class _FakeReflectionService:
 
 def test_weekly_renders(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "WeeklyReflectionService", _FakeReflectionService)
 
@@ -50,20 +48,20 @@ def test_weekly_renders(monkeypatch, tmp_path):
 
 
 def _settings(tmp_path):
-    return Settings(paths=Paths(db_path=tmp_path / "finch.db"))
+    return Settings(paths=Paths(var_dir=tmp_path))
 
 
 def _voice_settings(tmp_path):
     return Settings(
         paths=Paths(
-            db_path=tmp_path / "finch.db",
+            var_dir=tmp_path,
             voice_profile_path=tmp_path / "voice-profile.yaml",
         )
     )
 
 
-def _seed_draft(store: Store, draft_id: str, body: str) -> None:
-    DraftRepository(store).upsert_draft(
+def _seed_draft(ws: Workspace, draft_id: str, body: str) -> None:
+    DraftRepository(ws).upsert_draft(
         Draft(id=draft_id, kind=DraftKind.REPLY, candidate_id="t", body=body, claims=[])
     )
 
@@ -84,8 +82,8 @@ def test_voice_show_prints_profile(monkeypatch, tmp_path):
     assert "avoid_phrases" in r.output
 
 
-def _seed_accept_decision(store, draft_id, *, revised_body=None):
-    DecisionRecordRepository(store).save(
+def _seed_accept_decision(ws, draft_id, *, revised_body=None):
+    DecisionRecordRepository(ws).save(
         DecisionRecord(
             id=f"dec_job_{draft_id}",
             job_id=f"job_{draft_id}",
@@ -100,10 +98,9 @@ def _seed_accept_decision(store, draft_id, *, revised_body=None):
 
 def test_voice_approve_example_uses_revised_body_and_dedupes(monkeypatch, tmp_path):
     settings = _voice_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_draft(store, "d1", "original ai draft body")
-    _seed_accept_decision(store, "d1", revised_body="human revised body")
+    ws = Workspace(settings.paths.var_dir)
+    _seed_draft(ws, "d1", "original ai draft body")
+    _seed_accept_decision(ws, "d1", revised_body="human revised body")
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["voice", "approve-example", "d1"])
@@ -121,10 +118,9 @@ def test_voice_approve_example_uses_revised_body_and_dedupes(monkeypatch, tmp_pa
 
 def test_voice_approve_example_falls_back_to_draft_body(monkeypatch, tmp_path):
     settings = _voice_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_draft(store, "d2", "original ai draft body")
-    _seed_accept_decision(store, "d2")
+    ws = Workspace(settings.paths.var_dir)
+    _seed_draft(ws, "d2", "original ai draft body")
+    _seed_accept_decision(ws, "d2")
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["voice", "approve-example", "d2"])
@@ -135,8 +131,6 @@ def test_voice_approve_example_falls_back_to_draft_body(monkeypatch, tmp_path):
 
 def test_voice_approve_example_missing_draft(monkeypatch, tmp_path):
     settings = _voice_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     r = CliRunner().invoke(app, ["voice", "approve-example", "nope"])
     assert r.exit_code == 1
@@ -145,9 +139,8 @@ def test_voice_approve_example_missing_draft(monkeypatch, tmp_path):
 
 def test_voice_approve_example_requires_decision(monkeypatch, tmp_path):
     settings = _voice_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_draft(store, "d3", "body")
+    ws = Workspace(settings.paths.var_dir)
+    _seed_draft(ws, "d3", "body")
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     r = CliRunner().invoke(app, ["voice", "approve-example", "d3"])
     assert r.exit_code == 1
@@ -156,10 +149,9 @@ def test_voice_approve_example_requires_decision(monkeypatch, tmp_path):
 
 def test_voice_approve_example_removes_from_rejected(monkeypatch, tmp_path):
     settings = _voice_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_draft(store, "d7", "body")
-    _seed_accept_decision(store, "d7")
+    ws = Workspace(settings.paths.var_dir)
+    _seed_draft(ws, "d7", "body")
+    _seed_accept_decision(ws, "d7")
     profile = load_voice_profile(settings.paths.voice_profile_path)
     profile.rejected_examples.append(RejectedExample(id="d7", reason="old"))
     save_voice_profile(profile, settings.paths.voice_profile_path)
@@ -174,9 +166,8 @@ def test_voice_approve_example_removes_from_rejected(monkeypatch, tmp_path):
 
 def test_voice_reject_example_and_dedupe(monkeypatch, tmp_path):
     settings = _voice_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_draft(store, "d1", "body")
+    ws = Workspace(settings.paths.var_dir)
+    _seed_draft(ws, "d1", "body")
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["voice", "reject-example", "d1", "--reason", "too generic"])
@@ -194,8 +185,6 @@ def test_voice_reject_example_and_dedupe(monkeypatch, tmp_path):
 
 def test_voice_reject_example_missing_draft(monkeypatch, tmp_path):
     settings = _voice_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     r = CliRunner().invoke(app, ["voice", "reject-example", "nope", "--reason", "x"])
     assert r.exit_code == 1
@@ -204,9 +193,8 @@ def test_voice_reject_example_missing_draft(monkeypatch, tmp_path):
 
 def test_voice_reject_example_removes_from_approved(monkeypatch, tmp_path):
     settings = _voice_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_draft(store, "d8", "body")
+    ws = Workspace(settings.paths.var_dir)
+    _seed_draft(ws, "d8", "body")
     profile = load_voice_profile(settings.paths.voice_profile_path)
     profile.approved_examples.append(ApprovedExample(id="d8", text="body"))
     save_voice_profile(profile, settings.paths.voice_profile_path)

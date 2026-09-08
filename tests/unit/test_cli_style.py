@@ -5,11 +5,10 @@ from typer.testing import CliRunner
 from finch import cli
 from finch.cli import app
 from finch.settings import Paths, Settings
-from finch.storage.database import Store
 
 
 def _settings(tmp_path):
-    return Settings(paths=Paths(db_path=tmp_path / "finch.db"))
+    return Settings(paths=Paths(var_dir=tmp_path))
 
 
 def _patch(monkeypatch, settings):
@@ -35,7 +34,6 @@ def test_style_analyze_requires_exactly_one_source(monkeypatch, tmp_path):
 
 def test_style_analyze_text_json(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    Store(settings.paths.db_path).init()
     _patch(monkeypatch, settings)
     monkeypatch.setattr(cli, "WritingStyleService", lambda runner: _FakeService())
     r = CliRunner().invoke(app, ["style", "analyze", "--text", "hello", "--json"])

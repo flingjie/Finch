@@ -2,11 +2,9 @@
 
 from datetime import datetime
 
-from sqlmodel import Session, select
-
 from finch.engagement.models import InteractionRecord
-from finch.storage.database import Store
-from finch.storage.repositories import InteractionRecordRecord, InteractionRecordRepository
+from finch.storage.repositories import InteractionRecordRepository
+from finch.storage.workspace import Workspace
 
 
 def _record(
@@ -26,9 +24,8 @@ def _record(
 
 
 def _repo(tmp_path) -> InteractionRecordRepository:
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    return InteractionRecordRepository(store)
+    ws = Workspace(tmp_path)
+    return InteractionRecordRepository(ws)
 
 
 def test_upsert_get_roundtrip(tmp_path):
@@ -44,17 +41,14 @@ def test_upsert_get_roundtrip(tmp_path):
 
 
 def test_same_proposal_records_one_row(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = InteractionRecordRepository(store)
+    ws = Workspace(tmp_path)
+    repo = InteractionRecordRepository(ws)
 
     # 同一 proposal 用同 id 记录两次 → 只留一行（不重复计为两次互动）。
     repo.upsert(_record())
     repo.upsert(_record(published_body="updated body"))
 
-    with Session(store.engine) as session:
-        rows = list(session.exec(select(InteractionRecordRecord)))
-    assert len(rows) == 1
+    assert len(repo.list_all()) == 1
     assert repo.list_by_proposal("x:post_1:draft_reply")[0].published_body == "updated body"
 
 

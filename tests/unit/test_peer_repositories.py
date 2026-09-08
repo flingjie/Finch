@@ -1,11 +1,9 @@
 """PeerRepository 单元测试。"""
 
-from sqlmodel import Session, select
-
 from finch.peers.models import PeerProfile, PlatformIdentity
 from finch.peers.service import peer_id_for
-from finch.storage.database import Store
-from finch.storage.repositories import PeerRecord, PeerRepository
+from finch.storage.repositories import PeerRepository
+from finch.storage.workspace import Workspace
 
 
 def _profile(platform="x", author_id="alice", **overrides) -> PeerProfile:
@@ -18,9 +16,9 @@ def _profile(platform="x", author_id="alice", **overrides) -> PeerProfile:
 
 
 def _repo(tmp_path) -> PeerRepository:
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    return PeerRepository(store)
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    return PeerRepository(ws)
 
 
 def test_upsert_get_roundtrip(tmp_path):
@@ -36,17 +34,15 @@ def test_upsert_get_roundtrip(tmp_path):
 
 
 def test_same_author_across_posts_keeps_one_row(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = PeerRepository(store)
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    repo = PeerRepository(ws)
 
     # 同一作者两条帖子 → 同一 peer_id → 只留一行，且内容被更新。
     repo.upsert(_profile())
     repo.upsert(_profile(display_name="Alice Updated"))
 
-    with Session(store.engine) as session:
-        rows = list(session.exec(select(PeerRecord)))
-    assert len(rows) == 1
+    assert len(repo.list_all()) == 1
     assert repo.get(peer_id_for("x", "alice")).display_name == "Alice Updated"
 
 

@@ -7,12 +7,12 @@ from finch.cli import app
 from finch.practice.models import PracticeDiagnosis, PracticeLesson
 from finch.practice.service import PracticeService
 from finch.settings import Paths, Settings
-from finch.storage.database import Store
 from finch.storage.repositories import PracticeSessionRepository
+from finch.storage.workspace import Workspace
 
 
 def _settings(tmp_path):
-    return Settings(paths=Paths(db_path=tmp_path / "finch.db"))
+    return Settings(paths=Paths(var_dir=tmp_path))
 
 
 def _patch(monkeypatch, settings):
@@ -21,13 +21,12 @@ def _patch(monkeypatch, settings):
 
 def test_practice_start_without_idea_is_unlinked(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch(monkeypatch, settings)
     r = CliRunner().invoke(app, ["practice", "start", "--attempt", "hello"])
     assert r.exit_code == 0, r.output
     session_id = r.output.strip().splitlines()[0].removeprefix("id: ")
-    session = PracticeSessionRepository(store).get(session_id)
+    session = PracticeSessionRepository(ws).get(session_id)
     assert session is not None
     assert session.idea_id is None
     assert session.initial_attempt == "hello"
@@ -35,13 +34,12 @@ def test_practice_start_without_idea_is_unlinked(monkeypatch, tmp_path):
 
 def test_practice_start_persists(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch(monkeypatch, settings)
     r = CliRunner().invoke(app, ["practice", "start", "--idea", "idea_1", "--attempt", "hello"])
     assert r.exit_code == 0, r.output
     session_id = r.output.strip().splitlines()[0].removeprefix("id: ")
-    session = PracticeSessionRepository(store).get(session_id)
+    session = PracticeSessionRepository(ws).get(session_id)
     assert session is not None
     assert session.idea_id == "idea_1"
     assert session.initial_attempt == "hello"
@@ -56,10 +54,9 @@ class _FakeRunner:
 
 def test_practice_save_on_finished_session_clean_exit(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch(monkeypatch, settings)
-    svc = PracticeService(PracticeSessionRepository(store), _FakeRunner())
+    svc = PracticeService(PracticeSessionRepository(ws), _FakeRunner())
     s = svc.start(idea_id="idea_1", initial_attempt="初稿")
     s = svc.finish(s.id, "最终版")
     assert s.status == "finished"

@@ -3,9 +3,9 @@
 from datetime import UTC, datetime
 
 from finch.author.models import PublicationIntent
-from finch.conversations.models import ConversationThread
 from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.content.models import Draft, DraftKind
+from finch.conversations.models import ConversationThread
 from finch.engagement.models import (
     ConversationScore,
     ExternalPost,

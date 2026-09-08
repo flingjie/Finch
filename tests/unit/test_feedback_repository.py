@@ -1,15 +1,15 @@
-"""FeedbackSnapshot + ConversationEvidence 仓储单元测试（Phase 6，内存 sqlite，无网络）。"""
+"""FeedbackSnapshot + ConversationEvidence 仓储单元测试（Phase 6，内存文件工作区，无网络）。"""
 
 from datetime import datetime
 
 import pytest
 
 from finch.engagement.models import ConversationEvidence, FeedbackSnapshot
-from finch.storage.database import Store
 from finch.storage.repositories import (
     ConversationEvidenceRepository,
     FeedbackSnapshotRepository,
 )
+from finch.storage.workspace import Workspace
 
 
 def _snapshot(interaction_id: str = "x:p1:draft_reply", **overrides) -> FeedbackSnapshot:
@@ -41,9 +41,8 @@ def _evidence(
 
 
 def test_feedback_snapshot_roundtrip(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = FeedbackSnapshotRepository(store)
+    ws = Workspace(tmp_path)
+    repo = FeedbackSnapshotRepository(ws)
     repo.upsert(_snapshot())
 
     got = repo.get("x:p1:draft_reply")
@@ -55,9 +54,8 @@ def test_feedback_snapshot_roundtrip(tmp_path):
 
 
 def test_feedback_snapshot_upsert_idempotent(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = FeedbackSnapshotRepository(store)
+    ws = Workspace(tmp_path)
+    repo = FeedbackSnapshotRepository(ws)
     repo.upsert(_snapshot())
     repo.upsert(_snapshot(replies=5, meaningful=False))
 
@@ -68,9 +66,8 @@ def test_feedback_snapshot_upsert_idempotent(tmp_path):
 
 
 def test_conversation_evidence_roundtrip(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = ConversationEvidenceRepository(store)
+    ws = Workspace(tmp_path)
+    repo = ConversationEvidenceRepository(ws)
     repo.upsert(_evidence())
 
     listed = repo.list_by_interaction("x:p1:draft_reply")
@@ -81,9 +78,8 @@ def test_conversation_evidence_roundtrip(tmp_path):
 
 
 def test_list_unverified_and_mark_verified(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = ConversationEvidenceRepository(store)
+    ws = Workspace(tmp_path)
+    repo = ConversationEvidenceRepository(ws)
     repo.upsert(_evidence(idx=0))
     repo.upsert(_evidence(idx=1, kind="experiment"))
 
@@ -95,9 +91,8 @@ def test_list_unverified_and_mark_verified(tmp_path):
 
 
 def test_mark_verified_idempotent(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = ConversationEvidenceRepository(store)
+    ws = Workspace(tmp_path)
+    repo = ConversationEvidenceRepository(ws)
     repo.upsert(_evidence())
 
     repo.mark_verified("ce_x:p1:draft_reply_0")
@@ -109,17 +104,15 @@ def test_mark_verified_idempotent(tmp_path):
 
 
 def test_mark_verified_missing_raises(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = ConversationEvidenceRepository(store)
+    ws = Workspace(tmp_path)
+    repo = ConversationEvidenceRepository(ws)
     with pytest.raises(KeyError):
         repo.mark_verified("ce_missing_0")
 
 
 def test_conversation_evidence_upsert_idempotent(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = ConversationEvidenceRepository(store)
+    ws = Workspace(tmp_path)
+    repo = ConversationEvidenceRepository(ws)
     repo.upsert(_evidence(statement="a"))
     repo.upsert(_evidence(statement="b"))
 
@@ -130,10 +123,9 @@ def test_conversation_evidence_upsert_idempotent(tmp_path):
 
 def test_traceability_feedback_to_evidence(tmp_path):
     """Phase 6 验收：从互动可回溯到反馈快照与 conversation 证据（同一 interaction_id）。"""
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    fb_repo = FeedbackSnapshotRepository(store)
-    ev_repo = ConversationEvidenceRepository(store)
+    ws = Workspace(tmp_path)
+    fb_repo = FeedbackSnapshotRepository(ws)
+    ev_repo = ConversationEvidenceRepository(ws)
 
     interaction_id = "x:p1:draft_reply"
     fb_repo.upsert(_snapshot(interaction_id=interaction_id))

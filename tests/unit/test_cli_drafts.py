@@ -10,14 +10,14 @@ from finch.content.models import Draft, DraftKind
 from finch.content.voice import VoiceProfile
 from finch.drafts.service import DraftCreateResult
 from finch.settings import Paths, Settings
-from finch.storage.database import Store
 from finch.storage.repositories import DraftRepository
+from finch.storage.workspace import Workspace
 
 IDEA_ID = "idea_abc12345"
 
 
 def _settings(tmp_path):
-    return Settings(paths=Paths(db_path=tmp_path / "finch.db"))
+    return Settings(paths=Paths(var_dir=tmp_path))
 
 
 class _FakeDraftService:
@@ -87,8 +87,6 @@ def _patch(monkeypatch, settings, draft_service_cls):
 
 def test_drafts_create_json_output(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
     _FakeDraftService.created = []
     _patch(monkeypatch, settings, _FakeDraftService)
 
@@ -108,8 +106,6 @@ def test_drafts_create_json_output(monkeypatch, tmp_path):
 
 def test_drafts_create_non_json_output(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
     _FakeDraftService.created = []
     _patch(monkeypatch, settings, _FakeDraftService)
 
@@ -125,8 +121,6 @@ def test_drafts_create_non_json_output(monkeypatch, tmp_path):
 
 def test_drafts_create_unconfirmed_exits(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
     _patch(monkeypatch, settings, _RaisingDraftService)
 
     r = CliRunner().invoke(app, ["drafts", "create", IDEA_ID, "--json"])
@@ -152,18 +146,17 @@ def _draft(draft_id="draft_fake1234", body=BODY, content_job_id=None) -> Draft:
     )
 
 
-def _seed_draft(store, draft_id="draft_fake1234", body=BODY, content_job_id=None) -> Draft:
+def _seed_draft(ws, draft_id="draft_fake1234", body=BODY, content_job_id=None) -> Draft:
     draft = _draft(draft_id=draft_id, body=body, content_job_id=content_job_id)
-    DraftRepository(store).upsert_draft(draft)
+    DraftRepository(ws).upsert_draft(draft)
     return draft
 
 
 def test_drafts_show_json_output(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    _seed_draft(store)
+    _seed_draft(ws)
 
     r = CliRunner().invoke(app, ["drafts", "show", "draft_fake1234", "--json"])
     assert r.exit_code == 0, r.output
@@ -174,10 +167,9 @@ def test_drafts_show_json_output(monkeypatch, tmp_path):
 
 def test_drafts_show_non_json_output(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    _seed_draft(store)
+    _seed_draft(ws)
 
     r = CliRunner().invoke(app, ["drafts", "show", "draft_fake1234"])
     assert r.exit_code == 0, r.output
@@ -187,8 +179,6 @@ def test_drafts_show_non_json_output(monkeypatch, tmp_path):
 
 def test_drafts_show_unknown_exits(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["drafts", "show", "draft_nope"])
@@ -220,11 +210,10 @@ def _patch_revise(monkeypatch, settings, rewrite=_FakeRewrite.rewrite):
 
 def test_drafts_revise_updates_body(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _FakeRewrite.called = []
     _patch_revise(monkeypatch, settings)
-    _seed_draft(store)
+    _seed_draft(ws)
 
     r = CliRunner().invoke(
         app, ["drafts", "revise", "draft_fake1234", "--instruction", "make it shorter", "--json"]
@@ -234,13 +223,11 @@ def test_drafts_revise_updates_body(monkeypatch, tmp_path):
     assert payload["draft_id"] == "draft_fake1234"
     assert payload["body"] == "REVISED: " + BODY
     assert _FakeRewrite.called == [{"instruction": "make it shorter", "job_id": None}]
-    assert DraftRepository(store).get_draft("draft_fake1234").body == "REVISED: " + BODY
+    assert DraftRepository(ws).get_draft("draft_fake1234").body == "REVISED: " + BODY
 
 
 def test_drafts_revise_unknown_exits(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
     _patch_revise(monkeypatch, settings)
 
     r = CliRunner().invoke(
@@ -252,10 +239,9 @@ def test_drafts_revise_unknown_exits(monkeypatch, tmp_path):
 
 def test_drafts_revise_rewrite_error_exits(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_revise(monkeypatch, settings, _raising_rewrite)
-    _seed_draft(store)
+    _seed_draft(ws)
 
     r = CliRunner().invoke(
         app, ["drafts", "revise", "draft_fake1234", "--instruction", "make it shorter", "--json"]

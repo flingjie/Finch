@@ -1,6 +1,6 @@
 """端到端：连接主循环（发现 → 提案 → 批准 → 记录 → 对话 → 观点 → 指标）。
 
-用 fakes 与临时 SQLite 把各领域服务串起来，验证三个核心不变量：
+用 fakes 与临时文件工作区把各领域服务串起来，验证三个核心不变量：
 1. Proposal（建议）、InteractionRecord（已发生互动）、FeedbackSnapshot（结果）是三个
    不同事实；
 2. 未批准内容无法进入执行态（record 要求 APPROVED）；
@@ -25,7 +25,6 @@ from finch.ideas.fragment_service import FragmentService, IdeaDraftOutput
 from finch.ideas.models import IdeaBoundaries
 from finch.ideas.service import IdeaService
 from finch.peers.models import PeerProfile, PlatformIdentity
-from finch.storage.database import Store
 from finch.storage.repositories import (
     ContentJobRepository,
     ConversationThreadRepository,
@@ -33,6 +32,7 @@ from finch.storage.repositories import (
     InteractionRepository,
     PeerRepository,
 )
+from finch.storage.workspace import Workspace
 
 _NOW = datetime(2026, 9, 8, tzinfo=UTC)
 
@@ -79,14 +79,13 @@ def _idea_output() -> IdeaDraftOutput:
 
 
 def test_connection_loop_three_facts_and_traceability(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
+    ws = Workspace(tmp_path)
 
     # 1) 发现 → 提案落库。
     proposal = _proposal()
-    interactions = InteractionRepository(store)
+    interactions = InteractionRepository(ws)
     interactions.upsert(proposal, run_id="run_1")
-    peers = PeerRepository(store)
+    peers = PeerRepository(ws)
     peers.upsert(
         PeerProfile(
             id="peer_alice",
@@ -96,7 +95,7 @@ def test_connection_loop_three_facts_and_traceability(tmp_path):
     )
 
     # 2) 未批准不可记录（未批准内容无法进入执行态）。
-    assert InteractionRepository(store).get(proposal.id).status is InteractionStatus.PROPOSED
+    assert InteractionRepository(ws).get(proposal.id).status is InteractionStatus.PROPOSED
 
     # 3) 批准 → 记录真实互动（三事实分离：Proposal 仍保留自己的状态，Record 是独立事实）。
     interactions.approve(proposal.id)
@@ -110,7 +109,7 @@ def test_connection_loop_three_facts_and_traceability(tmp_path):
         occurred_at=_NOW,
         outcome="published",
     )
-    records = InteractionRecordRepository(store)
+    records = InteractionRecordRepository(ws)
     records.upsert(record)
     # 同一 proposal 重复记录幂等。
     records.upsert(record)
@@ -119,7 +118,7 @@ def test_connection_loop_three_facts_and_traceability(tmp_path):
     # 4) 收到回复 → 形成 ConversationThread。
     thread = ConversationService().open_thread(peer_id="peer_alice", topic="agent reliability")
     thread = ConversationService().append_interaction(thread, record.id, occurred_at=_NOW)
-    threads = ConversationThreadRepository(store)
+    threads = ConversationThreadRepository(ws)
     threads.upsert(thread)
 
     # 5) 从对话提炼观点（可追溯到 thread + 原始互动）。
@@ -131,7 +130,7 @@ def test_connection_loop_three_facts_and_traceability(tmp_path):
     assert ("conversation", thread.id) in refs
     assert ("conversation", record.id) in refs
 
-    job = IdeaService(ContentJobRepository(store)).create_candidate(idea)
+    job = IdeaService(ContentJobRepository(ws)).create_candidate(idea)
     assert job.status.value == "proposed"  # 没有用户立场时保持 PROPOSED
     assert job.communication_goal == "summarize_practice"
 
@@ -141,7 +140,7 @@ def test_connection_loop_three_facts_and_traceability(tmp_path):
         interactions=records.list_all(),
         threads=threads.list_all(),
         snapshots=[],
-        jobs=ContentJobRepository(store).list_jobs(),
+        jobs=ContentJobRepository(ws).list_jobs(),
         now=_NOW,
     )
     assert metrics.ideas_from_conversations == 1

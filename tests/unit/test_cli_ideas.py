@@ -21,15 +21,15 @@ from finch.ideas.models import (
 )
 from finch.ideas.service import IdeaService
 from finch.settings import Paths, Settings
-from finch.storage.database import Store
 from finch.storage.repositories import ContentJobRepository
+from finch.storage.workspace import Workspace
 
 CORE_POINT = "make the orchestrator a deterministic graph"
 COMMIT_URL = "https://github.com/acme/proj/commit/" + "a" * 40
 
 
 def _settings(tmp_path, repositories):
-    return Settings(paths=Paths(db_path=tmp_path / "finch.db"), repositories=repositories)
+    return Settings(paths=Paths(var_dir=tmp_path), repositories=repositories)
 
 
 def _candidate() -> IdeaCandidate:
@@ -89,8 +89,7 @@ def _patch_cli(monkeypatch, settings, record):
 
 def test_ideas_commit_persists_and_outputs_json(monkeypatch, tmp_path):
     settings = _settings(tmp_path, ["acme/proj"])
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_cli(monkeypatch, settings, [])
 
     r = CliRunner().invoke(app, ["ideas", "commit", "--json"])
@@ -104,7 +103,7 @@ def test_ideas_commit_persists_and_outputs_json(monkeypatch, tmp_path):
     assert payload[0]["status"] == "proposed"
     assert payload[0]["generation_key"]
 
-    jobs = ContentJobRepository(store).list_jobs()
+    jobs = ContentJobRepository(ws).list_jobs()
     assert len(jobs) == 1
     assert jobs[0].origin == "commit"
     assert jobs[0].status.value == "proposed"
@@ -113,8 +112,6 @@ def test_ideas_commit_persists_and_outputs_json(monkeypatch, tmp_path):
 
 def test_ideas_commit_non_json_output(monkeypatch, tmp_path):
     settings = _settings(tmp_path, ["acme/proj"])
-    store = Store(settings.paths.db_path)
-    store.init()
     _patch_cli(monkeypatch, settings, [])
 
     r = CliRunner().invoke(app, ["ideas", "commit"])
@@ -132,8 +129,6 @@ def test_ideas_commit_non_json_output(monkeypatch, tmp_path):
 
 def test_ideas_commit_defaults_repo_from_settings(monkeypatch, tmp_path):
     settings = _settings(tmp_path, ["acme/proj"])
-    store = Store(settings.paths.db_path)
-    store.init()
     record = []
     _patch_cli(monkeypatch, settings, record)
 
@@ -146,14 +141,13 @@ def test_ideas_commit_defaults_repo_from_settings(monkeypatch, tmp_path):
 
 def test_ideas_commit_requires_repo_when_unconfigured(monkeypatch, tmp_path):
     settings = _settings(tmp_path, [])
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_cli(monkeypatch, settings, [])
 
     r = CliRunner().invoke(app, ["ideas", "commit", "--json"])
     assert r.exit_code == 1
     assert "--repo" in r.output
-    assert ContentJobRepository(store).list_jobs() == []
+    assert ContentJobRepository(ws).list_jobs() == []
 
 
 # ---- finch ideas list / show / confirm / revise-position / skip ----
@@ -162,11 +156,11 @@ CORE_POINT_2 = "another idea worth writing"
 
 
 def _paths_settings(tmp_path):
-    return Settings(paths=Paths(db_path=tmp_path / "finch.db"))
+    return Settings(paths=Paths(var_dir=tmp_path))
 
 
-def _seed_candidate(store, core_point=CORE_POINT) -> ContentJob:
-    return IdeaService(ContentJobRepository(store)).create_candidate(
+def _seed_candidate(ws, core_point=CORE_POINT) -> ContentJob:
+    return IdeaService(ContentJobRepository(ws)).create_candidate(
         _make_candidate(core_point)
     )
 
@@ -212,11 +206,10 @@ def _patch_settings(monkeypatch, settings):
 
 def test_ideas_list_json_output(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
-    j1 = _seed_candidate(store, CORE_POINT)
-    j2 = _seed_candidate(store, CORE_POINT_2)
+    j1 = _seed_candidate(ws, CORE_POINT)
+    j2 = _seed_candidate(ws, CORE_POINT_2)
 
     r = CliRunner().invoke(app, ["ideas", "list", "--json"])
     assert r.exit_code == 0, r.output
@@ -229,10 +222,9 @@ def test_ideas_list_json_output(monkeypatch, tmp_path):
 
 def test_ideas_list_non_json_output(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
-    job = _seed_candidate(store)
+    job = _seed_candidate(ws)
 
     r = CliRunner().invoke(app, ["ideas", "list"])
     assert r.exit_code == 0, r.output
@@ -249,10 +241,9 @@ def test_ideas_list_non_json_output(monkeypatch, tmp_path):
 
 def test_ideas_show_json_dumps_candidate(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
-    job = _seed_candidate(store)
+    job = _seed_candidate(ws)
 
     r = CliRunner().invoke(app, ["ideas", "show", job.id, "--json"])
     assert r.exit_code == 0, r.output
@@ -263,11 +254,10 @@ def test_ideas_show_json_dumps_candidate(monkeypatch, tmp_path):
 
 def test_ideas_show_json_dumps_job_when_no_candidate(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
     job = _manual_job()
-    ContentJobRepository(store).upsert_job(job)
+    ContentJobRepository(ws).upsert_job(job)
 
     r = CliRunner().invoke(app, ["ideas", "show", job.id, "--json"])
     assert r.exit_code == 0, r.output
@@ -279,10 +269,9 @@ def test_ideas_show_json_dumps_job_when_no_candidate(monkeypatch, tmp_path):
 
 def test_ideas_show_non_json_output(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
-    job = _seed_candidate(store)
+    job = _seed_candidate(ws)
 
     r = CliRunner().invoke(app, ["ideas", "show", job.id])
     assert r.exit_code == 0, r.output
@@ -294,8 +283,6 @@ def test_ideas_show_non_json_output(monkeypatch, tmp_path):
 
 def test_ideas_show_unknown_exits(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
     _patch_settings(monkeypatch, settings)
 
     r = CliRunner().invoke(app, ["ideas", "show", "idea_nope", "--json"])
@@ -305,25 +292,23 @@ def test_ideas_show_unknown_exits(monkeypatch, tmp_path):
 
 def test_ideas_confirm_transitions(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
-    job = _seed_candidate(store)
+    job = _seed_candidate(ws)
 
     r = CliRunner().invoke(app, ["ideas", "confirm", job.id, "--json"])
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert payload == {"id": job.id, "status": "confirmed"}
-    assert ContentJobRepository(store).get_job(job.id).status == ContentJobStatus.CONFIRMED
+    assert ContentJobRepository(ws).get_job(job.id).status == ContentJobStatus.CONFIRMED
 
 
 def test_ideas_confirm_illegal_transition_exits(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
     job = _manual_job(status=ContentJobStatus.SKIPPED)
-    ContentJobRepository(store).upsert_job(job)
+    ContentJobRepository(ws).upsert_job(job)
 
     r = CliRunner().invoke(app, ["ideas", "confirm", job.id, "--json"])
     assert r.exit_code == 1
@@ -332,10 +317,9 @@ def test_ideas_confirm_illegal_transition_exits(monkeypatch, tmp_path):
 
 def test_ideas_revise_position_updates(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
-    job = _seed_candidate(store)
+    job = _seed_candidate(ws)
     position_file = tmp_path / "position.yaml"
     position_file.write_text(
         "claim: new claim\ndecision: new decision\ntradeoff: new tradeoff\nstatus: proposed\n"
@@ -347,7 +331,7 @@ def test_ideas_revise_position_updates(monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert payload == {"id": job.id, "status": "proposed"}
-    updated = ContentJobRepository(store).get_job(job.id)
+    updated = ContentJobRepository(ws).get_job(job.id)
     assert updated.author_position.claim == "new claim"
     assert updated.author_position.decision == "new decision"
     assert updated.author_position.tradeoff == "new tradeoff"
@@ -355,10 +339,9 @@ def test_ideas_revise_position_updates(monkeypatch, tmp_path):
 
 def test_ideas_revise_position_missing_file_exits(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
-    job = _seed_candidate(store)
+    job = _seed_candidate(ws)
 
     r = CliRunner().invoke(
         app, ["ideas", "revise-position", job.id, "--file", str(tmp_path / "nope.yaml")]
@@ -369,10 +352,9 @@ def test_ideas_revise_position_missing_file_exits(monkeypatch, tmp_path):
 
 def test_ideas_skip_records_reason(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
-    job = _seed_candidate(store)
+    job = _seed_candidate(ws)
 
     r = CliRunner().invoke(app, ["ideas", "skip", job.id, "--reason", "not_now", "--json"])
     assert r.exit_code == 0, r.output
@@ -380,26 +362,19 @@ def test_ideas_skip_records_reason(monkeypatch, tmp_path):
     assert payload["id"] == job.id
     assert payload["status"] == "skipped"
     assert payload["reason"] == "not_now"
-    updated = ContentJobRepository(store).get_job(job.id)
+    updated = ContentJobRepository(ws).get_job(job.id)
     assert updated.status == ContentJobStatus.SKIPPED
     assert updated.reject_reason == "not_now"
 
 
 def test_ideas_list_surfaces_legacy_row_warning(monkeypatch, tmp_path):
-    from sqlmodel import Session
-
-    from finch.storage.repositories import ContentJobRecord
-
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
-    _seed_candidate(store)
-    with Session(store.engine) as session:
-        session.merge(
-            ContentJobRecord(id="job_tp1", payload_json='{"id":"job_tp1","status":"ready"}')
-        )
-        session.commit()
+    _seed_candidate(ws)
+    # 模拟旧版行：payload 含不在枚举里的 status，无法解析为当前 ContentJob。
+    legacy_path = ws.dir("ideas") / "job_tp1.yaml"
+    legacy_path.write_text("id: job_tp1\nstatus: ready\n", encoding="utf-8")
 
     r = CliRunner().invoke(app, ["ideas", "list"])
     assert r.exit_code == 0, r.output
@@ -410,11 +385,10 @@ def test_ideas_list_surfaces_legacy_row_warning(monkeypatch, tmp_path):
 
 def test_ideas_skip_illegal_transition_exits(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
     job = _manual_job(status=ContentJobStatus.DRAFTED)
-    ContentJobRepository(store).upsert_job(job)
+    ContentJobRepository(ws).upsert_job(job)
 
     r = CliRunner().invoke(app, ["ideas", "skip", job.id, "--reason", "not_now"])
     assert r.exit_code == 1
@@ -422,7 +396,6 @@ def test_ideas_skip_illegal_transition_exits(monkeypatch, tmp_path):
 
 
 # ---- finch ideas create ----
-
 
 class _FakeFragmentService:
     def __init__(self, runner):
@@ -453,28 +426,27 @@ def test_ideas_create_requires_exactly_one_source(monkeypatch, tmp_path):
 
 def test_ideas_create_text_persists(monkeypatch, tmp_path):
     settings = _settings(tmp_path, [])
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_create_cli(monkeypatch, settings)
     r = CliRunner().invoke(app, ["ideas", "create", "--text", "hello", "--json"])
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert payload["status"] == "proposed"
     # _FakeFragmentService 复用 _candidate()（origin="commit"），仅验证落库链路。
-    assert ContentJobRepository(store).list_jobs()[0].core_message == CORE_POINT
+    assert ContentJobRepository(ws).list_jobs()[0].core_message == CORE_POINT
 
 
 class _FakeConversationThreadRepo:
-    def __init__(self, store):
-        self.store = store
+    def __init__(self, ws):
+        self.ws = ws
 
     def get(self, thread_id):
         return ConversationThread(id=thread_id, peer_id="peer_abc", topic="agent evals")
 
 
 class _MissingThreadRepo:
-    def __init__(self, store):
-        self.store = store
+    def __init__(self, ws):
+        self.ws = ws
 
     def get(self, thread_id):
         return None
@@ -482,24 +454,22 @@ class _MissingThreadRepo:
 
 def test_ideas_create_conversation_persists(monkeypatch, tmp_path):
     settings = _settings(tmp_path, [])
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_create_cli(monkeypatch, settings)
     monkeypatch.setattr(cli, "ConversationThreadRepository", _FakeConversationThreadRepo)
     r = CliRunner().invoke(app, ["ideas", "create", "--conversation", "thread_1", "--json"])
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert payload["status"] == "proposed"
-    assert ContentJobRepository(store).list_jobs()[0].core_message == CORE_POINT
+    assert ContentJobRepository(ws).list_jobs()[0].core_message == CORE_POINT
 
 
 def test_ideas_create_conversation_missing_rejected(monkeypatch, tmp_path):
     settings = _settings(tmp_path, [])
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
     _patch_create_cli(monkeypatch, settings)
     monkeypatch.setattr(cli, "ConversationThreadRepository", _MissingThreadRepo)
     r = CliRunner().invoke(app, ["ideas", "create", "--conversation", "nope", "--json"])
     assert r.exit_code == 1
     assert "conversation not found" in r.output
-    assert ContentJobRepository(store).list_jobs() == []
+    assert ContentJobRepository(ws).list_jobs() == []

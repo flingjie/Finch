@@ -1,9 +1,8 @@
-"""InteractionRepository 单元测试（Phase 5，内存/临时 sqlite，无网络）。"""
+"""InteractionRepository 单元测试（Phase 5，内存/临时文件工作区，无网络）。"""
 
 from datetime import datetime
 
 import pytest
-from sqlmodel import Session, select
 
 from finch.engagement.models import (
     ConversationScore,
@@ -12,8 +11,8 @@ from finch.engagement.models import (
     InteractionProposal,
     InteractionStatus,
 )
-from finch.storage.database import Store
-from finch.storage.repositories import InteractionProposalRecord, InteractionRepository
+from finch.storage.repositories import InteractionRepository
+from finch.storage.workspace import Workspace
 
 
 def _candidate(
@@ -52,20 +51,13 @@ def _candidate(
 
 
 def _repo(tmp_path) -> InteractionRepository:
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    return InteractionRepository(store)
-
-
-def _row_count(store: Store) -> int:
-    with Session(store.engine) as session:
-        return len(list(session.exec(select(InteractionProposalRecord))))
+    ws = Workspace(tmp_path)
+    return InteractionRepository(ws)
 
 
 def test_upsert_get_roundtrip(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = InteractionRepository(store)
+    ws = Workspace(tmp_path)
+    repo = InteractionRepository(ws)
     candidate = _candidate()
     repo.upsert(candidate, run_id="run-1")
 
@@ -79,14 +71,13 @@ def test_upsert_get_roundtrip(tmp_path):
 
 
 def test_upsert_idempotent_overwrites_same_id(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = InteractionRepository(store)
+    ws = Workspace(tmp_path)
+    repo = InteractionRepository(ws)
     candidate = _candidate()
     repo.upsert(candidate, run_id="run-1")
     repo.upsert(candidate.model_copy(update={"draft": "new draft"}), run_id="run-2")
 
-    assert _row_count(store) == 1
+    assert len(repo.list_all()) == 1
     assert repo.get(candidate.id).draft == "new draft"
 
 
@@ -140,9 +131,8 @@ def test_edit_saves_revision_without_approving(tmp_path):
 
 
 def test_record_execution_idempotent(tmp_path):
-    store = Store(tmp_path / "db.sqlite")
-    store.init()
-    repo = InteractionRepository(store)
+    ws = Workspace(tmp_path)
+    repo = InteractionRepository(ws)
     candidate = _candidate()
     repo.upsert(candidate, run_id="run-1")
     repo.approve(candidate.id)
@@ -152,7 +142,7 @@ def test_record_execution_idempotent(tmp_path):
 
     repo.record_execution(candidate.id, "approved", "sent ok")  # 幂等：不重复执行
     assert repo.get(candidate.id).status is InteractionStatus.EXECUTED
-    assert _row_count(store) == 1
+    assert len(repo.list_all()) == 1
 
 
 def test_missing_candidate_raises_key_error(tmp_path):

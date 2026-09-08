@@ -43,7 +43,6 @@ from .llm.openai_compatible import create_runner
 from .practice.service import PracticeService
 from .reddit.opencli_client import RedditOpenCliClient
 from .settings import Settings, load_settings
-from .storage.database import Store
 from .storage.repositories import (
     ContentJobRepository,
     ConversationThreadRepository,
@@ -59,6 +58,7 @@ from .storage.repositories import (
     PracticeSessionRepository,
     PublicationIntentRepository,
 )
+from .storage.workspace import Workspace
 from .style.models import StyleReport
 from .style.service import WritingStyleService
 from .style.source_resolver import SourceResolver
@@ -221,27 +221,12 @@ def _since_iso(since: str | None) -> str | None:
 
 
 @app.command()
-def init(
-    prune: bool = typer.Option(False, "--prune", help="删除数据库里已废弃模型遗留的孤儿表"),
-) -> None:
-    """初始化 var/ 目录与数据库 schema；--prune 时额外清理 schema 漂移。"""
+def init() -> None:
+    """初始化工作区目录树（幂等）。"""
     settings = load_settings()
-    from .storage.database import Store
-
-    store = Store(settings.paths.db_path)
-    store.init()
-    if prune:
-        dropped = store.prune_orphan_tables()
-        typer.echo(
-            f"pruned orphan tables: {', '.join(dropped)}" if dropped
-            else "no orphan tables to prune"
-        )
-        legacy = store.prune_legacy_content_jobs()
-        typer.echo(
-            f"pruned legacy content jobs: {', '.join(legacy)}" if legacy
-            else "no legacy content jobs to prune"
-        )
-    typer.echo(f"initialized: {settings.paths.db_path}")
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    typer.echo(f"initialized: {settings.paths.var_dir}")
 
 
 @app.command()
@@ -296,8 +281,8 @@ def ideas_commit(
 ) -> None:
     """从最近 Commit 提炼 idea 候选并幂等落库（不生成草稿）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     gh = GhClient()
     if repo is None:
         if not settings.repositories:
@@ -314,7 +299,7 @@ def ideas_commit(
         cache_path=settings.paths.cache_dir / "extraction_cache.json",
     )
     ideas = CommitService(reader, extractor).to_ideas(details, repo=repo)
-    idea_service = IdeaService(ContentJobRepository(store))
+    idea_service = IdeaService(ContentJobRepository(ws))
     jobs = [idea_service.create_candidate(idea) for idea in ideas]
     if as_json:
         payload = [
@@ -344,21 +329,21 @@ def ideas_create(
         typer.echo("exactly one of --text / --conversation is required")
         raise typer.Exit(code=1)
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     service = FragmentService(runner)
     try:
         if text is not None:
             idea = service.from_text(text)
         else:
-            thread = ConversationThreadRepository(store).get(conversation)
+            thread = ConversationThreadRepository(ws).get(conversation)
             if thread is None:
                 typer.echo(f"conversation not found: {conversation}")
                 raise typer.Exit(code=1)
-            interactions = InteractionRecordRepository(store).list_by_peer(thread.peer_id)
+            interactions = InteractionRecordRepository(ws).list_by_peer(thread.peer_id)
             idea = service.from_thread(thread, interactions=interactions)
-        job = IdeaService(ContentJobRepository(store)).create_candidate(idea)
+        job = IdeaService(ContentJobRepository(ws)).create_candidate(idea)
     except (RuntimeError, StructuredOutputError, ValueError) as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
@@ -375,9 +360,9 @@ def ideas_create(
 def ideas_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
     """列出全部 idea 候选，一行一个；旧行在系统警告中提示。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    repo = ContentJobRepository(store)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = ContentJobRepository(ws)
     jobs = sorted(repo.list_jobs(), key=lambda j: j.id)
     if as_json:
         payload = [
@@ -403,9 +388,9 @@ def ideas_show(
 ) -> None:
     """展示单个 idea 候选（--json 输出完整记录）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    job = ContentJobRepository(store).get_job(idea_id)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    job = ContentJobRepository(ws).get_job(idea_id)
     if job is None:
         typer.echo(f"idea not found: {idea_id}")
         raise typer.Exit(code=1)
@@ -422,9 +407,9 @@ def ideas_confirm(
 ) -> None:
     """确认立场：proposed → confirmed。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    service = IdeaService(ContentJobRepository(store))
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    service = IdeaService(ContentJobRepository(ws))
     try:
         job = service.confirm_position(idea_id)
     except (KeyError, ValueError) as exc:
@@ -447,8 +432,8 @@ def ideas_revise_position(
 ) -> None:
     """从 YAML 读取作者立场并更新（不改状态）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     try:
         position = AuthorPosition.model_validate(
             yaml.safe_load(Path(position_file).read_text())
@@ -456,7 +441,7 @@ def ideas_revise_position(
     except (OSError, yaml.YAMLError, ValueError) as exc:
         typer.echo(f"invalid position file: {exc}")
         raise typer.Exit(code=1) from exc
-    service = IdeaService(ContentJobRepository(store))
+    service = IdeaService(ContentJobRepository(ws))
     try:
         job = service.revise_position(idea_id, position)
     except (KeyError, ValueError) as exc:
@@ -478,9 +463,9 @@ def ideas_skip(
 ) -> None:
     """跳过 idea：proposed/confirmed → skipped。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    service = IdeaService(ContentJobRepository(store))
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    service = IdeaService(ContentJobRepository(ws))
     try:
         job = service.skip(idea_id, reason)
     except (KeyError, ValueError) as exc:
@@ -546,13 +531,13 @@ def drafts_create(
 ) -> None:
     """从已确认 idea 生成草稿并记录质检报告（不自动发布）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     service = DraftService(
-        DraftRepository(store),
-        CriticReportRepository(store),
-        ContentJobRepository(store),
+        DraftRepository(ws),
+        CriticReportRepository(ws),
+        ContentJobRepository(ws),
         runner,
         max_rewrite_rounds=settings.quality_gates.max_rewrite_rounds,
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
@@ -587,9 +572,9 @@ def drafts_show(
 ) -> None:
     """展示单个草稿。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    draft = DraftRepository(store).get_draft(draft_id)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    draft = DraftRepository(ws).get_draft(draft_id)
     if draft is None:
         typer.echo(f"draft not found: {draft_id}")
         raise typer.Exit(code=1)
@@ -607,17 +592,17 @@ def drafts_revise(
 ) -> None:
     """按自然语言指令重写草稿正文并落库（不自动发布）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    draft_repo = DraftRepository(store)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    draft_repo = DraftRepository(ws)
     draft = draft_repo.get_draft(draft_id)
     if draft is None:
         typer.echo(f"draft not found: {draft_id}")
         raise typer.Exit(code=1)
     job = None
     if draft.content_job_id:
-        job = ContentJobRepository(store).get_job(draft.content_job_id)
-    cards_by_id = {c.id: c for c in EvidenceRepository(store).list_cards()}
+        job = ContentJobRepository(ws).get_job(draft.content_job_id)
+    cards_by_id = {c.id: c for c in EvidenceRepository(ws).list_cards()}
     runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
     try:
         revised = rewrite_with_instruction(runner, draft, instruction, cards_by_id, job)
@@ -694,9 +679,9 @@ def learn(
 ) -> None:
     """记录一条已发布草稿的反馈（URL / 互动指标 / 结果评估 / 学习），供 weekly 汇总。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    if DraftRepository(store).get_draft(draft_id) is None:
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    if DraftRepository(ws).get_draft(draft_id) is None:
         typer.echo(f"draft not found: {draft_id}")
         raise typer.Exit(code=1)
 
@@ -727,7 +712,7 @@ def learn(
         outcome=parsed_outcome,
         learning=learning,
     )
-    FeedbackRepository(store).save_feedback(feedback)
+    FeedbackRepository(ws).save_feedback(feedback)
     if as_json:
         typer.echo(feedback.model_dump_json(indent=2))
     else:
@@ -738,29 +723,29 @@ def learn(
 def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
     """周复盘：关系质量指标与周报指标由代码算，LLM 定性解读（五个关系问题）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     since = datetime.now(UTC) - timedelta(days=7)
     report = weekly_analysis(
-        DraftRepository(store),
-        DecisionRecordRepository(store),
-        FeedbackRepository(store),
-        ContentJobRepository(store),
-        CriticReportRepository(store),
+        DraftRepository(ws),
+        DecisionRecordRepository(ws),
+        FeedbackRepository(ws),
+        ContentJobRepository(ws),
+        CriticReportRepository(ws),
         since=since,
     )
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     # 反馈按 recorded_at 对齐 7 天窗口（与 weekly_analysis 的 since 一致），避免复盘
     # 输入随库无界膨胀。
     window_feedbacks = [
-        fb for fb in FeedbackRepository(store).list_feedbacks() if fb.recorded_at >= since
+        fb for fb in FeedbackRepository(ws).list_feedbacks() if fb.recorded_at >= since
     ]
     rel_metrics = compute_relationship_metrics(
-        peers=PeerRepository(store).list_all(),
-        interactions=InteractionRecordRepository(store).list_all(),
-        threads=ConversationThreadRepository(store).list_all(),
-        snapshots=FeedbackSnapshotRepository(store).list_all(),
-        jobs=ContentJobRepository(store).list_jobs(),
+        peers=PeerRepository(ws).list_all(),
+        interactions=InteractionRecordRepository(ws).list_all(),
+        threads=ConversationThreadRepository(ws).list_all(),
+        snapshots=FeedbackSnapshotRepository(ws).list_all(),
+        jobs=ContentJobRepository(ws).list_jobs(),
         now=datetime.now(UTC),
     )
     try:
@@ -768,7 +753,7 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
             report,
             relationship_metrics=rel_metrics,
             feedbacks=window_feedbacks,
-            threads=ConversationThreadRepository(store).list_all(),
+            threads=ConversationThreadRepository(ws).list_all(),
             voice_profile=load_voice_profile(settings.paths.voice_profile_path),
         )
     except (RuntimeError, StructuredOutputError) as exc:
@@ -822,13 +807,13 @@ def voice_approve_example(
         example_id = f"text_{hashlib.sha256(text.encode('utf-8')).hexdigest()[:8]}"
         example = ApprovedExample(id=example_id, text=text, source="user_text")
     else:
-        store = Store(settings.paths.db_path)
-        store.init()
-        draft = DraftRepository(store).get_draft(draft_id)
+        ws = Workspace(settings.paths.var_dir)
+        ws.ensure()
+        draft = DraftRepository(ws).get_draft(draft_id)
         if draft is None:
             typer.echo(f"draft not found: {draft_id}")
             raise typer.Exit(code=1)
-        decisions = {d.draft_id: d for d in DecisionRecordRepository(store).list()}
+        decisions = {d.draft_id: d for d in DecisionRecordRepository(ws).list()}
         decision = decisions.get(draft_id)
         if decision is None or decision.action != DecisionAction.ACCEPT:
             typer.echo(f"not accepted: {draft_id}")
@@ -898,9 +883,9 @@ def voice_reject_example(
 ) -> None:
     """把草稿追加为 rejected example（按 id 去重）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    draft = DraftRepository(store).get_draft(draft_id)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    draft = DraftRepository(ws).get_draft(draft_id)
     if draft is None:
         typer.echo(f"draft not found: {draft_id}")
         raise typer.Exit(code=1)
@@ -917,13 +902,13 @@ def voice_reject_example(
     typer.echo(f"rejected example: {draft_id}")
 
 
-def _decision_service(store: Store) -> InboxDecisionService:
+def _decision_service(ws: Workspace) -> InboxDecisionService:
     return InboxDecisionService(
-        jobs=ContentJobRepository(store),
-        drafts=DraftRepository(store),
-        decisions=DecisionRecordRepository(store),
-        publication_intents=PublicationIntentRepository(store),
-        interactions=InteractionRepository(store),
+        jobs=ContentJobRepository(ws),
+        drafts=DraftRepository(ws),
+        decisions=DecisionRecordRepository(ws),
+        publication_intents=PublicationIntentRepository(ws),
+        interactions=InteractionRepository(ws),
     )
 
 
@@ -945,14 +930,14 @@ def _draft_job_id(drafts: DraftRepository, draft_id: str) -> str:
 def review_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
     """列出待决策的原创草稿（未被 accept/skip 决策覆盖，按 next 的确定性顺序）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     items = list_items(
-        jobs=ContentJobRepository(store),
-        drafts=DraftRepository(store),
-        decisions=DecisionRecordRepository(store),
-        interactions=InteractionRepository(store),
-        cards=EvidenceRepository(store),
+        jobs=ContentJobRepository(ws),
+        drafts=DraftRepository(ws),
+        decisions=DecisionRecordRepository(ws),
+        interactions=InteractionRepository(ws),
+        cards=EvidenceRepository(ws),
     )
     original = [i for i in items if i.track == InboxTrack.ORIGINAL]
     if as_json:
@@ -984,13 +969,13 @@ def review_show(
 ) -> None:
     """展示草稿正文与（若存在）质检报告。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    draft = DraftRepository(store).get_draft(draft_id)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    draft = DraftRepository(ws).get_draft(draft_id)
     if draft is None:
         typer.echo(f"draft not found: {draft_id}")
         raise typer.Exit(code=1)
-    reports = CriticReportRepository(store).list_reports(draft_id)
+    reports = CriticReportRepository(ws).list_reports(draft_id)
     if as_json:
         typer.echo(
             json.dumps(
@@ -1022,16 +1007,16 @@ def review_approve(
 ) -> None:
     """采用草稿（记录决策与发布意图，不自动发布）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    drafts = DraftRepository(store)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    drafts = DraftRepository(ws)
     try:
         job_id = _draft_job_id(drafts, draft_id)
     except KeyError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
     try:
-        result = _decision_service(store).accept(job_id)
+        result = _decision_service(ws).accept(job_id)
     except (KeyError, ValueError) as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
@@ -1049,18 +1034,18 @@ def review_revise(
 ) -> None:
     """按自然语言指令重写草稿正文（经 critic 校验，不自动发布）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    drafts = DraftRepository(store)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    drafts = DraftRepository(ws)
     try:
         job_id = _draft_job_id(drafts, draft_id)
     except KeyError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
-    cards_by_id = {c.id: c for c in EvidenceRepository(store).list_cards()}
+    cards_by_id = {c.id: c for c in EvidenceRepository(ws).list_cards()}
     runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
     try:
-        result = _decision_service(store).revise(
+        result = _decision_service(ws).revise(
             job_id, instruction, runner=runner, cards_by_id=cards_by_id
         )
     except (RuntimeError, StructuredOutputError) as exc:
@@ -1083,16 +1068,16 @@ def review_skip(
 ) -> None:
     """跳过草稿并记录理由（不写）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    drafts = DraftRepository(store)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    drafts = DraftRepository(ws)
     try:
         job_id = _draft_job_id(drafts, draft_id)
     except KeyError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
     try:
-        result = _decision_service(store).skip(job_id, reason)
+        result = _decision_service(ws).skip(job_id, reason)
     except (KeyError, ValueError) as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
@@ -1114,10 +1099,10 @@ def _run_discovery(settings: Settings) -> EngagementRunResult:
     )
 
 
-def _persist_discovery(store: Store, result: EngagementRunResult) -> None:
+def _persist_discovery(ws: Workspace, result: EngagementRunResult) -> None:
     """把发现结果的同行与提案落库（只读流程的落库，供 peers show / connect approve 进入）。"""
-    peers = PeerRepository(store)
-    interactions = InteractionRepository(store)
+    peers = PeerRepository(ws)
+    interactions = InteractionRepository(ws)
     for ranked in result.peers:
         peers.upsert(ranked.profile)
     for candidate in result.candidates:
@@ -1161,18 +1146,18 @@ def _render_daily(needs_follow_up, peers, contributions, idea_candidates) -> str
 def connect_daily(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
     """连接主循环每日入口：需要继续的对话 → 最值得连接的同行 → 可贡献内容 → 观点候选。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     result = _run_discovery(settings)
-    _persist_discovery(store, result)
+    _persist_discovery(ws, result)
 
     now = datetime.now(UTC)
-    threads = ConversationThreadRepository(store).list_all()
+    threads = ConversationThreadRepository(ws).list_all()
     needs_follow_up = [
         t for t in threads if ConversationService().needs_follow_up(t, now=now)
     ]
     idea_candidates = [
-        j for j in ContentJobRepository(store).list_jobs()
+        j for j in ContentJobRepository(ws).list_jobs()
         if j.status == ContentJobStatus.PROPOSED
     ]
 
@@ -1201,10 +1186,10 @@ def connect_prepare(
 ) -> None:
     """为发现结果准备互动提案并落库（只读发现 + 落库，不做审批/执行）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     result = _run_discovery(settings)
-    _persist_discovery(store, result)
+    _persist_discovery(ws, result)
     if as_json:
         typer.echo(json.dumps(
             [c.model_dump(mode="json") for c in result.candidates],
@@ -1223,10 +1208,10 @@ def connect_prepare(
 def connect_approve(proposal_id: str = typer.Argument(..., help="proposal id")) -> None:
     """批准提案（PROPOSED→APPROVED，幂等；批准只创建发布意图，不等于已发布）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     try:
-        InteractionRepository(store).approve(proposal_id)
+        InteractionRepository(ws).approve(proposal_id)
     except KeyError:
         typer.echo(f"proposal not found: {proposal_id}")
         raise typer.Exit(code=1) from None
@@ -1240,10 +1225,10 @@ def connect_reject(
 ) -> None:
     """拒绝提案并记录理由（→ REJECTED）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     try:
-        InteractionRepository(store).reject(proposal_id, reason)
+        InteractionRepository(ws).reject(proposal_id, reason)
     except KeyError:
         typer.echo(f"proposal not found: {proposal_id}")
         raise typer.Exit(code=1) from None
@@ -1257,9 +1242,9 @@ def connect_edit(
 ) -> None:
     """保存人工修订草稿到 revised_draft（不自动批准、不改变发布权限）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    repo = InteractionRepository(store)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = InteractionRepository(ws)
     if repo.get(proposal_id) is None:
         typer.echo(f"proposal not found: {proposal_id}")
         raise typer.Exit(code=1)
@@ -1280,9 +1265,9 @@ def connect_record(
 ) -> None:
     """记录一次真实互动为 InteractionRecord（需先批准；同一 proposal 幂等，不重复计两次）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    proposal = InteractionRepository(store).get(proposal_id)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    proposal = InteractionRepository(ws).get(proposal_id)
     if proposal is None:
         typer.echo(f"proposal not found: {proposal_id}")
         raise typer.Exit(code=1)
@@ -1299,7 +1284,7 @@ def connect_record(
         occurred_at=datetime.now(UTC),
         outcome="published",
     )
-    InteractionRecordRepository(store).upsert(record)
+    InteractionRecordRepository(ws).upsert(record)
     if as_json:
         typer.echo(record.model_dump_json(indent=2))
     else:
@@ -1310,9 +1295,9 @@ def connect_record(
 def peers_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
     """列出全部同行档案（按 peer id 稳定排序）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    peers = PeerRepository(store).list_all()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    peers = PeerRepository(ws).list_all()
     if as_json:
         typer.echo(json.dumps(
             [p.model_dump(mode="json") for p in peers], ensure_ascii=False, indent=2
@@ -1334,9 +1319,9 @@ def peers_show(
 ) -> None:
     """展示同行档案：身份、共同主题、互动历史与下一步。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    peer = PeerRepository(store).get(peer_id)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    peer = PeerRepository(ws).get(peer_id)
     if peer is None:
         typer.echo(f"peer not found: {peer_id}")
         raise typer.Exit(code=1)
@@ -1344,11 +1329,11 @@ def peers_show(
         payload = peer.model_dump(mode="json")
         payload["interactions"] = [
             r.model_dump(mode="json")
-            for r in InteractionRecordRepository(store).list_by_peer(peer_id)
+            for r in InteractionRecordRepository(ws).list_by_peer(peer_id)
         ]
         payload["threads"] = [
             t.model_dump(mode="json")
-            for t in ConversationThreadRepository(store).list_by_peer(peer_id)
+            for t in ConversationThreadRepository(ws).list_by_peer(peer_id)
         ]
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
@@ -1368,9 +1353,9 @@ def conversations_list(
 ) -> None:
     """列出对话线索（可只列需要跟进的）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    threads = ConversationThreadRepository(store).list_all()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    threads = ConversationThreadRepository(ws).list_all()
     if needs_follow_up:
         now = datetime.now(UTC)
         threads = [t for t in threads if ConversationService().needs_follow_up(t, now=now)]
@@ -1394,9 +1379,9 @@ def conversations_show(
 ) -> None:
     """展示对话线索全文：open questions / agreements / disagreements / experiments。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    thread = ConversationThreadRepository(store).get(conversation_id)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    thread = ConversationThreadRepository(ws).get(conversation_id)
     if thread is None:
         typer.echo(f"conversation not found: {conversation_id}")
         raise typer.Exit(code=1)
@@ -1421,9 +1406,9 @@ def conversations_follow_up(
 ) -> None:
     """恢复对话上下文并提出下一步（确定性恢复；语义建议由 conversation-follow-up 补充）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    thread = ConversationThreadRepository(store).get(conversation_id)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    thread = ConversationThreadRepository(ws).get(conversation_id)
     if thread is None:
         typer.echo(f"conversation not found: {conversation_id}")
         raise typer.Exit(code=1)
@@ -1454,10 +1439,10 @@ def practice_start(
 ) -> None:
     """开始一次表达练习（可选关联 idea + 首稿）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
-    session = PracticeService(PracticeSessionRepository(store), runner).start(
+    session = PracticeService(PracticeSessionRepository(ws), runner).start(
         idea_id=idea, initial_attempt=attempt
     )
     if as_json:
@@ -1475,11 +1460,11 @@ def practice_diagnose(
 ) -> None:
     """诊断最大问题 + 追问一个问题（LLM）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     try:
-        session = PracticeService(PracticeSessionRepository(store), runner).diagnose(
+        session = PracticeService(PracticeSessionRepository(ws), runner).diagnose(
             session_id, context=context
         )
     except KeyError:
@@ -1504,11 +1489,11 @@ def practice_save(
 ) -> None:
     """追加一次修订。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     try:
-        session = PracticeService(PracticeSessionRepository(store), runner).save_revision(
+        session = PracticeService(PracticeSessionRepository(ws), runner).save_revision(
             session_id, revision
         )
     except KeyError:
@@ -1532,11 +1517,11 @@ def practice_finish(
 ) -> None:
     """记最终版 + LLM 经验总结，置 finished。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     try:
-        session = PracticeService(PracticeSessionRepository(store), runner).finish(
+        session = PracticeService(PracticeSessionRepository(ws), runner).finish(
             session_id, final
         )
     except KeyError:
@@ -1559,9 +1544,9 @@ def practice_show(
 ) -> None:
     """展示会话（首稿 / 诊断 / 追问 / 修订 / 最终版 / lesson）。"""
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    session = PracticeSessionRepository(store).get(session_id)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    session = PracticeSessionRepository(ws).get(session_id)
     if session is None:
         typer.echo(f"session not found: {session_id}")
         raise typer.Exit(code=1)
@@ -1592,7 +1577,8 @@ def style_analyze(
         typer.echo("exactly one of --text / --file / --url is required")
         raise typer.Exit(code=1)
     settings = load_settings()
-    Store(settings.paths.db_path).init()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     resolver = SourceResolver(OpenCliClient(), RedditOpenCliClient(), WebFetcher())
     try:
         if text is not None:

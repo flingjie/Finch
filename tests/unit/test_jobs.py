@@ -6,8 +6,8 @@ from finch.content.jobs import (
     ContentJobStatus,
 )
 from finch.content.models import RecommendedFormat
-from finch.storage.database import Store
 from finch.storage.repositories import ContentJobRepository
+from finch.storage.workspace import Workspace
 
 
 class TestAuthorPosition:
@@ -91,9 +91,8 @@ class TestContentJobRepository:
 
     def test_upsert_and_get_job(self, tmp_path):
         """Test upsert_job and get_job."""
-        store = Store(tmp_path / "db.sqlite")
-        store.init()
-        repo = ContentJobRepository(store)
+        ws = Workspace(tmp_path)
+        repo = ContentJobRepository(ws)
 
         job = ContentJob(
             id="job_1",
@@ -112,9 +111,8 @@ class TestContentJobRepository:
 
     def test_upsert_jobs_batch(self, tmp_path):
         """Test batch upsert_jobs inserts and overwrites in one transaction."""
-        store = Store(tmp_path / "db.sqlite")
-        store.init()
-        repo = ContentJobRepository(store)
+        ws = Workspace(tmp_path)
+        repo = ContentJobRepository(ws)
         jobs = [
             ContentJob(
                 id=f"job_{i}",
@@ -137,9 +135,8 @@ class TestContentJobRepository:
 
     def test_update_existing_job(self, tmp_path):
         """Test that upsert_job updates existing job."""
-        store = Store(tmp_path / "db.sqlite")
-        store.init()
-        repo = ContentJobRepository(store)
+        ws = Workspace(tmp_path)
+        repo = ContentJobRepository(ws)
 
         job1 = ContentJob(
             id="job_1",
@@ -161,9 +158,8 @@ class TestContentJobRepository:
 
     def test_list_jobs(self, tmp_path):
         """Test list_jobs returns all jobs."""
-        store = Store(tmp_path / "db.sqlite")
-        store.init()
-        repo = ContentJobRepository(store)
+        ws = Workspace(tmp_path)
+        repo = ContentJobRepository(ws)
 
         job1 = ContentJob(
             id="job_1",
@@ -194,8 +190,7 @@ class TestContentJobRepository:
 
     def test_get_nonexistent_job(self, tmp_path):
         """Test get_job returns None for nonexistent job."""
-        store = Store(tmp_path / "db.sqlite")
-        store.init()
-        repo = ContentJobRepository(store)
+        ws = Workspace(tmp_path)
+        repo = ContentJobRepository(ws)
 
         assert repo.get_job("nonexistent") is None

@@ -1,6 +1,6 @@
 """Unit tests for restored `finch review` and `finch engagement` CLI surfaces.
 
-No real LLM / gh / opencli: repos are backed by a temp SQLite store and the only
+No real LLM / gh / opencli: repos are backed by a temp file workspace and the only
 LLM path (`review revise`) is monkeypatched at the service-module boundary.
 """
 
@@ -21,17 +21,17 @@ from finch.engagement.models import (
 )
 from finch.inbox.models import DecisionAction
 from finch.settings import Paths, Settings
-from finch.storage.database import Store
 from finch.storage.repositories import (
     ContentJobRepository,
     DecisionRecordRepository,
     DraftRepository,
     InteractionRepository,
 )
+from finch.storage.workspace import Workspace
 
 
 def _settings(tmp_path) -> Settings:
-    return Settings(paths=Paths(db_path=tmp_path / "finch.db"))
+    return Settings(paths=Paths(var_dir=tmp_path))
 
 
 def _job(job_id: str = "job_1") -> ContentJob:
@@ -61,9 +61,9 @@ def _draft(job_id: str = "job_1", draft_id: str = "draft_1", body: str = "hello 
     )
 
 
-def _seed_job_and_draft(store: Store, job_id="job_1", draft_id="draft_1", body="hello world"):
-    ContentJobRepository(store).upsert_job(_job(job_id))
-    DraftRepository(store).upsert_draft(_draft(job_id, draft_id, body))
+def _seed_job_and_draft(ws: Workspace, job_id="job_1", draft_id="draft_1", body="hello world"):
+    ContentJobRepository(ws).upsert_job(_job(job_id))
+    DraftRepository(ws).upsert_draft(_draft(job_id, draft_id, body))
 
 
 def _post() -> ExternalPost:
@@ -98,17 +98,16 @@ def _candidate(candidate_id: str = "x:post_1:draft_reply") -> InteractionProposa
     )
 
 
-def _seed_candidate(store: Store, candidate_id="x:post_1:draft_reply"):
-    InteractionRepository(store).upsert(_candidate(candidate_id), run_id="run_1")
+def _seed_candidate(ws: Workspace, candidate_id="x:post_1:draft_reply"):
+    InteractionRepository(ws).upsert(_candidate(candidate_id), run_id="run_1")
 
 
 # ---- finch review list ----
 
 def test_review_list_json_lists_pending_original_drafts(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_job_and_draft(store)
+    ws = Workspace(settings.paths.var_dir)
+    _seed_job_and_draft(ws)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["review", "list", "--json"])
@@ -122,9 +121,8 @@ def test_review_list_json_lists_pending_original_drafts(monkeypatch, tmp_path):
 
 def test_review_list_non_json(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_job_and_draft(store)
+    ws = Workspace(settings.paths.var_dir)
+    _seed_job_and_draft(ws)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["review", "list"])
@@ -135,9 +133,8 @@ def test_review_list_non_json(monkeypatch, tmp_path):
 
 def test_review_list_excludes_decided_drafts(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_job_and_draft(store)
+    ws = Workspace(settings.paths.var_dir)
+    _seed_job_and_draft(ws)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["review", "approve", "draft_1", "--json"])
@@ -152,9 +149,8 @@ def test_review_list_excludes_decided_drafts(monkeypatch, tmp_path):
 
 def test_review_show_prints_body(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_job_and_draft(store, body="full draft body here")
+    ws = Workspace(settings.paths.var_dir)
+    _seed_job_and_draft(ws, body="full draft body here")
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["review", "show", "draft_1"])
@@ -164,8 +160,6 @@ def test_review_show_prints_body(monkeypatch, tmp_path):
 
 def test_review_show_unknown_draft_exits(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["review", "show", "draft_nope"])
@@ -177,9 +171,8 @@ def test_review_show_unknown_draft_exits(monkeypatch, tmp_path):
 
 def test_review_approve_writes_decision_and_intent(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_job_and_draft(store)
+    ws = Workspace(settings.paths.var_dir)
+    _seed_job_and_draft(ws)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["review", "approve", "draft_1", "--json"])
@@ -189,15 +182,13 @@ def test_review_approve_writes_decision_and_intent(monkeypatch, tmp_path):
     assert payload["job_id"] == "job_1"
     assert payload["draft_id"] == "draft_1"
 
-    records = DecisionRecordRepository(store).list()
+    records = DecisionRecordRepository(ws).list()
     assert len(records) == 1
     assert records[0].action == DecisionAction.ACCEPT
 
 
 def test_review_approve_unknown_draft_exits(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["review", "approve", "draft_nope"])
@@ -207,9 +198,8 @@ def test_review_approve_unknown_draft_exits(monkeypatch, tmp_path):
 
 def test_review_skip_records_reason_and_skips_job(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_job_and_draft(store)
+    ws = Workspace(settings.paths.var_dir)
+    _seed_job_and_draft(ws)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["review", "skip", "draft_1", "--reason", "not_now", "--json"])
@@ -218,20 +208,19 @@ def test_review_skip_records_reason_and_skips_job(monkeypatch, tmp_path):
     assert payload["action"] == "skip"
     assert payload["job_id"] == "job_1"
 
-    records = DecisionRecordRepository(store).list()
+    records = DecisionRecordRepository(ws).list()
     assert len(records) == 1
     assert records[0].action == DecisionAction.SKIP
-    assert ContentJobRepository(store).get_job("job_1").status == ContentJobStatus.SKIPPED
-    assert ContentJobRepository(store).get_job("job_1").reject_reason == "not_now"
+    assert ContentJobRepository(ws).get_job("job_1").status == ContentJobStatus.SKIPPED
+    assert ContentJobRepository(ws).get_job("job_1").reject_reason == "not_now"
 
 
 # ---- finch review revise ----
 
 def test_review_revise_rewrites_via_service(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
-    store = Store(settings.paths.db_path)
-    store.init()
-    _seed_job_and_draft(store, body="original body")
+    ws = Workspace(settings.paths.var_dir)
+    _seed_job_and_draft(ws, body="original body")
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "create_runner", lambda *a, **k: object())
 
