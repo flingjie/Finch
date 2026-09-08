@@ -11,6 +11,11 @@ from pydantic import BaseModel
 
 from finch.content.models import DraftKind
 
+# 交流目标：这次内容打算把对话推进到哪里（连接优先改造 Phase 4）。
+CommunicationGoal = Literal[
+    "continue_discussion", "invite_counterexample", "summarize_practice", "find_collaborators"
+]
+
 
 class ContentJobStatus(StrEnum):
     """Content Job 状态枚举（idea 候选流状态机）。
@@ -57,6 +62,7 @@ class ContentJob(BaseModel):
     observation: str = ""
     intent: Literal["stance", "exploration"] = "stance"
     open_question: str = ""
+    communication_goal: CommunicationGoal | None = None
     generation_key: str | None = None
     generator_name: str | None = None
     generator_version: str | None = None

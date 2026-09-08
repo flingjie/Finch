@@ -95,6 +95,7 @@ class IdeaService:
             observation=idea.observation,
             intent=idea.intent,
             open_question=idea.open_question,
+            communication_goal=idea.communication_goal,
             generation_key=key,
             generator_name=idea.generator.skill,
             generator_version=idea.generator.version,

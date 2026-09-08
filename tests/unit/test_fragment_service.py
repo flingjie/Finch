@@ -1,7 +1,10 @@
 """FragmentService：user / conversation 来源 → IdeaCandidate。"""
 
+from datetime import datetime
+
 from finch.content.jobs import AuthorPosition
-from finch.engagement.models import ConversationEvidence
+from finch.conversations.models import ConversationThread
+from finch.engagement.models import ConversationEvidence, InteractionRecord
 from finch.ideas.fragment_service import FragmentService, IdeaDraftOutput
 from finch.ideas.models import IdeaBoundaries
 from finch.ideas.opportunity import Opportunity, SourcePostRef
@@ -115,4 +118,31 @@ def test_from_conversation_unverified_rejected():
     except ValueError:
         return
     raise AssertionError("expected ValueError for unverified evidence")
+
+
+def test_from_thread_traces_to_thread_and_interactions():
+    thread = ConversationThread(
+        id="thread_1", peer_id="peer_abc", topic="agent evals",
+        open_questions=["how to reproduce?"],
+        agreements=["replays help"],
+        possible_experiments=["diff failure replays"],
+    )
+    interaction = InteractionRecord(
+        id="rec_1", proposal_id="p1", peer_id="peer_abc", platform="x",
+        source_url="https://x.com/alice/status/1", occurred_at=datetime(2026, 9, 1),
+    )
+    svc = FragmentService(FakeRunner(_out()))
+    idea = svc.from_thread(thread, interactions=[interaction])
+    assert idea.origin == "conversation"
+    refs = {(r.type, r.ref) for r in idea.source_refs}
+    assert ("conversation", "thread_1") in refs
+    assert ("conversation", "rec_1") in refs
+
+
+def test_from_thread_preserves_communication_goal():
+    thread = ConversationThread(id="thread_1", peer_id="p", topic="t")
+    out = _out().model_copy(update={"communication_goal": "invite_counterexample"})
+    svc = FragmentService(FakeRunner(out))
+    idea = svc.from_thread(thread)
+    assert idea.communication_goal == "invite_counterexample"
 

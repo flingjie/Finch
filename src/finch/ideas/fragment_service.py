@@ -6,13 +6,15 @@
 """
 
 import hashlib
+import json
 import re
 from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
-from finch.content.jobs import AuthorPosition
-from finch.engagement.models import ConversationEvidence
+from finch.content.jobs import AuthorPosition, CommunicationGoal
+from finch.conversations.models import ConversationThread
+from finch.engagement.models import ConversationEvidence, InteractionRecord
 from finch.ideas.models import IdeaBoundaries, IdeaCandidate, IdeaGenerator, SourceRef
 from finch.ideas.opportunity import Opportunity
 from finch.llm.base import StructuredInferenceRunner
@@ -47,6 +49,8 @@ Rules:
 - author_position carries claim / decision / tradeoff; mark nothing as confirmed.
 - boundaries: known (verified), inferred (with hedging), unknown (do not assert).
 - recommended_format: original | reply | thread.
+- communication_goal: continue_discussion | invite_counterexample | summarize_practice |
+  find_collaborators (how this content should advance the conversation; null if none applies).
 
 ## Source type
 
@@ -75,6 +79,29 @@ why_worth_saying / intent / open_question / author_position / boundaries / recom
 """
 
 
+_THREAD_PROMPT = """\
+You turn a full conversation thread into a single Idea candidate. The conversation is the
+user's own ongoing exchange, so verified conclusions (agreements, experiments) may form the
+user's viewpoint; open questions and the other party's claims must stay attributed and not
+be rewritten as the user's own experience.
+
+Rules:
+- Only form a stance from the user's own experience, the user's explicit judgments, or
+  verified conversation conclusions. External author viewpoints stay third-person.
+- boundaries.known only holds verified conclusions; unresolved disagreements go to
+  boundaries.unknown.
+- communication_goal: continue_discussion | invite_counterexample | summarize_practice |
+  find_collaborators.
+
+## Conversation thread
+
+{thread}
+
+Return JSON matching the schema (core_point / observation / reader_problem / why_worth_saying /
+intent / open_question / author_position / boundaries / recommended_format / communication_goal).
+"""
+
+
 def _to_candidate(
     out: "IdeaDraftOutput",
     *,
@@ -98,6 +125,7 @@ def _to_candidate(
         source_refs=source_refs,
         boundaries=out.boundaries,
         recommended_format=out.recommended_format,
+        communication_goal=out.communication_goal,
         generator=IdeaGenerator(skill=_GENERATOR_SKILL, version=_GENERATOR_VERSION),
     )
 
@@ -144,6 +172,7 @@ class IdeaDraftOutput(BaseModel):
     author_position: AuthorPosition
     boundaries: IdeaBoundaries = Field(default_factory=IdeaBoundaries)
     recommended_format: Literal["original", "reply", "thread"] = "original"
+    communication_goal: CommunicationGoal | None = None
 
 
 class FragmentService:
@@ -184,6 +213,39 @@ class FragmentService:
         source_refs = [
             SourceRef(type="conversation", ref=evidence.id, summary=evidence.statement)
         ]
+        return _to_candidate(out, origin="conversation", source_refs=source_refs)
+
+    def from_thread(
+        self,
+        thread: ConversationThread,
+        *,
+        interactions: list[InteractionRecord] | None = None,
+    ) -> IdeaCandidate:
+        """完整 ConversationThread → IdeaCandidate，origin=conversation。
+
+        与 ``from_conversation``（单条已验证证据）不同：读取完整对话线索（open_questions /
+        agreements / disagreements / possible_experiments），来源可追溯到 thread 与原始互动。
+        """
+        interactions = interactions or []
+        thread_text = json.dumps(
+            {
+                "topic": thread.topic,
+                "open_questions": thread.open_questions,
+                "agreements": thread.agreements,
+                "disagreements": thread.disagreements,
+                "possible_experiments": thread.possible_experiments,
+            },
+            ensure_ascii=False,
+        )
+        out = cast(
+            IdeaDraftOutput,
+            self.runner.run(_THREAD_PROMPT.format(thread=thread_text), IdeaDraftOutput),
+        )
+        source_refs = [SourceRef(type="conversation", ref=thread.id, summary=thread.topic)]
+        source_refs.extend(
+            SourceRef(type="conversation", ref=rec.id, summary=rec.source_url)
+            for rec in interactions
+        )
         return _to_candidate(out, origin="conversation", source_refs=source_refs)
 
     def from_opportunity(self, opportunity: Opportunity) -> IdeaCandidate:

@@ -361,7 +361,7 @@ def ideas_commit(
 @ideas_app.command("create")
 def ideas_create(
     text: str = typer.Option(None, "--text", help="用户输入的一句话/片段"),
-    conversation: str = typer.Option(None, "--conversation", help="已验证的交流证据 id"),
+    conversation: str = typer.Option(None, "--conversation", help="对话线索 id"),
     opportunity: str = typer.Option(None, "--opportunity", help="交流机会 id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
@@ -379,14 +379,12 @@ def ideas_create(
         if text is not None:
             idea = service.from_text(text)
         elif conversation is not None:
-            evidence = ConversationEvidenceRepository(store).get(conversation)
-            if evidence is None:
-                typer.echo(f"conversation evidence not found: {conversation}")
+            thread = ConversationThreadRepository(store).get(conversation)
+            if thread is None:
+                typer.echo(f"conversation not found: {conversation}")
                 raise typer.Exit(code=1)
-            if not evidence.verified:
-                typer.echo(f"conversation evidence not verified: {conversation}")
-                raise typer.Exit(code=1)
-            idea = service.from_conversation(evidence)
+            interactions = InteractionRecordRepository(store).list_by_peer(thread.peer_id)
+            idea = service.from_thread(thread, interactions=interactions)
         else:
             opp = OpportunityRepository(store).get(opportunity)
             if opp is None:
