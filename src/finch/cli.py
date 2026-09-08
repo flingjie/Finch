@@ -90,13 +90,13 @@ app.add_typer(review_app, name="review")
 engagement_app = typer.Typer(help="Review engagement candidates (human-in-the-loop)")
 app.add_typer(engagement_app, name="engagement")
 
-scout_app = typer.Typer(help="从公开讨论侦察交流机会（conversation-scout）")
+scout_app = typer.Typer(help="从公开讨论侦察交流机会")
 app.add_typer(scout_app, name="scout")
 
-practice_app = typer.Typer(help="表达练习（expression-practice，skill 驱动 + 一次性 CLI 落库）")
+practice_app = typer.Typer(help="表达练习")
 app.add_typer(practice_app, name="practice")
 
-style_app = typer.Typer(help="分析一段文本/链接的写作特点（writing-style-analysis）")
+style_app = typer.Typer(help="分析一段文本/链接的写作特点")
 app.add_typer(style_app, name="style")
 
 
@@ -291,7 +291,7 @@ def diagnose() -> None:
 @github_app.command("reflect")
 def github_reflect(repo: str = typer.Option("flingjie/FDE-Gym"),
                    since: str = typer.Option("7d")) -> None:
-    """读取最近 Commit，提取工程事件并输出 Evidence Cards。"""
+    """读取最近 Commit，提取工程事件并输出证据卡。"""
     gh = GhClient()
     settings = load_settings()
     details = load_commit_details(
@@ -319,7 +319,7 @@ def ideas_commit(
     since: str = typer.Option("7d", "--since", help="起始时间（如 7d / 24h / ISO 时间）"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """从最近 Commit 提炼 Idea 候选并幂等落库为 ContentJob（不生成草稿）。"""
+    """从最近 Commit 提炼 idea 候选并幂等落库（不生成草稿）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -360,11 +360,11 @@ def ideas_commit(
 @ideas_app.command("create")
 def ideas_create(
     text: str = typer.Option(None, "--text", help="用户输入的一句话/片段"),
-    conversation: str = typer.Option(None, "--conversation", help="已验证 ConversationEvidence id"),
-    opportunity: str = typer.Option(None, "--opportunity", help="Opportunity id"),
+    conversation: str = typer.Option(None, "--conversation", help="已验证的交流证据 id"),
+    opportunity: str = typer.Option(None, "--opportunity", help="交流机会 id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """把用户片段 / ConversationEvidence / Opportunity 结构化为 IdeaCandidate 并落库。"""
+    """把用户片段 / 交流证据 / 交流机会结构化为 idea 候选并落库。"""
     provided = sum(x is not None for x in (text, conversation, opportunity))
     if provided != 1:
         typer.echo("exactly one of --text / --conversation / --opportunity is required")
@@ -407,7 +407,7 @@ def ideas_create(
 
 @ideas_app.command("list")
 def ideas_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
-    """列出全部 idea 候选（ContentJob），一行一个；旧行在系统警告中提示。"""
+    """列出全部 idea 候选，一行一个；旧行在系统警告中提示。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -435,7 +435,7 @@ def ideas_show(
     idea_id: str = typer.Argument(..., help="idea id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """展示单个 idea 候选（--json 输出完整 ContentJob）。"""
+    """展示单个 idea 候选（--json 输出完整记录）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -476,10 +476,10 @@ def ideas_confirm(
 @ideas_app.command("revise-position")
 def ideas_revise_position(
     idea_id: str = typer.Argument(..., help="idea id"),
-    position_file: str = typer.Option(..., "--file", help="AuthorPosition YAML 文件路径"),
+    position_file: str = typer.Option(..., "--file", help="作者立场 YAML 文件路径"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """从 YAML 读取 AuthorPosition 并更新立场（不改状态）。"""
+    """从 YAML 读取作者立场并更新（不改状态）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -578,7 +578,7 @@ def drafts_create(
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),  # noqa: B008
     verbose: bool = typer.Option(False, "--verbose", help="附带运行详情"),
 ) -> None:
-    """从已确认 idea 生成草稿并落库 Draft + CriticReport（不自动发布）。"""
+    """从已确认 idea 生成草稿并记录质检报告（不自动发布）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -940,7 +940,7 @@ def review_show(
     draft_id: str = typer.Argument(..., help="draft id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """展示草稿正文与（若存在）critic 报告。"""
+    """展示草稿正文与（若存在）质检报告。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -978,7 +978,7 @@ def review_approve(
     draft_id: str = typer.Argument(..., help="draft id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """采用草稿（写 DecisionRecord + PublicationIntent，不自动发布）。"""
+    """采用草稿（记录决策与发布意图，不自动发布）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -1200,7 +1200,7 @@ def scout_search(
     topic: str = typer.Option(None, "--topic", help="搜索话题（默认 settings.twitter.queries[0]）"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """从公开讨论搜索交流机会并落库（不生成 Idea，不落 ContentJob）。"""
+    """从公开讨论搜索交流机会并落库（不生成 idea）。"""
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
@@ -1286,7 +1286,7 @@ def practice_start(
     if as_json:
         typer.echo(session.model_dump_json(indent=2))
     else:
-        typer.echo(session.id)
+        typer.echo(f"id: {session.id}")
         typer.echo("下一步：诊断本次表达")
 
 
@@ -1409,7 +1409,7 @@ def style_analyze(
     compare_voice: bool = typer.Option(False, "--compare-voice", help="追加对比我的画像"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """分析写作风格，产出 StyleReport（可选与 VoiceProfile 比较）。"""
+    """分析写作风格，产出风格报告（可选与个人声音画像比较）。"""
     provided = sum(x is not None for x in (text, file, url))
     if provided != 1:
         typer.echo("exactly one of --text / --file / --url is required")

@@ -33,7 +33,7 @@ def test_practice_start_persists(monkeypatch, tmp_path):
     _patch(monkeypatch, settings)
     r = CliRunner().invoke(app, ["practice", "start", "--idea", "idea_1", "--attempt", "hello"])
     assert r.exit_code == 0, r.output
-    session_id = r.output.strip().splitlines()[0]
+    session_id = r.output.strip().splitlines()[0].removeprefix("id: ")
     session = PracticeSessionRepository(store).get(session_id)
     assert session is not None
     assert session.idea_id == "idea_1"
