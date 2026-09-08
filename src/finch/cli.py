@@ -41,6 +41,7 @@ from .learn.reflection import WeeklyReflectionService, render_reflection
 from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
 from .practice.service import PracticeService
+from .projections import build_daily_context, build_pending_actions
 from .reddit.opencli_client import RedditOpenCliClient
 from .settings import Settings, load_settings
 from .storage.repositories import (
@@ -227,6 +228,25 @@ def init() -> None:
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     typer.echo(f"initialized: {settings.paths.var_dir}")
+
+
+@app.command()
+def context(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """生成当日上下文投影并写入 projections/（可重建，非事实源）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    daily = build_daily_context(ws)
+    pending = build_pending_actions(ws)
+    proj = ws.dir("projections")
+    ws.atomic_write(proj / "daily-context.json", json.dumps(daily, ensure_ascii=False, indent=2))
+    ws.atomic_write(
+        proj / "pending-actions.json", json.dumps(pending, ensure_ascii=False, indent=2)
+    )
+    if as_json:
+        typer.echo(json.dumps({"daily": daily, "pending": pending}, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"projections written to {proj}")
 
 
 @app.command()
