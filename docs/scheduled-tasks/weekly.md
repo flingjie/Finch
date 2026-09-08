@@ -1,3 +1,5 @@
+> **已过时（superseded）**：`finch weekly` 现为定性 LLM 复盘（指标由 `weekly_analysis` 计算、解读由 `WeeklyReflectionService` 做），不再读取 `weekly.py` 的阈值常量（`_HEALTHY`/`_WEAK` 等已删）。保留作历史参考。
+
 # Finch 每周任务（Codex Scheduled Task 草案）
 
 > 将本文件内容作为每周复盘的提示词。`finch weekly` 已实现（读取草稿批准/修改/跳过记录、发布链接与互动数据）。

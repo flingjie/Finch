@@ -117,7 +117,7 @@ def compute_metrics(
 
 
 def render_metrics(m: EngagementMetrics) -> str:
-    """把 EngagementMetrics 渲染为 Markdown（镜像 render_weekly 风格）。"""
+    """把 EngagementMetrics 渲染为 Markdown（章节标题 + 逐项列表）。"""
     return "\n".join(
         [
             "# Finch Engagement Metrics",

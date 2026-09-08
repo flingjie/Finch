@@ -1,3 +1,5 @@
+> **已过时（superseded）**：本文描述的 daily 编排（`run_daily`）已移除，`finch ideas search` 已退役（改为 `finch scout search` → `finch ideas create --opportunity`）。保留作历史参考，不反映当前架构。
+
 # Finch 每日任务（Codex Scheduled Task 草案）
 
 > 将本文件内容作为 Codex Scheduled Task（或 ChatGPT 自动化）的每日提示词。Finch 只通过 CLI 执行，不自动发布。
