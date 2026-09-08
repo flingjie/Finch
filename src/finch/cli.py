@@ -101,7 +101,7 @@ app.add_typer(style_app, name="style")
 
 
 def _idea_meta_line(job: ContentJob) -> str:
-    """一行摘要：稳定、可扫描，也保留机器可解析的 tab 分隔结构。"""
+    """一行摘要：稳定、可扫描（tab 分隔；机器解析请用 --json，不用此文本输出）。"""
     return "\t".join(
         [
             job.id,
@@ -114,7 +114,7 @@ def _idea_meta_line(job: ContentJob) -> str:
 
 
 def _render_idea_list(jobs: list[ContentJob]) -> str:
-    """人类可读的候选列表：带表头，仍保持一候选一行。"""
+    """人类可读的候选列表：带表头，一候选一行（机器解析请用 --json）。"""
     lines = ["id\tstatus\torigin\tintent\tcore_message"]
     lines.extend(_idea_meta_line(job) for job in jobs)
     return "\n".join(lines)
