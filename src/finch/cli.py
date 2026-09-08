@@ -217,7 +217,7 @@ def ideas_create(
     settings = load_settings()
     store = Store(settings.paths.db_path)
     store.init()
-    runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     service = FragmentService(runner)
     if text is not None:
         idea = service.from_text(text)

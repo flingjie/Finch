@@ -49,3 +49,4 @@ def test_from_conversation_origin_and_source_ref():
     assert idea.origin == "conversation"
     assert idea.source_refs[0].type == "conversation"
     assert idea.source_refs[0].ref == "ev_1"
+    assert idea.source_refs[0].summary == "某个机制到底怎么工作"
