@@ -77,3 +77,10 @@ def test_jsonl_append_and_read(tmp_path):
         {"round": 0, "outcome": "pass"},
         {"round": 1, "outcome": "rewrite"},
     ]
+
+
+def test_read_jsonl_skips_malformed_trailing_line(tmp_path):
+    ws = Workspace(tmp_path)
+    p = tmp_path / "critic.jsonl"
+    p.write_text('{"round": 0}\n{"round": 1', encoding="utf-8")
+    assert ws.read_jsonl(p) == [{"round": 0}]

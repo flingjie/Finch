@@ -71,22 +71,31 @@ class Workspace:
         正文尾部换行在读时规范化（不保留）。
         """
         lines = path.read_text(encoding="utf-8").split("\n")
-        close = next(i for i in range(1, len(lines)) if lines[i] == _FRONTMATTER)
+        if not lines or lines[0] != _FRONTMATTER:
+            raise ValueError(f"missing frontmatter opener in {path}")
+        close = next((i for i in range(1, len(lines)) if lines[i] == _FRONTMATTER), None)
+        if close is None:
+            raise ValueError(f"missing frontmatter closer in {path}")
         meta = yaml.safe_load("\n".join(lines[1:close])) or {}
         return meta, "\n".join(lines[close + 1 :])
 
     def append_jsonl(self, path: Path, obj: dict) -> None:
-        """追加一行 JSONL（保序）。"""
+        """追加一行 JSONL（读改写 + ``atomic_write`` 原子替换，保持写入原子性）。"""
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+        line = json.dumps(obj, ensure_ascii=False, default=str) + "\n"
+        self.atomic_write(path, existing + line)
 
     def read_jsonl(self, path: Path) -> list[dict]:
-        """读全部 JSONL 行；缺文件返回空列表。"""
+        """读全部 JSONL 行；缺文件返回空列表；跳过损坏的尾部行（防御手工/中断写入）。"""
         if not path.exists():
             return []
         out: list[dict] = []
         for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
+            if not line.strip():
+                continue
+            try:
                 out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
         return out

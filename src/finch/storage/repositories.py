@@ -139,6 +139,8 @@ class ContentJobRepository:
         return _read(self.ws, "ideas", job_id, ContentJob)
 
     def find_by_generation_key(self, generation_key: str) -> ContentJob | None:
+        if generation_key is None:
+            return None
         for job in self.list_jobs():
             if job.generation_key == generation_key:
                 return job
@@ -206,8 +208,12 @@ class CriticReportRepository:
         self.ws.append_jsonl(self._path(draft_id), payload)
 
     def list_reports(self, draft_id: str) -> list[dict]:
-        rows = sorted(self.ws.read_jsonl(self._path(draft_id)), key=lambda r: r["round"])
-        return [{"checks": r["checks"], "outcome": r["outcome"]} for r in rows]
+        rows = self.ws.read_jsonl(self._path(draft_id))
+        latest = {r["round"]: r for r in rows}
+        return [
+            {"checks": latest[k]["checks"], "outcome": latest[k]["outcome"]}
+            for k in sorted(latest)
+        ]
 
     def list_all_reports(self, since: datetime | None = None) -> dict[str, list[dict]]:
         grouped: dict[str, list[dict]] = {}
@@ -216,12 +222,14 @@ class CriticReportRepository:
                 if since is not None and datetime.fromisoformat(r["ts"]) < since:
                     continue
                 grouped.setdefault(r["draft_id"], []).append(r)
+        result: dict[str, list[dict]] = {}
         for draft_id, rows in grouped.items():
-            rows.sort(key=lambda r: r["round"])
-            grouped[draft_id] = [
-                {"checks": r["checks"], "outcome": r["outcome"]} for r in rows
+            latest = {r["round"]: r for r in rows}
+            result[draft_id] = [
+                {"checks": latest[k]["checks"], "outcome": latest[k]["outcome"]}
+                for k in sorted(latest)
             ]
-        return grouped
+        return result
 
 
 class InteractionRepository:
@@ -236,6 +244,8 @@ class InteractionRepository:
         return _read(self.ws, "interactions/proposals", candidate_id, InteractionProposal)
 
     def find_by_generation_key(self, generation_key: str) -> InteractionProposal | None:
+        if generation_key is None:
+            return None
         for c in self.list_all():
             if c.generation_key == generation_key:
                 return c

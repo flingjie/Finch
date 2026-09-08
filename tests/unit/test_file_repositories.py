@@ -19,6 +19,7 @@ from finch.peers.models import PeerProfile, PlatformIdentity
 from finch.storage.repositories import (
     ContentJobRepository,
     ConversationThreadRepository,
+    CriticReportRepository,
     DecisionRecordRepository,
     DraftRepository,
     InteractionRecordRepository,
@@ -116,3 +117,12 @@ def test_publication_intent_get(tmp_path):
         approved_at=datetime.now(UTC), expected_kind="original",
     ))
     assert repo.get("d1").source_id == "d1"
+
+
+def test_critic_report_same_round_idempotent(tmp_path):
+    repo = CriticReportRepository(Workspace(tmp_path))
+    repo.upsert_report("draft_1", 0, [], "pass")
+    repo.upsert_report("draft_1", 0, [], "rewrite")
+    reports = repo.list_reports("draft_1")
+    assert len(reports) == 1
+    assert reports[0]["outcome"] == "rewrite"
