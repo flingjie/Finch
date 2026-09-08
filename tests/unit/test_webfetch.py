@@ -36,6 +36,7 @@ def test_rejects_blocked_hosts():
         "http://169.254.169.254/latest/meta-data/",
         "http://10.0.0.1/",
         "http://192.168.1.1/",
+        "http://100.100.100.200/latest/meta-data/",
     ):
         with pytest.raises(WebSourceUnavailable):
             WebFetcher().fetch(url)
@@ -50,6 +51,7 @@ def test_is_blocked_ip():
     assert _is_blocked_ip("127.0.0.1")
     assert _is_blocked_ip("169.254.169.254")
     assert _is_blocked_ip("10.0.0.1")
+    assert _is_blocked_ip("100.100.100.200")  # Alibaba 元数据（CGNAT 100.64/10）
     assert not _is_blocked_ip("93.184.216.34")  # example.com 公网 IP
 
 

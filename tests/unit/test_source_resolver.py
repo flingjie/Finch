@@ -53,6 +53,12 @@ def test_resolve_url_routes_x():
     assert "你好" in s.body and "世界" in s.body
 
 
+def test_resolve_url_scheme_less():
+    s = _resolver().resolve_url("x.com/a/status/1")
+    assert s.source_type == "url"
+    assert "你好" in s.body
+
+
 def test_resolve_url_routes_reddit():
     s = _resolver().resolve_url("https://reddit.com/r/x/comments/p1")
     assert "标题" in s.body and "正文" in s.body

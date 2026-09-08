@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
 from .content.jobs import AuthorPosition, ContentJob, ContentJobStatus
+from .content.models import Draft
 from .content.voice import (
     ApprovedExample,
     RejectedExample,
@@ -31,7 +32,7 @@ from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient
 from .ideas.commit_service import CommitService
 from .ideas.fragment_service import FragmentService
-from .ideas.opportunity import OpportunityService
+from .ideas.opportunity import Opportunity, OpportunityService
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
 from .inbox.service import InboxDecisionService, list_items
@@ -173,6 +174,72 @@ def _render_idea_detail(job: ContentJob) -> str:
     if steps:
         lines += ["", "下一步:"] + steps
     return "\n".join(lines)
+
+
+def _render_draft(draft: Draft) -> str:
+    """单个草稿的完整可读视图。"""
+    lines = [
+        f"id: {draft.id}",
+        f"kind: {draft.kind.value}",
+    ]
+    if draft.content_job_id:
+        lines.append(f"content_job_id: {draft.content_job_id}")
+    if draft.position_statement:
+        lines.append(f"position_statement: {draft.position_statement}")
+    lines += ["", draft.body, "", "下一步:"]
+    lines += [
+        f"- 采用并进入发布意图：finch review approve {draft.id}",
+        f"- 继续修改：finch drafts revise {draft.id} --instruction \"...\"",
+        f"- 放弃草稿：finch review skip {draft.id} --reason \"...\"",
+    ]
+    return "\n".join(lines)
+
+
+def _render_critic_reports(reports: list[dict]) -> str:
+    """把 Critic 报告从原始 JSON 转成逐项可读视图。"""
+    if not reports:
+        return ""
+    lines: list[str] = []
+    for idx, report in enumerate(reports, start=1):
+        lines += [f"--- critic {idx} ---", f"outcome: {report.get('outcome', '-')}"]
+        for check in report.get("checks", []):
+            passed = bool(check.get("passed"))
+            severity = check.get("severity", "-")
+            status = "pass" if passed else f"fail ({severity})"
+            detail = "; ".join(check.get("issues", []))
+            line = f"- {check.get('checker', '?')}: {status}"
+            if detail:
+                line += f" — {detail}"
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _render_opportunity_list(opps: list[Opportunity]) -> str:
+    """交流机会列表：带表头，仍保持一机会一行。"""
+    lines = ["id\turl\tshared_tension"]
+    lines.extend(f"{opp.id}\t{opp.source_post.url}\t{opp.shared_tension}" for opp in opps)
+    return "\n".join(lines)
+
+
+def _render_opportunity_detail(opp: Opportunity) -> str:
+    """单个交流机会的完整可读视图。"""
+    return "\n".join(
+        [
+            f"id: {opp.id}",
+            f"url: {opp.source_post.url}",
+            f"author: @{opp.source_post.author}",
+            f"source_text: {opp.source_post.text}",
+            "",
+            f"shared_tension: {opp.shared_tension}",
+            f"why_relevant: {opp.why_relevant}",
+            f"response_angles: {', '.join(opp.response_angles)}",
+            f"knowledge_gap: {opp.knowledge_gap}",
+            f"relationship_value: {opp.relationship_value}",
+            "",
+            "下一步:",
+            f"- 转成 idea：finch ideas create --opportunity {opp.id}",
+        ]
+    )
 
 
 def _since_iso(since: str | None) -> str | None:
@@ -570,8 +637,7 @@ def drafts_show(
     if as_json:
         typer.echo(draft.model_dump_json(indent=2))
     else:
-        typer.echo(draft.id)
-        typer.echo(draft.body)
+        typer.echo(_render_draft(draft))
 
 
 @drafts_app.command("revise")
@@ -604,6 +670,7 @@ def drafts_revise(
         payload = {"draft_id": revised.id, "body": revised.body}
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
+        typer.echo(f"已更新草稿 {revised.id}:")
         typer.echo(revised.body)
 
 
@@ -869,6 +936,7 @@ def review_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON"
     if not original:
         typer.echo("no pending drafts")
         return
+    typer.echo("draft_id\tcontent_type\tpreview")
     for item in original:
         snippet = " ".join(item.draft.split())[:80]
         typer.echo(f"{item.draft_id}\t{item.content_type}\t{snippet}")
@@ -897,10 +965,19 @@ def review_show(
             )
         )
     else:
+        typer.echo(f"id: {draft.id}")
+        typer.echo(f"kind: {draft.kind.value}")
+        typer.echo("")
         typer.echo(draft.body)
-        if reports:
-            typer.echo("\n--- critic ---")
-            typer.echo(json.dumps(reports, ensure_ascii=False, indent=2))
+        critic = _render_critic_reports(reports)
+        if critic:
+            typer.echo("")
+            typer.echo(critic)
+        typer.echo("")
+        typer.echo("下一步:")
+        typer.echo(f"- 采用：finch review approve {draft.id}")
+        typer.echo(f"- 修改：finch review revise {draft.id} --instruction \"...\"")
+        typer.echo(f"- 跳过：finch review skip {draft.id} --reason \"...\"")
 
 
 @review_app.command("approve")
@@ -926,7 +1003,7 @@ def review_approve(
     if as_json:
         typer.echo(result.model_dump_json(indent=2))
     else:
-        typer.echo(f"approved {draft_id}")
+        typer.echo(f"approved {draft_id} (publication intent recorded)")
 
 
 @review_app.command("revise")
@@ -987,7 +1064,7 @@ def review_skip(
     if as_json:
         typer.echo(result.model_dump_json(indent=2))
     else:
-        typer.echo(f"skipped {draft_id}")
+        typer.echo(f"skipped {draft_id} (reason: {reason})")
 
 
 @engagement_app.command("list")
@@ -1009,9 +1086,10 @@ def engagement_list(as_json: bool = typer.Option(False, "--json", help="输出 J
     if not candidates:
         typer.echo("no pending candidates")
         return
+    typer.echo("id\taction\turl\tpreview")
     for candidate in candidates:
         snippet = " ".join(candidate.post.content.split())[:60]
-        typer.echo(f"{candidate.id}\t{candidate.action.value}\t{candidate.post.url} — {snippet}")
+        typer.echo(f"{candidate.id}\t{candidate.action.value}\t{candidate.post.url}\t{snippet}")
 
 
 @engagement_app.command("show")
@@ -1154,8 +1232,7 @@ def scout_search(
             json.dumps([o.model_dump(mode="json") for o in opps], ensure_ascii=False, indent=2)
         )
     else:
-        for opp in opps:
-            typer.echo(f"{opp.id}\t{opp.source_post.url}\t{opp.shared_tension}")
+        typer.echo(_render_opportunity_list(opps))
 
 
 @scout_app.command("list")
@@ -1173,8 +1250,7 @@ def scout_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
     if not opps:
         typer.echo("no opportunities")
         return
-    for opp in opps:
-        typer.echo(f"{opp.id}\t{opp.source_post.url}\t{opp.shared_tension}")
+    typer.echo(_render_opportunity_list(opps))
 
 
 @scout_app.command("show")
@@ -1193,12 +1269,7 @@ def scout_show(
     if as_json:
         typer.echo(opp.model_dump_json(indent=2))
     else:
-        typer.echo(f"{opp.id}\t{opp.source_post.url}")
-        typer.echo(f"shared_tension: {opp.shared_tension}")
-        typer.echo(f"why_relevant: {opp.why_relevant}")
-        typer.echo(f"response_angles: {', '.join(opp.response_angles)}")
-        typer.echo(f"knowledge_gap: {opp.knowledge_gap}")
-        typer.echo(f"relationship_value: {opp.relationship_value}")
+        typer.echo(_render_opportunity_detail(opp))
 
 
 @practice_app.command("start")
@@ -1223,6 +1294,7 @@ def practice_start(
         typer.echo(session.model_dump_json(indent=2))
     else:
         typer.echo(session.id)
+        typer.echo(f"下一步：finch practice diagnose {session.id}")
 
 
 @practice_app.command("diagnose")
@@ -1251,6 +1323,7 @@ def practice_diagnose(
     else:
         typer.echo(f"diagnosis: {session.diagnosis}")
         typer.echo(f"question: {session.questions_asked[-1]}")
+        typer.echo(f"下一步：finch practice save {session_id} --revision \"...\"")
 
 
 @practice_app.command("save")
@@ -1278,6 +1351,7 @@ def practice_save(
         typer.echo(session.model_dump_json(indent=2))
     else:
         typer.echo(f"revisions: {len(session.revisions)}")
+        typer.echo(f"下一步：finch practice diagnose {session_id}")
 
 
 @practice_app.command("finish")
@@ -1305,6 +1379,7 @@ def practice_finish(
         typer.echo(session.model_dump_json(indent=2))
     else:
         typer.echo(f"lesson: {session.lesson}")
+        typer.echo(f"下一步：finch practice show {session_id}")
 
 
 @practice_app.command("show")

@@ -67,7 +67,9 @@ class SourceResolver:
         )
 
     def resolve_url(self, url: str) -> ResolvedSource:
-        # 按解析后的 host 精确路由（不用子串匹配），避免 http://evil.com/x.com 误路由。
+        # 容忍无 scheme 的输入（如 "x.com/..."），补默认 https 后再按解析后的 host 精确路由。
+        if "://" not in url:
+            url = "https://" + url
         host = (urlparse(url).hostname or "").lower()
         if host == "x.com" or host == "twitter.com" or host.endswith((".x.com", ".twitter.com")):
             body = self._x_thread(url)

@@ -14,6 +14,10 @@ from urllib.parse import urlparse
 
 _SKIP_TAGS = {"script", "style", "nav", "header", "footer", "aside"}
 
+# RFC 6598 共享地址段（CGNAT），含 Alibaba Cloud 元数据端点 100.100.100.200；
+# ipaddress 的 is_private/is_reserved 不覆盖该段，需显式拦截。
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+
 
 class WebSourceUnavailable(RuntimeError):
     """网页无法访问、登录受限、正文为空，或 host/scheme 被 SSRF 防护阻断。"""
@@ -51,7 +55,7 @@ def _extract_text(html: str) -> str:
 
 
 def _is_blocked_ip(ip_str: str) -> bool:
-    """IP 是否属于 SSRF 敏感范围（回环/内网/链路本地/保留/组播/未指定）。"""
+    """IP 是否属于 SSRF 敏感范围（回环/内网/链路本地/保留/组播/未指定/CGNAT）。"""
     try:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
@@ -63,6 +67,7 @@ def _is_blocked_ip(ip_str: str) -> bool:
         or ip.is_reserved
         or ip.is_multicast
         or ip.is_unspecified
+        or ip in _CGNAT
     )
 
 
@@ -97,6 +102,9 @@ class WebFetcher:
     def fetch(self, url: str) -> str:
         """GET 网页并提取正文；失败/空正文/被阻断抛 ``WebSourceUnavailable``。"""
         _validate_url(url)
+        # 已知局限：DNS 在 _validate_url 与 opener.open 各解析一次（TOCTOU，可被 DNS rebinding
+        # 绕过）。本地单人 CLI、URL 由用户手输的威胁模型下可接受；彻底堵需 pin 解析后的 IP
+        # 直连。主 SSRF（直连私网/回环/元数据 IP 与 file:// 等 scheme）已在 _validate_url 拦截。
         opener = urllib.request.build_opener(_SafeRedirectHandler())
         try:
             with opener.open(url, timeout=15.0) as response:
