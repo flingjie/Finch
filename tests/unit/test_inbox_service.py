@@ -8,7 +8,7 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
 )
-from finch.content.models import Draft, DraftKind
+from finch.content.models import Draft, DraftKind, RecommendedFormat
 from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
@@ -33,7 +33,7 @@ def _job(candidate_id=None, decision="d", tradeoff="t", why_now="w", id="job_1")
         candidate_id=candidate_id,
         reader_problem="rp",
         author_position=AuthorPosition(claim="c", decision=decision, tradeoff=tradeoff),
-        recommended_format=DraftKind.ORIGINAL,
+        recommended_format=RecommendedFormat.SHORT_POST,
         status=ContentJobStatus.CONFIRMED,
         core_message="core",
         why_now=why_now,

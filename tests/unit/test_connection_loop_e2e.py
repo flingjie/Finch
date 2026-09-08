@@ -10,6 +10,7 @@
 from datetime import UTC, datetime
 
 from finch.content.jobs import AuthorPosition
+from finch.content.models import RecommendedFormat
 from finch.conversations.service import ConversationService
 from finch.engagement.metrics import compute_relationship_metrics
 from finch.engagement.models import (
@@ -72,7 +73,7 @@ def _idea_output() -> IdeaDraftOutput:
         why_worth_saying="replays help",
         author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"),
         boundaries=IdeaBoundaries(),
-        recommended_format="original",
+        recommended_format=RecommendedFormat.SHORT_POST,
         communication_goal="summarize_practice",
     )
 

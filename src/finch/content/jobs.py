@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from finch.content.models import DraftKind
+from finch.content.models import RecommendedFormat
 
 # 交流目标：这次内容打算把对话推进到哪里（连接优先改造 Phase 4）。
 CommunicationGoal = Literal[
@@ -52,7 +52,7 @@ class ContentJob(BaseModel):
     candidate_id: str | None = None
     reader_problem: str
     author_position: AuthorPosition | None = None
-    recommended_format: DraftKind
+    recommended_format: RecommendedFormat
     status: ContentJobStatus
     reject_reason: str | None = None
     core_message: str = ""

@@ -5,7 +5,7 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
 )
-from finch.content.models import DraftKind
+from finch.content.models import RecommendedFormat
 from finch.storage.database import Store
 from finch.storage.repositories import ContentJobRepository
 
@@ -49,7 +49,7 @@ class TestContentJob:
             candidate_id=None,
             reader_problem="Problem",
             author_position=None,
-            recommended_format=DraftKind.REPLY,
+            recommended_format=RecommendedFormat.REPLY,
             status=ContentJobStatus.PROPOSED,
         )
         assert job.core_message == ""
@@ -62,7 +62,7 @@ class TestContentJob:
             candidate_id=None,
             reader_problem="Readers don't know how to configure connection pooling",
             author_position=None,
-            recommended_format=DraftKind.REPLY,
+            recommended_format=RecommendedFormat.REPLY,
             status=ContentJobStatus.PROPOSED,
         )
         assert job.id == "job_1"
@@ -79,7 +79,7 @@ class TestContentJob:
                 decision="Use 10 connections",
                 tradeoff="More memory",
             ),
-            recommended_format=DraftKind.ORIGINAL,
+            recommended_format=RecommendedFormat.SHORT_POST,
             status=ContentJobStatus.CONFIRMED,
         )
         assert job.author_position is not None
@@ -101,7 +101,7 @@ class TestContentJobRepository:
             candidate_id=None,
             reader_problem="Problem",
             author_position=None,
-            recommended_format=DraftKind.REPLY,
+            recommended_format=RecommendedFormat.REPLY,
             status=ContentJobStatus.CONFIRMED,
         )
         repo.upsert_job(job)
@@ -122,7 +122,7 @@ class TestContentJobRepository:
                 candidate_id=None,
                 reader_problem=f"Problem {i}",
                 author_position=None,
-                recommended_format=DraftKind.REPLY,
+                recommended_format=RecommendedFormat.REPLY,
                 status=ContentJobStatus.CONFIRMED,
             )
             for i in range(3)
@@ -147,7 +147,7 @@ class TestContentJobRepository:
             candidate_id=None,
             reader_problem="Problem v1",
             author_position=None,
-            recommended_format=DraftKind.REPLY,
+            recommended_format=RecommendedFormat.REPLY,
             status=ContentJobStatus.CONFIRMED,
         )
         repo.upsert_job(job1)
@@ -171,7 +171,7 @@ class TestContentJobRepository:
             candidate_id=None,
             reader_problem="Problem 1",
             author_position=None,
-            recommended_format=DraftKind.REPLY,
+            recommended_format=RecommendedFormat.REPLY,
             status=ContentJobStatus.CONFIRMED,
         )
         job2 = ContentJob(
@@ -180,7 +180,7 @@ class TestContentJobRepository:
             candidate_id=None,
             reader_problem="Problem 2",
             author_position=None,
-            recommended_format=DraftKind.ORIGINAL,
+            recommended_format=RecommendedFormat.SHORT_POST,
             status=ContentJobStatus.SKIPPED,
         )
 

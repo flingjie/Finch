@@ -11,7 +11,7 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
 )
-from finch.content.models import DraftKind
+from finch.content.models import RecommendedFormat
 from finch.conversations.models import ConversationThread
 from finch.ideas.models import (
     IdeaBoundaries,
@@ -49,7 +49,7 @@ def _candidate() -> IdeaCandidate:
             SourceRef(type="commit", ref=COMMIT_URL, summary="feat: node-ize orchestrator")
         ],
         boundaries=IdeaBoundaries(),
-        recommended_format="original",
+        recommended_format=RecommendedFormat.SHORT_POST,
         generator=IdeaGenerator(skill="commit-to-idea", version="1.0.0"),
     )
 
@@ -188,7 +188,7 @@ def _make_candidate(core_point=CORE_POINT) -> IdeaCandidate:
             SourceRef(type="commit", ref=COMMIT_URL, summary="feat: node-ize orchestrator")
         ],
         boundaries=IdeaBoundaries(),
-        recommended_format="original",
+        recommended_format=RecommendedFormat.SHORT_POST,
         generator=IdeaGenerator(skill="commit-to-idea", version="1.0.0"),
     )
 
@@ -199,7 +199,7 @@ def _manual_job(idea_id: str = "idea_manual000", status=ContentJobStatus.PROPOSE
         source_card_ids=[],
         reader_problem="orchestrator was hard to rerun",
         author_position=AuthorPosition(claim="claim", decision="decision", tradeoff="tradeoff"),
-        recommended_format=DraftKind.ORIGINAL,
+        recommended_format=RecommendedFormat.SHORT_POST,
         status=status,
         core_message=CORE_POINT,
         why_now="failures can now be replayed",

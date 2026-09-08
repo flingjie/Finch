@@ -12,7 +12,7 @@ from typer.testing import CliRunner
 from finch import cli
 from finch.cli import app
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
-from finch.content.models import Draft, DraftKind
+from finch.content.models import Draft, DraftKind, RecommendedFormat
 from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
@@ -44,7 +44,7 @@ def _job(job_id: str = "job_1") -> ContentJob:
             decision="deterministic graphs win",
             tradeoff="orchestrator was hard to rerun",
         ),
-        recommended_format=DraftKind.ORIGINAL,
+        recommended_format=RecommendedFormat.SHORT_POST,
         status=ContentJobStatus.DRAFTED,
         core_message="deterministic graphs",
         why_now="failures can now be replayed",

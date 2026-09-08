@@ -1,7 +1,7 @@
 """契约扩展：IdeaCandidate / ContentJob 新增 observation/intent/open_question。"""
 
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
-from finch.content.models import DraftKind
+from finch.content.models import RecommendedFormat
 from finch.ideas.models import (
     IdeaBoundaries,
     IdeaCandidate,
@@ -24,7 +24,7 @@ def _candidate() -> IdeaCandidate:
         author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"),
         source_refs=[],
         boundaries=IdeaBoundaries(known=[], inferred=[], unknown=[]),
-        recommended_format="original",
+        recommended_format=RecommendedFormat.SHORT_POST,
         generator=IdeaGenerator(skill="idea-discovery", version="1.0.0"),
     )
 
@@ -47,7 +47,8 @@ def test_new_fields_default_to_sane_values():
     idea = IdeaCandidate(
         id="idea_y", origin="commit", core_point="cp", reader_problem="rp",
         why_worth_saying="w", author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"),
-        source_refs=[], boundaries=IdeaBoundaries(), recommended_format="original",
+        source_refs=[], boundaries=IdeaBoundaries(),
+        recommended_format=RecommendedFormat.SHORT_POST,
         generator=IdeaGenerator(skill="idea-discovery", version="1.0.0"),
     )
     assert idea.observation == ""
@@ -76,7 +77,7 @@ def test_create_candidate_falls_back_to_id_on_generation_key_change():
     existing = ContentJob(
         id="idea_x", source_card_ids=[], reader_problem="rp",
         author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"),
-        recommended_format=DraftKind.ORIGINAL, status=ContentJobStatus.CONFIRMED,
+        recommended_format=RecommendedFormat.SHORT_POST, status=ContentJobStatus.CONFIRMED,
         core_message="中心主张",
     )
 
@@ -99,7 +100,7 @@ def test_create_candidate_falls_back_to_id_on_generation_key_change():
 def test_content_job_new_fields_default():
     job = ContentJob(
         id="j", source_card_ids=[], reader_problem="rp",
-        recommended_format=DraftKind.ORIGINAL, status=ContentJobStatus.PROPOSED,
+        recommended_format=RecommendedFormat.SHORT_POST, status=ContentJobStatus.PROPOSED,
     )
     assert job.observation == ""
     assert job.intent == "stance"

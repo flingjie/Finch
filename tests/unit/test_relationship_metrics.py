@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 from finch.content.jobs import ContentJob, ContentJobStatus
-from finch.content.models import DraftKind
+from finch.content.models import RecommendedFormat
 from finch.conversations.models import ConversationThread
 from finch.engagement.metrics import compute_relationship_metrics
 from finch.engagement.models import FeedbackSnapshot, InteractionRecord
@@ -30,7 +30,7 @@ def _record(peer_id="peer_abc", rid="rec_1") -> InteractionRecord:
 def _job(origin="conversation") -> ContentJob:
     return ContentJob(
         id="idea_1", source_card_ids=[], reader_problem="r",
-        recommended_format=DraftKind.ORIGINAL, status=ContentJobStatus.PROPOSED,
+        recommended_format=RecommendedFormat.SHORT_POST, status=ContentJobStatus.PROPOSED,
         core_message="c", origin=origin,
     )
 

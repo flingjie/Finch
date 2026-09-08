@@ -18,7 +18,7 @@ from finch.content.checkers import (
 from finch.content.checkers.base import split_sentences
 from finch.content.checkers.portability import _PortabilityFinding
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
-from finch.content.models import ClaimRef, Draft, DraftKind
+from finch.content.models import ClaimRef, Draft, DraftKind, RecommendedFormat
 from finch.evidence.models import ClaimConfidence, EvidenceCard
 
 
@@ -114,7 +114,7 @@ def _job(decision: str = "Use pool size 10", tradeoff: str = "More memory") -> C
         candidate_id=None,
         reader_problem="p",
         author_position=AuthorPosition(claim="c", decision=decision, tradeoff=tradeoff),
-        recommended_format=DraftKind.REPLY,
+        recommended_format=RecommendedFormat.REPLY,
         status=ContentJobStatus.CONFIRMED,
         core_message="use pool size 10",
     )

@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from finch.content.jobs import AuthorPosition
+from finch.content.models import RecommendedFormat
 from finch.conversations.models import ConversationThread
 from finch.engagement.models import ConversationEvidence, InteractionRecord
 from finch.ideas.fragment_service import FragmentService, IdeaDraftOutput
@@ -30,7 +31,7 @@ def _out() -> IdeaDraftOutput:
         open_question="问题",
         author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"),
         boundaries=IdeaBoundaries(known=[], inferred=[], unknown=[]),
-        recommended_format="original",
+        recommended_format=RecommendedFormat.SHORT_POST,
     )
 
 
@@ -94,7 +95,7 @@ def test_from_opportunity_neutralizes_first_person():
             claim="I saw the failure", decision="I will fix it", tradeoff="I lose time"
         ),
         boundaries=IdeaBoundaries(known=["I know this"], inferred=[], unknown=[]),
-        recommended_format="original",
+        recommended_format=RecommendedFormat.SHORT_POST,
     )
     svc = FragmentService(FakeRunner(first_person))
     idea = svc.from_opportunity(opp)

@@ -2,7 +2,7 @@
 
 from finch.content.checkers.base import CheckResult
 from finch.content.jobs import ContentJob, ContentJobStatus
-from finch.content.models import Draft, DraftKind
+from finch.content.models import Draft, DraftKind, RecommendedFormat
 from finch.idea.models import RewriteIdeaOutput
 from finch.idea.service import idea_checker_suite, rewrite_idea
 
@@ -20,7 +20,7 @@ class FakeRunner:
 def _job():
     return ContentJob(
         id="idea_abc", source_card_ids=[], reader_problem="rp",
-        author_position=None, recommended_format=DraftKind.ORIGINAL,
+        author_position=None, recommended_format=RecommendedFormat.SHORT_POST,
         status=ContentJobStatus.CONFIRMED,
     )
 

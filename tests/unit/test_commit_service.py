@@ -1,5 +1,6 @@
 """Tests for CommitService（commit → IdeaCandidate，Skill 架构 Step 2 Task 1）。"""
 
+from finch.content.models import RecommendedFormat
 from finch.evidence.models import Claim, ClaimConfidence, EngineeringEvent
 from finch.github.models import CommitDetail, CommitFile
 from finch.ideas.commit_service import CommitService
@@ -92,7 +93,7 @@ def test_clear_decision_yields_one_idea():
     assert idea.core_point == "make the orchestrator a deterministic graph"
     assert idea.reader_problem == "orchestrator was hard to rerun"
     assert idea.why_worth_saying == "failures can now be replayed"
-    assert idea.recommended_format == "original"
+    assert idea.recommended_format == RecommendedFormat.SHORT_POST
     assert idea.generator == IdeaGenerator(skill="idea-discovery", version="1.0.0")
 
 

@@ -13,6 +13,7 @@ from typing import Literal, cast
 from pydantic import BaseModel, Field
 
 from finch.content.jobs import AuthorPosition, CommunicationGoal
+from finch.content.models import RecommendedFormat
 from finch.conversations.models import ConversationThread
 from finch.engagement.models import ConversationEvidence, InteractionRecord
 from finch.ideas.models import IdeaBoundaries, IdeaCandidate, IdeaGenerator, SourceRef
@@ -48,7 +49,7 @@ Rules:
   complete conclusion yet). Choose "exploration" when there is no complete conclusion.
 - author_position carries claim / decision / tradeoff; mark nothing as confirmed.
 - boundaries: known (verified), inferred (with hedging), unknown (do not assert).
-- recommended_format: original | reply | thread.
+- recommended_format: reply | quote | short_post | thread | dm | do_not_publish.
 - communication_goal: continue_discussion | invite_counterexample | summarize_practice |
   find_collaborators (how this content should advance the conversation; null if none applies).
 
@@ -171,7 +172,7 @@ class IdeaDraftOutput(BaseModel):
     open_question: str = ""
     author_position: AuthorPosition
     boundaries: IdeaBoundaries = Field(default_factory=IdeaBoundaries)
-    recommended_format: Literal["original", "reply", "thread"] = "original"
+    recommended_format: RecommendedFormat = RecommendedFormat.SHORT_POST
     communication_goal: CommunicationGoal | None = None
 
 

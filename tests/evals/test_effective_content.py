@@ -24,7 +24,7 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
 )
-from finch.content.models import ClaimRef, Draft, DraftKind
+from finch.content.models import ClaimRef, Draft, DraftKind, RecommendedFormat
 from finch.evidence.models import ClaimConfidence, EvidenceCard
 
 # --- scripted runners -------------------------------------------------------
@@ -135,7 +135,7 @@ def _job(
         candidate_id="t1",
         reader_problem="readers don't know how to rate limit",
         author_position=position,
-        recommended_format=DraftKind.REPLY,
+        recommended_format=RecommendedFormat.REPLY,
         status=status,
         core_message="token bucket rate limiting",
     )

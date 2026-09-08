@@ -5,7 +5,7 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
 )
-from finch.content.models import ClaimRef, Draft, DraftKind
+from finch.content.models import ClaimRef, Draft, DraftKind, RecommendedFormat
 from finch.content.writer import rewrite
 from finch.evidence.models import ClaimConfidence, EvidenceCard
 
@@ -43,7 +43,7 @@ def _job():
             tradeoff="more memory",
             change_mind_if="if a library already covers it",
         ),
-        recommended_format=DraftKind.REPLY,
+        recommended_format=RecommendedFormat.REPLY,
         status=ContentJobStatus.CONFIRMED,
         core_message="use a token bucket for rate limiting",
         why_now="we hit rate limits this week",

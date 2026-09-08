@@ -3,7 +3,7 @@
 import pytest
 
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
-from finch.content.models import DraftKind
+from finch.content.models import RecommendedFormat
 from finch.ideas.models import (
     IdeaBoundaries,
     IdeaCandidate,
@@ -53,7 +53,7 @@ def _candidate(**overrides) -> IdeaCandidate:
             inferred=["用户需要恢复"],
             unknown=["性能影响"],
         ),
-        recommended_format="original",
+        recommended_format=RecommendedFormat.SHORT_POST,
         generator=IdeaGenerator(skill="commit-to-idea", version="0.1.0"),
     )
     data.update(overrides)
@@ -101,7 +101,7 @@ def test_create_candidate_builds_job():
     assert job.core_message == "Graph 的价值是恢复与重放"
     assert job.why_now == "它决定失败后能否重放"
     assert job.reader_problem == "很多人只把 Graph 当可视化"
-    assert job.recommended_format == DraftKind.ORIGINAL
+    assert job.recommended_format == RecommendedFormat.SHORT_POST
     assert job.source_card_ids == []
     assert job.generation_key is not None
     assert job.author_position is not None
@@ -109,14 +109,16 @@ def test_create_candidate_builds_job():
     assert job.author_position.change_mind_if is None
 
 
-def test_create_candidate_maps_reply_and_thread_to_reply():
+def test_create_candidate_preserves_recommended_format():
     svc, _ = _service()
-    assert svc.create_candidate(_candidate(recommended_format="reply")).recommended_format == (
-        DraftKind.REPLY
-    )
-    assert svc.create_candidate(_candidate(recommended_format="thread")).recommended_format == (
-        DraftKind.REPLY
-    )
+    assert svc.create_candidate(
+        _candidate(recommended_format=RecommendedFormat.REPLY)
+    ).recommended_format == RecommendedFormat.REPLY
+
+    svc2, _ = _service()
+    assert svc2.create_candidate(
+        _candidate(recommended_format=RecommendedFormat.THREAD)
+    ).recommended_format == RecommendedFormat.THREAD
 
 
 def test_create_candidate_is_idempotent_by_generation_key():

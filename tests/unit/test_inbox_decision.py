@@ -4,7 +4,7 @@ from datetime import datetime
 
 from finch.author.models import PublicationIntent
 from finch.content.jobs import ContentJob, ContentJobStatus
-from finch.content.models import Draft, DraftKind
+from finch.content.models import Draft, DraftKind, RecommendedFormat
 from finch.engagement.models import (
     ConversationScore,
     ExternalPost,
@@ -73,7 +73,7 @@ class _Interactions:
 def _job(job_id="job_1"):
     return ContentJob(
         id=job_id, source_card_ids=[], reader_problem="rp",
-        author_position=None, recommended_format=DraftKind.ORIGINAL,
+        author_position=None, recommended_format=RecommendedFormat.SHORT_POST,
         status=ContentJobStatus.CONFIRMED,
     )
 
