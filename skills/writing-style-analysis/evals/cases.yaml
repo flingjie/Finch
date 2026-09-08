@@ -1,0 +1,62 @@
+skill_name: writing-style-analysis
+cases:
+  - id: 1
+    name: 单帖只输出 single_text
+    input:
+      text: "我们上线了新版本，修复了一个崩溃。"
+    expected_output:
+      scope: single_text
+    assertions:
+      - name: 范围
+        description: 单篇文本 scope == single_text，sample_size == 1
+
+  - id: 2
+    name: 不声称 AI 生成
+    input:
+      text: "这段文字读起来很流畅。"
+    expected_output:
+      no_ai_claim: true
+    assertions:
+      - name: 不判定 AI
+        description: 报告不声称文本由 AI 或人创作
+
+  - id: 3
+    name: 技术术语不当缺陷
+    input:
+      text: "我们用 gRPC 和 etcd 做了分布式锁。"
+    expected_output:
+      technical_terms_not_flaws: true
+    assertions:
+      - name: 术语中性
+        description: 技术词密度被描述，但不被当作文体缺陷
+
+  - id: 4
+    name: 每条主要判断有原文依据
+    input:
+      text: "先给结论：这个方案不可行。然后展开三个失败场景。"
+    expected_output:
+      excerpts_back_observations: true
+    assertions:
+      - name: 有出处
+        description: StyleEvidence 的 excerpts 引用原文支撑 observation
+
+  - id: 5
+    name: compare 不写 VoiceProfile
+    input:
+      text: "我的表达通常先讲背景。"
+      compare_voice: true
+    expected_output:
+      voice_profile_unchanged: true
+    assertions:
+      - name: 只读画像
+        description: 产出 StyleComparison 但不修改 voice-profile.yaml
+
+  - id: 6
+    name: 中英混合可处理
+    input:
+      text: "We shipped the feature。但 latency 反而变差了。"
+    expected_output:
+      mixed_language_ok: true
+    assertions:
+      - name: 混合语言
+        description: 中英混合文本正常产出 StyleReport
