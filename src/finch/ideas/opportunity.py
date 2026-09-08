@@ -26,6 +26,9 @@ _OPPORTUNITY_SIGNALS = frozenset({
     "不行", "坏了", "崩溃", "问题", "坑", "踩坑", "反例", "缺口", "翻车",
 })
 
+# LLM 精判的并发上限（bounded pool，避免按帖子数无限开线程）。
+_MAX_WORKERS = 4
+
 _NOISE_SIGNALS = frozenset({
     "announces", "announced", "launches", "launched", "release", "released",
     "shipping", "shipped", "new version",
@@ -130,11 +133,12 @@ class OpportunityService:
             if _classify(signal) == "opportunity":
                 survivors.append((post, signal))
 
-        # 独立 I/O 的 LLM 精判：≥2 帖时用 pool.map 并行，结果顺序与串行一致。
+        # 独立 I/O 的 LLM 精判：≥2 帖时用有界 pool.map 并行，结果顺序与串行一致。
         if len(survivors) <= 1:
             results = [self._judge(signal, topic) for _, signal in survivors]
         else:
-            with ThreadPoolExecutor(max_workers=len(survivors)) as pool:
+            workers = min(len(survivors), _MAX_WORKERS)
+            with ThreadPoolExecutor(max_workers=workers) as pool:
                 results = list(pool.map(lambda ps: self._judge(ps[1], topic), survivors))
 
         opportunities: list[Opportunity] = []

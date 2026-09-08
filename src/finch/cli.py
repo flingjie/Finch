@@ -231,24 +231,28 @@ def ideas_create(
     store.init()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     service = FragmentService(runner)
-    if text is not None:
-        idea = service.from_text(text)
-    elif conversation is not None:
-        evidence = ConversationEvidenceRepository(store).get(conversation)
-        if evidence is None:
-            typer.echo(f"conversation evidence not found: {conversation}")
-            raise typer.Exit(code=1)
-        if not evidence.verified:
-            typer.echo(f"conversation evidence not verified: {conversation}")
-            raise typer.Exit(code=1)
-        idea = service.from_conversation(evidence)
-    else:
-        opp = OpportunityRepository(store).get(opportunity)
-        if opp is None:
-            typer.echo(f"opportunity not found: {opportunity}")
-            raise typer.Exit(code=1)
-        idea = service.from_opportunity(opp)
-    job = IdeaService(ContentJobRepository(store)).create_candidate(idea)
+    try:
+        if text is not None:
+            idea = service.from_text(text)
+        elif conversation is not None:
+            evidence = ConversationEvidenceRepository(store).get(conversation)
+            if evidence is None:
+                typer.echo(f"conversation evidence not found: {conversation}")
+                raise typer.Exit(code=1)
+            if not evidence.verified:
+                typer.echo(f"conversation evidence not verified: {conversation}")
+                raise typer.Exit(code=1)
+            idea = service.from_conversation(evidence)
+        else:
+            opp = OpportunityRepository(store).get(opportunity)
+            if opp is None:
+                typer.echo(f"opportunity not found: {opportunity}")
+                raise typer.Exit(code=1)
+            idea = service.from_opportunity(opp)
+        job = IdeaService(ContentJobRepository(store)).create_candidate(idea)
+    except (RuntimeError, StructuredOutputError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
     if as_json:
         typer.echo(json.dumps(
             {"id": job.id, "origin": job.origin, "status": job.status.value},
@@ -643,12 +647,16 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
     window_feedbacks = [
         fb for fb in FeedbackRepository(store).list_feedbacks() if fb.recorded_at >= since
     ]
-    reflection = WeeklyReflectionService(runner).reflect(
-        report,
-        feedbacks=window_feedbacks,
-        conversation_evidence=ConversationEvidenceRepository(store).list_all(),
-        voice_profile=load_voice_profile(settings.paths.voice_profile_path),
-    )
+    try:
+        reflection = WeeklyReflectionService(runner).reflect(
+            report,
+            feedbacks=window_feedbacks,
+            conversation_evidence=ConversationEvidenceRepository(store).list_all(),
+            voice_profile=load_voice_profile(settings.paths.voice_profile_path),
+        )
+    except (RuntimeError, StructuredOutputError) as exc:
+        typer.echo(f"weekly reflection failed: {exc}")
+        raise typer.Exit(code=1) from exc
     if as_json:
         typer.echo(reflection.model_dump_json(indent=2))
     else:
@@ -1152,6 +1160,9 @@ def practice_diagnose(
     except KeyError:
         typer.echo(f"session not found: {session_id}")
         raise typer.Exit(code=1) from None
+    except (ValueError, RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
     if as_json:
         typer.echo(session.model_dump_json(indent=2))
     else:
@@ -1177,6 +1188,9 @@ def practice_save(
     except KeyError:
         typer.echo(f"session not found: {session_id}")
         raise typer.Exit(code=1) from None
+    except (ValueError, RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
     if as_json:
         typer.echo(session.model_dump_json(indent=2))
     else:
@@ -1201,6 +1215,9 @@ def practice_finish(
     except KeyError:
         typer.echo(f"session not found: {session_id}")
         raise typer.Exit(code=1) from None
+    except (ValueError, RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
     if as_json:
         typer.echo(session.model_dump_json(indent=2))
     else:

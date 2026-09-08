@@ -115,6 +115,7 @@ def _sanitize_external(out: "IdeaDraftOutput", signal: str) -> "IdeaDraftOutput"
             "core_point": _neutralize(out.core_point),
             "observation": _neutralize(out.observation),
             "reader_problem": _neutralize(out.reader_problem),
+            "why_worth_saying": _neutralize(out.why_worth_saying),
             "open_question": _neutralize(out.open_question),
             "author_position": AuthorPosition(
                 claim=_neutralize(position.claim),

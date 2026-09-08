@@ -77,6 +77,11 @@ class IdeaService:
         existing = self.jobs.find_by_generation_key(key)
         if existing is not None:
             return existing
+        # 兜底：generation_key 因 generator.skill 改名等变化时（同 core_point 的 id 不变），
+        # 按内容指纹（id）命中已有 job，避免重新落库覆盖其 confirmed/drafted/revised 状态。
+        existing_by_id = self.jobs.get_job(f"idea_{fingerprint[:8]}")
+        if existing_by_id is not None:
+            return existing_by_id
         job = ContentJob(
             id=f"idea_{fingerprint[:8]}",
             source_card_ids=[],

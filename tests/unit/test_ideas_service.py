@@ -127,15 +127,16 @@ def test_create_candidate_is_idempotent_by_generation_key():
     assert len(repo._by_id) == 1
 
 
-def test_create_candidate_distinguishes_source_refs_in_key():
-    svc, _ = _service()
+def test_create_candidate_dedups_same_core_point_by_id():
+    svc, repo = _service()
     a = svc.create_candidate(_candidate())
     b = svc.create_candidate(
         _candidate(source_refs=[SourceRef(type="commit", ref="zzz", summary="别的来源")])
     )
-    # 生成键区分来源；注意 id 仅由 core_point 决定（既定 id 方案），同核心主张会共享 id。
-    assert a.generation_key != b.generation_key
-    assert a.id == b.id
+    # 同 core_point（同 id）现在按 id 兜底去重，返回既有 job，不再覆盖（避免丢失
+    # confirmed/drafted/revised 状态；generation_key 的键级区分仍由 idea_generation_key 单独测试）。
+    assert b is a
+    assert len(repo._by_id) == 1
 
 
 # ---- confirm_position ----

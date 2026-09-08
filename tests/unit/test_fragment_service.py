@@ -84,7 +84,7 @@ def test_from_opportunity_neutralizes_first_person():
         core_point="I think our agent is broken",
         observation="I spent weeks debugging it",
         reader_problem="we can't reproduce the crash",
-        why_worth_saying="worth saying",
+        why_worth_saying="worth writing because I hit this crash",
         intent="stance",
         open_question="why does it crash",
         author_position=AuthorPosition(
@@ -98,6 +98,7 @@ def test_from_opportunity_neutralizes_first_person():
     assert "I think" not in idea.core_point
     assert "I spent" not in idea.observation
     assert "we" not in idea.reader_problem.lower()
+    assert "I hit" not in idea.why_worth_saying
     assert "I saw" not in idea.author_position.claim
     assert idea.boundaries.known == []  # LLM 的 known 被强制清空
     assert idea.source_refs[0].summary == "I spent weeks debugging this"  # 原文保留在来源

@@ -36,6 +36,9 @@ class _Jobs:
     def find_by_generation_key(self, key):
         return None
 
+    def get_job(self, job_id):
+        return None
+
     def upsert_job(self, job):
         self.saved = job
 
@@ -66,6 +69,31 @@ def test_create_candidate_maps_new_fields():
     assert job.open_question == "尚未解决什么"
     assert job.origin == "user"
     assert job.status == ContentJobStatus.PROPOSED
+
+
+def test_create_candidate_falls_back_to_id_on_generation_key_change():
+    """generation_key 变（如 generator.skill 改名）时，按内容 id 兜底命中既有 job，不覆盖。"""
+    existing = ContentJob(
+        id="idea_x", source_card_ids=[], reader_problem="rp",
+        author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"),
+        recommended_format=DraftKind.ORIGINAL, status=ContentJobStatus.CONFIRMED,
+        core_message="中心主张",
+    )
+
+    class _Repo:
+        def find_by_generation_key(self, key):
+            return None  # skill 改名导致 generation_key 不再命中
+
+        def get_job(self, job_id):
+            return existing
+
+        def upsert_job(self, job):
+            raise AssertionError("should not upsert when id-fallback hits existing job")
+
+    service = IdeaService(_Repo())  # type: ignore[arg-type]
+    job = service.create_candidate(_candidate())
+    assert job is existing
+    assert job.status == ContentJobStatus.CONFIRMED
 
 
 def test_content_job_new_fields_default():
