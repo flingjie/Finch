@@ -1,0 +1,79 @@
+"""Workspace 原子写 / YAML / frontmatter / JSONL 原语测试。"""
+
+from datetime import UTC, datetime
+
+import pytest
+
+from finch.peers.models import PeerProfile, PlatformIdentity
+from finch.storage.workspace import Workspace
+
+
+def _profile() -> PeerProfile:
+    return PeerProfile(
+        id="p1",
+        platform_identities=[PlatformIdentity(platform="x", author_id="alice")],
+        last_meaningful_interaction_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+    )
+
+
+def test_yaml_roundtrip(tmp_path):
+    ws = Workspace(tmp_path)
+    model = _profile()
+    p = tmp_path / "p.yaml"
+    ws.write_yaml(p, model)
+    assert ws.read_yaml(p, PeerProfile) == model
+
+
+def test_yaml_write_idempotent_bytes(tmp_path):
+    ws = Workspace(tmp_path)
+    p = tmp_path / "p.yaml"
+    ws.write_yaml(p, _profile())
+    first = p.read_text()
+    ws.write_yaml(p, _profile())
+    assert p.read_text() == first
+
+
+def test_read_yaml_missing_returns_none(tmp_path):
+    ws = Workspace(tmp_path)
+    assert ws.read_yaml(tmp_path / "nope.yaml", PeerProfile) is None
+
+
+def test_atomic_write_leaves_no_tmp(tmp_path):
+    ws = Workspace(tmp_path)
+    p = tmp_path / "x.txt"
+    ws.atomic_write(p, "hello")
+    assert p.read_text() == "hello"
+    assert not (tmp_path / "x.txt.tmp").exists()
+
+
+def test_frontmatter_roundtrip_preserves_body_horizontal_rule(tmp_path):
+    ws = Workspace(tmp_path)
+    meta = {"id": "d1", "kind": "original", "candidate_id": None}
+    body = "# Title\n\nSome text.\n\n---\n\nMore."
+    p = tmp_path / "draft.md"
+    ws.write_frontmatter(p, meta, body)
+    m2, b2 = ws.read_frontmatter(p)
+    assert m2 == meta
+    assert b2 == body
+
+
+def test_safe_filename_rejects_path_traversal(tmp_path):
+    ws = Workspace(tmp_path)
+    with pytest.raises(ValueError):
+        ws.safe_filename("../evil")
+
+
+def test_safe_filename_maps_colon(tmp_path):
+    ws = Workspace(tmp_path)
+    assert ws.safe_filename("intent:abc") == "intent_abc"
+
+
+def test_jsonl_append_and_read(tmp_path):
+    ws = Workspace(tmp_path)
+    p = tmp_path / "critic.jsonl"
+    ws.append_jsonl(p, {"round": 0, "outcome": "pass"})
+    ws.append_jsonl(p, {"round": 1, "outcome": "rewrite"})
+    assert ws.read_jsonl(p) == [
+        {"round": 0, "outcome": "pass"},
+        {"round": 1, "outcome": "rewrite"},
+    ]
