@@ -1,13 +1,16 @@
-"""Evidence Card 仓储（spec 7.1/7.2）与草稿/审核/反馈/ContentJob 仓储（Phase 6/8）。
+"""文件工作区仓储：领域模型 → YAML / frontmatter-Markdown / JSONL。
 
-另含草稿版本（DraftVersionRecord）与 Critic 报告（CriticReportRecord）仓储（Task 7）。
+保留原公有方法签名，只把 ``Session.merge/commit`` 换成文件原子写；构造入参由
+``Store`` 改为 ``Workspace``。二级查找（find_by_generation_key / list_by_* /
+list_pending）由「同类独立目录 + glob + Python 过滤」实现。
 """
 
-import json
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import TypeVar
 
-from sqlalchemy import UniqueConstraint
-from sqlmodel import Field, Session, SQLModel, col, select
+import yaml
+from pydantic import BaseModel, ValidationError
 
 from finch.author.models import PublicationIntent
 from finch.content.checkers.base import CheckResult
@@ -27,959 +30,379 @@ from finch.inbox.models import DecisionRecord
 from finch.learn.models import Feedback
 from finch.peers.models import PeerProfile
 from finch.practice.models import PracticeSession
-from finch.storage.database import Store
+from finch.storage.workspace import Workspace
+
+T = TypeVar("T", bound=BaseModel)
 
 
-class EvidenceCardRecord(SQLModel, table=True):
-    """EvidenceCard 持久化模型（C5）。"""
+def _write(ws: Workspace, name: str, key: str, model: BaseModel) -> None:
+    ws.write_yaml(ws.dir(name) / f"{ws.safe_filename(key)}.yaml", model)
 
-    id: str = Field(primary_key=True)
-    event_id: str = Field(index=True)
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+def _read(ws: Workspace, name: str, key: str, model_cls: type[T]) -> T | None:
+    return ws.read_yaml(ws.dir(name) / f"{ws.safe_filename(key)}.yaml", model_cls)
+
+
+def _list_all(ws: Workspace, name: str, model_cls: type[T]) -> list[T]:
+    out: list[T] = []
+    for path in sorted(ws.dir(name).glob("*.yaml")):
+        obj = ws.read_yaml(path, model_cls)
+        if obj is not None:
+            out.append(obj)
+    return out
 
 
 class EvidenceRepository:
-    """EvidenceCard 仓储（C5）。"""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def upsert_card(self, card: EvidenceCard) -> None:
-        """按 id merge 插入或更新 EvidenceCard（幂等）。"""
-        payload_json = card.model_dump_json()
-        record = EvidenceCardRecord(
-            id=card.id,
-            event_id=card.event_id,
-            payload_json=payload_json,
-            updated_at=datetime.now(UTC),
-        )
-        with Session(self.store.engine) as session:
-            session.merge(record)
-            session.commit()
+        _write(self.ws, "evidence", card.id, card)
 
     def upsert_cards(self, cards: list[EvidenceCard]) -> None:
-        """按 id 批量 merge 插入或更新（单 Session、单 commit，收紧事务粒度）。"""
-        if not cards:
-            return
-        with Session(self.store.engine) as session:
-            for card in cards:
-                session.merge(
-                    EvidenceCardRecord(
-                        id=card.id,
-                        event_id=card.event_id,
-                        payload_json=card.model_dump_json(),
-                        updated_at=datetime.now(UTC),
-                    )
-                )
-            session.commit()
+        for card in cards:
+            self.upsert_card(card)
 
     def get_card(self, card_id: str) -> EvidenceCard | None:
-        """按 id 获取 EvidenceCard，不存在返回 None。"""
-        with Session(self.store.engine) as session:
-            record = session.get(EvidenceCardRecord, card_id)
-            if record is None:
-                return None
-            return EvidenceCard.model_validate_json(record.payload_json)
+        return _read(self.ws, "evidence", card_id, EvidenceCard)
 
     def list_cards(self) -> list[EvidenceCard]:
-        """列出所有 EvidenceCard。"""
-        with Session(self.store.engine) as session:
-            stmt = select(EvidenceCardRecord)
-            records = list(session.exec(stmt))
-            return [EvidenceCard.model_validate_json(r.payload_json) for r in records]
-
-
-class DraftRecord(SQLModel, table=True):
-    """Draft 持久化模型（C2）。"""
-
-    id: str = Field(primary_key=True)  # = draft.id
-    kind: str  # DraftKind.value
-    candidate_id: str | None = None
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+        return _list_all(self.ws, "evidence", EvidenceCard)
 
 
 class DraftRepository:
-    """Draft 仓储（C2）。"""
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
-    def __init__(self, store: Store) -> None:
-        self.store = store
+    def _path(self, draft_id: str) -> Path:
+        return self.ws.dir("drafts") / self.ws.safe_filename(draft_id) / "draft.md"
 
     def upsert_draft(self, draft: Draft) -> None:
-        """按 id merge 插入或更新 Draft（幂等）。"""
-        payload_json = draft.model_dump_json()
-        record = DraftRecord(
-            id=draft.id,
-            kind=draft.kind.value,
-            candidate_id=draft.candidate_id,
-            payload_json=payload_json,
-            updated_at=datetime.now(UTC),
-        )
-        with Session(self.store.engine) as session:
-            session.merge(record)
-            session.commit()
+        meta = draft.model_dump(mode="json", exclude={"body"})
+        self.ws.write_frontmatter(self._path(draft.id), meta, draft.body)
 
     def get_draft(self, draft_id: str) -> Draft | None:
-        """按 id 获取 Draft，不存在返回 None。"""
-        with Session(self.store.engine) as session:
-            record = session.get(DraftRecord, draft_id)
-            if record is None:
-                return None
-            return Draft.model_validate_json(record.payload_json)
+        path = self._path(draft_id)
+        if not path.exists():
+            return None
+        meta, body = self.ws.read_frontmatter(path)
+        return Draft.model_validate({**meta, "body": body})
 
     def list_drafts(self) -> list[Draft]:
-        """列出所有 Draft（按 id 稳定排序，保证 next --json 的 pending[0] 确定性）。"""
-        with Session(self.store.engine) as session:
-            stmt = select(DraftRecord).order_by(col(DraftRecord.id))
-            records = list(session.exec(stmt))
-            return [Draft.model_validate_json(r.payload_json) for r in records]
+        out: list[Draft] = []
+        for path in sorted(self.ws.dir("drafts").glob("*/draft.md")):
+            meta, body = self.ws.read_frontmatter(path)
+            out.append(Draft.model_validate({**meta, "body": body}))
+        return out
 
     def list_by_job(self, job_id: str) -> list[Draft]:
-        """按 content_job_id 列出草稿（payload_json 内字段，需全表扫描后过滤）。"""
         return [d for d in self.list_drafts() if d.content_job_id == job_id]
 
 
-class DecisionRecordRecord(SQLModel, table=True):
-    """DecisionRecord 持久化模型（单一决策点）。"""
-
-    id: str = Field(primary_key=True)  # "dec_<job_id>"
-    job_id: str = Field(index=True)
-    draft_id: str = Field(index=True)
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
 class DecisionRecordRepository:
-    """DecisionRecord 仓储（加性，与旧 ReviewRepository 并存）。"""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def save(self, record: DecisionRecord) -> None:
-        with Session(self.store.engine) as session:
-            session.merge(
-                DecisionRecordRecord(
-                    id=record.id,
-                    job_id=record.job_id,
-                    draft_id=record.draft_id,
-                    payload_json=record.model_dump_json(),
-                    updated_at=datetime.now(UTC),
-                )
-            )
-            session.commit()
+        _write(self.ws, "decisions", record.id, record)
 
     def get(self, job_id: str) -> DecisionRecord | None:
-        with Session(self.store.engine) as session:
-            record = session.get(DecisionRecordRecord, f"dec_{job_id}")
-            if record is None:
-                return None
-            return DecisionRecord.model_validate_json(record.payload_json)
+        return _read(self.ws, "decisions", f"dec_{job_id}", DecisionRecord)
 
     def list(self) -> list[DecisionRecord]:
-        with Session(self.store.engine) as session:
-            records = list(session.exec(select(DecisionRecordRecord)))
-            return [DecisionRecord.model_validate_json(r.payload_json) for r in records]
-
-
-class FeedbackRecord(SQLModel, table=True):
-    """Feedback 持久化模型（C2）。"""
-
-    id: str = Field(primary_key=True)  # = feedback.draft_id
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+        return _list_all(self.ws, "decisions", DecisionRecord)
 
 
 class FeedbackRepository:
-    """Feedback 仓储（C2）。"""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def save_feedback(self, feedback: Feedback) -> None:
-        """按 id merge 保存 Feedback（幂等）。"""
-        payload_json = feedback.model_dump_json()
-        record = FeedbackRecord(
-            id=feedback.draft_id,
-            payload_json=payload_json,
-            updated_at=datetime.now(UTC),
-        )
-        with Session(self.store.engine) as session:
-            session.merge(record)
-            session.commit()
+        _write(self.ws, "feedback", feedback.draft_id, feedback)
 
     def get_feedback(self, draft_id: str) -> Feedback | None:
-        """按 draft_id 获取 Feedback，不存在返回 None。"""
-        with Session(self.store.engine) as session:
-            record = session.get(FeedbackRecord, draft_id)
-            if record is None:
-                return None
-            return Feedback.model_validate_json(record.payload_json)
+        return _read(self.ws, "feedback", draft_id, Feedback)
 
     def list_feedbacks(self) -> list[Feedback]:
-        """列出所有 Feedback。"""
-        with Session(self.store.engine) as session:
-            stmt = select(FeedbackRecord)
-            records = list(session.exec(stmt))
-            return [Feedback.model_validate_json(r.payload_json) for r in records]
-
-
-class ContentJobRecord(SQLModel, table=True):
-    """ContentJob 持久化模型（C8）。"""
-
-    id: str = Field(primary_key=True)  # = job.id
-    origin: str | None = Field(default=None, index=True)
-    generation_key: str | None = Field(default=None, index=True)
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+        return _list_all(self.ws, "feedback", Feedback)
 
 
 class ContentJobRepository:
-    """ContentJob 仓储（C8）。"""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def upsert_job(self, job: ContentJob) -> None:
-        """按 id merge 插入或更新 ContentJob（幂等）。"""
-        payload_json = job.model_dump_json()
-        record = ContentJobRecord(
-            id=job.id,
-            origin=job.origin,
-            generation_key=job.generation_key,
-            payload_json=payload_json,
-            updated_at=datetime.now(UTC),
-        )
-        with Session(self.store.engine) as session:
-            session.merge(record)
-            session.commit()
+        _write(self.ws, "ideas", job.id, job)
 
     def upsert_jobs(self, jobs: list[ContentJob]) -> None:
-        """按 id 批量 merge 插入或更新（单 Session、单 commit，收紧事务粒度）。"""
-        if not jobs:
-            return
-        with Session(self.store.engine) as session:
-            for job in jobs:
-                session.merge(
-                    ContentJobRecord(
-                        id=job.id,
-                        origin=job.origin,
-                        generation_key=job.generation_key,
-                        payload_json=job.model_dump_json(),
-                        updated_at=datetime.now(UTC),
-                    )
-                )
-            session.commit()
+        for job in jobs:
+            self.upsert_job(job)
 
     def get_job(self, job_id: str) -> ContentJob | None:
-        """按 id 获取 ContentJob，不存在返回 None。"""
-        with Session(self.store.engine) as session:
-            record = session.get(ContentJobRecord, job_id)
-            if record is None:
-                return None
-            return ContentJob.model_validate_json(record.payload_json)
+        return _read(self.ws, "ideas", job_id, ContentJob)
 
     def find_by_generation_key(self, generation_key: str) -> ContentJob | None:
-        """按 generation_key 获取 ContentJob，不存在返回 None（幂等键查询）。"""
-        with Session(self.store.engine) as session:
-            stmt = select(ContentJobRecord).where(
-                ContentJobRecord.generation_key == generation_key
-            )
-            record = session.exec(stmt).first()
-            if record is None:
-                return None
-            return ContentJob.model_validate_json(record.payload_json)
+        for job in self.list_jobs():
+            if job.generation_key == generation_key:
+                return job
+        return None
 
     def list_jobs(self) -> list[ContentJob]:
-        """列出所有可解析的 ContentJob（单查询）。不可解析的旧行被跳过，绝不 raise。"""
         jobs, _ = self._list_jobs_and_failures()
         return jobs
 
     def list_job_parse_failures(self) -> list[str]:
-        """列出 payload 无法解析为 ContentJob 的旧行 id（供 CLI 渲染系统警告）。"""
         _, failures = self._list_jobs_and_failures()
         return failures
 
     def _list_jobs_and_failures(self) -> tuple[list[ContentJob], list[str]]:
-        from pydantic import ValidationError
-
-        with Session(self.store.engine) as session:
-            records = list(session.exec(select(ContentJobRecord)))
         jobs: list[ContentJob] = []
         failures: list[str] = []
-        for record in records:
+        for path in sorted(self.ws.dir("ideas").glob("*.yaml")):
             try:
-                jobs.append(ContentJob.model_validate_json(record.payload_json))
-            except ValidationError:
-                failures.append(record.id)
+                job = self.ws.read_yaml(path, ContentJob)
+            except (ValidationError, yaml.YAMLError):
+                failures.append(path.stem)
+            else:
+                if job is not None:
+                    jobs.append(job)
         return jobs, failures
 
 
-class DraftVersionRecord(SQLModel, table=True):
-    """草稿每轮版本持久化模型（Task 7：C8）。"""
-
-    id: str = Field(primary_key=True)  # f"{draft_id}:{round}"
-    draft_id: str = Field(index=True)
-    round: int
-    payload_json: str  # Draft.model_dump_json()
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
 class DraftVersionRepository:
-    """草稿版本仓储（Task 7）：逐轮保留 Critique 前的草稿快照。"""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def upsert_version(self, draft_id: str, round: int, draft: Draft) -> None:
-        """按 id（draft_id:round）merge 插入或更新某一轮草稿版本（幂等）。"""
-        record = DraftVersionRecord(
-            id=f"{draft_id}:{round}",
-            draft_id=draft_id,
-            round=round,
-            payload_json=draft.model_dump_json(),
-            updated_at=datetime.now(UTC),
+        meta = draft.model_dump(mode="json", exclude={"body"})
+        path = (
+            self.ws.dir("drafts") / self.ws.safe_filename(draft_id) / "versions" / f"{round}.md"
         )
-        with Session(self.store.engine) as session:
-            session.merge(record)
-            session.commit()
+        self.ws.write_frontmatter(path, meta, draft.body)
 
     def list_versions(self, draft_id: str) -> list[Draft]:
-        """按 round 升序返回某草稿的全部版本（单查询，避免 N+1）。"""
-        with Session(self.store.engine) as session:
-            stmt = (
-                select(DraftVersionRecord)
-                .where(DraftVersionRecord.draft_id == draft_id)
-                .order_by("round")
-            )
-            records = list(session.exec(stmt))
-            return [Draft.model_validate_json(r.payload_json) for r in records]
-
-
-class CriticReportRecord(SQLModel, table=True):
-    """Critic 每轮报告持久化模型（Task 7：C8）。"""
-
-    id: str = Field(primary_key=True)  # f"{draft_id}:{round}"
-    draft_id: str = Field(index=True)
-    round: int
-    payload_json: str  # {"checks": [...], "outcome": "..."}
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+        d = self.ws.dir("drafts") / self.ws.safe_filename(draft_id) / "versions"
+        out: list[Draft] = []
+        for path in sorted(d.glob("*.md"), key=lambda p: int(p.stem)):
+            meta, body = self.ws.read_frontmatter(path)
+            out.append(Draft.model_validate({**meta, "body": body}))
+        return out
 
 
 class CriticReportRepository:
-    """Critic 报告仓储（Task 7）：逐轮保留检查结果与聚合去向。"""
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
-    def __init__(self, store: Store) -> None:
-        self.store = store
+    def _path(self, draft_id: str) -> Path:
+        return self.ws.dir("drafts") / self.ws.safe_filename(draft_id) / "critic.jsonl"
 
     def upsert_report(
         self, draft_id: str, round: int, checks: list[CheckResult], outcome: str
     ) -> None:
-        """按 id（draft_id:round）merge 插入或更新某轮 Critic 报告（幂等）。"""
         payload = {
-            "checks": [check.model_dump(mode="json") for check in checks],
+            "draft_id": draft_id,
+            "round": round,
+            "checks": [c.model_dump(mode="json") for c in checks],
             "outcome": outcome,
+            "ts": datetime.now(UTC).isoformat(),
         }
-        record = CriticReportRecord(
-            id=f"{draft_id}:{round}",
-            draft_id=draft_id,
-            round=round,
-            payload_json=json.dumps(payload),
-            updated_at=datetime.now(UTC),
-        )
-        with Session(self.store.engine) as session:
-            session.merge(record)
-            session.commit()
+        self.ws.append_jsonl(self._path(draft_id), payload)
 
     def list_reports(self, draft_id: str) -> list[dict]:
-        """按 round 升序返回某草稿的全部报告（单查询，避免 N+1）。"""
-        with Session(self.store.engine) as session:
-            stmt = (
-                select(CriticReportRecord)
-                .where(CriticReportRecord.draft_id == draft_id)
-                .order_by("round")
-            )
-            records = list(session.exec(stmt))
-            return [json.loads(r.payload_json) for r in records]
+        rows = sorted(self.ws.read_jsonl(self._path(draft_id)), key=lambda r: r["round"])
+        return [{"checks": r["checks"], "outcome": r["outcome"]} for r in rows]
 
     def list_all_reports(self, since: datetime | None = None) -> dict[str, list[dict]]:
-        """按 draft_id 分组返回 Critic 报告（单查询，供周复盘批量统计，避免 N+1）。
-
-        `since` 非 None 时仅返回 ``updated_at >= since`` 的报告，使周复盘指标遵守时间窗。
-        """
-        with Session(self.store.engine) as session:
-            stmt = select(CriticReportRecord).order_by("draft_id", "round")
-            if since is not None:
-                stmt = stmt.where(CriticReportRecord.updated_at >= since)
-            records = list(session.exec(stmt))
         grouped: dict[str, list[dict]] = {}
-        for record in records:
-            grouped.setdefault(record.draft_id, []).append(json.loads(record.payload_json))
+        for path in sorted(self.ws.dir("drafts").glob("*/critic.jsonl")):
+            for r in self.ws.read_jsonl(path):
+                if since is not None and datetime.fromisoformat(r["ts"]) < since:
+                    continue
+                grouped.setdefault(r["draft_id"], []).append(r)
+        for draft_id, rows in grouped.items():
+            rows.sort(key=lambda r: r["round"])
+            grouped[draft_id] = [
+                {"checks": r["checks"], "outcome": r["outcome"]} for r in rows
+            ]
         return grouped
 
 
-class InteractionProposalRecord(SQLModel, table=True):
-    """InteractionProposal 持久化模型（Phase 5 审批队列）。"""
-
-    id: str = Field(primary_key=True)  # = candidate.id（稳定幂等键）
-    run_id: str = Field(index=True)
-    post_id: str = Field(index=True)
-    action: str  # InteractionAction.value
-    status: str  # InteractionStatus.value
-    generation_key: str | None = Field(default=None, index=True)  # idempotency key
-    payload_json: str
-    execution_outcome: str | None = None  # ExecutionStatus.value（record_execution 时写入）
-    execution_detail: str | None = None
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
 class InteractionRepository:
-    """互动候选审批队列仓储（Phase 5）。
-
-    ``upsert`` 按 ``candidate.id`` merge（幂等）；``approve``/``reject``/``edit`` 通过
-    ``_update`` 读回原记录、改写 payload 后按同 ``run_id`` merge，保留 run_id/post_id/action
-    等索引列。``record_execution`` 以 ``candidate.id`` 为幂等键，重复调用只覆盖同一条记录，
-    不会重复执行。
-    """
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
-
-    @staticmethod
-    def _to_record(candidate: InteractionProposal, run_id: str) -> InteractionProposalRecord:
-        return InteractionProposalRecord(
-            id=candidate.id,
-            run_id=run_id,
-            post_id=candidate.post.id,
-            action=candidate.action.value,
-            status=candidate.status.value,
-            generation_key=candidate.generation_key,
-            payload_json=candidate.model_dump_json(),
-            updated_at=datetime.now(UTC),
-        )
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def upsert(self, candidate: InteractionProposal, run_id: str) -> None:
-        """按 id merge 插入或更新候选（幂等，可重放）。"""
-        with Session(self.store.engine) as session:
-            session.merge(self._to_record(candidate, run_id=run_id))
-            session.commit()
+        # run_id 保留签名兼容；文件形式不单独持久化（原列仅用于回填，从未被读取）。
+        _write(self.ws, "interactions/proposals", candidate.id, candidate)
 
     def get(self, candidate_id: str) -> InteractionProposal | None:
-        """按 id 获取候选，不存在返回 None。"""
-        with Session(self.store.engine) as session:
-            record = session.get(InteractionProposalRecord, candidate_id)
-            if record is None:
-                return None
-            return InteractionProposal.model_validate_json(record.payload_json)
+        return _read(self.ws, "interactions/proposals", candidate_id, InteractionProposal)
 
     def find_by_generation_key(self, generation_key: str) -> InteractionProposal | None:
-        """按 generation_key 查询候选（幂等键：相同 key 不重复创建 Proposal）。"""
-        with Session(self.store.engine) as session:
-            stmt = select(InteractionProposalRecord).where(
-                InteractionProposalRecord.generation_key == generation_key
-            )
-            record = session.exec(stmt).first()
-            if record is None:
-                return None
-            return InteractionProposal.model_validate_json(record.payload_json)
+        for c in self.list_all():
+            if c.generation_key == generation_key:
+                return c
+        return None
 
     def list_pending(self) -> list[InteractionProposal]:
-        """列出全部仍处 PROPOSED 状态的候选（未批准、未拒绝、未执行）。"""
-        with Session(self.store.engine) as session:
-            stmt = select(InteractionProposalRecord).where(
-                InteractionProposalRecord.status == InteractionStatus.PROPOSED.value
-            )
-            records = list(session.exec(stmt))
-            return [InteractionProposal.model_validate_json(r.payload_json) for r in records]
+        return [c for c in self.list_all() if c.status == InteractionStatus.PROPOSED]
 
     def list_all(self) -> list[InteractionProposal]:
-        """列出全部候选（含已批准/已拒绝/已执行，供指标聚合）。"""
-        with Session(self.store.engine) as session:
-            records = list(session.exec(select(InteractionProposalRecord)))
-            return [InteractionProposal.model_validate_json(r.payload_json) for r in records]
+        return _list_all(self.ws, "interactions/proposals", InteractionProposal)
 
     def list_executed(self) -> list[InteractionProposal]:
-        """列出全部已执行（EXECUTED）候选。"""
-        with Session(self.store.engine) as session:
-            stmt = select(InteractionProposalRecord).where(
-                InteractionProposalRecord.status == InteractionStatus.EXECUTED.value
-            )
-            records = list(session.exec(stmt))
-            return [InteractionProposal.model_validate_json(r.payload_json) for r in records]
+        return [c for c in self.list_all() if c.status == InteractionStatus.EXECUTED]
 
     def _update(self, candidate_id: str, **updates: object) -> None:
-        """读回候选、应用 updates 后按同 run_id merge（幂等）。不存在时抛 KeyError。"""
-        with Session(self.store.engine) as session:
-            record = session.get(InteractionProposalRecord, candidate_id)
-            if record is None:
-                raise KeyError(candidate_id)
-            candidate = InteractionProposal.model_validate_json(record.payload_json)
-            candidate = candidate.model_copy(update=updates)
-            session.merge(self._to_record(candidate, run_id=record.run_id))
-            session.commit()
+        candidate = self.get(candidate_id)
+        if candidate is None:
+            raise KeyError(candidate_id)
+        self.upsert(candidate.model_copy(update=updates), run_id="")
 
     def approve(self, candidate_id: str) -> None:
-        """PROPOSED→APPROVED（幂等：重复批准仍是 APPROVED，不重复执行）。"""
         self._update(candidate_id, status=InteractionStatus.APPROVED, reject_reason=None)
 
     def reject(self, candidate_id: str, reason: str) -> None:
-        """→ REJECTED，并记录 reject_reason（幂等）。"""
         self._update(candidate_id, status=InteractionStatus.REJECTED, reject_reason=reason)
 
     def edit(self, candidate_id: str, revised_draft: str) -> None:
-        """保存人工修订草稿到 ``revised_draft``（不自动批准、不改变发布权限）。"""
         self._update(candidate_id, revised_draft=revised_draft)
 
     def record_execution(self, candidate_id: str, outcome: str, detail: str) -> None:
-        """记录执行结果（``outcome`` ∈ ExecutionStatus 值）并置 status=EXECUTED。
-
-        以 ``candidate.id`` 为幂等键：重复调用只 merge 覆盖同一条记录，不重复执行。
-        真正的「未批准不可执行」由纯函数 ``evaluate_execution`` 在执行前强制，本方法
-        只是被动的结果记录器。
-        """
-        with Session(self.store.engine) as session:
-            record = session.get(InteractionProposalRecord, candidate_id)
-            if record is None:
-                raise KeyError(candidate_id)
-            candidate = InteractionProposal.model_validate_json(record.payload_json)
-            candidate = candidate.model_copy(update={"status": InteractionStatus.EXECUTED})
-            merged = self._to_record(candidate, run_id=record.run_id)
-            merged.execution_outcome = outcome
-            merged.execution_detail = detail
-            session.merge(merged)
-            session.commit()
-
-
-class FeedbackSnapshotRecord(SQLModel, table=True):
-    """FeedbackSnapshot 持久化模型（Phase 6 反馈回流）。"""
-
-    id: str = Field(primary_key=True)  # = snapshot.id（幂等键）
-    interaction_id: str = Field(index=True)
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+        candidate = self.get(candidate_id)
+        if candidate is None:
+            raise KeyError(candidate_id)
+        self.upsert(
+            candidate.model_copy(update={"status": InteractionStatus.EXECUTED}), run_id=""
+        )
 
 
 class FeedbackSnapshotRepository:
-    """互动反馈快照仓储（Phase 6）。
-
-    ``upsert`` 按 ``snapshot.id`` merge（幂等）；``get`` 按 ``interaction_id`` 查询，
-    返回该互动最近一次写入的快照。
-    """
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def upsert(self, snapshot: FeedbackSnapshot) -> None:
-        """按 id merge 插入或更新快照（幂等，可重放）。"""
-        record = FeedbackSnapshotRecord(
-            id=snapshot.id,
-            interaction_id=snapshot.interaction_id,
-            payload_json=snapshot.model_dump_json(),
-            updated_at=datetime.now(UTC),
-        )
-        with Session(self.store.engine) as session:
-            session.merge(record)
-            session.commit()
+        _write(self.ws, "interactions/snapshots", snapshot.id, snapshot)
 
     def get(self, interaction_id: str) -> FeedbackSnapshot | None:
-        """按 interaction_id 获取快照，不存在返回 None。"""
-        with Session(self.store.engine) as session:
-            stmt = select(FeedbackSnapshotRecord).where(
-                FeedbackSnapshotRecord.interaction_id == interaction_id
-            )
-            record = session.exec(stmt).first()
-            if record is None:
-                return None
-            return FeedbackSnapshot.model_validate_json(record.payload_json)
+        matches = [s for s in self.list_all() if s.interaction_id == interaction_id]
+        return matches[0] if matches else None
 
     def list_all(self) -> list[FeedbackSnapshot]:
-        """列出所有快照。"""
-        with Session(self.store.engine) as session:
-            stmt = select(FeedbackSnapshotRecord)
-            records = list(session.exec(stmt))
-            return [FeedbackSnapshot.model_validate_json(r.payload_json) for r in records]
-
-
-class ConversationEvidenceRecord(SQLModel, table=True):
-    """ConversationEvidence 持久化模型（Phase 6 反馈回流）。"""
-
-    id: str = Field(primary_key=True)  # = evidence.id（幂等键）
-    interaction_id: str = Field(index=True)
-    post_id: str = Field(index=True)
-    origin: str  # 恒为 "conversation"
-    kind: str  # question / disagreement / hypothesis / experiment
-    verified: bool = Field(index=True)
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+        return _list_all(self.ws, "interactions/snapshots", FeedbackSnapshot)
 
 
 class ConversationEvidenceRepository:
-    """conversation 证据仓储（Phase 6）。
-
-    ``upsert`` 按 ``evidence.id`` merge（幂等）；``mark_verified`` 读回记录、置
-    ``verified=True`` 后按同 id merge；``list_unverified`` 只返回未验证的讨论信号，
-    供升级流程筛选待验证项。
-    """
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
-
-    @staticmethod
-    def _to_record(evidence: ConversationEvidence) -> ConversationEvidenceRecord:
-        return ConversationEvidenceRecord(
-            id=evidence.id,
-            interaction_id=evidence.interaction_id,
-            post_id=evidence.post_id,
-            origin=evidence.origin,
-            kind=evidence.kind,
-            verified=evidence.verified,
-            payload_json=evidence.model_dump_json(),
-            updated_at=datetime.now(UTC),
-        )
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def upsert(self, evidence: ConversationEvidence) -> None:
-        """按 id merge 插入或更新证据（幂等，可重放）。"""
-        with Session(self.store.engine) as session:
-            session.merge(self._to_record(evidence))
-            session.commit()
+        _write(self.ws, "interactions/evidence", evidence.id, evidence)
 
     def get(self, evidence_id: str) -> ConversationEvidence | None:
-        """按 id 获取证据，不存在返回 None。"""
-        with Session(self.store.engine) as session:
-            record = session.get(ConversationEvidenceRecord, evidence_id)
-            if record is None:
-                return None
-            return ConversationEvidence.model_validate_json(record.payload_json)
+        return _read(self.ws, "interactions/evidence", evidence_id, ConversationEvidence)
 
     def list_unverified(self) -> list[ConversationEvidence]:
-        """列出全部未验证（``verified=False``）的证据。"""
-        with Session(self.store.engine) as session:
-            stmt = select(ConversationEvidenceRecord).where(
-                ConversationEvidenceRecord.verified == False  # noqa: E712
-            )
-            records = list(session.exec(stmt))
-            return [ConversationEvidence.model_validate_json(r.payload_json) for r in records]
+        return [e for e in self.list_all() if not e.verified]
 
     def list_all(self) -> list[ConversationEvidence]:
-        """列出全部 conversation 证据（含已验证与未验证，供指标聚合）。"""
-        with Session(self.store.engine) as session:
-            records = list(session.exec(select(ConversationEvidenceRecord)))
-            return [ConversationEvidence.model_validate_json(r.payload_json) for r in records]
+        return _list_all(self.ws, "interactions/evidence", ConversationEvidence)
 
     def list_verified(self) -> list[ConversationEvidence]:
-        """列出全部已验证（``verified=True``）的证据。"""
-        with Session(self.store.engine) as session:
-            stmt = select(ConversationEvidenceRecord).where(
-                ConversationEvidenceRecord.verified == True  # noqa: E712
-            )
-            records = list(session.exec(stmt))
-            return [ConversationEvidence.model_validate_json(r.payload_json) for r in records]
+        return [e for e in self.list_all() if e.verified]
 
     def mark_verified(self, evidence_id: str) -> None:
-        """置 ``verified=True``（幂等；不存在时抛 KeyError）。"""
-        with Session(self.store.engine) as session:
-            record = session.get(ConversationEvidenceRecord, evidence_id)
-            if record is None:
-                raise KeyError(evidence_id)
-            evidence = ConversationEvidence.model_validate_json(record.payload_json)
-            evidence = evidence.model_copy(update={"verified": True})
-            session.merge(self._to_record(evidence))
-            session.commit()
+        evidence = self.get(evidence_id)
+        if evidence is None:
+            raise KeyError(evidence_id)
+        self.upsert(evidence.model_copy(update={"verified": True}))
 
     def list_by_interaction(self, interaction_id: str) -> list[ConversationEvidence]:
-        """按 interaction_id 列出全部证据。"""
-        with Session(self.store.engine) as session:
-            stmt = select(ConversationEvidenceRecord).where(
-                ConversationEvidenceRecord.interaction_id == interaction_id
-            )
-            records = list(session.exec(stmt))
-            return [ConversationEvidence.model_validate_json(r.payload_json) for r in records]
-
-
-class EngagementRunStatsRecord(SQLModel, table=True):
-    """互动轨道运行级计数持久化模型（Phase 7 可观测性）。"""
-
-    run_id: str = Field(primary_key=True)
-    posts_scanned: int = 0
-    candidates: int = 0
-    drafts: int = 0
-    latency_ms: int = 0
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+        return [e for e in self.list_all() if e.interaction_id == interaction_id]
 
 
 class EngagementRunStatsRepository:
-    """互动轨道运行级计数仓储（Phase 7）。
-
-    ``upsert`` 按 ``run_id`` merge（幂等）；``list_all`` 返回全部运行级计数，供 CLI
-    ``finch engagement metrics`` 聚合 ``no_evidence_runs`` / ``posts_scanned`` / 延迟。
-    """
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def upsert(self, stats: EngagementRunStats) -> None:
-        """按 run_id merge 插入或更新运行级计数（幂等，可重放）。"""
-        record = EngagementRunStatsRecord(
-            run_id=stats.run_id,
-            posts_scanned=stats.posts_scanned,
-            candidates=stats.candidates,
-            drafts=stats.drafts,
-            latency_ms=stats.latency_ms,
-            payload_json=stats.model_dump_json(),
-            updated_at=datetime.now(UTC),
-        )
-        with Session(self.store.engine) as session:
-            session.merge(record)
-            session.commit()
+        _write(self.ws, "interactions/run-stats", stats.run_id, stats)
 
     def list_all(self) -> list[EngagementRunStats]:
-        """列出全部运行级计数。"""
-        with Session(self.store.engine) as session:
-            records = list(session.exec(select(EngagementRunStatsRecord)))
-            return [EngagementRunStats.model_validate_json(r.payload_json) for r in records]
-
-
-class PublicationIntentRecord(SQLModel, table=True):
-    """PublicationIntent 持久化模型（P0：批准时保存的期待发布记录）。"""
-
-    id: str = Field(primary_key=True)  # f"intent:{source_id}"
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+        return _list_all(self.ws, "interactions/run-stats", EngagementRunStats)
 
 
 class PublicationIntentRepository:
-    """发布意图仓储（P0）：按 source_id 主键 merge（幂等）。"""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def save(self, intent: PublicationIntent) -> None:
-        """按 ``intent:{source_id}`` merge 插入或更新（幂等）。"""
-        record = PublicationIntentRecord(
-            id=f"intent:{intent.source_id}",
-            payload_json=intent.model_dump_json(),
-            updated_at=datetime.now(UTC),
-        )
-        with Session(self.store.engine) as session:
-            session.merge(record)
-            session.commit()
+        _write(self.ws, "publication-intents", f"intent_{intent.source_id}", intent)
 
     def get(self, source_id: str) -> PublicationIntent | None:
-        """按 source_id 获取发布意图，不存在返回 None。"""
-        with Session(self.store.engine) as session:
-            record = session.get(PublicationIntentRecord, f"intent:{source_id}")
-            if record is None:
-                return None
-            return PublicationIntent.model_validate_json(record.payload_json)
+        return _read(self.ws, "publication-intents", f"intent_{source_id}", PublicationIntent)
 
     def list(self) -> list[PublicationIntent]:
-        """列出全部发布意图。"""
-        with Session(self.store.engine) as session:
-            records = list(session.exec(select(PublicationIntentRecord)))
-            return [PublicationIntent.model_validate_json(r.payload_json) for r in records]
-
-
-
-class PracticeSessionRecord(SQLModel, table=True):
-    """PracticeSession（表达练习会话）持久化模型。"""
-
-    id: str = Field(primary_key=True)
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+        return _list_all(self.ws, "publication-intents", PublicationIntent)
 
 
 class PracticeSessionRepository:
-    """表达练习会话仓储：按 id merge 幂等 upsert。"""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def upsert(self, session: PracticeSession) -> None:
-        record = PracticeSessionRecord(
-            id=session.id,
-            payload_json=session.model_dump_json(),
-            updated_at=datetime.now(UTC),
-        )
-        with Session(self.store.engine) as session_ctx:
-            session_ctx.merge(record)
-            session_ctx.commit()
+        _write(self.ws, "practice", session.id, session)
 
     def get(self, session_id: str) -> PracticeSession | None:
-        with Session(self.store.engine) as session_ctx:
-            record = session_ctx.get(PracticeSessionRecord, session_id)
-            if record is None:
-                return None
-            return PracticeSession.model_validate_json(record.payload_json)
-
-
-class PeerRecord(SQLModel, table=True):
-    """PeerProfile 持久化模型。``(platform, author_id)`` 唯一约束保证幂等归一化。"""
-
-    __table_args__ = (UniqueConstraint("platform", "author_id", name="uq_peer_platform_author"),)
-
-    id: str = Field(primary_key=True)  # = PeerProfile.id = peer_id_for(platform, author_id)
-    platform: str  # 主平台身份（platform_identities[0]）
-    author_id: str  # 主作者 id
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+        return _read(self.ws, "practice", session_id, PracticeSession)
 
 
 class PeerRepository:
-    """PeerProfile 仓储：按 id merge 幂等 upsert，``(platform, author_id)`` 唯一约束兜底。"""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
-
-    @staticmethod
-    def _to_record(profile: PeerProfile) -> PeerRecord:
-        primary = profile.platform_identities[0]
-        return PeerRecord(
-            id=profile.id,
-            platform=primary.platform,
-            author_id=primary.author_id,
-            payload_json=profile.model_dump_json(),
-            updated_at=datetime.now(UTC),
-        )
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def upsert(self, profile: PeerProfile) -> None:
-        """按 id merge 插入或更新 PeerProfile（幂等：同一作者跨多条帖子只留一个身份）。"""
-        with Session(self.store.engine) as session:
-            session.merge(self._to_record(profile))
-            session.commit()
+        _write(self.ws, "peers", profile.id, profile)
 
     def get(self, peer_id: str) -> PeerProfile | None:
-        """按 id 获取 PeerProfile，不存在返回 None。"""
-        with Session(self.store.engine) as session:
-            record = session.get(PeerRecord, peer_id)
-            if record is None:
-                return None
-            return PeerProfile.model_validate_json(record.payload_json)
+        return _read(self.ws, "peers", peer_id, PeerProfile)
 
     def list_all(self) -> list[PeerProfile]:
-        """列出全部 PeerProfile（按 id 稳定排序）。"""
-        with Session(self.store.engine) as session:
-            stmt = select(PeerRecord).order_by(col(PeerRecord.id))
-            records = list(session.exec(stmt))
-            return [PeerProfile.model_validate_json(r.payload_json) for r in records]
-
-
-class InteractionRecordRecord(SQLModel, table=True):
-    """InteractionRecord 持久化模型（已发生互动的独立事实，不用 Proposal 状态替代）。"""
-
-    id: str = Field(primary_key=True)  # 约定 = rec_<proposal_id>（幂等键）
-    proposal_id: str = Field(index=True)
-    peer_id: str = Field(index=True)
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+        return _list_all(self.ws, "peers", PeerProfile)
 
 
 class InteractionRecordRepository:
-    """已发生互动仓储。``upsert`` 按 id merge 幂等；同一 proposal 用同 id，重复记录只覆盖
-    同一条，不会重复计为两次互动。"""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
-
-    @staticmethod
-    def _to_record(record: InteractionRecord) -> InteractionRecordRecord:
-        return InteractionRecordRecord(
-            id=record.id,
-            proposal_id=record.proposal_id,
-            peer_id=record.peer_id,
-            payload_json=record.model_dump_json(),
-            updated_at=datetime.now(UTC),
-        )
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def upsert(self, record: InteractionRecord) -> None:
-        """按 id merge 插入或更新互动事实（幂等，可重放）。"""
-        with Session(self.store.engine) as session:
-            session.merge(self._to_record(record))
-            session.commit()
+        _write(self.ws, "interactions/records", record.id, record)
 
     def get(self, record_id: str) -> InteractionRecord | None:
-        """按 id 获取互动事实，不存在返回 None。"""
-        with Session(self.store.engine) as session:
-            rec = session.get(InteractionRecordRecord, record_id)
-            if rec is None:
-                return None
-            return InteractionRecord.model_validate_json(rec.payload_json)
+        return _read(self.ws, "interactions/records", record_id, InteractionRecord)
 
     def list_by_proposal(self, proposal_id: str) -> list[InteractionRecord]:
-        """按 proposal_id 列出互动事实（通常 0 或 1 条）。"""
-        with Session(self.store.engine) as session:
-            stmt = select(InteractionRecordRecord).where(
-                InteractionRecordRecord.proposal_id == proposal_id
-            )
-            records = list(session.exec(stmt))
-            return [InteractionRecord.model_validate_json(r.payload_json) for r in records]
+        return [r for r in self.list_all() if r.proposal_id == proposal_id]
 
     def list_by_peer(self, peer_id: str) -> list[InteractionRecord]:
-        """按 peer_id 列出该同行的全部互动事实。"""
-        with Session(self.store.engine) as session:
-            stmt = select(InteractionRecordRecord).where(
-                InteractionRecordRecord.peer_id == peer_id
-            )
-            records = list(session.exec(stmt))
-            return [InteractionRecord.model_validate_json(r.payload_json) for r in records]
+        return [r for r in self.list_all() if r.peer_id == peer_id]
 
     def list_all(self) -> list[InteractionRecord]:
-        """列出全部互动事实。"""
-        with Session(self.store.engine) as session:
-            records = list(session.exec(select(InteractionRecordRecord)))
-            return [InteractionRecord.model_validate_json(r.payload_json) for r in records]
-
-
-class ConversationThreadRecord(SQLModel, table=True):
-    """ConversationThread 持久化模型。"""
-
-    id: str = Field(primary_key=True)  # = thread_id_for(peer_id, topic)
-    peer_id: str = Field(index=True)
-    payload_json: str
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+        return _list_all(self.ws, "interactions/records", InteractionRecord)
 
 
 class ConversationThreadRepository:
-    """对话线索仓储：按 id merge 幂等 upsert；与搜索运行解耦，删除/重跑搜索不丢关系上下文。"""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
-
-    @staticmethod
-    def _to_record(thread: ConversationThread) -> ConversationThreadRecord:
-        return ConversationThreadRecord(
-            id=thread.id,
-            peer_id=thread.peer_id,
-            payload_json=thread.model_dump_json(),
-            updated_at=datetime.now(UTC),
-        )
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
 
     def upsert(self, thread: ConversationThread) -> None:
-        """按 id merge 插入或更新对话线索（幂等，可重放）。"""
-        with Session(self.store.engine) as session:
-            session.merge(self._to_record(thread))
-            session.commit()
+        _write(self.ws, "conversations", thread.id, thread)
 
     def get(self, thread_id: str) -> ConversationThread | None:
-        """按 id 获取对话线索，不存在返回 None。"""
-        with Session(self.store.engine) as session:
-            rec = session.get(ConversationThreadRecord, thread_id)
-            if rec is None:
-                return None
-            return ConversationThread.model_validate_json(rec.payload_json)
+        return _read(self.ws, "conversations", thread_id, ConversationThread)
 
     def list_by_peer(self, peer_id: str) -> list[ConversationThread]:
-        """按 peer_id 列出该同行的全部对话线索。"""
-        with Session(self.store.engine) as session:
-            stmt = select(ConversationThreadRecord).where(
-                ConversationThreadRecord.peer_id == peer_id
-            )
-            records = list(session.exec(stmt))
-            return [ConversationThread.model_validate_json(r.payload_json) for r in records]
+        return [t for t in self.list_all() if t.peer_id == peer_id]
 
     def list_all(self) -> list[ConversationThread]:
-        """列出全部对话线索（按 id 稳定排序）。"""
-        with Session(self.store.engine) as session:
-            stmt = select(ConversationThreadRecord).order_by(col(ConversationThreadRecord.id))
-            records = list(session.exec(stmt))
-            return [ConversationThread.model_validate_json(r.payload_json) for r in records]
+        return _list_all(self.ws, "conversations", ConversationThread)
