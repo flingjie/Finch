@@ -31,7 +31,7 @@ from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient
 from .ideas.commit_service import CommitService
 from .ideas.fragment_service import FragmentService
-from .ideas.search_service import SearchService
+from .ideas.opportunity import OpportunityService
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
 from .inbox.service import InboxDecisionService, list_items
@@ -51,6 +51,7 @@ from .storage.repositories import (
     FeedbackRepository,
     FeedbackSnapshotRepository,
     InteractionRepository,
+    OpportunityRepository,
     PublicationIntentRepository,
 )
 from .twitter.normalizer import normalize_tweets
@@ -79,6 +80,9 @@ app.add_typer(review_app, name="review")
 
 engagement_app = typer.Typer(help="Review engagement candidates (human-in-the-loop)")
 app.add_typer(engagement_app, name="engagement")
+
+scout_app = typer.Typer(help="从公开讨论侦察交流机会（conversation-scout）")
+app.add_typer(scout_app, name="scout")
 
 
 def _since_iso(since: str | None) -> str | None:
@@ -208,11 +212,13 @@ def ideas_commit(
 def ideas_create(
     text: str = typer.Option(None, "--text", help="用户输入的一句话/片段"),
     conversation: str = typer.Option(None, "--conversation", help="已验证 ConversationEvidence id"),
+    opportunity: str = typer.Option(None, "--opportunity", help="Opportunity id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """把用户片段或已验证 ConversationEvidence 结构化为 IdeaCandidate 并落库。"""
-    if (text is None) == (conversation is None):
-        typer.echo("exactly one of --text / --conversation is required")
+    """把用户片段 / ConversationEvidence / Opportunity 结构化为 IdeaCandidate 并落库。"""
+    provided = sum(x is not None for x in (text, conversation, opportunity))
+    if provided != 1:
+        typer.echo("exactly one of --text / --conversation / --opportunity is required")
         raise typer.Exit(code=1)
     settings = load_settings()
     store = Store(settings.paths.db_path)
@@ -221,7 +227,7 @@ def ideas_create(
     service = FragmentService(runner)
     if text is not None:
         idea = service.from_text(text)
-    else:
+    elif conversation is not None:
         evidence = ConversationEvidenceRepository(store).get(conversation)
         if evidence is None:
             typer.echo(f"conversation evidence not found: {conversation}")
@@ -230,56 +236,20 @@ def ideas_create(
             typer.echo(f"conversation evidence not verified: {conversation}")
             raise typer.Exit(code=1)
         idea = service.from_conversation(evidence)
+    else:
+        opp = OpportunityRepository(store).get(opportunity)
+        if opp is None:
+            typer.echo(f"opportunity not found: {opportunity}")
+            raise typer.Exit(code=1)
+        idea = service.from_opportunity(opp)
     job = IdeaService(ContentJobRepository(store)).create_candidate(idea)
     if as_json:
-        typer.echo(
-            json.dumps(
-                {"id": job.id, "origin": job.origin, "status": job.status.value},
-                ensure_ascii=False, indent=2,
-            )
-        )
+        typer.echo(json.dumps(
+            {"id": job.id, "origin": job.origin, "status": job.status.value},
+            ensure_ascii=False, indent=2,
+        ))
     else:
         typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
-
-
-@ideas_app.command("search")
-def ideas_search(
-    topic: str = typer.Option(None, "--topic", help="搜索话题（默认 settings.twitter.queries[0]）"),
-    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
-) -> None:
-    """从公开讨论搜索提炼 Idea 候选并幂等落库为 ContentJob（不生成草稿）。"""
-    settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    builder = QueryBuilder(
-        settings.twitter.queries, per_query_limit=settings.twitter.per_query_limit
-    )
-    opencli = OpenCliClient()
-    if topic is None:
-        if not builder.configs:
-            typer.echo("--topic is required (no twitter queries configured)")
-            raise typer.Exit(code=1)
-        topic = builder.configs[0].text
-    tweets = opencli.search(topic, product="top", limit=builder.per_query_limit)
-    posts = normalize_tweets(tweets)
-    ideas = SearchService(opencli, builder).to_ideas(posts, topic=topic)
-    idea_service = IdeaService(ContentJobRepository(store))
-    jobs = [idea_service.create_candidate(idea) for idea in ideas]
-    if as_json:
-        payload = [
-            {
-                "id": job.id,
-                "origin": job.origin,
-                "core_point": job.core_message,
-                "status": job.status.value,
-                "generation_key": job.generation_key,
-            }
-            for job in jobs
-        ]
-        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
-    else:
-        for job in jobs:
-            typer.echo(f"{job.id}\t{job.status.value}\t{job.core_message}")
 
 
 @ideas_app.command("list")
@@ -1039,6 +1009,83 @@ def engagement_metrics() -> None:
     typer.echo(render_metrics(metrics))
     stats = EngagementRunStatsRepository(store).list_all()
     typer.echo(render_run_stats(summarize_run_stats(stats)))
+
+
+@scout_app.command("search")
+def scout_search(
+    topic: str = typer.Option(None, "--topic", help="搜索话题（默认 settings.twitter.queries[0]）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """从公开讨论搜索交流机会并落库（不生成 Idea，不落 ContentJob）。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    builder = QueryBuilder(
+        settings.twitter.queries, per_query_limit=settings.twitter.per_query_limit
+    )
+    opencli = OpenCliClient()
+    if topic is None:
+        if not builder.configs:
+            typer.echo("--topic is required (no twitter queries configured)")
+            raise typer.Exit(code=1)
+        topic = builder.configs[0].text
+    tweets = opencli.search(topic, product="top", limit=builder.per_query_limit)
+    posts = normalize_tweets(tweets)
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    opps = OpportunityService(runner).to_opportunities(posts, topic=topic)
+    repo = OpportunityRepository(store)
+    for opp in opps:
+        repo.upsert(opp)
+    if as_json:
+        typer.echo(
+            json.dumps([o.model_dump(mode="json") for o in opps], ensure_ascii=False, indent=2)
+        )
+    else:
+        for opp in opps:
+            typer.echo(f"{opp.id}\t{opp.source_post.url}\t{opp.shared_tension}")
+
+
+@scout_app.command("list")
+def scout_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """列出全部交流机会。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    opps = OpportunityRepository(store).list_all()
+    if as_json:
+        typer.echo(
+            json.dumps([o.model_dump(mode="json") for o in opps], ensure_ascii=False, indent=2)
+        )
+        return
+    if not opps:
+        typer.echo("no opportunities")
+        return
+    for opp in opps:
+        typer.echo(f"{opp.id}\t{opp.source_post.url}\t{opp.shared_tension}")
+
+
+@scout_app.command("show")
+def scout_show(
+    opportunity_id: str = typer.Argument(..., help="opportunity id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """展示单个交流机会。"""
+    settings = load_settings()
+    store = Store(settings.paths.db_path)
+    store.init()
+    opp = OpportunityRepository(store).get(opportunity_id)
+    if opp is None:
+        typer.echo(f"opportunity not found: {opportunity_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(opp.model_dump_json(indent=2))
+    else:
+        typer.echo(f"{opp.id}\t{opp.source_post.url}")
+        typer.echo(f"shared_tension: {opp.shared_tension}")
+        typer.echo(f"why_relevant: {opp.why_relevant}")
+        typer.echo(f"response_angles: {', '.join(opp.response_angles)}")
+        typer.echo(f"knowledge_gap: {opp.knowledge_gap}")
+        typer.echo(f"relationship_value: {opp.relationship_value}")
 
 
 if __name__ == "__main__":

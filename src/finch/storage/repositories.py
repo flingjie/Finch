@@ -20,6 +20,7 @@ from finch.engagement.models import (
     InteractionStatus,
 )
 from finch.evidence.models import EvidenceCard
+from finch.ideas.opportunity import Opportunity
 from finch.inbox.models import DecisionRecord
 from finch.learn.models import Feedback
 from finch.storage.database import Store
@@ -580,6 +581,45 @@ class FeedbackSnapshotRepository:
             stmt = select(FeedbackSnapshotRecord)
             records = list(session.exec(stmt))
             return [FeedbackSnapshot.model_validate_json(r.payload_json) for r in records]
+
+
+class OpportunityRecord(SQLModel, table=True):
+    """Opportunity（交流机会）持久化模型。"""
+
+    id: str = Field(primary_key=True)  # = opp_<sha256[:8]>
+    payload_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class OpportunityRepository:
+    """交流机会仓储：按 id merge 幂等 upsert。"""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def upsert(self, opportunity: Opportunity) -> None:
+        record = OpportunityRecord(
+            id=opportunity.id,
+            payload_json=opportunity.model_dump_json(),
+            updated_at=datetime.now(UTC),
+        )
+        with Session(self.store.engine) as session:
+            session.merge(record)
+            session.commit()
+
+    def get(self, opportunity_id: str) -> Opportunity | None:
+        with Session(self.store.engine) as session:
+            record = session.get(OpportunityRecord, opportunity_id)
+            if record is None:
+                return None
+            return Opportunity.model_validate_json(record.payload_json)
+
+    def list_all(self) -> list[Opportunity]:
+        with Session(self.store.engine) as session:
+            records = list(
+                session.exec(select(OpportunityRecord).order_by(col(OpportunityRecord.id)))
+            )
+            return [Opportunity.model_validate_json(r.payload_json) for r in records]
 
 
 class ConversationEvidenceRecord(SQLModel, table=True):

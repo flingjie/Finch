@@ -1,23 +1,20 @@
-skill_name: search-to-idea
+skill_name: conversation-scout
 cases:
   - id: 1
-    name: 真实问题产出一个清晰 Idea
+    name: 真实问题产出一个交流机会
     input:
       topic: agent evals
       posts:
         - url: https://x.com/acme/status/1
           text: "Our agent keeps failing on long context, it's broken."
     expected_output:
-      ideas: 1
-      origin: search
-      core_point: 话题 + 中性化信号（第三人口径，不含第一人称）
+      opportunities: 1
+      source_post_url: https://x.com/acme/status/1
     assertions:
-      - name: 单候选
-        description: 产出恰好一个 IdeaCandidate
-      - name: 立场 proposed
-        description: author_position.status == proposed
+      - name: 单机会
+        description: 产出恰好一个 Opportunity
       - name: 可追溯来源
-        description: source_refs 至少一条 type=post 引用，ref 为帖子 URL
+        description: source_post.url 为帖子 URL，source_post.text 保留原文
 
   - id: 2
     name: 新闻产出空列表
@@ -27,10 +24,10 @@ cases:
         - url: https://x.com/acme/status/2
           text: "Acme launches v2 of their agent framework today."
     expected_output:
-      ideas: 0
+      opportunities: 0
     assertions:
       - name: 空结果
-        description: 新闻不产出 IdeaCandidate
+        description: 新闻不产出 Opportunity
 
   - id: 3
     name: 融资产出空列表
@@ -40,10 +37,10 @@ cases:
         - url: https://x.com/acme/status/3
           text: "Acme raised a $50M series A at a $1B valuation."
     expected_output:
-      ideas: 0
+      opportunities: 0
     assertions:
       - name: 空结果
-        description: 融资不产出 IdeaCandidate
+        description: 融资不产出 Opportunity
 
   - id: 4
     name: 纯情绪产出空列表
@@ -53,10 +50,10 @@ cases:
         - url: https://x.com/acme/status/4
           text: "This new framework is absolutely amazing and incredible."
     expected_output:
-      ideas: 0
+      opportunities: 0
     assertions:
       - name: 空结果
-        description: 纯情绪不产出 IdeaCandidate
+        description: 纯情绪不产出 Opportunity
 
   - id: 5
     name: 外部亲历不写成用户亲历
@@ -66,16 +63,11 @@ cases:
         - url: https://x.com/acme/status/5
           text: "I spent 3 weeks debugging our agent and it still crashes."
     expected_output:
-      ideas: 1
-      core_point_has_no_first_person: true
-      source_refs_keep_original: true
+      opportunities: 1
+      source_post_keeps_original: true
     assertions:
-      - name: 中性化
-        description: core_point / reader_problem / author_position.claim 不出现第一人称
       - name: 保持外部来源
-        description: source_refs[0].type == post 且 summary 保留原文（外部来源，可追溯）
-      - name: 未验证归 inferred
-        description: boundaries.known 为空，外部信号归入 inferred
+        description: source_post.text 保留原文（外部来源，可追溯），机会字段不采纳第一人称亲历
 
   - id: 6
     name: 最近已表达去重
@@ -87,7 +79,7 @@ cases:
         - url: https://x.com/acme/status/7
           text: "Our agent keeps failing on long context, it's broken."
     expected_output:
-      ideas: 1
+      opportunities: 1
     assertions:
       - name: 去重
         description: 重复帖子只产出一次
@@ -101,7 +93,6 @@ cases:
           text: "The scheduler has a nasty race condition bug."
     expected_output:
       deterministic: true
-      generation_key_stable: true
     assertions:
       - name: 确定性
-        description: 相同输入两次运行产出相同 Idea（id 与 generation_key 一致）
+        description: 相同输入两次运行产出相同 Opportunity（id 一致）

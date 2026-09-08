@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from finch.content.jobs import AuthorPosition
 from finch.engagement.models import ConversationEvidence
 from finch.ideas.models import IdeaBoundaries, IdeaCandidate, IdeaGenerator, SourceRef
+from finch.ideas.opportunity import Opportunity
 from finch.llm.base import StructuredInferenceRunner
 
 _GENERATOR_SKILL = "idea-discovery"
@@ -38,6 +39,19 @@ Rules:
 ## Source text
 
 {source_text}
+"""
+
+
+_FROM_OPPORTUNITY_PROMPT = """\
+You turn a scouted conversation opportunity into a single Idea candidate. The opportunity
+came from external public discussion, so it must stay external: never write the external
+author's experience as the user's own first-person experience.
+
+## Opportunity
+{opportunity}
+
+Return JSON matching the same schema as before (core_point / observation / reader_problem /
+why_worth_saying / intent / open_question / author_position / boundaries / recommended_format).
 """
 
 
@@ -112,3 +126,25 @@ class FragmentService:
             SourceRef(type="conversation", ref=evidence.id, summary=evidence.statement)
         ]
         return _to_candidate(out, origin="conversation", source_refs=source_refs)
+
+    def from_opportunity(self, opportunity: Opportunity) -> IdeaCandidate:
+        """scout 机会 → IdeaCandidate，origin=search；外部信号强制中性化归入 inferred。"""
+        out = cast(
+            IdeaDraftOutput,
+            self.runner.run(
+                _FROM_OPPORTUNITY_PROMPT.format(opportunity=opportunity.model_dump_json()),
+                IdeaDraftOutput,
+            ),
+        )
+        neutral = " ".join(opportunity.source_post.text.split())
+        # 外部信号未经作者一手验证：强制 known 为空、inferred 承载中性化信号（不信任 LLM 边界）。
+        boundaries = IdeaBoundaries(known=[], inferred=[neutral], unknown=[])
+        return _to_candidate(
+            out, origin="search",
+            source_refs=[
+                SourceRef(
+                    type="post", ref=opportunity.source_post.url,
+                    summary=opportunity.source_post.text,
+                )
+            ],
+        ).model_copy(update={"boundaries": boundaries})

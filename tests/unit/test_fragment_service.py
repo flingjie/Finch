@@ -4,6 +4,7 @@ from finch.content.jobs import AuthorPosition
 from finch.engagement.models import ConversationEvidence
 from finch.ideas.fragment_service import FragmentService, IdeaDraftOutput
 from finch.ideas.models import IdeaBoundaries
+from finch.ideas.opportunity import Opportunity, SourcePostRef
 
 
 class FakeRunner:
@@ -50,3 +51,20 @@ def test_from_conversation_origin_and_source_ref():
     assert idea.source_refs[0].type == "conversation"
     assert idea.source_refs[0].ref == "ev_1"
     assert idea.source_refs[0].summary == "某个机制到底怎么工作"
+
+
+def test_from_opportunity_external_neutralized():
+    opp = Opportunity(
+        id="opp_1",
+        source_post=SourcePostRef(
+            url="https://x.com/a/status/9", author="a", text="I spent weeks debugging this"
+        ),
+        shared_tension="t", why_relevant="w", response_angles=["ask_mechanism"],
+        knowledge_gap="g", relationship_value="v",
+    )
+    svc = FragmentService(FakeRunner(_out()))
+    idea = svc.from_opportunity(opp)
+    assert idea.origin == "search"
+    assert idea.boundaries.known == []
+    assert idea.boundaries.inferred  # 外部信号强制归入 inferred
+    assert idea.source_refs[0].type == "post"
