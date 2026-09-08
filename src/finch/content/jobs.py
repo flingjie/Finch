@@ -53,7 +53,10 @@ class ContentJob(BaseModel):
     core_message: str = ""
     why_now: str = ""
     # ---- idea 候选流字段（Skill 架构 Step 1）----
-    origin: Literal["commit", "search", "user"] | None = None
+    origin: Literal["commit", "search", "user", "conversation"] | None = None
+    observation: str = ""
+    intent: Literal["stance", "exploration"] = "stance"
+    open_question: str = ""
     generation_key: str | None = None
     generator_name: str | None = None
     generator_version: str | None = None

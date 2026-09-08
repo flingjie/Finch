@@ -21,7 +21,7 @@ from finch.content.jobs import AuthorPosition
 class SourceRef(BaseModel):
     """来源引用：类型 + 引用标识 + 一句话摘要（保证可追溯）。"""
 
-    type: Literal["commit", "pr", "issue", "test", "post", "paper"]
+    type: Literal["commit", "pr", "issue", "test", "post", "paper", "conversation"]
     ref: str
     summary: str
 
@@ -45,10 +45,13 @@ class IdeaCandidate(BaseModel):
     """Idea 候选：Skill 层产出的统一输入契约。"""
 
     id: str
-    origin: Literal["commit", "search", "user"]
+    origin: Literal["commit", "search", "user", "conversation"]
     core_point: str
+    observation: str = ""
     reader_problem: str
     why_worth_saying: str
+    intent: Literal["stance", "exploration"] = "stance"
+    open_question: str = ""
     author_position: AuthorPosition
     source_refs: list[SourceRef]
     boundaries: IdeaBoundaries
