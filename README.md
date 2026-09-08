@@ -31,6 +31,9 @@ uv run finch scout list / show ...
 uv run finch practice start --idea <id> --attempt "<首稿>"
 uv run finch practice diagnose / save / finish / show ...
 
+# —— 写作风格分析 ——
+uv run finch style analyze --text "<文本>" | --file posts.md | --url "<链接>" [--compare-voice]
+
 # —— 草稿 ——
 uv run finch drafts create <id>          # 从已确认 idea 生成草稿（经 Critic，不自动发布）
 uv run finch drafts show <draft_id>
@@ -85,6 +88,7 @@ skills/
   weekly-reflection/     定性周复盘（finch weekly）
   feynman-practice/      费曼技巧（检查理解）
   sticky-message/        检查想法是否清晰易记
+  writing-style-analysis/  分析文本/链接写作特点（finch style analyze，只读不写画像）
   _shared/               idea-contract / evidence-policy / author-position / expression-contract / publication-safety
 
 src/finch/
@@ -93,6 +97,8 @@ src/finch/
   practice/         PracticeService（expression-practice 会话）
   idea/             finch drafts 复用的纯函数（rewrite_idea / idea_checker_suite）
   content/          ContentJob、writer、critic 检查器、voice profile
+  style/            writing-style-analysis：StyleReport/StyleComparison + SourceResolver
+  webfetch/         通用网页正文提取器（只读 adapter，fail-closed）
   inbox/            原创 + 互动轨道的投影与决策（InboxDecisionService）
   learn/            Feedback 模型 + weekly_analysis 指标 + WeeklyReflectionService 定性复盘
   evidence/         Commit → EngineeringEvent → EvidenceCard

@@ -18,11 +18,11 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (typer sub-apps / commands): `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch scout ...` (search / list / show), `finch practice ...` (start / diagnose / save / finish / show), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch engagement ...` (list / show / approve / reject / edit / metrics), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init [--prune]`, `finch diagnose`.
+CLI surface (typer sub-apps / commands): `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch scout ...` (search / list / show), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch engagement ...` (list / show / approve / reject / edit / metrics), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init [--prune]`, `finch diagnose`.
 
 ## Architecture
 
-Skill + domain services, not an LLM agent loop and not a graph runtime. Eight skills cover the cognitive tasks (idea discovery / conversation scouting / expression practice / drafting / voice / reflection / feynman / sticky-message); ordering, state, retries, and idempotency live in deterministic Python domain services. Codex (`codex exec`) is called as a subprocess only at specific "smart" steps (assess / write / critic).
+Skill + domain services, not an LLM agent loop and not a graph runtime. Nine skills cover the cognitive tasks (idea discovery / conversation scouting / expression practice / drafting / voice / reflection / feynman / sticky-message / writing-style-analysis); ordering, state, retries, and idempotency live in deterministic Python domain services. Codex (`codex exec`) is called as a subprocess only at specific "smart" steps (assess / write / critic).
 
 ```
 skills/
@@ -34,6 +34,7 @@ skills/
   weekly-reflection/    定性周复盘（finch weekly）
   feynman-practice/     费曼技巧（检查理解）
   sticky-message/       检查想法是否清晰易记
+  writing-style-analysis/  分析文本/链接写作特点（finch style analyze，只读不写画像）
   _shared/              idea-contract / evidence-policy / author-position / expression-contract / publication-safety
 
 src/finch/
@@ -44,6 +45,8 @@ src/finch/
   practice/     PracticeService（expression-practice 会话：start/diagnose/save_revision/finish）
   idea/         finch drafts 复用的纯函数：rewrite_idea / idea_checker_suite（去掉 EvidenceChecker）
   content/      ContentJob、writer、critic 检查器、voice profile
+  style/        writing-style-analysis：StyleReport/StyleComparison + SourceResolver
+  webfetch/     通用网页正文提取器（只读 adapter，fail-closed）
   inbox/        原创 + 互动轨道的投影与决策（InboxDecisionService，供 review 命令）
   learn/        Feedback 模型 + weekly_analysis 指标 + WeeklyReflectionService 定性复盘 + finch learn
   evidence/     Commit → EngineeringEvent → EvidenceCard 提取 + 安全扫描（scan_cards）
@@ -52,7 +55,7 @@ src/finch/
   engagement/   engagement 轨道库（models 供 inbox 投影；search/scoring/proposals/guard/evidence_upgrade/metrics）
   storage/      SQLite via SQLModel: Store + repositories (payload_json pattern)
   settings.py   finch.yaml + env loading (Pydantic)
-  cli.py        typer app (ideas/scout/practice/drafts/review/engagement/weekly/voice/github/twitter/init/diagnose)
+  cli.py        typer app (ideas/scout/practice/style/drafts/review/engagement/weekly/voice/github/twitter/init/diagnose)
 ```
 
 Config lives in `finch.yaml` (repositories, repository_discovery, twitter, quality_gates, paths, engagement, interests, llm, extraction). Prompts live in `prompts/`.
