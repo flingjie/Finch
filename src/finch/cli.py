@@ -1,5 +1,7 @@
 """Finch CLI（spec 10）。"""
 
+import difflib
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -819,33 +821,84 @@ def voice_show() -> None:
     )
 
 
+def _diff_text(before: str, after: str) -> str:
+    """模型初稿 → 最终文本的 unified diff。"""
+    return "\n".join(
+        difflib.unified_diff(before.splitlines(), after.splitlines(), lineterm="")
+    )
+
+
 @voice_app.command("approve-example")
-def voice_approve_example(draft_id: str) -> None:
-    """把草稿追加为 approved example（按 id 去重；已接受即入库）。"""
+def voice_approve_example(
+    draft_id: str = typer.Argument(None, help="草稿 id（从已批准草稿采纳）"),
+    text: str = typer.Option(None, "--text", help="用户亲写文本"),
+) -> None:
+    """把已批准草稿或用户亲写文本追加为 approved example（按 id 去重）。
+
+    只接受用户明确批准的最终文本：从草稿采纳时要求 DecisionRecord=ACCEPT 且优先用人工
+    修订版本；用户亲写文本经 --text 直接采纳。记录模型初稿 → 最终文本的 diff。
+    """
+    if (draft_id is None) == (text is None):
+        typer.echo("exactly one of draft_id / --text is required")
+        raise typer.Exit(code=1)
     settings = load_settings()
-    store = Store(settings.paths.db_path)
-    store.init()
-    draft = DraftRepository(store).get_draft(draft_id)
-    if draft is None:
-        typer.echo(f"draft not found: {draft_id}")
-        raise typer.Exit(code=1)
-    decisions = {d.draft_id: d for d in DecisionRecordRepository(store).list()}
-    decision = decisions.get(draft_id)
-    if decision is None or decision.action != DecisionAction.ACCEPT:
-        typer.echo(f"not accepted: {draft_id}")
-        raise typer.Exit(code=1)
-    text = decision.revised_body or draft.body
     path = settings.paths.voice_profile_path
     profile = load_voice_profile(path)
-    if any(ex.id == draft_id for ex in profile.approved_examples):
-        typer.echo(f"already approved: {draft_id}")
+
+    if text is not None:
+        example_id = f"text_{hashlib.sha256(text.encode('utf-8')).hexdigest()[:8]}"
+        example = ApprovedExample(id=example_id, text=text, source="user_text")
+    else:
+        store = Store(settings.paths.db_path)
+        store.init()
+        draft = DraftRepository(store).get_draft(draft_id)
+        if draft is None:
+            typer.echo(f"draft not found: {draft_id}")
+            raise typer.Exit(code=1)
+        decisions = {d.draft_id: d for d in DecisionRecordRepository(store).list()}
+        decision = decisions.get(draft_id)
+        if decision is None or decision.action != DecisionAction.ACCEPT:
+            typer.echo(f"not accepted: {draft_id}")
+            raise typer.Exit(code=1)
+        final_text = decision.revised_body or draft.body
+        example = ApprovedExample(
+            id=draft_id,
+            text=final_text,
+            source="draft",
+            original_draft=draft.body,
+            diff=_diff_text(draft.body, final_text) if draft.body != final_text else None,
+        )
+
+    if any(ex.id == example.id for ex in profile.approved_examples):
+        typer.echo(f"already approved: {example.id}")
         return
     profile.rejected_examples = [
-        ex for ex in profile.rejected_examples if ex.id != draft_id
+        ex for ex in profile.rejected_examples if ex.id != example.id
     ]
-    profile.approved_examples.append(ApprovedExample(id=draft_id, text=text))
+    profile.approved_examples.append(example)
     save_voice_profile(profile, path)
-    typer.echo(f"approved example: {draft_id}")
+    typer.echo(f"approved example: {example.id}")
+
+
+@voice_app.command("revoke-example")
+def voice_revoke_example(example_id: str = typer.Argument(..., help="样例 id")) -> None:
+    """撤销一个错误样例并从画像移除（移除后画像重新计算偏好）。"""
+    settings = load_settings()
+    path = settings.paths.voice_profile_path
+    profile = load_voice_profile(path)
+    before = len(profile.approved_examples) + len(profile.rejected_examples)
+    profile.approved_examples = [
+        ex for ex in profile.approved_examples if ex.id != example_id
+    ]
+    profile.rejected_examples = [
+        ex for ex in profile.rejected_examples if ex.id != example_id
+    ]
+    after = len(profile.approved_examples) + len(profile.rejected_examples)
+    if before == after:
+        typer.echo(f"example not found: {example_id}")
+        raise typer.Exit(code=1)
+    save_voice_profile(profile, path)
+    typer.echo(f"revoked example: {example_id}")
 
 
 @voice_app.command("reject-example")

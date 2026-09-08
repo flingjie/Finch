@@ -11,10 +11,18 @@ from pydantic import BaseModel, Field
 
 
 class ApprovedExample(BaseModel):
-    """已人工批准、可作为声音参照的样例（id=草稿 id，text=最终文本）。"""
+    """已人工批准、可作为声音参照的样例。
+
+    ``text`` 是最终文本（用户亲写或人工修订后的最终版本）；``source`` 标记来源
+    （``draft`` = 从草稿批准，``user_text`` = 用户亲写）；``original_draft`` 保存模型
+    初稿、``diff`` 保存初稿 → 最终文本的 unified diff，供提取稳定偏好候选与审计样本来源。
+    """
 
     id: str
     text: str
+    source: str = "draft"
+    original_draft: str | None = None
+    diff: str | None = None
 
 
 class RejectedExample(BaseModel):
