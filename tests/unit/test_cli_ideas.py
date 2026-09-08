@@ -18,6 +18,7 @@ from finch.ideas.models import (
     IdeaGenerator,
     SourceRef,
 )
+from finch.ideas.opportunity import Opportunity, SourcePostRef
 from finch.ideas.service import IdeaService
 from finch.settings import Paths, Settings
 from finch.storage.database import Store
@@ -421,10 +422,29 @@ class _FakeFragmentService:
     def from_text(self, text):
         return _candidate()
 
+    def from_opportunity(self, opportunity):
+        return _candidate()
+
 
 def _patch_create_cli(monkeypatch, settings):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "FragmentService", _FakeFragmentService)
+
+
+_OPPORTUNITY = Opportunity(
+    id="opp_1",
+    source_post=SourcePostRef(url="https://x.com/a/status/9", author="a", text="post text"),
+    shared_tension="t", why_relevant="w", response_angles=["ask_mechanism"],
+    knowledge_gap="g", relationship_value="v",
+)
+
+
+class _FakeOpportunityRepo:
+    def __init__(self, store):
+        self.store = store
+
+    def get(self, opportunity_id):
+        return _OPPORTUNITY
 
 
 def test_ideas_create_requires_exactly_one_source(monkeypatch, tmp_path):
@@ -445,4 +465,17 @@ def test_ideas_create_text_persists(monkeypatch, tmp_path):
     payload = json.loads(r.output)
     assert payload["status"] == "proposed"
     # _FakeFragmentService 复用 _candidate()（origin="commit"），仅验证落库链路。
+    assert ContentJobRepository(store).list_jobs()[0].core_message == CORE_POINT
+
+
+def test_ideas_create_opportunity_persists(monkeypatch, tmp_path):
+    settings = _settings(tmp_path, [])
+    store = Store(settings.paths.db_path)
+    store.init()
+    _patch_create_cli(monkeypatch, settings)
+    monkeypatch.setattr(cli, "OpportunityRepository", _FakeOpportunityRepo)
+    r = CliRunner().invoke(app, ["ideas", "create", "--opportunity", "opp_1", "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["status"] == "proposed"
     assert ContentJobRepository(store).list_jobs()[0].core_message == CORE_POINT

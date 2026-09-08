@@ -66,5 +66,7 @@ def test_from_opportunity_external_neutralized():
     idea = svc.from_opportunity(opp)
     assert idea.origin == "search"
     assert idea.boundaries.known == []
-    assert idea.boundaries.inferred  # 外部信号强制归入 inferred
+    assert idea.boundaries.inferred == ["I spent weeks debugging this"]
+    assert idea.boundaries.unknown == []
     assert idea.source_refs[0].type == "post"
+    assert idea.source_refs[0].summary == "I spent weeks debugging this"
