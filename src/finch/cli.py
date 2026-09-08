@@ -1305,6 +1305,17 @@ def connect_record(
         outcome="published",
     )
     InteractionRecordRepository(ws).upsert(record)
+    if proposal.peer_id:
+        topic = (
+            proposal.post.matched_topics[0]
+            if proposal.post.matched_topics
+            else (proposal.contribution_type.value if proposal.contribution_type else "general")
+        )
+        svc = ConversationService()
+        opened = svc.open_thread(peer_id=proposal.peer_id, topic=topic)
+        thread = ConversationThreadRepository(ws).get(opened.id) or opened
+        thread = svc.append_interaction(thread, record.id, occurred_at=record.occurred_at)
+        ConversationThreadRepository(ws).upsert(thread)
     if as_json:
         typer.echo(record.model_dump_json(indent=2))
     else:
