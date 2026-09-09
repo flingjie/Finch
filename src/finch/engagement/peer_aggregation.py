@@ -39,7 +39,14 @@ def aggregate_by_peer(
         )
         bundle = by_id.get(profile.id)
         if bundle is None:
+            refs = [post.url] if post.url else []
+            if refs:
+                profile = profile.model_copy(update={"source_refs": refs})
             bundle = PeerBundle(profile=profile)
             by_id[profile.id] = bundle
+        elif post.url and post.url not in bundle.profile.source_refs:
+            bundle.profile = bundle.profile.model_copy(
+                update={"source_refs": [*bundle.profile.source_refs, post.url]}
+            )
         bundle.posts.append(post)
     return list(by_id.values())

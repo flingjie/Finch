@@ -351,11 +351,19 @@ def test_peers_list_and_show(monkeypatch, tmp_path):
     ws = Workspace(settings.paths.var_dir)
     profile = PeerProfile(
         id="peer_abc",
-        platform_identities=[PlatformIdentity(platform="x", author_id="author_1")],
+        platform_identities=[
+            PlatformIdentity(
+                platform="x",
+                author_id="author_1",
+                username="alice",
+                url="https://x.com/alice",
+            )
+        ],
         display_name="Alice",
         shared_topics=["graphs"],
         why_relevant="writes concretely",
         next_context="ask about replay",
+        source_refs=["https://x.com/alice/status/1"],
     )
     PeerRepository(ws).upsert(profile)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
@@ -365,6 +373,8 @@ def test_peers_list_and_show(monkeypatch, tmp_path):
     assert "谁: Alice" in r.output
     assert "为什么值得连: writes concretely" in r.output
     assert "共同话题: graphs" in r.output
+    assert "主页: https://x.com/alice" in r.output
+    assert "代表帖: https://x.com/alice/status/1" in r.output
     assert "uv run finch peers show peer_abc" in r.output
     assert "id\tdisplay_name" not in r.output
 
@@ -373,6 +383,8 @@ def test_peers_list_and_show(monkeypatch, tmp_path):
     assert "谁: Alice" in r.output
     assert "为什么值得连: writes concretely" in r.output
     assert "下一步上下文: ask about replay" in r.output
+    assert "主页: https://x.com/alice" in r.output
+    assert "代表帖: https://x.com/alice/status/1" in r.output
     assert "uv run finch connect prepare" in r.output
 
     r = CliRunner().invoke(app, ["peers", "show", "nope"])

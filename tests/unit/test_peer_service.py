@@ -1,7 +1,7 @@
 """PeerService 归一化测试。"""
 
 from finch.peers.models import PeerProfile, PlatformIdentity, RelationshipStage
-from finch.peers.service import PeerService, peer_id_for
+from finch.peers.service import PeerService, peer_id_for, profile_url_for
 
 
 def test_peer_id_for_is_deterministic():
@@ -36,12 +36,35 @@ def test_distinct_platform_identity_is_added():
     assert {i.platform for i in merged.platform_identities} == {"x", "reddit"}
 
 
+def test_profile_url_for_x_and_reddit():
+    assert profile_url_for("x", username="Alice", author_id="alice") == "https://x.com/Alice"
+    assert profile_url_for("reddit", author_id="bob") == "https://www.reddit.com/user/bob"
+    assert profile_url_for("x", username="@cara") == "https://x.com/cara"
+
+
 def test_from_author_builds_discovered_profile():
     svc = PeerService()
     profile = svc.from_author(platform="x", author_id="alice", username="Alice")
     assert profile.id == peer_id_for("x", "alice")
     assert profile.display_name == "Alice"
     assert profile.relationship_stage.value == "discovered"
+    assert profile.platform_identities[0].url == "https://x.com/Alice"
+
+
+def test_merge_identity_fills_missing_url():
+    svc = PeerService()
+    profile = PeerProfile(
+        id=peer_id_for("x", "alice"),
+        platform_identities=[PlatformIdentity(platform="x", author_id="alice")],
+    )
+    merged = svc.merge_identity(
+        profile,
+        PlatformIdentity(
+            platform="x", author_id="alice", url="https://x.com/alice"
+        ),
+    )
+    assert merged.platform_identities[0].url == "https://x.com/alice"
+    assert profile.platform_identities[0].url is None
 
 
 def test_merge_does_not_mutate_original():
@@ -71,8 +94,12 @@ def test_merge_discovered_preserves_accumulated_fields():
         relationship_stage=RelationshipStage.CONVERSING,
         next_context="ask about the replay harness",
         possible_next_actions=["share my replay diff"],
+        source_refs=["https://x.com/alice/status/old"],
     )
     discovered = svc.from_author(platform="x", author_id="alice", username="Alice")
+    discovered = discovered.model_copy(
+        update={"source_refs": ["https://x.com/alice/status/new"]}
+    )
     merged = svc.merge_discovered(existing, discovered)
 
     # 积累的关系字段不丢，新身份幂等并入（不重复）。
@@ -82,6 +109,11 @@ def test_merge_discovered_preserves_accumulated_fields():
     assert merged.shared_topics == ["agent evals"]
     assert merged.possible_next_actions == ["share my replay diff"]
     assert len(merged.platform_identities) == 1
+    assert merged.platform_identities[0].url == "https://x.com/Alice"
+    assert merged.source_refs == [
+        "https://x.com/alice/status/old",
+        "https://x.com/alice/status/new",
+    ]
 
 
 def test_merge_discovered_does_not_mutate_existing():

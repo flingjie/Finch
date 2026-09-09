@@ -57,3 +57,17 @@ def test_bundle_profile_is_peer_profile_with_stable_id():
     assert identity.platform == "x"
     assert identity.author_id == "alice"
     assert bundle.profile.display_name == "Alice"
+    assert identity.url == "https://x.com/Alice"
+    assert bundle.profile.source_refs == ["https://x.com/alice/status/p1"]
+
+
+def test_aggregate_collects_post_urls_as_source_refs():
+    posts = [
+        _post(pid="p1", author_id="alice"),
+        _post(pid="p2", author_id="alice"),
+    ]
+    bundle = aggregate_by_peer(posts)[0]
+    assert bundle.profile.source_refs == [
+        "https://x.com/alice/status/p1",
+        "https://x.com/alice/status/p2",
+    ]

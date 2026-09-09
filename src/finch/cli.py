@@ -51,7 +51,7 @@ from .learn.reflection import WeeklyReflectionService, render_reflection
 from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
 from .peers.models import PeerProfile
-from .peers.service import PeerService
+from .peers.service import PeerService, profile_url_for
 from .practice.service import PracticeService
 from .projections import (
     TodayFocus,
@@ -220,8 +220,31 @@ def _thread_next_step(thread: ConversationThread) -> str:
     return "已无未解问题；确认是否关闭或延续新主题"
 
 
+def _peer_home_url(peer: PeerProfile) -> str | None:
+    """主页链接：优先身份上的 url，否则按平台 + handle 推导。"""
+    for identity in peer.platform_identities:
+        if identity.url:
+            return identity.url
+        derived = profile_url_for(
+            identity.platform,
+            username=identity.username,
+            author_id=identity.author_id,
+        )
+        if derived:
+            return derived
+    return None
+
+
+def _peer_signal_post_url(peer: PeerProfile) -> str | None:
+    """代表帖：source_refs 里第一条 http(s) 链接。"""
+    for ref in peer.source_refs:
+        if ref.startswith(("http://", "https://")):
+            return ref
+    return None
+
+
 def _render_peer_card(peer: PeerProfile) -> str:
-    """同行决策卡：谁 / 为什么值得连 / 下一步上下文；show 命令带真实 id。"""
+    """同行决策卡：谁 / 为什么值得连 / 链接 / 下一步；show 命令带真实 id。"""
     lines = [f"谁: {peer.display_name or peer.id}"]
     if (peer.why_relevant or "").strip():
         lines.append(f"为什么值得连: {peer.why_relevant}")
@@ -229,6 +252,12 @@ def _render_peer_card(peer: PeerProfile) -> str:
         lines.append(f"下一步上下文: {peer.next_context}")
     if peer.shared_topics:
         lines.append(f"共同话题: {', '.join(peer.shared_topics)}")
+    home = _peer_home_url(peer)
+    if home:
+        lines.append(f"主页: {home}")
+    signal = _peer_signal_post_url(peer)
+    if signal:
+        lines.append(f"代表帖: {signal}")
     lines.append(f"uv run finch peers show {peer.id}")
     return "\n".join(lines)
 
@@ -258,6 +287,12 @@ def _render_peer_detail(peer: PeerProfile) -> str:
         lines.append(f"为什么值得连: {peer.why_relevant}")
     if (peer.next_context or "").strip():
         lines.append(f"下一步上下文: {peer.next_context}")
+    home = _peer_home_url(peer)
+    if home:
+        lines.append(f"主页: {home}")
+    signal = _peer_signal_post_url(peer)
+    if signal:
+        lines.append(f"代表帖: {signal}")
     lines.append("uv run finch connect prepare")
     return "\n".join(lines)
 
