@@ -46,3 +46,18 @@ class PeerService:
         updated = profile.model_copy(deep=True)
         updated.platform_identities.append(identity)
         return updated
+
+    def merge_discovered(
+        self, existing: PeerProfile | None, discovered: PeerProfile
+    ) -> PeerProfile:
+        """发现落库：无既有档案用发现骨架；有则只并入新平台身份，保留已积累的关系字段。
+
+        防止 ``_persist_discovery`` 每次用 ``from_author`` 骨架整对象覆写已积累的
+        ``relationship_stage`` / ``why_relevant`` / ``next_context`` 等字段。
+        """
+        if existing is None:
+            return discovered
+        merged = existing
+        for identity in discovered.platform_identities:
+            merged = self.merge_identity(merged, identity)
+        return merged

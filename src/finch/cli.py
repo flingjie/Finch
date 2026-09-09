@@ -43,6 +43,7 @@ from .learn.models import Feedback, OutcomeAssessment
 from .learn.reflection import WeeklyReflectionService, render_reflection
 from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
+from .peers.service import PeerService
 from .practice.service import PracticeService
 from .projections import (
     TodayFocus,
@@ -1159,11 +1160,16 @@ def _run_discovery(settings: Settings) -> EngagementRunResult:
 
 
 def _persist_discovery(ws: Workspace, result: EngagementRunResult) -> None:
-    """把发现结果的同行与提案落库（只读流程的落库，供 peers show / connect approve 进入）。"""
+    """把发现结果的同行与提案落库（只读流程的落库，供 peers show / connect approve 进入）。
+
+    同行已存在时只并入新平台身份，不覆写已积累的关系字段（relationship_stage / why_relevant 等）。
+    """
     peers = PeerRepository(ws)
     interactions = InteractionRepository(ws)
+    peer_svc = PeerService()
     for ranked in result.peers:
-        peers.upsert(ranked.profile)
+        merged = peer_svc.merge_discovered(peers.get(ranked.profile.id), ranked.profile)
+        peers.upsert(merged)
     for candidate in result.candidates:
         interactions.upsert(candidate, run_id=result.run_id)
 

@@ -22,7 +22,7 @@ from finch.engagement.models import (
     InteractionStatus,
 )
 from finch.engagement.relationship import PeerValue
-from finch.peers.models import PeerProfile, PlatformIdentity
+from finch.peers.models import PeerProfile, PlatformIdentity, RelationshipStage
 from finch.settings import Paths, Settings
 from finch.storage.repositories import (
     ConversationThreadRepository,
@@ -256,6 +256,34 @@ def test_connect_daily_json(monkeypatch, tmp_path):
     assert payload["run_id"] == "daily_test"
     assert [p["id"] for p in payload["peers"]] == ["peer_abc"]
     assert [c["id"] for c in payload["contributions"]] == ["x:post_1:draft_reply"]
+
+
+def test_connect_daily_preserves_accumulated_peer_fields(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    existing = PeerProfile(
+        id="peer_abc",
+        platform_identities=[PlatformIdentity(platform="x", author_id="author_1")],
+        display_name="Alice",
+        shared_topics=["graphs"],
+        why_relevant="writes concretely",
+        relationship_stage=RelationshipStage.CONVERSING,
+        next_context="ask about replay",
+    )
+    PeerRepository(ws).upsert(existing)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "run_discovery_engagement_flow", lambda *a, **k: _daily_result())
+
+    r = CliRunner().invoke(app, ["connect", "daily"])
+    assert r.exit_code == 0, r.output
+
+    persisted = PeerRepository(ws).get("peer_abc")
+    assert persisted is not None
+    assert persisted.shared_topics == ["graphs"]
+    assert persisted.relationship_stage == RelationshipStage.CONVERSING
+    assert persisted.why_relevant == "writes concretely"
+    assert persisted.next_context == "ask about replay"
 
 
 # ---- finch peers ----

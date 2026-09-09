@@ -1,6 +1,6 @@
 """PeerService 归一化测试。"""
 
-from finch.peers.models import PlatformIdentity
+from finch.peers.models import PeerProfile, PlatformIdentity, RelationshipStage
 from finch.peers.service import PeerService, peer_id_for
 
 
@@ -52,3 +52,45 @@ def test_merge_does_not_mutate_original():
         profile, PlatformIdentity(platform="reddit", author_id="alice_reddit")
     )
     assert len(profile.platform_identities) == before  # 原对象不变
+
+
+def test_merge_discovered_returns_skeleton_when_no_existing():
+    svc = PeerService()
+    discovered = svc.from_author(platform="x", author_id="alice", username="Alice")
+    assert svc.merge_discovered(None, discovered) is discovered
+
+
+def test_merge_discovered_preserves_accumulated_fields():
+    svc = PeerService()
+    existing = PeerProfile(
+        id=peer_id_for("x", "alice"),
+        platform_identities=[PlatformIdentity(platform="x", author_id="alice")],
+        display_name="Alice",
+        shared_topics=["agent evals"],
+        why_relevant="writes concretely about flaky evals",
+        relationship_stage=RelationshipStage.CONVERSING,
+        next_context="ask about the replay harness",
+        possible_next_actions=["share my replay diff"],
+    )
+    discovered = svc.from_author(platform="x", author_id="alice", username="Alice")
+    merged = svc.merge_discovered(existing, discovered)
+
+    # 积累的关系字段不丢，新身份幂等并入（不重复）。
+    assert merged.relationship_stage is RelationshipStage.CONVERSING
+    assert merged.why_relevant == "writes concretely about flaky evals"
+    assert merged.next_context == "ask about the replay harness"
+    assert merged.shared_topics == ["agent evals"]
+    assert merged.possible_next_actions == ["share my replay diff"]
+    assert len(merged.platform_identities) == 1
+
+
+def test_merge_discovered_does_not_mutate_existing():
+    svc = PeerService()
+    existing = PeerProfile(
+        id=peer_id_for("x", "alice"),
+        platform_identities=[PlatformIdentity(platform="x", author_id="alice")],
+        why_relevant="keep me",
+    )
+    discovered = svc.from_author(platform="x", author_id="alice")
+    svc.merge_discovered(existing, discovered)
+    assert existing.why_relevant == "keep me"  # 原对象不变
