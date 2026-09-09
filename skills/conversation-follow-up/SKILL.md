@@ -21,6 +21,12 @@ description: >
 - `open_questions` / `agreements` / `disagreements` / `possible_experiments`：上下文。
 - `next_step`：回答未解问题或提出实验。
 
+## 向用户呈现
+
+见 `_shared/agent-presentation.md` 与 `references/presentation.md`。本 Skill 做编辑式推荐，不贴 `conversations list` 原文。
+
+读完 CLI 后：点名最该先回的对话 + 具体下一步 → 最多展开 3 条 →「跟进 1 / 展开 2 / 先放着 / 换一批」。内部保留序号 → `thread_id`。
+
 ## 边界
 
 - 只读恢复上下文，不自动回复。
@@ -30,3 +36,5 @@ description: >
 ## 参考
 
 - `references/follow-up-contract.md` — 跟进判定与下一步建议。
+- `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话（共享原则）。
+- `references/presentation.md` — 本 Skill 的形状与「跟进 / 展开 / 先放着」映射。

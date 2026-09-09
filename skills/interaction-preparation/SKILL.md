@@ -24,6 +24,12 @@ Skill 的语义判断生成。
 - `draft` / `intent` / `source_summary` / `factual_risks`：草稿及事实风险。
 - `why_this_person` / `why_now` / `expected_conversation_opening`：关系理由。
 
+## 向用户呈现
+
+见 `_shared/agent-presentation.md` 与 `references/presentation.md`。本 Skill 做编辑式推荐，不贴 `connect prepare` 的 TSV 原文。
+
+读完 CLI 后：点名最值得先发的一条 + 草稿预览 → 最多展开 3 条 →「批准 1 / 改草稿 1 / 跳过 / 换一批」。内部保留序号 → `proposal_id`。
+
 ## 边界
 
 - 批准只创建发布意图，不等于已经发布；真正发送前经人工 + `guard.evaluate_execution`。
@@ -33,3 +39,5 @@ Skill 的语义判断生成。
 ## 参考
 
 - `references/interaction-contract.md` — 贡献类型与草稿约束。
+- `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话（共享原则）。
+- `references/presentation.md` — 本 Skill 的形状与「批准 / 改草稿 / 跳过」映射。

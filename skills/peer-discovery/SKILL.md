@@ -24,6 +24,12 @@ description: >
 - `why_relevant`：为什么值得继续交流。
 - `next_context`：下一步交流的上下文。
 
+## 向用户呈现
+
+见 `_shared/agent-presentation.md` 与 `references/presentation.md`。本 Skill 做编辑式推荐，不贴 `peers` / `connect daily` 原文。
+
+读完 CLI 后：点名最值得先连的人及理由 → 最多展开 3 条 →「准备互动 1 / 展开 2 / 换一批」。内部保留序号 → `peer_id`。
+
 ## 边界
 
 - 不替用户形成观点（→ `idea-discovery` 才把对话/机会转成观点）。
@@ -36,3 +42,5 @@ description: >
 
 - `references/opportunity-signals.md` — 真实问题 / 分歧 / 失败案例 vs 新闻 / 融资 / 情绪的判据。
 - `references/audience-profile.md` — 什么样的交流对象值得投入。
+- `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话（共享原则）。
+- `references/presentation.md` — 本 Skill 的形状与「准备互动 / 展开 / 换一批」映射。

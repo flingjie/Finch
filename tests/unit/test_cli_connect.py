@@ -67,6 +67,9 @@ def _candidate(candidate_id: str = "x:post_1:draft_reply") -> InteractionProposa
         draft="a draft reply",
         approval_required=True,
         peer_id="peer_abc",
+        why_this_person="writes about deterministic graphs",
+        why_now="thread is still active",
+        expected_conversation_opening="ask how they replay failures",
     )
 
 
@@ -206,6 +209,9 @@ def _daily_result() -> EngagementRunResult:
         id="peer_abc",
         platform_identities=[PlatformIdentity(platform="x", author_id="author_1")],
         display_name="Alice",
+        shared_topics=["graphs"],
+        why_relevant="writes concretely about agent memory",
+        next_context="ask about relationship facts",
     )
     value = PeerValue(
         topic_overlap=1.0,
@@ -237,12 +243,57 @@ def test_connect_daily_persists_peers_and_renders_sections(monkeypatch, tmp_path
     r = CliRunner().invoke(app, ["connect", "daily"])
     assert r.exit_code == 0, r.output
     assert "需要继续的对话" in r.output
-    assert "Alice" in r.output
+    assert "谁: Alice" in r.output
+    assert "为什么值得连: writes concretely about agent memory" in r.output
+    assert "下一步上下文: ask about relationship facts" in r.output
+    assert "uv run finch peers show peer_abc" in r.output
+    assert "peer_value=" not in r.output
+    assert "动作: 回复" in r.output
+    assert "草稿预览: a draft reply" in r.output
+    assert "uv run finch connect approve x:post_1:draft_reply" in r.output
     assert "可贡献的具体内容" in r.output
     assert "观点候选" in r.output
     # 发现结果落库，供 peers show / connect approve 进入。
     assert PeerRepository(ws).get("peer_abc") is not None
     assert InteractionRepository(ws).get("x:post_1:draft_reply") is not None
+
+
+def test_connect_prepare_renders_decision_cards(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "run_discovery_engagement_flow", lambda *a, **k: _daily_result())
+
+    r = CliRunner().invoke(app, ["connect", "prepare"])
+    assert r.exit_code == 0, r.output
+    assert "动作: 回复" in r.output
+    assert "为什么是这个人: writes about deterministic graphs" in r.output
+    assert "为什么现在: thread is still active" in r.output
+    assert "草稿预览: a draft reply" in r.output
+    assert "uv run finch connect approve x:post_1:draft_reply" in r.output
+    assert "\tdraft_reply\t" not in r.output
+    assert "peer_value=" not in r.output
+
+
+def test_connect_prepare_caps_cards(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+
+    def _many():
+        result = _daily_result()
+        result.candidates = [
+            _candidate(f"x:post_{i}:draft_reply") for i in range(8)
+        ]
+        return result
+
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "run_discovery_engagement_flow", lambda *a, **k: _many())
+
+    r = CliRunner().invoke(app, ["connect", "prepare"])
+    assert r.exit_code == 0, r.output
+    assert r.output.count("动作:") == 6
+    assert "共 8 个候选，以上 6 个。" in r.output
+    assert "uv run finch connect approve x:post_0:draft_reply" in r.output
+    assert "uv run finch connect reject x:post_0:draft_reply --reason ..." in r.output
+    assert "x:post_6:draft_reply" not in r.output
 
 
 def test_connect_daily_json(monkeypatch, tmp_path):
@@ -288,6 +339,13 @@ def test_connect_daily_preserves_accumulated_peer_fields(monkeypatch, tmp_path):
 
 # ---- finch peers ----
 
+def _seed_thread(ws: Workspace, conversation_id="thread_1") -> ConversationThread:
+    thread = ConversationService().open_thread(peer_id="peer_abc", topic="agent evals")
+    thread = thread.model_copy(update={"id": conversation_id})
+    ConversationThreadRepository(ws).upsert(thread)
+    return thread
+
+
 def test_peers_list_and_show(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
@@ -296,32 +354,30 @@ def test_peers_list_and_show(monkeypatch, tmp_path):
         platform_identities=[PlatformIdentity(platform="x", author_id="author_1")],
         display_name="Alice",
         shared_topics=["graphs"],
+        why_relevant="writes concretely",
+        next_context="ask about replay",
     )
     PeerRepository(ws).upsert(profile)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["peers", "list"])
     assert r.exit_code == 0, r.output
-    assert "peer_abc" in r.output
-    assert "Alice" in r.output
+    assert "谁: Alice" in r.output
+    assert "为什么值得连: writes concretely" in r.output
+    assert "共同话题: graphs" in r.output
+    assert "uv run finch peers show peer_abc" in r.output
+    assert "id\tdisplay_name" not in r.output
 
     r = CliRunner().invoke(app, ["peers", "show", "peer_abc"])
     assert r.exit_code == 0, r.output
-    assert "Alice" in r.output
-    assert "graphs" in r.output
+    assert "谁: Alice" in r.output
+    assert "为什么值得连: writes concretely" in r.output
+    assert "下一步上下文: ask about replay" in r.output
+    assert "uv run finch connect prepare" in r.output
 
     r = CliRunner().invoke(app, ["peers", "show", "nope"])
     assert r.exit_code == 1
     assert "peer not found" in r.output
-
-
-# ---- finch conversations ----
-
-def _seed_thread(ws: Workspace, conversation_id="thread_1") -> ConversationThread:
-    thread = ConversationService().open_thread(peer_id="peer_abc", topic="agent evals")
-    thread = thread.model_copy(update={"id": conversation_id})
-    ConversationThreadRepository(ws).upsert(thread)
-    return thread
 
 
 def test_conversations_list_and_show(monkeypatch, tmp_path):
@@ -332,13 +388,14 @@ def test_conversations_list_and_show(monkeypatch, tmp_path):
 
     r = CliRunner().invoke(app, ["conversations", "list"])
     assert r.exit_code == 0, r.output
-    assert "thread_1" in r.output
-    assert "agent evals" in r.output
+    assert "话题: agent evals" in r.output
+    assert "uv run finch conversations show thread_1" in r.output
+    assert "id\tpeer_id\ttopic" not in r.output
 
     r = CliRunner().invoke(app, ["conversations", "show", "thread_1"])
     assert r.exit_code == 0, r.output
-    assert "agent evals" in r.output
-    assert "peer_abc" in r.output
+    assert "话题: agent evals" in r.output
+    assert "同行: peer_abc" in r.output
 
 
 def test_conversations_needs_follow_up(monkeypatch, tmp_path):
@@ -356,7 +413,10 @@ def test_conversations_needs_follow_up(monkeypatch, tmp_path):
 
     r = CliRunner().invoke(app, ["conversations", "list", "--needs-follow-up"])
     assert r.exit_code == 0, r.output
-    assert "t_q" in r.output
+    assert "话题: t" in r.output
+    assert "未解问题: how?" in r.output
+    assert "建议下一步: 回答未解问题或提出实验" in r.output
+    assert "uv run finch conversations follow-up t_q" in r.output
     assert "t_clean" not in r.output
 
 
@@ -371,5 +431,9 @@ def test_conversations_follow_up_restores_context(monkeypatch, tmp_path):
 
     r = CliRunner().invoke(app, ["conversations", "follow-up", "t_q"])
     assert r.exit_code == 0, r.output
-    assert "how to reproduce?" in r.output
-    assert "next_step" in r.output
+    assert "话题: agent evals" in r.output
+    assert "未解问题: how to reproduce?" in r.output
+    assert "建议下一步: 回答未解问题或提出实验" in r.output
+    assert "uv run finch conversations show t_q" in r.output
+    assert "next_step:" not in r.output
+    assert "conversation:" not in r.output

@@ -26,20 +26,9 @@ description: >
 
 ## 向用户呈现
 
-见 `_shared/agent-presentation.md`。本 Skill 做编辑式推荐，不贴 CLI 原文。
+见 `_shared/agent-presentation.md` 与 `references/presentation.md`。本 Skill 做编辑式推荐，不贴 CLI 原文。
 
-读完 `finch ideas commit` / `create` / `signals` 后，按该文档的形状回复：
-
-1. 结论（范围 · 数量 · 最推荐及理由）
-2. 最多展开 3 条决策卡；其余折叠
-3. 操作：「写 1」「展开 2」「比较 1 和 2」「换一批」
-
-内部保留序号 → `idea_id`（来自 CLI 卡末确认命令）。例如用户说「写 1」时执行：
-
-```text
-uv run finch ideas confirm idea_656b4596
-uv run finch drafts create idea_656b4596
-```
+读完 `finch ideas commit` / `create` / `signals` 后，按 `references/presentation.md` 的形状回复：结论 → 最多 3 条卡 →「写 1 / 展开 2 / 比较 / 换一批」。内部保留序号 → `idea_id`。
 
 ## 产出契约（IdeaCandidate）
 
@@ -64,4 +53,5 @@ uv run finch drafts create idea_656b4596
 - `references/signals-signals.md` — 社区信号（同行主题 + 未解问题/分歧）综合的判据。
 - `_shared/idea-contract.md` — IdeaCandidate 契约。
 - `_shared/evidence-policy.md` — 证据优先、外部帖 ≠ 个人证据。
-- `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话。
+- `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话（共享原则）。
+- `references/presentation.md` — 本 Skill 的形状与「写 / 展开 / 换一批」映射。

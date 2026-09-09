@@ -23,11 +23,17 @@ from .content.voice import (
     save_voice_profile,
 )
 from .content.writer import rewrite_with_instruction
+from .conversations.models import ConversationThread
 from .conversations.service import ConversationService
 from .drafts.service import DraftCreateResult, DraftService
 from .engagement.flow import EngagementRunResult, run_discovery_engagement_flow
 from .engagement.metrics import compute_relationship_metrics
-from .engagement.models import InteractionRecord, InteractionStatus
+from .engagement.models import (
+    InteractionAction,
+    InteractionProposal,
+    InteractionRecord,
+    InteractionStatus,
+)
 from .engagement.proposals import generate_proposals
 from .engagement.scoring import rank_candidates, score_posts
 from .engagement.search import fetch_post_by_url
@@ -44,6 +50,7 @@ from .learn.models import Feedback, OutcomeAssessment
 from .learn.reflection import WeeklyReflectionService, render_reflection
 from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
+from .peers.models import PeerProfile
 from .peers.service import PeerService
 from .practice.service import PracticeService
 from .projections import (
@@ -189,6 +196,167 @@ def _render_idea_cards(jobs: list[ContentJob], *, limit: int = _IDEA_CARD_LIMIT)
     if first.status == ContentJobStatus.PROPOSED:
         parts.append(f"uv run finch ideas skip {first.id} --reason ...")
     return "\n\n".join(parts)
+
+
+_CONNECT_CARD_LIMIT = 6
+
+_ACTION_LABELS = {
+    InteractionAction.IGNORE: "忽略",
+    InteractionAction.BOOKMARK: "收藏",
+    InteractionAction.OBSERVE_AUTHOR: "观察",
+    InteractionAction.DRAFT_REPLY: "回复",
+    InteractionAction.DRAFT_QUOTE: "引用",
+    InteractionAction.DRAFT_DM: "私信",
+}
+
+
+def _action_label(action: InteractionAction) -> str:
+    return _ACTION_LABELS.get(action, action.value)
+
+
+def _thread_next_step(thread: ConversationThread) -> str:
+    if thread.open_questions:
+        return "回答未解问题或提出实验"
+    return "已无未解问题；确认是否关闭或延续新主题"
+
+
+def _render_peer_card(peer: PeerProfile) -> str:
+    """同行决策卡：谁 / 为什么值得连 / 下一步上下文；show 命令带真实 id。"""
+    lines = [f"谁: {peer.display_name or peer.id}"]
+    if (peer.why_relevant or "").strip():
+        lines.append(f"为什么值得连: {peer.why_relevant}")
+    if (peer.next_context or "").strip():
+        lines.append(f"下一步上下文: {peer.next_context}")
+    if peer.shared_topics:
+        lines.append(f"共同话题: {', '.join(peer.shared_topics)}")
+    lines.append(f"uv run finch peers show {peer.id}")
+    return "\n".join(lines)
+
+
+def _render_peer_cards(peers: list[PeerProfile], *, limit: int = _CONNECT_CARD_LIMIT) -> str:
+    if not peers:
+        return "no peers"
+    shown = peers[:limit]
+    parts = ["\n\n".join(_render_peer_card(p) for p in shown)]
+    if len(peers) > limit:
+        parts.append(
+            f"共 {len(peers)} 个同行，以上 {len(shown)} 个。其余：uv run finch peers list"
+        )
+    return "\n\n".join(parts)
+
+
+def _render_peer_detail(peer: PeerProfile) -> str:
+    lines = [
+        f"谁: {peer.display_name or peer.id}",
+        f"阶段: {peer.relationship_stage.value}",
+    ]
+    if peer.expertise_topics:
+        lines.append(f"专长: {', '.join(peer.expertise_topics)}")
+    if peer.shared_topics:
+        lines.append(f"共同话题: {', '.join(peer.shared_topics)}")
+    if (peer.why_relevant or "").strip():
+        lines.append(f"为什么值得连: {peer.why_relevant}")
+    if (peer.next_context or "").strip():
+        lines.append(f"下一步上下文: {peer.next_context}")
+    lines.append("uv run finch connect prepare")
+    return "\n".join(lines)
+
+
+def _render_proposal_card(proposal: InteractionProposal) -> str:
+    """互动提案决策卡：动作 / 理由 / 草稿预览；批准命令带真实 id。"""
+    draft = (proposal.revised_draft or proposal.draft or "").strip()
+    preview = " ".join(draft.split())[:120] if draft else "-"
+    lines = [f"动作: {_action_label(proposal.action)}"]
+    if (proposal.why_this_person or "").strip():
+        lines.append(f"为什么是这个人: {proposal.why_this_person}")
+    if (proposal.why_now or "").strip():
+        lines.append(f"为什么现在: {proposal.why_now}")
+    if (proposal.expected_conversation_opening or "").strip():
+        lines.append(f"预期开口: {proposal.expected_conversation_opening}")
+    lines.append(f"草稿预览: {preview}")
+    if proposal.status == InteractionStatus.PROPOSED:
+        lines.append(f"uv run finch connect approve {proposal.id}")
+    return "\n".join(lines)
+
+
+def _render_proposal_cards(
+    proposals: list[InteractionProposal],
+    *,
+    limit: int = _CONNECT_CARD_LIMIT,
+    include_reject: bool = True,
+) -> str:
+    if not proposals:
+        return "no interaction proposals"
+    shown = proposals[:limit]
+    parts = ["\n\n".join(_render_proposal_card(p) for p in shown)]
+    if len(proposals) > limit:
+        parts.append(
+            f"共 {len(proposals)} 个候选，以上 {len(shown)} 个。"
+            "其余：uv run finch connect prepare --json"
+        )
+    first = shown[0]
+    if include_reject and first.status == InteractionStatus.PROPOSED:
+        parts.append(f"uv run finch connect reject {first.id} --reason ...")
+    return "\n\n".join(parts)
+
+
+def _render_thread_card(thread: ConversationThread, *, for_follow_up: bool = False) -> str:
+    """对话线索决策卡：话题 / 未解问题 / 建议下一步。"""
+    lines = [f"话题: {thread.topic}"]
+    if thread.open_questions:
+        lines.append(f"未解问题: {'; '.join(thread.open_questions)}")
+    if for_follow_up or thread.open_questions:
+        lines.append(f"建议下一步: {_thread_next_step(thread)}")
+    if for_follow_up:
+        lines.append(f"uv run finch conversations show {thread.id}")
+    elif thread.open_questions:
+        lines.append(f"uv run finch conversations follow-up {thread.id}")
+    else:
+        lines.append(f"uv run finch conversations show {thread.id}")
+    return "\n".join(lines)
+
+
+def _render_thread_cards(
+    threads: list[ConversationThread],
+    *,
+    limit: int = _CONNECT_CARD_LIMIT,
+    needs_follow_up: bool = False,
+) -> str:
+    if not threads:
+        return "no conversations"
+    shown = threads[:limit]
+    parts = [
+        "\n\n".join(
+            _render_thread_card(t, for_follow_up=False) for t in shown
+        )
+    ]
+    if len(threads) > limit:
+        rest = (
+            "uv run finch conversations list --needs-follow-up"
+            if needs_follow_up
+            else "uv run finch conversations list"
+        )
+        parts.append(f"共 {len(threads)} 条线索，以上 {len(shown)} 条。其余：{rest}")
+    return "\n\n".join(parts)
+
+
+def _render_thread_detail(thread: ConversationThread) -> str:
+    lines = [
+        f"话题: {thread.topic}",
+        f"同行: {thread.peer_id}",
+        f"状态: {thread.status.value}",
+    ]
+    if thread.open_questions:
+        lines.append(f"未解问题: {'; '.join(thread.open_questions)}")
+    if thread.agreements:
+        lines.append(f"共识: {', '.join(thread.agreements)}")
+    if thread.disagreements:
+        lines.append(f"分歧: {', '.join(thread.disagreements)}")
+    if thread.possible_experiments:
+        lines.append(f"可实验: {', '.join(thread.possible_experiments)}")
+    if thread.open_questions:
+        lines.append(f"uv run finch conversations follow-up {thread.id}")
+    return "\n".join(lines)
 
 
 def _idea_next_steps(job: ContentJob) -> list[str]:
@@ -1249,32 +1417,60 @@ def _persist_discovery(ws: Workspace, result: EngagementRunResult) -> None:
 
 
 def _render_daily(focus: TodayFocus) -> str:
-    def _section(title, items, total, render):
-        lines = [f"## {title}"]
-        if not items:
-            lines.append("- (none)")
-        else:
-            for i in items:
-                lines.append(render(i))
-        if items and total > len(items):
-            lines.append(f"… 还有 {total - len(items)} 个")
-        return "\n".join(lines)
+    def _section(title: str, body: str) -> str:
+        return f"## {title}\n{body}"
 
     conv = focus["conversations"]
     peer = focus["peers"]
     contrib = focus["contributions"]
     ideas = focus["ideas"]
+
+    def _with_more(body: str, shown: int, total: int) -> str:
+        if shown and total > shown:
+            return f"{body}\n… 还有 {total - shown} 个"
+        return body
+
+    conv_body = (
+        _render_thread_cards(conv["items"], limit=len(conv["items"]) or 1)
+        if conv["items"]
+        else "- (none)"
+    )
+    peer_body = (
+        _render_peer_cards(
+            [rp.profile for rp in peer["items"]], limit=len(peer["items"]) or 1
+        )
+        if peer["items"]
+        else "- (none)"
+    )
+    contrib_body = (
+        _render_proposal_cards(
+            contrib["items"], limit=len(contrib["items"]) or 1, include_reject=False
+        )
+        if contrib["items"]
+        else "- (none)"
+    )
+    idea_body = (
+        "\n\n".join(_render_idea_card(j) for j in ideas["items"])
+        if ideas["items"]
+        else "- (none)"
+    )
     return "\n\n".join([
-        _section("需要继续的对话", conv["items"], conv["total"],
-                 lambda t: f"- {t.id}\t{t.topic}\t{t.status.value}"),
-        _section("今天最值得连接的同行", peer["items"], peer["total"],
-                 lambda rp: f"- {rp.profile.display_name or rp.profile.id}\t"
-                            f"peer_value={rp.value.total:.2f}"),
-        _section("可贡献的具体内容", contrib["items"], contrib["total"],
-                 lambda c: f"- {c.id}\t[{c.action.value}]\t"
-                           f"{' '.join(c.post.content.split())[:60]}"),
-        _section("从近期交流产生的观点候选", ideas["items"], ideas["total"],
-                 lambda j: f"- {j.id}\t{j.core_message}"),
+        _section(
+            "需要继续的对话",
+            _with_more(conv_body, len(conv["items"]), conv["total"]),
+        ),
+        _section(
+            "今天最值得连接的同行",
+            _with_more(peer_body, len(peer["items"]), peer["total"]),
+        ),
+        _section(
+            "可贡献的具体内容",
+            _with_more(contrib_body, len(contrib["items"]), contrib["total"]),
+        ),
+        _section(
+            "从近期交流产生的观点候选",
+            _with_more(idea_body, len(ideas["items"]), ideas["total"]),
+        ),
     ])
 
 
@@ -1342,9 +1538,7 @@ def connect_prepare(
     if not result.candidates:
         typer.echo("no interaction proposals")
         return
-    for c in result.candidates:
-        snippet = " ".join(c.post.content.split())[:60]
-        typer.echo(f"{c.id}\t{c.action.value}\t{c.peer_id or '-'}\t{snippet}")
+    typer.echo(_render_proposal_cards(result.candidates))
 
 
 @connect_app.command("create")
@@ -1376,7 +1570,7 @@ def connect_create(
     if as_json:
         typer.echo(candidate.model_dump_json(indent=2))
     else:
-        typer.echo(f"{candidate.id}\t{candidate.action.value}\t{candidate.draft or ''}")
+        typer.echo(_render_proposal_card(candidate))
 
 
 @connect_app.command("approve")
@@ -1492,10 +1686,7 @@ def peers_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
     if not peers:
         typer.echo("no peers")
         return
-    typer.echo("id\tdisplay_name\tstage\tshared_topics")
-    for p in peers:
-        topics = ",".join(p.shared_topics)
-        typer.echo(f"{p.id}\t{p.display_name or '-'}\t{p.relationship_stage.value}\t{topics}")
+    typer.echo(_render_peer_cards(peers))
 
 
 @peers_app.command("show")
@@ -1523,13 +1714,7 @@ def peers_show(
         ]
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
-    typer.echo(f"id: {peer.id}")
-    typer.echo(f"display_name: {peer.display_name or '-'}")
-    typer.echo(f"stage: {peer.relationship_stage.value}")
-    typer.echo(f"expertise_topics: {', '.join(peer.expertise_topics) or '-'}")
-    typer.echo(f"shared_topics: {', '.join(peer.shared_topics) or '-'}")
-    typer.echo(f"why_relevant: {peer.why_relevant or '-'}")
-    typer.echo(f"next_context: {peer.next_context or '-'}")
+    typer.echo(_render_peer_detail(peer))
 
 
 @peers_app.command("get")
@@ -1559,9 +1744,9 @@ def conversations_list(
     if not threads:
         typer.echo("no conversations")
         return
-    typer.echo("id\tpeer_id\ttopic\tstatus")
-    for t in threads:
-        typer.echo(f"{t.id}\t{t.peer_id}\t{t.topic}\t{t.status.value}")
+    typer.echo(
+        _render_thread_cards(threads, needs_follow_up=needs_follow_up)
+    )
 
 
 @conversations_app.command("show")
@@ -1580,15 +1765,7 @@ def conversations_show(
     if as_json:
         typer.echo(thread.model_dump_json(indent=2))
         return
-    typer.echo(f"id: {thread.id}")
-    typer.echo(f"peer_id: {thread.peer_id}")
-    typer.echo(f"topic: {thread.topic}")
-    typer.echo(f"status: {thread.status.value}")
-    typer.echo(f"interactions: {', '.join(thread.interaction_ids) or '-'}")
-    typer.echo(f"open_questions: {', '.join(thread.open_questions) or '-'}")
-    typer.echo(f"agreements: {', '.join(thread.agreements) or '-'}")
-    typer.echo(f"disagreements: {', '.join(thread.disagreements) or '-'}")
-    typer.echo(f"possible_experiments: {', '.join(thread.possible_experiments) or '-'}")
+    typer.echo(_render_thread_detail(thread))
 
 
 @conversations_app.command("get")
@@ -1611,11 +1788,7 @@ def conversations_follow_up(
         typer.echo(f"conversation not found: {conversation_id}")
         raise typer.Exit(code=1)
     open_questions = thread.open_questions
-    next_step = (
-        "回答未解问题或提出实验"
-        if open_questions
-        else "已无未解问题；确认是否关闭或延续新主题"
-    )
+    next_step = _thread_next_step(thread)
     if as_json:
         typer.echo(json.dumps({
             "conversation_id": thread.id,
@@ -1624,9 +1797,7 @@ def conversations_follow_up(
             "next_step": next_step,
         }, ensure_ascii=False, indent=2))
         return
-    typer.echo(f"conversation: {thread.id} ({thread.topic})")
-    typer.echo(f"open_questions: {', '.join(open_questions) or '-'}")
-    typer.echo(f"next_step: {next_step}")
+    typer.echo(_render_thread_card(thread, for_follow_up=True))
 
 
 @practice_app.command("start")
