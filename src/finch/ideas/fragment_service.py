@@ -1,6 +1,6 @@
 """FragmentService：把用户片段 / 完整对话线索 / 已验证证据 结构化为 IdeaCandidate。
 
-（idea-discovery 的 user / conversation 来源。）
+（idea-discovery 的 practice / conversation / synthesis 来源。）
 
 本模块是纯领域逻辑：不访问 DB、不落库。``IdeaService.create_candidate`` 负责后续幂等落库。
 """
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from finch.content.jobs import AuthorPosition, CommunicationGoal, IdeaOrigin
 from finch.content.models import RecommendedFormat
-from finch.conversations.models import ConversationThread
+from finch.conversations.models import ConversationThread, ThreadStatus
 from finch.engagement.models import ConversationEvidence, InteractionRecord
 from finch.ideas.models import IdeaBoundaries, IdeaCandidate, IdeaGenerator, SourceRef
 from finch.llm.base import StructuredInferenceRunner
@@ -142,7 +142,7 @@ class FragmentService:
         self.runner = runner
 
     def from_text(self, text: str) -> IdeaCandidate:
-        """用户片段（一句话/模糊判断）→ IdeaCandidate，origin=user，无外部 source_refs。"""
+        """用户片段（一句话/模糊判断）→ IdeaCandidate，origin=practice，无外部 source_refs。"""
         out = cast(
             IdeaDraftOutput,
             self.runner.run(
@@ -225,7 +225,8 @@ class FragmentService:
         signal_lines: list[str] = []
         source_refs: list[SourceRef] = []
         for p in peers:
-            topics = [t for t in (p.shared_topics or p.current_interests) if t]
+            topics = list(dict.fromkeys((p.shared_topics or []) + (p.current_interests or [])))
+            topics = [t for t in topics if t]
             if not topics:
                 continue
             signal_lines.append(f"peer {p.display_name or p.id}: {'; '.join(topics)}")
@@ -237,6 +238,8 @@ class FragmentService:
 
         has_tension = False
         for t in threads:
+            if t.status is ThreadStatus.CLOSED:
+                continue
             if t.open_questions:
                 has_tension = True
                 signal_lines.append(f"open question [{t.topic}]: {t.open_questions[0]}")

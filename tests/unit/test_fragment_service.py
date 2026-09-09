@@ -4,7 +4,7 @@ from datetime import datetime
 
 from finch.content.jobs import AuthorPosition
 from finch.content.models import RecommendedFormat
-from finch.conversations.models import ConversationThread
+from finch.conversations.models import ConversationThread, ThreadStatus
 from finch.engagement.models import ConversationEvidence, InteractionRecord
 from finch.ideas.fragment_service import FragmentService, IdeaDraftOutput
 from finch.ideas.models import IdeaBoundaries
@@ -132,4 +132,13 @@ def test_from_signals_returns_none_when_llm_says_no_idea():
         id="thread_1", peer_id="p", topic="t", open_questions=["q"],
     )
     svc = FragmentService(FakeRunner(empty))
+    assert svc.from_signals(peers=[], threads=[thread]) is None
+
+
+def test_from_signals_ignores_closed_threads():
+    thread = ConversationThread(
+        id="thread_1", peer_id="p", topic="t",
+        open_questions=["q"], status=ThreadStatus.CLOSED,
+    )
+    svc = FragmentService(FakeRunner(_out()))
     assert svc.from_signals(peers=[], threads=[thread]) is None

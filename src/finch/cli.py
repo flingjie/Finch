@@ -387,18 +387,20 @@ def ideas_signals(as_json: bool = typer.Option(False, "--json", help="输出 JSO
     ws.ensure()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     service = FragmentService(runner)
-    idea = service.from_signals(
-        peers=PeerRepository(ws).list_all(),
-        threads=ConversationThreadRepository(ws).list_all(),
-    )
-    if idea is None:
-        typer.echo("no community signal worth an idea")
-        raise typer.Exit(code=0)
     try:
-        job = IdeaService(ContentJobRepository(ws)).create_candidate(idea)
+        idea = service.from_signals(
+            peers=PeerRepository(ws).list_all(),
+            threads=ConversationThreadRepository(ws).list_all(),
+        )
+        if idea is not None:
+            job = IdeaService(ContentJobRepository(ws)).create_candidate(idea)
     except (RuntimeError, StructuredOutputError, ValueError) as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
+
+    if idea is None:
+        typer.echo("no community signal worth an idea")
+        raise typer.Exit(code=0)
     if as_json:
         typer.echo(json.dumps(
             {"id": job.id, "origin": job.origin, "status": job.status.value},

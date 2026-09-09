@@ -21,6 +21,7 @@ CommunicationGoal = Literal[
 IdeaOrigin = Literal["practice", "conversation", "synthesis"]
 
 # 旧工作区中已存的 legacy origin 值 → 新枚举（读取时归一化，避免校验崩溃）。
+# ``search`` 从无生产路径，但历史上若曾落库，其语义最接近社区信号综合 → 归入 synthesis。
 _LEGACY_ORIGIN = {"commit": "practice", "user": "practice", "search": "synthesis"}
 
 
