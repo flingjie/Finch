@@ -1,6 +1,7 @@
 """确定性投影：从工作区只读聚合生成 projections/*.json（非事实源，可重建可删）。"""
 
 from datetime import UTC, datetime
+from typing import TypedDict
 
 from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.conversations.models import ConversationThread
@@ -84,6 +85,22 @@ def _position_complete(job: ContentJob) -> bool:
     return position is not None and bool(position.decision) and bool(position.tradeoff)
 
 
+class FocusSection[T](TypedDict):
+    """今日聚焦的一段：排序+截断后的 items 与全量 total。"""
+
+    items: list[T]
+    total: int
+
+
+class TodayFocus(TypedDict):
+    """今日聚焦四段投影（确定性，无 LLM）。"""
+
+    conversations: FocusSection[ConversationThread]
+    peers: FocusSection[RankedPeer]
+    contributions: FocusSection[InteractionProposal]
+    ideas: FocusSection[ContentJob]
+
+
 def build_today_focus(
     *,
     peers: list[RankedPeer],
@@ -91,7 +108,7 @@ def build_today_focus(
     threads: list[ConversationThread],
     ideas: list[ContentJob],
     now: datetime | None = None,
-) -> dict[str, dict]:
+) -> TodayFocus:
     """确定性「今日聚焦」投影：四段排序 + top-N 截断（纯 Python，无 LLM）。"""
     now = now or datetime.now(UTC)
     conv_sorted = sorted(threads, key=lambda t: _thread_overdue_key(t, now))

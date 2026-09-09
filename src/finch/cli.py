@@ -44,7 +44,12 @@ from .learn.reflection import WeeklyReflectionService, render_reflection
 from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
 from .practice.service import PracticeService
-from .projections import build_daily_context, build_pending_actions, build_today_focus
+from .projections import (
+    TodayFocus,
+    build_daily_context,
+    build_pending_actions,
+    build_today_focus,
+)
 from .reddit.opencli_client import RedditOpenCliClient
 from .settings import Settings, load_settings
 from .storage.repositories import (
@@ -1163,7 +1168,7 @@ def _persist_discovery(ws: Workspace, result: EngagementRunResult) -> None:
         interactions.upsert(candidate, run_id=result.run_id)
 
 
-def _render_daily(focus: dict) -> str:
+def _render_daily(focus: TodayFocus) -> str:
     def _section(title, items, total, render):
         lines = [f"## {title}"]
         if not items:

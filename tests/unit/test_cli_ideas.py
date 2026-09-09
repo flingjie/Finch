@@ -486,3 +486,26 @@ def test_ideas_signals_no_signal_exits_zero(monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
     assert "no community signal" in r.output
     assert ContentJobRepository(ws).list_jobs() == []
+
+
+class _SignalIdeaFragmentService:
+    def __init__(self, runner):
+        self.runner = runner
+
+    def from_signals(self, *, peers=None, threads=None):
+        return _candidate().model_copy(update={"origin": "synthesis"})
+
+
+def test_ideas_signals_persists_candidate(monkeypatch, tmp_path):
+    settings = _settings(tmp_path, [])
+    ws = Workspace(settings.paths.var_dir)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "FragmentService", _SignalIdeaFragmentService)
+    r = CliRunner().invoke(app, ["ideas", "signals", "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["origin"] == "synthesis"
+    assert payload["status"] == "proposed"
+    jobs = ContentJobRepository(ws).list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].origin == "synthesis"
