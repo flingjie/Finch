@@ -1,7 +1,7 @@
 """Draft 语义审查（contract C5）：六维打分 + 三个语义 flag + 蕴含判定。
 
 同时承载 Critic Suite 默认检查器套件（``default_checker_suite``）与并行执行器
-（``_run_checks``），供 graph 的 write 节点与 idea 服务复用。
+（``_run_checks``），供 idea-to-draft 与 idea 服务复用。
 """
 
 import json

@@ -12,7 +12,7 @@ Do not read files, run commands, or use any tools. Answer only from the data bel
   - evidence: how well every claim is backed by its cited evidence card.
   - increment: the new, non-obvious value the draft adds beyond what the cards already state.
   - conversation: clarity, tone, and fit for a reply in a public technical discussion.
-  - voice: consistency with the builder's voice (measured, evidence-first, no hype).
+  - voice: consistency with the user's voice (measured, evidence-first, no hype).
   - safety: absence of fabricated personal experience, unsupported metrics, and unentailed claims.
 - quality_score: overall 0..1 quality, weighting the six dimensions with safety as a hard floor.
 - invented_personal_experience: set true if the draft asserts first-person experience, anecdotes, or events we have no evidence for.

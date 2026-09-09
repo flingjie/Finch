@@ -13,7 +13,7 @@ description: >
 
 ## 流程
 
-1. 选 Idea（`finch ideas list` 挑选，或关联一个 Opportunity）。
+1. 选 Idea（`finch ideas list` 挑选）。
 2. 用户先表达 → `finch practice start --idea <id> --attempt "..."`。
 3. 诊断最大问题 → `finch practice diagnose <session-id>`。
 4. 用户重新表达 → `finch practice save <session-id> --revision "..."`。
