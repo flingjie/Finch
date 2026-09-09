@@ -32,11 +32,23 @@ def test_reflect_returns_reflection():
     assert out.new_idea_candidates == ["idea_x"]
 
 
-def test_render_reflection_contains_sections():
+def test_render_reflection_leads_with_practice():
     reflection = WeeklyReflection(
-        insight="i", strongest_expression="s", meaningful_connection="m",
-        next_practice="n", stop_doing="x", voice_update_candidate="v",
+        insight="i",
+        strongest_expression="那篇回复",
+        meaningful_connection="与 Alice 的来回",
+        surface_only_interactions="点赞帖",
+        conversations_formed_ideas="关系记忆讨论",
+        continue_relationships="Alice；Bob",
+        next_practice="先讲场景再下判断",
+        stop_doing="堆术语",
+        voice_update_candidate="少用本质上",
     )
     text = render_reflection(reflection)
-    assert "本周与谁形成了真正的来回交流" in text
-    assert "下周训练重点" in text
+    assert text.startswith("下周只练：先讲场景再下判断")
+    assert "本周真正有来回：与 Alice 的来回" in text
+    assert "下周继续：Alice；Bob" in text
+    assert "其余：" in text
+    assert "Finch Weekly Reflection" not in text
+    assert "uv run finch practice start" in text or "uv run finch connect daily" in text
+    assert text.index("下周只练：") < text.index("其余：")

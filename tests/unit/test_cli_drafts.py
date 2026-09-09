@@ -113,10 +113,27 @@ def test_drafts_create_non_json_output(monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
     assert "当前等待你的审核" in r.output
     assert "质量检查：通过" in r.output
-    assert "下一步：" in r.output
-    assert "采用并进入发布意图" in r.output
+    assert "uv run finch review approve draft_fake1234" in r.output
+    assert "uv run finch drafts revise draft_fake1234 --instruction" in r.output
+    assert "uv run finch review skip draft_fake1234 --reason" in r.output
+    assert "采用并进入发布意图" not in r.output
     # 运行详情默认不出现。
     assert "运行详情" not in r.output
+    assert "draft_id:" not in r.output
+
+
+def test_drafts_show_non_json_output(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    _seed_draft(ws)
+
+    r = CliRunner().invoke(app, ["drafts", "show", "draft_fake1234"])
+    assert r.exit_code == 0, r.output
+    assert BODY in r.output
+    assert "uv run finch review approve draft_fake1234" in r.output
+    assert "content_job_id:" not in r.output
+    assert "采用并进入发布意图" not in r.output
 
 
 def test_drafts_create_unconfirmed_exits(monkeypatch, tmp_path):
@@ -163,18 +180,6 @@ def test_drafts_show_json_output(monkeypatch, tmp_path):
     payload = json.loads(r.output)
     assert payload["id"] == "draft_fake1234"
     assert payload["body"] == BODY
-
-
-def test_drafts_show_non_json_output(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    ws = Workspace(settings.paths.var_dir)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    _seed_draft(ws)
-
-    r = CliRunner().invoke(app, ["drafts", "show", "draft_fake1234"])
-    assert r.exit_code == 0, r.output
-    assert "draft_fake1234" in r.output
-    assert BODY in r.output
 
 
 def test_drafts_show_unknown_exits(monkeypatch, tmp_path):

@@ -43,8 +43,55 @@ def test_weekly_renders(monkeypatch, tmp_path):
 
     r = CliRunner().invoke(app, ["weekly"])
     assert r.exit_code == 0, r.output
-    assert "Finch Weekly Reflection" in r.output
-    assert "下周训练重点" in r.output
+    assert "下周只练：" in r.output
+    assert r.output.index("下周只练：") < r.output.index("本周真正有来回")
+    assert "Finch Weekly Reflection" not in r.output
+    assert "uv run finch practice start" in r.output or "uv run finch connect daily" in r.output
+
+
+def test_voice_show_prints_summary_not_full_dump(monkeypatch, tmp_path):
+    settings = _voice_settings(tmp_path)
+    profile = load_voice_profile(settings.paths.voice_profile_path)
+    profile.preferred_patterns = ["先讲场景", "少用本质"]
+    profile.avoid_phrases = ["本质上", "赋能"]
+    profile.approved_examples.append(ApprovedExample(id="d1", text="body"))
+    save_voice_profile(profile, settings.paths.voice_profile_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["voice", "show"])
+    assert r.exit_code == 0, r.output
+    assert "画像摘要" in r.output
+    assert "已批准样例: 1" in r.output
+    assert "先讲场景" in r.output
+    assert "uv run finch voice propose" in r.output
+    assert "uv run finch voice show --json" in r.output
+    assert "preferred_patterns:" not in r.output
+
+
+def test_voice_propose_caps_and_commands(monkeypatch, tmp_path):
+    settings = _voice_settings(tmp_path)
+    profile = load_voice_profile(settings.paths.voice_profile_path)
+    profile.approved_examples.append(
+        ApprovedExample(
+            id="d1",
+            text="after",
+            diff=(
+                "--- a\n+++ b\n"
+                "-本质上很重要\n-赋能团队\n-闭环一下\n-抓住本质\n"
+                "+先讲场景\n+少用术语\n+给反例\n+再下判断\n"
+            ),
+        )
+    )
+    save_voice_profile(profile, settings.paths.voice_profile_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["voice", "propose"])
+    assert r.exit_code == 0, r.output
+    assert "更新候选" in r.output
+    assert r.output.count("避免：") <= 3
+    assert r.output.count("偏好：") <= 3
+    assert "uv run finch voice show --json" in r.output
+    assert "不会自动写入" in r.output
 
 
 def _settings(tmp_path):
@@ -76,7 +123,7 @@ def test_voice_subcommands_exist():
 def test_voice_show_prints_profile(monkeypatch, tmp_path):
     settings = _voice_settings(tmp_path)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    r = CliRunner().invoke(app, ["voice", "show"])
+    r = CliRunner().invoke(app, ["voice", "show", "--json"])
     assert r.exit_code == 0, r.output
     assert "preferred_patterns" in r.output
     assert "avoid_phrases" in r.output

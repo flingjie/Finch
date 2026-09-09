@@ -21,6 +21,10 @@ description: >
 
 `finch weekly [--json]`（关系质量指标与周报指标由代码算，解读由 LLM 做）。
 
+## 向用户呈现
+
+见 `_shared/agent-presentation.md` 与 `references/presentation.md`。先给「下周只练」与关系两句，五问折叠；下一步是「开练 / 看同行 / 更新声音」。
+
 ## 边界
 
 - 不自动更新 VoiceProfile（输出 voice_update_candidate，由用户确认后走 `voice-profile`）。
@@ -30,3 +34,5 @@ description: >
 ## 参考
 
 - `references/reflection-contract.md` — 输出 schema 与五问。
+- `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话（共享原则）。
+- `references/presentation.md` — 本 Skill 的形状与「开练 / 看同行 / 更新声音」映射。

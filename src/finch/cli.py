@@ -417,20 +417,15 @@ def _render_idea_detail(job: ContentJob) -> str:
 
 
 def _render_draft(draft: Draft) -> str:
-    """单个草稿的完整可读视图。"""
+    """单个草稿的决策卡：正文 + 可复制审核命令。"""
     lines = [
-        f"id: {draft.id}",
-        f"kind: {draft.kind.value}",
-    ]
-    if draft.content_job_id:
-        lines.append(f"content_job_id: {draft.content_job_id}")
-    if draft.position_statement:
-        lines.append(f"position_statement: {draft.position_statement}")
-    lines += ["", draft.body, "", "下一步:"]
-    lines += [
-        "- 采用并进入发布意图",
-        "- 继续修改",
-        "- 放弃草稿",
+        f"> {draft.body}",
+        "",
+        "状态：未发布",
+        "",
+        f"uv run finch review approve {draft.id}",
+        f'uv run finch drafts revise {draft.id} --instruction "..."',
+        f"uv run finch review skip {draft.id} --reason ...",
     ]
     return "\n".join(lines)
 
@@ -803,10 +798,9 @@ def _render_draft_result(result: DraftCreateResult) -> str:
     lines += [
         "状态：未发布",
         "",
-        "下一步：",
-        "- 采用并进入发布意图",
-        "- 继续修改",
-        "- 放弃草稿",
+        f"uv run finch review approve {draft.id}",
+        f'uv run finch drafts revise {draft.id} --instruction "..."',
+        f"uv run finch review skip {draft.id} --reason ...",
     ]
     return "\n".join(lines)
 
@@ -1073,12 +1067,35 @@ def _voice_profile_path() -> Path:
 
 
 @voice_app.command("show")
-def voice_show() -> None:
-    """加载并打印声音画像。"""
+def voice_show(
+    as_json: bool = typer.Option(False, "--json", help="输出完整画像"),
+) -> None:
+    """加载并打印声音画像（默认摘要；--json 输出完整结构）。"""
     profile = load_voice_profile(_voice_profile_path())
-    typer.echo(
-        yaml.safe_dump(profile.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
-    )
+    if as_json:
+        typer.echo(
+            yaml.safe_dump(profile.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
+        )
+        return
+    prefer = profile.preferred_patterns[:3]
+    avoid = profile.avoid_phrases[:3]
+    lines = [
+        "画像摘要",
+        f"- 偏好模式: {len(profile.preferred_patterns)} 条",
+        f"- 避免表达: {len(profile.avoid_phrases)} 条",
+        f"- 已批准样例: {len(profile.approved_examples)}",
+        f"- 已拒绝样例: {len(profile.rejected_examples)}",
+    ]
+    if prefer:
+        lines += ["", "偏好（最多 3）："] + [f"- {p}" for p in prefer]
+    if avoid:
+        lines += ["", "避免（最多 3）："] + [f"- {p}" for p in avoid]
+    lines += [
+        "",
+        "uv run finch voice propose",
+        "uv run finch voice show --json",
+    ]
+    typer.echo("\n".join(lines))
 
 
 def _diff_text(before: str, after: str) -> str:
@@ -1170,13 +1187,25 @@ def voice_propose(as_json: bool = typer.Option(False, "--json", help="输出 JSO
     if as_json:
         typer.echo(proposal.model_dump_json(indent=2))
         return
-    typer.echo("## 建议避免的表达（用户曾删掉/改掉）")
-    for phrase in proposal.avoid_phrases:
-        typer.echo(f"- {phrase}")
-    typer.echo("## 建议偏好的表达（用户曾改向）")
-    for phrase in proposal.preferred_patterns:
-        typer.echo(f"- {phrase}")
-
+    avoid = proposal.avoid_phrases[:3]
+    prefer = proposal.preferred_patterns[:3]
+    if not avoid and not prefer:
+        typer.echo("暂无更新候选（需要带 diff 的已批准样例）")
+        typer.echo("uv run finch voice show --json")
+        return
+    lines = ["更新候选（最多 3+3，不会自动写入）"]
+    for phrase in avoid:
+        lines.append(f"- 避免：「{phrase}」")
+    for phrase in prefer:
+        lines.append(f"- 偏好：「{phrase}」")
+    if len(proposal.avoid_phrases) > 3 or len(proposal.preferred_patterns) > 3:
+        lines.append("其余候选见：uv run finch voice propose --json")
+    lines += [
+        "",
+        "确认后请人工改 voice-profile，或继续用 approve-example 积累样例。",
+        "uv run finch voice show --json",
+    ]
+    typer.echo("\n".join(lines))
 
 @voice_app.command("reject-example")
 def voice_reject_example(
@@ -1296,10 +1325,9 @@ def review_show(
             typer.echo("")
             typer.echo(critic)
         typer.echo("")
-        typer.echo("下一步:")
-        typer.echo("- 采用")
-        typer.echo("- 修改")
-        typer.echo("- 跳过")
+        typer.echo(f"uv run finch review approve {draft.id}")
+        typer.echo(f'uv run finch drafts revise {draft.id} --instruction "..."')
+        typer.echo(f"uv run finch review skip {draft.id} --reason ...")
 
 
 @review_app.command("approve")

@@ -132,35 +132,27 @@ def _render_threads(threads: list[ConversationThread]) -> str:
 
 
 def render_reflection(reflection: WeeklyReflection) -> str:
-    """把 WeeklyReflection 渲染为 Markdown。"""
+    """把 WeeklyReflection 渲染为编辑式摘要：先下周重点，再折叠五问。"""
+    practice = reflection.next_practice or "(未给出)"
     lines = [
-        "# Finch Weekly Reflection",
+        f"下周只练：{practice}",
         "",
-        "## 本周与谁形成了真正的来回交流",
-        f"- {reflection.meaningful_connection or '(none)'}",
+        f"本周真正有来回：{reflection.meaningful_connection or '(none)'}",
+        f"下周继续：{reflection.continue_relationships or '(none)'}",
         "",
-        "## 哪些互动只有表面反馈",
-        f"- {reflection.surface_only_interactions or '(none)'}",
-        "",
-        "## 哪些对话形成了新的观点或实验",
-        f"- {reflection.conversations_formed_ideas or '(none)'}",
-        "",
-        "## 下周应该继续的关系",
-        f"- {reflection.continue_relationships or '(none)'}",
-        "",
-        "## 越来越像自己的表达",
-        f"- {reflection.strongest_expression or '(none)'}",
-        "",
-        "## 下周训练重点",
-        f"- {reflection.next_practice or '(none)'}",
-        "",
-        "## 停止做",
-        f"- {reflection.stop_doing or '(none)'}",
-        "",
-        "## 声音画像更新候选",
-        f"- {reflection.voice_update_candidate or '(none)'}",
+        "其余：",
+        f"- 表面反馈：{reflection.surface_only_interactions or '(none)'}",
+        f"- 形成观点的对话：{reflection.conversations_formed_ideas or '(none)'}",
+        f"- 越来越像自己：{reflection.strongest_expression or '(none)'}",
+        f"- 停止做：{reflection.stop_doing or '(none)'}",
+        f"- 声音更新候选：{reflection.voice_update_candidate or '(none)'}",
     ]
     if reflection.new_idea_candidates:
-        lines += ["", "## 新 Idea 候选"]
-        lines += [f"- {cand}" for cand in reflection.new_idea_candidates]
+        lines.append("- 新 Idea 候选：" + "；".join(reflection.new_idea_candidates))
+    lines += [
+        "",
+        "uv run finch practice start --idea <id> --attempt \"...\"",
+        "uv run finch connect daily",
+        "uv run finch voice propose",
+    ]
     return "\n".join(lines)
