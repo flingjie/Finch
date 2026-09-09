@@ -154,7 +154,7 @@ def test_contentjob_find_by_generation_key(tmp_path):
         author_position=None,
         recommended_format=RecommendedFormat.REPLY,
         status=ContentJobStatus.PROPOSED,
-        origin="commit",
+        origin="practice",
         generation_key="gk_123",
     )
     repo.upsert_job(job)
@@ -162,7 +162,7 @@ def test_contentjob_find_by_generation_key(tmp_path):
     found = repo.find_by_generation_key("gk_123")
     assert found is not None
     assert found.id == "job_1"
-    assert found.origin == "commit"
+    assert found.origin == "practice"
     assert repo.find_by_generation_key("nope") is None
 
 

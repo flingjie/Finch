@@ -16,7 +16,7 @@ from finch.ideas.models import (
 def _candidate(**overrides) -> IdeaCandidate:
     data = dict(
         id="idea_abc123",
-        origin="commit",
+        origin="practice",
         core_point="Graph 的价值是恢复与重放",
         reader_problem="很多人只把 Graph 当可视化",
         why_worth_saying="它决定失败后能否重放",
@@ -82,7 +82,7 @@ def test_idea_candidate_requires_author_position_and_generator():
     with pytest.raises(ValidationError):
         IdeaCandidate(
             id="i1",
-            origin="user",
+            origin="practice",
             core_point="p",
             reader_problem="rp",
             why_worth_saying="w",

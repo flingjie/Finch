@@ -35,7 +35,7 @@ def _settings(tmp_path, repositories):
 def _candidate() -> IdeaCandidate:
     return IdeaCandidate(
         id="idea_abc12345",
-        origin="commit",
+        origin="practice",
         core_point=CORE_POINT,
         reader_problem="orchestrator was hard to rerun",
         why_worth_saying="failures can now be replayed",
@@ -98,14 +98,14 @@ def test_ideas_commit_persists_and_outputs_json(monkeypatch, tmp_path):
     assert isinstance(payload, list)
     assert len(payload) == 1
     assert payload[0]["id"].startswith("idea_")
-    assert payload[0]["origin"] == "commit"
+    assert payload[0]["origin"] == "practice"
     assert payload[0]["core_point"] == CORE_POINT
     assert payload[0]["status"] == "proposed"
     assert payload[0]["generation_key"]
 
     jobs = ContentJobRepository(ws).list_jobs()
     assert len(jobs) == 1
-    assert jobs[0].origin == "commit"
+    assert jobs[0].origin == "practice"
     assert jobs[0].status.value == "proposed"
     assert jobs[0].core_message == CORE_POINT
 
@@ -122,7 +122,7 @@ def test_ideas_commit_non_json_output(monkeypatch, tmp_path):
     idea_id, status, origin, intent, core = lines[1].split("\t")
     assert idea_id.startswith("idea_")
     assert status == "proposed"
-    assert origin == "commit"
+    assert origin == "practice"
     assert intent == "stance"
     assert core == CORE_POINT
 
@@ -168,7 +168,7 @@ def _seed_candidate(ws, core_point=CORE_POINT) -> ContentJob:
 def _make_candidate(core_point=CORE_POINT) -> IdeaCandidate:
     return IdeaCandidate(
         id="idea_abc12345",
-        origin="commit",
+        origin="practice",
         core_point=core_point,
         reader_problem="orchestrator was hard to rerun",
         why_worth_saying="failures can now be replayed",
@@ -196,7 +196,7 @@ def _manual_job(idea_id: str = "idea_manual000", status=ContentJobStatus.PROPOSE
         status=status,
         core_message=CORE_POINT,
         why_now="failures can now be replayed",
-        origin="commit",
+        origin="practice",
     )
 
 
@@ -234,7 +234,7 @@ def test_ideas_list_non_json_output(monkeypatch, tmp_path):
     idea_id, status, origin, intent, core = lines[1].split("\t")
     assert idea_id == job.id
     assert status == "proposed"
-    assert origin == "commit"
+    assert origin == "practice"
     assert intent == "stance"
     assert core == CORE_POINT
 
@@ -432,7 +432,7 @@ def test_ideas_create_text_persists(monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert payload["status"] == "proposed"
-    # _FakeFragmentService 复用 _candidate()（origin="commit"），仅验证落库链路。
+    # _FakeFragmentService 复用 _candidate()（origin="practice"），仅验证落库链路。
     assert ContentJobRepository(ws).list_jobs()[0].core_message == CORE_POINT
 
 

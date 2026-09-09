@@ -11,7 +11,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
-from finch.content.jobs import AuthorPosition, CommunicationGoal
+from finch.content.jobs import AuthorPosition, CommunicationGoal, IdeaOrigin
 from finch.content.models import RecommendedFormat
 from finch.conversations.models import ConversationThread
 from finch.engagement.models import ConversationEvidence, InteractionRecord
@@ -72,7 +72,7 @@ intent / open_question / author_position / boundaries / recommended_format / com
 def _to_candidate(
     out: "IdeaDraftOutput",
     *,
-    origin: Literal["commit", "search", "user", "conversation"],
+    origin: IdeaOrigin,
     source_refs: list[SourceRef],
 ) -> IdeaCandidate:
     # 注意：此处的 ``id`` 只是候选自带的展示性 id；真正的 ``ContentJob.id`` 由
@@ -127,7 +127,7 @@ class FragmentService:
                 IdeaDraftOutput,
             ),
         )
-        return _to_candidate(out, origin="user", source_refs=[])
+        return _to_candidate(out, origin="practice", source_refs=[])
 
     def from_conversation(self, evidence: ConversationEvidence) -> IdeaCandidate:
         """已验证 ConversationEvidence → IdeaCandidate，origin=conversation。

@@ -14,7 +14,7 @@ from finch.ideas.service import IdeaService
 def _candidate() -> IdeaCandidate:
     return IdeaCandidate(
         id="idea_x",
-        origin="user",
+        origin="practice",
         core_point="中心主张",
         observation="实际观察",
         reader_problem="读者问题",
@@ -45,7 +45,7 @@ class _Jobs:
 
 def test_new_fields_default_to_sane_values():
     idea = IdeaCandidate(
-        id="idea_y", origin="commit", core_point="cp", reader_problem="rp",
+        id="idea_y", origin="practice", core_point="cp", reader_problem="rp",
         why_worth_saying="w", author_position=AuthorPosition(claim="c", decision="d", tradeoff="t"),
         source_refs=[], boundaries=IdeaBoundaries(),
         recommended_format=RecommendedFormat.SHORT_POST,
@@ -68,7 +68,7 @@ def test_create_candidate_maps_new_fields():
     assert job.observation == "实际观察"
     assert job.intent == "exploration"
     assert job.open_question == "尚未解决什么"
-    assert job.origin == "user"
+    assert job.origin == "practice"
     assert job.status == ContentJobStatus.PROPOSED
 
 

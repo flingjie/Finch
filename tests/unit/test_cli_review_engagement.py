@@ -48,7 +48,7 @@ def _job(job_id: str = "job_1") -> ContentJob:
         status=ContentJobStatus.DRAFTED,
         core_message="deterministic graphs",
         why_now="failures can now be replayed",
-        origin="user",
+        origin="practice",
     )
 
 

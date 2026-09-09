@@ -35,7 +35,7 @@ class FakeContentJobRepository:
 def _candidate(**overrides) -> IdeaCandidate:
     data = dict(
         id="idea_abc123",
-        origin="commit",
+        origin="practice",
         core_point="Graph 的价值是恢复与重放",
         reader_problem="很多人只把 Graph 当可视化",
         why_worth_saying="它决定失败后能否重放",
@@ -94,7 +94,7 @@ def test_create_candidate_builds_job():
     svc, _ = _service()
     job = svc.create_candidate(_candidate())
     assert job.id == f"idea_{job.content_fingerprint[:8]}"
-    assert job.origin == "commit"
+    assert job.origin == "practice"
     assert job.status == ContentJobStatus.PROPOSED
     assert job.generator_name == "commit-to-idea"
     assert job.generator_version == "0.1.0"

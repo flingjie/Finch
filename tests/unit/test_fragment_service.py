@@ -37,7 +37,7 @@ def _out() -> IdeaDraftOutput:
 def test_from_text_origin_user_no_source_refs():
     svc = FragmentService(FakeRunner(_out()))
     idea = svc.from_text("我最近有个模糊想法")
-    assert idea.origin == "user"
+    assert idea.origin == "practice"
     assert idea.source_refs == []
     assert idea.generator.skill == "idea-discovery"
     assert idea.intent == "exploration"

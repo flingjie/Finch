@@ -109,7 +109,7 @@ def _event_to_idea(
     return IdeaCandidate(
         # 与 IdeaService 的 ContentJob.id 方案一致：sha256(core_point)[:8]。
         id=f"idea_{hashlib.sha256(core_point.encode('utf-8')).hexdigest()[:8]}",
-        origin="commit",
+        origin="practice",
         core_point=core_point,
         reader_problem=event.problem.statement,
         why_worth_saying=event.result.statement,

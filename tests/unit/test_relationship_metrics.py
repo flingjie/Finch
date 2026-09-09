@@ -71,7 +71,7 @@ def test_counts_relationship_signals():
         interactions=[_record(), _record(rid="rec_2"), _record(peer_id="peer_other", rid="rec_3")],
         threads=[thread, stale],
         snapshots=[_snapshot(), _snapshot(meaningful=False)],
-        jobs=[_job(), _job(origin="user")],
+        jobs=[_job(), _job(origin="practice")],
         now=_NOW,
     )
     assert m.meaningful_interactions == 1

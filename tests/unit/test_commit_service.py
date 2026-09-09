@@ -89,7 +89,7 @@ def test_clear_decision_yields_one_idea():
     ideas = svc.to_ideas([_commit()], repo="acme/proj")
     assert len(ideas) == 1
     idea = ideas[0]
-    assert idea.origin == "commit"
+    assert idea.origin == "practice"
     assert idea.core_point == "make the orchestrator a deterministic graph"
     assert idea.reader_problem == "orchestrator was hard to rerun"
     assert idea.why_worth_saying == "failures can now be replayed"

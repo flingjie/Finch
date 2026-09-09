@@ -1,5 +1,8 @@
 """Tests for ContentJob models and repositories (idea 候选流实体)."""
 
+import pytest
+from pydantic import ValidationError
+
 from finch.content.jobs import (
     AuthorPosition,
     ContentJob,
@@ -194,3 +197,33 @@ class TestContentJobRepository:
         repo = ContentJobRepository(ws)
 
         assert repo.get_job("nonexistent") is None
+
+
+def test_origin_legacy_values_normalize():
+    """Legacy origin values normalize to new enum on read."""
+    job = ContentJob(
+        id="idea_x", source_card_ids=[], reader_problem="r",
+        recommended_format="short_post", status="proposed", origin="commit",
+    )
+    assert job.origin == "practice"
+    assert ContentJob(
+        id="idea_y", source_card_ids=[], reader_problem="r",
+        recommended_format="short_post", status="proposed", origin="user",
+    ).origin == "practice"
+    assert ContentJob(
+        id="idea_z", source_card_ids=[], reader_problem="r",
+        recommended_format="short_post", status="proposed", origin="search",
+    ).origin == "synthesis"
+    assert ContentJob(
+        id="idea_w", source_card_ids=[], reader_problem="r",
+        recommended_format="short_post", status="proposed", origin="conversation",
+    ).origin == "conversation"
+
+
+def test_origin_rejects_unknown_value():
+    """Unknown origin values raise ValidationError."""
+    with pytest.raises(ValidationError):
+        ContentJob(
+            id="idea_x", source_card_ids=[], reader_problem="r",
+            recommended_format="short_post", status="proposed", origin="llm",
+        )

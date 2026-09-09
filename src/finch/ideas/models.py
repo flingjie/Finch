@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from finch.content.jobs import AuthorPosition, CommunicationGoal
+from finch.content.jobs import AuthorPosition, CommunicationGoal, IdeaOrigin
 from finch.content.models import RecommendedFormat
 
 
@@ -46,7 +46,7 @@ class IdeaCandidate(BaseModel):
     """Idea 候选：Skill 层产出的统一输入契约。"""
 
     id: str
-    origin: Literal["commit", "search", "user", "conversation"]
+    origin: IdeaOrigin
     core_point: str
     observation: str = ""
     reader_problem: str

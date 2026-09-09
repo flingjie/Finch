@@ -7,7 +7,7 @@
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from finch.content.models import RecommendedFormat
 
@@ -15,6 +15,13 @@ from finch.content.models import RecommendedFormat
 CommunicationGoal = Literal[
     "continue_discussion", "invite_counterexample", "summarize_practice", "find_collaborators"
 ]
+
+# Idea origin: traceability label for where the idea came from.
+# Normalized to three values with legacy read-compat.
+IdeaOrigin = Literal["practice", "conversation", "synthesis"]
+
+# 旧工作区中已存的 legacy origin 值 → 新枚举（读取时归一化，避免校验崩溃）。
+_LEGACY_ORIGIN = {"commit": "practice", "user": "practice", "search": "synthesis"}
 
 
 class ContentJobStatus(StrEnum):
@@ -58,7 +65,7 @@ class ContentJob(BaseModel):
     core_message: str = ""
     why_now: str = ""
     # ---- idea 候选流字段（Skill 架构 Step 1）----
-    origin: Literal["commit", "search", "user", "conversation"] | None = None
+    origin: IdeaOrigin | None = None
     observation: str = ""
     intent: Literal["stance", "exploration"] = "stance"
     open_question: str = ""
@@ -67,3 +74,10 @@ class ContentJob(BaseModel):
     generator_name: str | None = None
     generator_version: str | None = None
     content_fingerprint: str | None = None
+
+    @field_validator("origin", mode="before")
+    @classmethod
+    def _normalize_legacy_origin(cls, v):
+        if isinstance(v, str) and v in _LEGACY_ORIGIN:
+            return _LEGACY_ORIGIN[v]
+        return v
