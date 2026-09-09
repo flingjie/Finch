@@ -45,3 +45,11 @@ def test_peer_profile_json_roundtrip():
     )
     restored = PeerProfile.model_validate_json(profile.model_dump_json())
     assert restored == profile
+
+
+def test_peer_profile_possible_next_actions_defaults_empty():
+    profile = PeerProfile(
+        id="peer_abc",
+        platform_identities=[PlatformIdentity(platform="x", author_id="alice")],
+    )
+    assert profile.possible_next_actions == []

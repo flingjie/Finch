@@ -42,4 +42,5 @@ class PeerProfile(BaseModel):
     relationship_stage: RelationshipStage = RelationshipStage.DISCOVERED
     last_meaningful_interaction_at: datetime | None = None
     next_context: str = ""
+    possible_next_actions: list[str] = Field(default_factory=list)
     source_refs: list[str] = Field(default_factory=list)

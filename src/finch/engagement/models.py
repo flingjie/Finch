@@ -122,6 +122,7 @@ class InteractionRecord(BaseModel):
     outcome: str = ""
     reply_refs: list[str] = Field(default_factory=list)
     follow_up_status: str = "none"
+    follow_up_at: datetime | None = None
 
 
 class FeedbackSnapshot(BaseModel):

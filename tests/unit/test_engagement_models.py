@@ -9,6 +9,7 @@ from finch.engagement.models import (
     ExternalPost,
     InteractionAction,
     InteractionProposal,
+    InteractionRecord,
     InteractionStatus,
 )
 from finch.settings import Settings, load_settings
@@ -168,3 +169,11 @@ def test_settings_loads_engagement_and_interests_from_yaml(tmp_path, monkeypatch
     assert s.engagement.min_candidate_score == 0.8
     assert s.interests.stable == ["agent reliability"]
     assert s.interests.excluded == ["AI 新闻搬运"]
+
+
+def test_interaction_record_follow_up_at_defaults_none():
+    rec = InteractionRecord(
+        id="rec_1", proposal_id="p1", peer_id="peer_abc", platform="x",
+        source_url="https://x.com/a/1", occurred_at=datetime(2026, 9, 1),
+    )
+    assert rec.follow_up_at is None
