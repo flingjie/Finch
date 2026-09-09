@@ -8,6 +8,7 @@ from finch.conversations.models import ConversationThread
 from finch.engagement.models import ConversationEvidence, InteractionRecord
 from finch.ideas.fragment_service import FragmentService, IdeaDraftOutput
 from finch.ideas.models import IdeaBoundaries
+from finch.peers.models import PeerProfile, PlatformIdentity
 
 
 class FakeRunner:
@@ -95,3 +96,40 @@ def test_from_thread_preserves_communication_goal():
     idea = svc.from_thread(thread)
     assert idea.communication_goal == "invite_counterexample"
 
+
+
+def test_from_signals_returns_none_without_tension():
+    svc = FragmentService(FakeRunner(_out()))
+    peers = [PeerProfile(
+        id="p1", platform_identities=[PlatformIdentity(platform="x", author_id="a")],
+        shared_topics=["agent evals"],
+    )]
+    assert svc.from_signals(peers=peers, threads=[]) is None
+
+
+def test_from_signals_synthesizes_with_origin_synthesis():
+    thread = ConversationThread(
+        id="thread_1", peer_id="p", topic="agent evals",
+        open_questions=["how to reproduce flaky evals?"],
+        disagreements=["replays are enough"],
+    )
+    peer = PeerProfile(
+        id="p1",
+        platform_identities=[PlatformIdentity(platform="x", author_id="a", url="https://x.com/a/1")],
+        shared_topics=["agent evals"],
+    )
+    svc = FragmentService(FakeRunner(_out()))
+    idea = svc.from_signals(peers=[peer], threads=[thread])
+    assert idea is not None
+    assert idea.origin == "synthesis"
+    assert ("conversation", "thread_1") in {(r.type, r.ref) for r in idea.source_refs}
+    assert ("post", "https://x.com/a/1") in {(r.type, r.ref) for r in idea.source_refs}
+
+
+def test_from_signals_returns_none_when_llm_says_no_idea():
+    empty = _out().model_copy(update={"core_point": ""})
+    thread = ConversationThread(
+        id="thread_1", peer_id="p", topic="t", open_questions=["q"],
+    )
+    svc = FragmentService(FakeRunner(empty))
+    assert svc.from_signals(peers=[], threads=[thread]) is None

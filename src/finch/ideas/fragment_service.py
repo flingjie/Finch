@@ -17,6 +17,7 @@ from finch.conversations.models import ConversationThread
 from finch.engagement.models import ConversationEvidence, InteractionRecord
 from finch.ideas.models import IdeaBoundaries, IdeaCandidate, IdeaGenerator, SourceRef
 from finch.llm.base import StructuredInferenceRunner
+from finch.peers.models import PeerProfile
 
 _GENERATOR_SKILL = "idea-discovery"
 _GENERATOR_VERSION = "1.0.0"
@@ -63,6 +64,28 @@ Rules:
 ## Conversation thread
 
 {thread}
+
+Return JSON matching the schema (core_point / observation / reader_problem / why_worth_saying /
+intent / open_question / author_position / boundaries / recommended_format / communication_goal).
+"""
+
+
+_SIGNALS_PROMPT = """\
+You aggregate recurring community signals (peers' shared topics + open conversation
+questions/disagreements) into a single publishable engineering Idea candidate, or decline.
+
+Rules:
+- Synthesize only a real engineering decision, recurring problem, or unresolved tension
+  worth developing. News, hype, mechanical changes, or pure sentiment → decline by returning
+  an empty core_point ("").
+- Never invent personal experience. The user has NOT personally lived every signal; the
+  candidate must remain a third-person, attributed synthesis (boundaries keep it hedged).
+- author_position is always proposed, never confirmed.
+- recommended_format: reply | quote | short_post | thread | dm | do_not_publish.
+
+## Signals
+
+{signal_text}
 
 Return JSON matching the schema (core_point / observation / reader_problem / why_worth_saying /
 intent / open_question / author_position / boundaries / recommended_format / communication_goal).
@@ -184,3 +207,55 @@ class FragmentService:
             for rec in interactions
         )
         return _to_candidate(out, origin="conversation", source_refs=source_refs)
+
+    def from_signals(
+        self,
+        *,
+        peers: list[PeerProfile] | None = None,
+        threads: list[ConversationThread] | None = None,
+    ) -> IdeaCandidate | None:
+        """聚合社区信号 → 一个 IdeaCandidate（origin=synthesis）；无张力或无价值 → None。
+
+        社区信号 = 同行反复讨论的主题 + 对话线索里的未解问题/分歧。未解问题/分歧是
+        必要的「张力」信号：只有共同主题、没有张力时直接返回 None，不调用 LLM。
+        """
+        peers = peers or []
+        threads = threads or []
+
+        signal_lines: list[str] = []
+        source_refs: list[SourceRef] = []
+        for p in peers:
+            topics = [t for t in (p.shared_topics or p.current_interests) if t]
+            if not topics:
+                continue
+            signal_lines.append(f"peer {p.display_name or p.id}: {'; '.join(topics)}")
+            for ident in p.platform_identities:
+                if ident.url:
+                    source_refs.append(
+                        SourceRef(type="post", ref=ident.url, summary=p.display_name)
+                    )
+
+        has_tension = False
+        for t in threads:
+            if t.open_questions:
+                has_tension = True
+                signal_lines.append(f"open question [{t.topic}]: {t.open_questions[0]}")
+            if t.disagreements:
+                has_tension = True
+                signal_lines.append(f"disagreement [{t.topic}]: {t.disagreements[0]}")
+            if t.open_questions or t.disagreements:
+                source_refs.append(SourceRef(type="conversation", ref=t.id, summary=t.topic))
+
+        if not has_tension:
+            return None
+
+        out = cast(
+            IdeaDraftOutput,
+            self.runner.run(
+                _SIGNALS_PROMPT.format(signal_text="\n".join(signal_lines)),
+                IdeaDraftOutput,
+            ),
+        )
+        if not (out.core_point or "").strip():
+            return None
+        return _to_candidate(out, origin="synthesis", source_refs=source_refs)

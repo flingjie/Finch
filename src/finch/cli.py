@@ -379,6 +379,35 @@ def ideas_create(
         typer.echo(_render_idea_detail(job))
 
 
+@ideas_app.command("signals")
+def ideas_signals(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """聚合社区信号（同行共同主题 + 未解问题/分歧）为一个 idea 候选并落库。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    service = FragmentService(runner)
+    idea = service.from_signals(
+        peers=PeerRepository(ws).list_all(),
+        threads=ConversationThreadRepository(ws).list_all(),
+    )
+    if idea is None:
+        typer.echo("no community signal worth an idea")
+        raise typer.Exit(code=0)
+    try:
+        job = IdeaService(ContentJobRepository(ws)).create_candidate(idea)
+    except (RuntimeError, StructuredOutputError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(json.dumps(
+            {"id": job.id, "origin": job.origin, "status": job.status.value},
+            ensure_ascii=False, indent=2,
+        ))
+    else:
+        typer.echo(_render_idea_detail(job))
+
+
 @ideas_app.command("list")
 def ideas_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
     """列出全部 idea 候选，一行一个；旧行在系统警告中提示。"""

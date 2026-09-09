@@ -410,6 +410,9 @@ class _FakeFragmentService:
     def from_thread(self, thread, *, interactions=None):
         return _candidate()
 
+    def from_signals(self, *, peers=None, threads=None):
+        return None
+
 
 def _patch_create_cli(monkeypatch, settings):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
@@ -472,4 +475,14 @@ def test_ideas_create_conversation_missing_rejected(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["ideas", "create", "--conversation", "nope", "--json"])
     assert r.exit_code == 1
     assert "conversation not found" in r.output
+    assert ContentJobRepository(ws).list_jobs() == []
+
+
+def test_ideas_signals_no_signal_exits_zero(monkeypatch, tmp_path):
+    settings = _settings(tmp_path, [])
+    ws = Workspace(settings.paths.var_dir)
+    _patch_create_cli(monkeypatch, settings)
+    r = CliRunner().invoke(app, ["ideas", "signals"])
+    assert r.exit_code == 0, r.output
+    assert "no community signal" in r.output
     assert ContentJobRepository(ws).list_jobs() == []
