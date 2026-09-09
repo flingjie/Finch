@@ -57,7 +57,7 @@ Finch 的核心闭环已完成从「内容优先」到「连接优先」的倒�
 | 需要继续的对话 | 超期天数降序 → `open_questions` 数降序 | 2 |
 | 今天最值得连接的同行 | `peer_value`（`result.peers` 已有排序）降序 | 3 |
 | 可贡献的具体内容 | `candidate.score.total` 降序 | 3 |
-| 从交流形成的观点候选 | 立场完整度（有 decision+tradeoff 优先）→ 最近创建 | 1 |
+| 从交流形成的观点候选 | 立场完整度（有 decision+tradeoff 优先）→ 确定性 id 顺序（`ContentJob` 无创建时间戳） | 1 |
 
 ### 设计要点
 
