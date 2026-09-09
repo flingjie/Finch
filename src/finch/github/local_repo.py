@@ -75,6 +75,46 @@ def _origin_from_config(root: Path) -> str | None:
         return None
 
 
+def git_root(cwd: Path) -> Path | None:
+    """Walk up from cwd until a `.git` file or directory is found."""
+    current = cwd.resolve()
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def current_origin_repo(cwd: Path | None = None) -> str | None:
+    """`owner/name` of `origin` for the checkout containing cwd, or None."""
+    root = git_root(cwd if cwd is not None else Path.cwd())
+    if root is None:
+        return None
+    url = _origin_from_config(root)
+    if url is None:
+        try:
+            url = _run_git(root, ["remote", "get-url", "origin"]).strip()
+        except RuntimeError:
+            return None
+    return normalize_remote(url) if url else None
+
+
+def resolve_commit_repo(
+    explicit: str | None,
+    configured: list[str],
+    *,
+    cwd: Path | None = None,
+) -> str | None:
+    """`--repo` > current checkout origin > `settings.repositories[0]`."""
+    if explicit:
+        return explicit
+    origin = current_origin_repo(cwd)
+    if origin:
+        return origin
+    if configured:
+        return configured[0]
+    return None
+
+
 def find_local_clone(repo: str, base_dirs: list[Path]) -> Path | None:
     """Find a checkout under `base_dirs` whose origin matches `owner/name`."""
     for base in base_dirs:

@@ -34,6 +34,7 @@ from .engagement.search import fetch_post_by_url
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient
+from .github.local_repo import resolve_commit_repo
 from .ideas.commit_service import CommitService
 from .ideas.fragment_service import FragmentService
 from .ideas.service import IdeaService
@@ -130,18 +131,85 @@ def _render_idea_list(jobs: list[ContentJob]) -> str:
     """人类可读的候选列表：带表头，一候选一行（机器解析请用 --json）。"""
     lines = ["id\tstatus\torigin\tintent\tcore_message"]
     lines.extend(_idea_meta_line(job) for job in jobs)
+    focus = next((job for job in jobs if job.status == ContentJobStatus.PROPOSED), None)
+    if focus is None and jobs:
+        focus = jobs[0]
+    if focus is not None:
+        lines += _render_next_steps(focus)
     return "\n".join(lines)
 
 
-def _idea_next_steps(job: ContentJob) -> list[str]:
-    """按状态给出下一步动作（不含 CLI 命令）。"""
+_IDEA_CARD_LIMIT = 6
+
+_FORMAT_LABELS = {
+    "reply": "回复",
+    "quote": "引用",
+    "short_post": "短帖",
+    "thread": "长帖",
+    "dm": "私信",
+    "do_not_publish": "不发布",
+}
+
+
+def _format_label(fmt: str) -> str:
+    return _FORMAT_LABELS.get(fmt, fmt)
+
+
+def _render_idea_card(job: ContentJob) -> str:
+    """决策卡素材：可写观点 / 为什么值得写 / 适合形式；确认命令带真实 id。"""
+    lines = [
+        f"可写观点: {job.core_message or '-'}",
+        *(
+            [f"为什么值得写: {job.why_now}"]
+            if (job.why_now or "").strip()
+            else []
+        ),
+        f"适合形式: {_format_label(job.recommended_format.value)}",
+    ]
     if job.status == ContentJobStatus.PROPOSED:
-        return ["- 确认立场", "- 修改立场", "- 跳过"]
+        lines.append(f"uv run finch ideas confirm {job.id}")
+    elif job.status == ContentJobStatus.CONFIRMED:
+        lines.append(f"uv run finch drafts create {job.id}")
+    return "\n".join(lines)
+
+
+def _render_idea_cards(jobs: list[ContentJob], *, limit: int = _IDEA_CARD_LIMIT) -> str:
+    """本次结果的决策卡列表；超出 limit 时指向 `ideas list`。"""
+    if not jobs:
+        return "no idea candidates"
+    shown = jobs[:limit]
+    parts: list[str] = [
+        "\n\n".join(_render_idea_card(job) for job in shown)
+    ]
+    if len(jobs) > limit:
+        parts.append(
+            f"共 {len(jobs)} 个候选，以上 {len(shown)} 个。其余：uv run finch ideas list"
+        )
+    first = shown[0]
+    if first.status == ContentJobStatus.PROPOSED:
+        parts.append(f"uv run finch ideas skip {first.id} --reason ...")
+    return "\n\n".join(parts)
+
+
+def _idea_next_steps(job: ContentJob) -> list[str]:
+    """按状态给出可复制的下一步 CLI 命令。"""
+    if job.status == ContentJobStatus.PROPOSED:
+        return [
+            f"uv run finch ideas confirm {job.id}",
+            f"uv run finch ideas skip {job.id} --reason ...",
+        ]
     if job.status == ContentJobStatus.CONFIRMED:
-        return ["- 生成草稿", "- 表达练习"]
+        return [f"uv run finch drafts create {job.id}"]
     if job.status == ContentJobStatus.DRAFTED:
-        return ["- 查看草稿"]
+        return ["uv run finch review list"]
     return []
+
+
+def _render_next_steps(job: ContentJob) -> list[str]:
+    steps = _idea_next_steps(job)
+    if not steps:
+        return []
+    return ["", "下一步:"] + steps
 
 
 def _render_idea_detail(job: ContentJob) -> str:
@@ -176,9 +244,7 @@ def _render_idea_detail(job: ContentJob) -> str:
         lines += ["", f"开放问题: {job.open_question}"]
     if job.reject_reason:
         lines += ["", f"跳过理由: {job.reject_reason}"]
-    steps = _idea_next_steps(job)
-    if steps:
-        lines += ["", "下一步:"] + steps
+    lines += _render_next_steps(job)
     return "\n".join(lines)
 
 
@@ -304,7 +370,9 @@ def github_reflect(repo: str = typer.Option("flingjie/FDE-Gym"),
 
 @ideas_app.command("commit")
 def ideas_commit(
-    repo: str = typer.Option(None, "--repo", help="仓库（默认 settings.repositories[0]）"),
+    repo: str | None = typer.Option(
+        None, "--repo", help="仓库（默认当前 checkout 的 origin，否则 settings.repositories[0]）"
+    ),
     since: str = typer.Option("7d", "--since", help="起始时间（如 7d / 24h / ISO 时间）"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
@@ -313,11 +381,12 @@ def ideas_commit(
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     gh = GhClient()
+    repo = resolve_commit_repo(repo, settings.repositories)
     if repo is None:
-        if not settings.repositories:
-            typer.echo("--repo is required (no repositories configured)")
-            raise typer.Exit(code=1)
-        repo = settings.repositories[0]
+        typer.echo(
+            "--repo is required (no current checkout origin and no repositories configured)"
+        )
+        raise typer.Exit(code=1)
     details = load_commit_details(
         repo, gh, local_dirs=settings.paths.local_repos_dirs, since=_since_iso(since)
     )
@@ -336,6 +405,9 @@ def ideas_commit(
                 "id": job.id,
                 "origin": job.origin,
                 "core_point": job.core_message,
+                "reader_problem": job.reader_problem,
+                "why_now": job.why_now,
+                "recommended_format": job.recommended_format.value,
                 "status": job.status.value,
                 "generation_key": job.generation_key,
             }
@@ -343,7 +415,7 @@ def ideas_commit(
         ]
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        typer.echo(_render_idea_list(jobs))
+        typer.echo(_render_idea_cards(jobs))
 
 
 @ideas_app.command("create")
@@ -481,7 +553,9 @@ def ideas_confirm(
         )
     else:
         typer.echo(f"{job.id} -> {job.status.value}")
-        typer.echo("下一步：生成草稿")
+        for line in _render_next_steps(job):
+            if line:
+                typer.echo(line)
 
 
 @ideas_app.command("revise-position")

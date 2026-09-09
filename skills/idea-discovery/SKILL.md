@@ -18,10 +18,28 @@ description: >
 
 ## 四种来源
 
-- **commit 来源**：`finch ideas commit [--repo R] [--since 7d]`，见 `references/commit-signals.md`。
+- **commit 来源**：`finch ideas commit [--since 7d]`。默认当前 checkout 的 origin、近 7 天；
+  只有用户点名别的仓库才传 `--repo`。见 `references/commit-signals.md`。
 - **fragment 来源**：`finch ideas create --text "..."`，见 `references/fragment-signals.md`。
 - **conversation 来源**：`finch ideas create --conversation <evidence-id>`，见 `references/conversation-signals.md`。
 - **signals 来源**：`finch ideas signals`，见 `references/signals-signals.md`。
+
+## 向用户呈现
+
+见 `_shared/agent-presentation.md`。本 Skill 做编辑式推荐，不贴 CLI 原文。
+
+读完 `finch ideas commit` / `create` / `signals` 后，按该文档的形状回复：
+
+1. 结论（范围 · 数量 · 最推荐及理由）
+2. 最多展开 3 条决策卡；其余折叠
+3. 操作：「写 1」「展开 2」「比较 1 和 2」「换一批」
+
+内部保留序号 → `idea_id`（来自 CLI 卡末确认命令）。例如用户说「写 1」时执行：
+
+```text
+uv run finch ideas confirm idea_656b4596
+uv run finch drafts create idea_656b4596
+```
 
 ## 产出契约（IdeaCandidate）
 
@@ -46,3 +64,4 @@ description: >
 - `references/signals-signals.md` — 社区信号（同行主题 + 未解问题/分歧）综合的判据。
 - `_shared/idea-contract.md` — IdeaCandidate 契约。
 - `_shared/evidence-policy.md` — 证据优先、外部帖 ≠ 个人证据。
+- `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话。

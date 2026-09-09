@@ -5,8 +5,10 @@ import pytest
 
 from finch.github.local_repo import (
     LocalRepoClient,
+    current_origin_repo,
     find_local_clone,
     normalize_remote,
+    resolve_commit_repo,
 )
 
 
@@ -62,6 +64,24 @@ def test_normalize_remote(url, expected):
 def test_find_local_clone(repo, tmp_path):
     assert find_local_clone("flingjie/FDE-Gym", [tmp_path]) == repo
     assert find_local_clone("other/name", [tmp_path]) is None
+
+
+def test_current_origin_repo_from_checkout_and_nested(repo):
+    assert current_origin_repo(repo) == "flingjie/FDE-Gym"
+    nested = repo / "src"
+    nested.mkdir()
+    assert current_origin_repo(nested) == "flingjie/FDE-Gym"
+
+
+def test_current_origin_repo_none_without_git(tmp_path):
+    assert current_origin_repo(tmp_path) is None
+
+
+def test_resolve_commit_repo_prefers_explicit_then_cwd_then_settings(repo, tmp_path):
+    assert resolve_commit_repo("acme/other", ["acme/proj"], cwd=repo) == "acme/other"
+    assert resolve_commit_repo(None, ["acme/proj"], cwd=repo) == "flingjie/FDE-Gym"
+    assert resolve_commit_repo(None, ["acme/proj"], cwd=tmp_path) == "acme/proj"
+    assert resolve_commit_repo(None, [], cwd=tmp_path) is None
 
 
 def test_list_commits_newest_first(repo):
