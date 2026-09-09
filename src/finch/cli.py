@@ -44,7 +44,7 @@ from .learn.reflection import WeeklyReflectionService, render_reflection
 from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
 from .practice.service import PracticeService
-from .projections import build_daily_context, build_pending_actions
+from .projections import build_daily_context, build_pending_actions, build_today_focus
 from .reddit.opencli_client import RedditOpenCliClient
 from .settings import Settings, load_settings
 from .storage.repositories import (
@@ -1132,37 +1132,34 @@ def _persist_discovery(ws: Workspace, result: EngagementRunResult) -> None:
         interactions.upsert(candidate, run_id=result.run_id)
 
 
-def _render_daily(needs_follow_up, peers, contributions, idea_candidates) -> str:
-    lines = ["## 需要继续的对话"]
-    if needs_follow_up:
-        for t in needs_follow_up:
-            lines.append(f"- {t.id}\t{t.topic}\t{t.status.value}")
-    else:
-        lines.append("- (none)")
-    lines.append("")
-    lines.append("## 今天最值得连接的同行")
-    if peers:
-        for rp in peers:
-            name = rp.profile.display_name or rp.profile.id
-            lines.append(f"- {name}\tpeer_value={rp.value.total:.2f}")
-    else:
-        lines.append("- (none)")
-    lines.append("")
-    lines.append("## 可贡献的具体内容")
-    if contributions:
-        for c in contributions:
-            snippet = " ".join(c.post.content.split())[:60]
-            lines.append(f"- {c.id}\t[{c.action.value}]\t{snippet}")
-    else:
-        lines.append("- (none)")
-    lines.append("")
-    lines.append("## 从近期交流产生的观点候选")
-    if idea_candidates:
-        for j in idea_candidates:
-            lines.append(f"- {j.id}\t{j.core_message}")
-    else:
-        lines.append("- (none)")
-    return "\n".join(lines)
+def _render_daily(focus: dict) -> str:
+    def _section(title, items, total, render):
+        lines = [f"## {title}"]
+        if not items:
+            lines.append("- (none)")
+        else:
+            for i in items:
+                lines.append(render(i))
+        if items and total > len(items):
+            lines.append(f"… 还有 {total - len(items)} 个")
+        return "\n".join(lines)
+
+    conv = focus["conversations"]
+    peer = focus["peers"]
+    contrib = focus["contributions"]
+    ideas = focus["ideas"]
+    return "\n\n".join([
+        _section("需要继续的对话", conv["items"], conv["total"],
+                 lambda t: f"- {t.id}\t{t.topic}\t{t.status.value}"),
+        _section("今天最值得连接的同行", peer["items"], peer["total"],
+                 lambda rp: f"- {rp.profile.display_name or rp.profile.id}\t"
+                            f"peer_value={rp.value.total:.2f}"),
+        _section("可贡献的具体内容", contrib["items"], contrib["total"],
+                 lambda c: f"- {c.id}\t[{c.action.value}]\t"
+                           f"{' '.join(c.post.content.split())[:60]}"),
+        _section("从近期交流产生的观点候选", ideas["items"], ideas["total"],
+                 lambda j: f"- {j.id}\t{j.core_message}"),
+    ])
 
 
 @connect_app.command("daily")
@@ -1200,7 +1197,14 @@ def connect_daily(as_json: bool = typer.Option(False, "--json", help="输出 JSO
             "idea_candidates": [j.model_dump(mode="json") for j in idea_candidates],
         }, ensure_ascii=False, indent=2))
         return
-    typer.echo(_render_daily(needs_follow_up, result.peers, result.candidates, idea_candidates))
+    focus = build_today_focus(
+        peers=result.peers,
+        contributions=result.candidates,
+        threads=needs_follow_up,
+        ideas=idea_candidates,
+        now=now,
+    )
+    typer.echo(_render_daily(focus))
 
 
 @connect_app.command("prepare")
