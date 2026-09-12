@@ -18,11 +18,15 @@ from finch.content.models import Draft
 from finch.conversations.models import ConversationThread
 from finch.engagement.models import (
     ConversationEvidence,
+    DiscoverySnapshot,
     EngagementRunStats,
     FeedbackSnapshot,
     InteractionProposal,
     InteractionRecord,
     InteractionStatus,
+    Opportunity,
+    PresentationRecord,
+    RecommendationFeedback,
 )
 from finch.evidence.models import EvidenceCard
 from finch.inbox.models import DecisionRecord
@@ -284,6 +288,74 @@ class InteractionRepository:
         )
 
 
+class OpportunityRepository:
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
+
+    def upsert(self, opportunity: Opportunity) -> None:
+        _write(self.ws, "interactions/opportunities", opportunity.id, opportunity)
+
+    def get(self, opportunity_id: str) -> Opportunity | None:
+        return _read(self.ws, "interactions/opportunities", opportunity_id, Opportunity)
+
+    def list_all(self) -> list[Opportunity]:
+        return _list_all(self.ws, "interactions/opportunities", Opportunity)
+
+    def list_by_ids(self, ids: list[str]) -> list[Opportunity]:
+        by_id = {o.id: o for o in self.list_all()}
+        return [by_id[i] for i in ids if i in by_id]
+
+
+class DiscoverySnapshotRepository:
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
+
+    def upsert(self, snapshot: DiscoverySnapshot) -> None:
+        _write(self.ws, "interactions/discovery-snapshots", snapshot.id, snapshot)
+
+    def get(self, snapshot_id: str) -> DiscoverySnapshot | None:
+        return _read(
+            self.ws, "interactions/discovery-snapshots", snapshot_id, DiscoverySnapshot
+        )
+
+    def list_all(self) -> list[DiscoverySnapshot]:
+        return _list_all(self.ws, "interactions/discovery-snapshots", DiscoverySnapshot)
+
+    def latest(self) -> DiscoverySnapshot | None:
+        items = sorted(self.list_all(), key=lambda s: s.created_at, reverse=True)
+        return items[0] if items else None
+
+
+class PresentationRecordRepository:
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
+
+    def upsert(self, record: PresentationRecord) -> None:
+        _write(self.ws, "interactions/presentations", record.id, record)
+
+    def list_for_snapshot(self, snapshot_id: str) -> list[PresentationRecord]:
+        return [r for r in self.list_all() if r.snapshot_id == snapshot_id]
+
+    def list_all(self) -> list[PresentationRecord]:
+        return _list_all(self.ws, "interactions/presentations", PresentationRecord)
+
+    def presented_ids(self, snapshot_id: str) -> set[str]:
+        return {r.opportunity_id for r in self.list_for_snapshot(snapshot_id)}
+
+
+class RecommendationFeedbackRepository:
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
+
+    def upsert(self, feedback: RecommendationFeedback) -> None:
+        _write(self.ws, "interactions/recommendation-feedback", feedback.id, feedback)
+
+    def list_all(self) -> list[RecommendationFeedback]:
+        return _list_all(
+            self.ws, "interactions/recommendation-feedback", RecommendationFeedback
+        )
+
+
 class FeedbackSnapshotRepository:
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
@@ -393,6 +465,20 @@ class InteractionRecordRepository:
 
     def list_by_peer(self, peer_id: str) -> list[InteractionRecord]:
         return [r for r in self.list_all() if r.peer_id == peer_id]
+
+    def find_by_platform_message_id(
+        self, platform_message_id: str
+    ) -> InteractionRecord | None:
+        for r in self.list_all():
+            if r.platform_message_id == platform_message_id:
+                return r
+        return None
+
+    def find_by_source_url(self, source_url: str) -> InteractionRecord | None:
+        for r in self.list_all():
+            if r.source_url == source_url:
+                return r
+        return None
 
     def list_all(self) -> list[InteractionRecord]:
         return _list_all(self.ws, "interactions/records", InteractionRecord)

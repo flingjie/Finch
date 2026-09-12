@@ -103,26 +103,122 @@ class InteractionProposal(BaseModel):
     generation_key: str | None = None
 
 
-class InteractionRecord(BaseModel):
-    """已发生的互动事实：单独记录，不得用 Proposal 状态替代。
+class SuggestedMode(StrEnum):
+    """交流机会建议模式：先了解 / 讨论 / 调查。"""
 
-    ``proposal_id`` 回溯到已批准的 ``InteractionProposal``；``published_body`` 是真正发出
-    的正文；``occurred_at`` 是互动发生时间；``outcome`` 记录执行结果（ExecutionStatus 值或
-    后续回复状态）；``reply_refs`` 保存对方回复的引用（URL / 帖子 id）；``follow_up_status``
-    标记是否已跟进（``none`` / ``pending`` / ``replied`` / ``closed``）。
+    LEARN = "learn"
+    DISCUSS = "discuss"
+    INVESTIGATE = "investigate"
+
+
+class Opportunity(BaseModel):
+    """轻量交流机会（发现结果，无审批状态机）。
+
+    ``InteractionProposal`` 是用户选中后深度准备的提案；本模型只承载浏览列表。
+    ``id`` 由 peer_id + 规范来源 + 内容版本派生，稳定可重放。
     """
 
     id: str
-    proposal_id: str
+    peer_id: str
+    source_refs: list[str] = Field(default_factory=list)
+    source_excerpt: str = ""
+    content_fingerprint: str = ""
+    discovered_via: str = ""
+    topic_tags: list[str] = Field(default_factory=list)
+    role_tags: list[str] = Field(default_factory=list)
+    tags_inferred: bool = True
+    why_relevant: str = ""
+    opening: str = ""
+    suggested_mode: SuggestedMode = SuggestedMode.DISCUSS
+    novelty_reason: str = ""
+    uncertainty: str = ""
+    assessed_at: datetime | None = None
+    assessment_version: str = "1"
+    # Optional score snapshot for ranking (deterministic total from Python).
+    score_total: float = 0.0
+    complementarity: float = 0.0
+    post: ExternalPost | None = None
+    related_source_refs: list[str] = Field(default_factory=list)
+
+
+class DiscoverySnapshot(BaseModel):
+    """一次有界发现刷新的缓存快照（B）。"""
+
+    id: str
+    created_at: datetime
+    context_fingerprint: str
+    source_coverage: dict[str, object] = Field(default_factory=dict)
+    failures: list[dict[str, str]] = Field(default_factory=list)
+    ranked_opportunity_ids: list[str] = Field(default_factory=list)
+    ranking_version: str = "1"
+
+
+class PresentationRecord(BaseModel):
+    """实际呈现给用户的机会（仅展示时写入，后台生成不算看过）。"""
+
+    id: str
+    snapshot_id: str
+    opportunity_id: str
+    presented_at: datetime
+
+
+class InterestFeedbackValue(StrEnum):
+    WORTH_FOLLOWING = "worth_following"
+    NEUTRAL = "neutral"
+    UNSUITABLE = "unsuitable"
+
+
+class ActionFeedbackValue(StrEnum):
+    PREPARE = "prepare"
+    SAVE_FOR_LATER = "save_for_later"
+    NO_OPENING = "no_opening"
+
+
+class RecommendationFeedback(BaseModel):
+    """推荐反馈（兴趣 / 行动维度分离；非 DecisionRecord）。"""
+
+    id: str
+    opportunity_id: str
+    snapshot_id: str
+    dimension: Literal["interest", "action"]
+    value: str
+    reason: str = ""
+    created_at: datetime
+
+
+class VerificationStatus(StrEnum):
+    SOURCE_VERIFIED = "source_verified"
+    USER_ATTESTED = "user_attested"
+    UNVERIFIED = "unverified"
+
+
+class InteractionRecord(BaseModel):
+    """已发生的互动事实：单独记录，不得用 Proposal 状态替代。
+
+    ``proposal_id`` 可空（系统外发生的交流）；``published_body`` / ``body`` 是真正发出
+    的正文；``occurred_at`` 是互动发生时间（重跑不得刷新）；``verification_status``
+    区分平台验证 / 用户声明 / 未验证。
+    """
+
+    id: str
+    proposal_id: str | None = None
     peer_id: str
     platform: str
     source_url: str
     published_body: str = ""
+    body: str = ""
     occurred_at: datetime
+    observed_at: datetime | None = None
     outcome: str = ""
     reply_refs: list[str] = Field(default_factory=list)
     follow_up_status: str = "none"
     follow_up_at: datetime | None = None
+    platform_message_id: str | None = None
+    author_identity: str | None = None
+    direction: Literal["outbound", "inbound", "unknown"] = "unknown"
+    reply_to_id: str | None = None
+    verification_status: VerificationStatus = VerificationStatus.UNVERIFIED
+    provenance: str = ""
 
 
 class FeedbackSnapshot(BaseModel):

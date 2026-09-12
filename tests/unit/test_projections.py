@@ -109,5 +109,6 @@ def test_build_today_focus_ranks_and_truncates():
     )
     assert [t.id for t in focus["conversations"]["items"]] == ["thread_never", "thread_old"]
     assert focus["conversations"]["total"] == 3
-    assert [rp.profile.id for rp in focus["peers"]["items"]] == ["p1", "p3", "p2"]
+    assert [rp.profile.id for rp in focus["peers"]["items"]] == ["p1", "p3", "p2", "p4"]
     assert focus["peers"]["total"] == 4
+    assert focus["opportunities"]["items"] == []

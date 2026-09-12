@@ -39,11 +39,17 @@ class Workspace:
         return name.replace(":", "_")
 
     def atomic_write(self, path: Path, text: str) -> None:
-        """写临时文件后 ``os.replace`` 原子替换（同目录保证原子性）。"""
+        """写唯一临时文件后 ``os.replace`` 原子替换（同目录保证原子性）。"""
+        import uuid
+
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
+        tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
 
     def write_yaml(self, path: Path, model: BaseModel) -> None:
         """领域模型 → YAML（``mode="json"`` 保证 datetime/StrEnum/None 稳定）。"""

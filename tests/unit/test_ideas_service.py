@@ -193,7 +193,7 @@ def test_revise_position_updates_job():
         decision="新决策",
         tradeoff="新权衡",
     )
-    revised = svc.revise_position(job.id, new_position)
+    revised = svc.revise_position(job.id, new_position, change_reason="sharper claim")
     assert revised.status == ContentJobStatus.PROPOSED  # 不改状态
     assert revised.author_position == AuthorPosition(
         claim="新主张",
@@ -201,6 +201,29 @@ def test_revise_position_updates_job():
         tradeoff="新权衡",
         change_mind_if=None,
     )
+    assert len(revised.position_revisions) == 1
+    assert revised.position_revisions[0].claim == "新主张"
+    assert revised.position_revisions[0].change_reason == "sharper claim"
+
+
+def test_revise_position_appends_history():
+    svc, _ = _service()
+    job = svc.create_candidate(_candidate())
+    svc.revise_position(
+        job.id,
+        AuthorPosition(claim="v1", decision="d1", tradeoff="t1"),
+        change_reason="first",
+    )
+    revised = svc.revise_position(
+        job.id,
+        AuthorPosition(claim="v2", decision="d2", tradeoff="t2"),
+        change_reason="counterexample from peer",
+        source_refs=["https://x.com/a/1"],
+    )
+    assert len(revised.position_revisions) == 2
+    assert revised.position_revisions[0].claim == "v1"
+    assert revised.position_revisions[1].claim == "v2"
+    assert revised.author_position.claim == "v2"
 
 
 def test_revise_position_legal_from_confirmed():

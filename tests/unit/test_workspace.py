@@ -43,7 +43,27 @@ def test_atomic_write_leaves_no_tmp(tmp_path):
     p = tmp_path / "x.txt"
     ws.atomic_write(p, "hello")
     assert p.read_text() == "hello"
-    assert not (tmp_path / "x.txt.tmp").exists()
+    leftovers = list(tmp_path.glob("*.tmp"))
+    assert leftovers == []
+
+
+def test_atomic_write_uses_unique_tmp_names(tmp_path, monkeypatch):
+    ws = Workspace(tmp_path)
+    p = tmp_path / "x.txt"
+    seen: list[str] = []
+    real_replace = __import__("os").replace
+
+    def tracking_replace(src, dst):
+        seen.append(str(src))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr("os.replace", tracking_replace)
+    ws.atomic_write(p, "a")
+    ws.atomic_write(p, "b")
+    assert len(seen) == 2
+    assert seen[0] != seen[1]
+    assert all(".tmp" in name for name in seen)
+    assert p.read_text() == "b"
 
 
 def test_frontmatter_roundtrip_preserves_body_horizontal_rule(tmp_path):

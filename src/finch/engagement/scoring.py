@@ -13,7 +13,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -33,13 +33,21 @@ _POPULARITY_KEYS = ("likes", "favorites", "replies", "reposts", "retweets", "com
 
 
 class ConversationScoreInput(BaseModel):
-    """模型返回的四维评分；不含 relationship_value（由关系评分确定性计算）与 total。"""
+    """模型返回的评分；不含 relationship_value 与 total（由代码确定性计算）。"""
 
     relevance: float = Field(ge=0, le=1)
     novelty: float = Field(ge=0, le=1)
     discussability: float = Field(ge=0, le=1)
     practical_evidence: float = Field(ge=0, le=1)
     reasons: list[str]
+    complementarity: float = Field(default=0.0, ge=0, le=1)
+    suggested_mode: Literal["learn", "discuss", "investigate"] = "discuss"
+    topic_tags: list[str] = Field(default_factory=list)
+    role_tags: list[str] = Field(default_factory=list)
+    why_relevant: str = ""
+    opening: str = ""
+    novelty_reason: str = ""
+    uncertainty: str = ""
 
 
 class ScoreItem(BaseModel):
@@ -57,10 +65,11 @@ class ScoreBatchOutput(BaseModel):
 
 @dataclass(frozen=True)
 class ScoredPost:
-    """帖子及其确定性计算后的总评分（InteractionProposal 就绪）。"""
+    """帖子及其确定性计算后的总评分（Opportunity / Proposal 就绪）。"""
 
     post: ExternalPost
     score: ConversationScore
+    assessment: ConversationScoreInput | None = None
 
 
 def weighted_total(
@@ -144,7 +153,7 @@ def _assemble(
         total=total,
         reasons=dims.reasons,
     )
-    return ScoredPost(post=post, score=score)
+    return ScoredPost(post=post, score=score, assessment=dims)
 
 
 def score_posts(

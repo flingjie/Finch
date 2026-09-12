@@ -109,15 +109,45 @@ class IdeaService:
         self.jobs.upsert_job(job)
         return job
 
-    def revise_position(self, idea_id: str, position: AuthorPosition) -> ContentJob:
-        """更新立场（job 的 AuthorPosition），不改状态。"""
+    def revise_position(
+        self,
+        idea_id: str,
+        position: AuthorPosition,
+        *,
+        change_reason: str = "",
+        assumptions: list[str] | None = None,
+        counterexample: str = "",
+        scope: str = "",
+        source_refs: list[str] | None = None,
+        confirmed_by_user: bool = False,
+    ) -> ContentJob:
+        """更新立场并追加修订历史（不改状态；DRAFTED ≠ 观点已证实）。"""
+        from datetime import UTC, datetime
+
+        from finch.content.jobs import PositionRevision
+
         job = self._get_job(idea_id)
         if job.status not in (ContentJobStatus.PROPOSED, ContentJobStatus.CONFIRMED):
             raise ValueError(
                 f"illegal transition: cannot revise position of idea {idea_id} "
                 f"in status {job.status.value}; revise is legal from proposed/confirmed"
             )
-        job = job.model_copy(update={"author_position": position})
+        revision = PositionRevision(
+            claim=position.claim,
+            assumptions=assumptions or [],
+            counterexample=counterexample,
+            scope=scope,
+            source_refs=source_refs or [],
+            change_reason=change_reason,
+            confirmed_by_user=confirmed_by_user,
+            created_at=datetime.now(UTC),
+            decision=position.decision,
+            tradeoff=position.tradeoff,
+        )
+        revisions = [*job.position_revisions, revision]
+        job = job.model_copy(
+            update={"author_position": position, "position_revisions": revisions}
+        )
         self.jobs.upsert_job(job)
         return job
 

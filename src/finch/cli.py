@@ -29,13 +29,17 @@ from .drafts.service import DraftCreateResult, DraftService
 from .engagement.flow import EngagementRunResult, run_discovery_engagement_flow
 from .engagement.metrics import compute_relationship_metrics
 from .engagement.models import (
+    DiscoverySnapshot,
     InteractionAction,
     InteractionProposal,
     InteractionRecord,
     InteractionStatus,
+    Opportunity,
+    PresentationRecord,
+    RecommendationFeedback,
 )
 from .engagement.proposals import generate_proposals
-from .engagement.scoring import rank_candidates, score_posts
+from .engagement.scoring import ScoredPost, rank_candidates, score_posts
 from .engagement.search import fetch_post_by_url
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
@@ -47,7 +51,11 @@ from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
 from .inbox.service import InboxDecisionService, list_items
 from .learn.models import Feedback, OutcomeAssessment
-from .learn.reflection import WeeklyReflectionService, render_reflection
+from .learn.reflection import (
+    WeeklyReflectionService,
+    idea_revision_diff_lines,
+    render_reflection,
+)
 from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
 from .peers.models import PeerProfile
@@ -66,15 +74,19 @@ from .storage.repositories import (
     ConversationThreadRepository,
     CriticReportRepository,
     DecisionRecordRepository,
+    DiscoverySnapshotRepository,
     DraftRepository,
     EvidenceRepository,
     FeedbackRepository,
     FeedbackSnapshotRepository,
     InteractionRecordRepository,
     InteractionRepository,
+    OpportunityRepository,
     PeerRepository,
     PracticeSessionRepository,
+    PresentationRecordRepository,
     PublicationIntentRepository,
+    RecommendationFeedbackRepository,
 )
 from .storage.workspace import Workspace
 from .style.models import StyleReport
@@ -241,6 +253,40 @@ def _peer_signal_post_url(peer: PeerProfile) -> str | None:
         if ref.startswith(("http://", "https://")):
             return ref
     return None
+
+
+def _render_opportunity_card(opp: Opportunity, *, index: int | None = None) -> str:
+    """轻量机会卡：人 / 链接 / 为何推荐 / 切入点（无完整草稿）。"""
+    prefix = f"{index}. " if index is not None else ""
+    who = opp.peer_id
+    if opp.post is not None:
+        who = opp.post.author_name or opp.post.author_id or opp.peer_id
+    link = opp.source_refs[0] if opp.source_refs else ""
+    lines = [
+        f"{prefix}谁: {who}",
+        f"模式: {opp.suggested_mode.value}",
+    ]
+    if link:
+        lines.append(f"内容: {link}")
+    if opp.why_relevant.strip():
+        lines.append(f"为何推荐: {opp.why_relevant}")
+    if opp.opening.strip():
+        lines.append(f"切入点: {opp.opening}")
+    elif opp.suggested_mode.value == "learn":
+        lines.append("切入点: （先了解，暂不回复）")
+    if opp.novelty_reason.strip():
+        lines.append(f"增量: {opp.novelty_reason}")
+    lines.append(f"uv run finch connect prepare --opportunity {opp.id}")
+    return "\n".join(lines)
+
+
+def _render_opportunity_cards(opps: list[Opportunity], *, limit: int = 12) -> str:
+    if not opps:
+        return "- (none)"
+    shown = opps[:limit]
+    return "\n\n".join(
+        _render_opportunity_card(o, index=i) for i, o in enumerate(shown, start=1)
+    )
 
 
 def _render_peer_card(peer: PeerProfile) -> str:
@@ -1079,6 +1125,13 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
         jobs=ContentJobRepository(ws).list_jobs(),
         now=datetime.now(UTC),
     )
+    records = InteractionRecordRepository(ws).list_all()
+    message_excerpts = [
+        f"[{r.id}] {r.direction}: {(r.body or r.published_body)[:160]}"
+        for r in sorted(records, key=lambda x: x.occurred_at, reverse=True)[:6]
+        if (r.body or r.published_body)
+    ]
+    idea_diffs = idea_revision_diff_lines(ContentJobRepository(ws).list_jobs())
     try:
         reflection = WeeklyReflectionService(runner).reflect(
             report,
@@ -1086,6 +1139,8 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
             feedbacks=window_feedbacks,
             threads=ConversationThreadRepository(ws).list_all(),
             voice_profile=load_voice_profile(settings.paths.voice_profile_path),
+            message_excerpts=message_excerpts,
+            idea_diffs=idea_diffs,
         )
     except (RuntimeError, StructuredOutputError) as exc:
         typer.echo(f"weekly reflection failed: {exc}")
@@ -1453,7 +1508,7 @@ def review_skip(
 
 
 def _run_discovery(settings: Settings) -> EngagementRunResult:
-    """执行一次只读发现流程（搜索 → 同行聚合 → 关系评分 → 提案）。"""
+    """执行一次只读发现流程（搜索 → 粗筛 → 语义评估 → 机会选择）。"""
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     return run_discovery_engagement_flow(
         settings,
@@ -1464,19 +1519,128 @@ def _run_discovery(settings: Settings) -> EngagementRunResult:
     )
 
 
-def _persist_discovery(ws: Workspace, result: EngagementRunResult) -> None:
-    """把发现结果的同行与提案落库（只读流程的落库，供 peers show / connect approve 进入）。
-
-    同行已存在时只并入新平台身份，不覆写已积累的关系字段（relationship_stage / why_relevant 等）。
-    """
+def _persist_discovery(
+    ws: Workspace,
+    result: EngagementRunResult,
+    *,
+    snapshot_id: str | None = None,
+) -> DiscoverySnapshot | None:
+    """把发现结果的同行与机会落库；可选写入 DiscoverySnapshot。"""
     peers = PeerRepository(ws)
-    interactions = InteractionRepository(ws)
+    opportunities = OpportunityRepository(ws)
     peer_svc = PeerService()
     for ranked in result.peers:
         merged = peer_svc.merge_discovered(peers.get(ranked.profile.id), ranked.profile)
         peers.upsert(merged)
+    for opp in result.opportunities:
+        opportunities.upsert(opp)
     for candidate in result.candidates:
-        interactions.upsert(candidate, run_id=result.run_id)
+        InteractionRepository(ws).upsert(candidate, run_id=result.run_id)
+
+    if not result.opportunities and result.status == "failed":
+        return DiscoverySnapshotRepository(ws).latest()
+
+    snap_id = snapshot_id or result.run_id
+    snapshot = DiscoverySnapshot(
+        id=snap_id,
+        created_at=datetime.now(UTC),
+        context_fingerprint=result.context_fingerprint,
+        source_coverage={
+            "posts_found": result.posts_found,
+            "opportunity_count": len(result.opportunities),
+            "status": result.status,
+        },
+        failures=[
+            {"platform": f.platform, "query": f.query or "", "reason": f.reason}
+            for f in result.failures
+        ],
+        ranked_opportunity_ids=[o.id for o in result.opportunities],
+        ranking_version="1",
+    )
+    DiscoverySnapshotRepository(ws).upsert(snapshot)
+    return snapshot
+
+
+def _record_presentations(
+    ws: Workspace,
+    snapshot_id: str,
+    opportunity_ids: list[str],
+) -> None:
+    repo = PresentationRecordRepository(ws)
+    now = datetime.now(UTC)
+    for oid in opportunity_ids:
+        rec = PresentationRecord(
+            id=f"{snapshot_id}:{oid}",
+            snapshot_id=snapshot_id,
+            opportunity_id=oid,
+            presented_at=now,
+        )
+        repo.upsert(rec)
+
+
+def _snapshot_fresh(snapshot: DiscoverySnapshot | None, ttl_hours: int) -> bool:
+    if snapshot is None:
+        return False
+    age = datetime.now(UTC) - snapshot.created_at
+    return age <= timedelta(hours=ttl_hours)
+
+
+def _load_today_payload(
+    ws: Workspace,
+    settings: Settings,
+    *,
+    limit: int,
+) -> tuple[TodayFocus, DiscoverySnapshot | None]:
+    """纯读取今日投影（无网络/LLM）。"""
+    now = datetime.now(UTC)
+    snapshot = DiscoverySnapshotRepository(ws).latest()
+    opp_repo = OpportunityRepository(ws)
+    opps: list[Opportunity] = []
+    if snapshot is not None:
+        opps = opp_repo.list_by_ids(snapshot.ranked_opportunity_ids[:limit])
+    threads = ConversationThreadRepository(ws).list_all()
+    needs_follow_up = [
+        t for t in threads if ConversationService().needs_follow_up(t, now=now)
+    ]
+    idea_candidates = [
+        j for j in ContentJobRepository(ws).list_jobs()
+        if j.status == ContentJobStatus.PROPOSED
+    ]
+    # Peers from ranked opportunities' peer_ids if present; else empty ranked list.
+    peer_repo = PeerRepository(ws)
+    ranked_peers = []
+    from finch.engagement.flow import RankedPeer
+    from finch.engagement.relationship import PeerValue
+
+    for opp in opps:
+        profile = peer_repo.get(opp.peer_id)
+        if profile is None:
+            continue
+        ranked_peers.append(
+            RankedPeer(
+                profile=profile,
+                value=PeerValue(
+                    topic_overlap=0.0,
+                    practical_depth=0.0,
+                    contribution_space=0.0,
+                    continuity_potential=0.0,
+                    repetition_penalty=0.0,
+                    promotion_risk=0.0,
+                    total=opp.score_total,
+                    reasons=[],
+                ),
+            )
+        )
+    focus = build_today_focus(
+        peers=ranked_peers,
+        contributions=InteractionRepository(ws).list_pending()[:3],
+        threads=needs_follow_up,
+        ideas=idea_candidates,
+        opportunities=opps,
+        now=now,
+        opportunity_limit=limit,
+    )
+    return focus, snapshot
 
 
 def _render_daily(focus: TodayFocus) -> str:
@@ -1484,8 +1648,7 @@ def _render_daily(focus: TodayFocus) -> str:
         return f"## {title}\n{body}"
 
     conv = focus["conversations"]
-    peer = focus["peers"]
-    contrib = focus["contributions"]
+    opps = focus["opportunities"]
     ideas = focus["ideas"]
 
     def _with_more(body: str, shown: int, total: int) -> str:
@@ -1498,20 +1661,7 @@ def _render_daily(focus: TodayFocus) -> str:
         if conv["items"]
         else "- (none)"
     )
-    peer_body = (
-        _render_peer_cards(
-            [rp.profile for rp in peer["items"]], limit=len(peer["items"]) or 1
-        )
-        if peer["items"]
-        else "- (none)"
-    )
-    contrib_body = (
-        _render_proposal_cards(
-            contrib["items"], limit=len(contrib["items"]) or 1, include_reject=False
-        )
-        if contrib["items"]
-        else "- (none)"
-    )
+    opp_body = _render_opportunity_cards(opps["items"], limit=len(opps["items"]) or 1)
     idea_body = (
         "\n\n".join(_render_idea_card(j) for j in ideas["items"])
         if ideas["items"]
@@ -1523,12 +1673,8 @@ def _render_daily(focus: TodayFocus) -> str:
             _with_more(conv_body, len(conv["items"]), conv["total"]),
         ),
         _section(
-            "今天最值得连接的同行",
-            _with_more(peer_body, len(peer["items"]), peer["total"]),
-        ),
-        _section(
-            "可贡献的具体内容",
-            _with_more(contrib_body, len(contrib["items"]), contrib["total"]),
+            "新发现的交流机会",
+            _with_more(opp_body, len(opps["items"]), opps["total"]),
         ),
         _section(
             "从近期交流产生的观点候选",
@@ -1537,71 +1683,330 @@ def _render_daily(focus: TodayFocus) -> str:
     ])
 
 
-@connect_app.command("daily")
-def connect_daily(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
-    """连接主循环每日入口：需要继续的对话 → 最值得连接的同行 → 可贡献内容 → 观点候选。"""
+def _prepare_opportunity(
+    settings: Settings,
+    ws: Workspace,
+    opportunity_id: str,
+) -> InteractionProposal | None:
+    """对指定机会深读并生成提案（≤ prepare 路径，不刷全量发现）。"""
+    opp = OpportunityRepository(ws).get(opportunity_id)
+    if opp is None:
+        return None
+    url = opp.source_refs[0] if opp.source_refs else ""
+    if not url:
+        return None
+    post = fetch_post_by_url(
+        url, opencli=OpenCliClient(), reddit_opencli=RedditOpenCliClient()
+    )
+    if post is None and opp.post is not None:
+        post = opp.post
+    if post is None:
+        return None
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    scored = score_posts(runner, [post], settings.engagement.weights)
+    ranked = rank_candidates(scored, min_candidate_score=settings.engagement.min_candidate_score)
+    if not ranked:
+        # Still attempt a proposal from a synthetic scored post at threshold.
+        from finch.engagement.models import ConversationScore
+
+        synthetic = ScoredPost(
+            post=post,
+            score=ConversationScore(
+                relevance=0.8,
+                novelty=0.8,
+                discussability=0.8,
+                practical_evidence=0.7,
+                relationship_value=0.5,
+                total=0.78,
+                reasons=[opp.why_relevant or "selected opportunity"],
+            ),
+        )
+        ranked = [synthetic]
+    proposals = generate_proposals(runner, ranked, settings.engagement)
+    if not proposals:
+        return None
+    proposal = proposals[0]
+    if opp.peer_id:
+        proposal = proposal.model_copy(
+            update={
+                "peer_id": opp.peer_id,
+                "why_this_person": opp.why_relevant,
+                "expected_conversation_opening": opp.opening,
+                "why_now": opp.novelty_reason or opp.why_relevant,
+            }
+        )
+    InteractionRepository(ws).upsert(proposal, run_id=f"prepare_{opportunity_id}")
+    return proposal
+
+
+@connect_app.command("refresh")
+def connect_refresh(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """有界刷新发现池并持久化快照，返回覆盖情况。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
+    previous = DiscoverySnapshotRepository(ws).latest()
     result = _run_discovery(settings)
-    _persist_discovery(ws, result)
-
-    now = datetime.now(UTC)
-    threads = ConversationThreadRepository(ws).list_all()
-    needs_follow_up = [
-        t for t in threads if ConversationService().needs_follow_up(t, now=now)
-    ]
-    idea_candidates = [
-        j for j in ContentJobRepository(ws).list_jobs()
-        if j.status == ContentJobStatus.PROPOSED
-    ]
-
+    if result.status == "failed" and previous is not None:
+        snapshot = previous
+        coverage = {
+            "kept_previous": True,
+            "previous_id": previous.id,
+            "previous_created_at": previous.created_at.isoformat(),
+            "failure_summary": result.summary,
+        }
+    else:
+        snapshot = _persist_discovery(ws, result)
+        coverage = {
+            "kept_previous": False,
+            "posts_found": result.posts_found,
+            "opportunity_count": len(result.opportunities),
+            "failures": len(result.failures),
+            "status": result.status,
+        }
     if as_json:
         typer.echo(json.dumps({
-            "run_id": result.run_id,
-            "posts_found": result.posts_found,
+            "snapshot_id": snapshot.id if snapshot else None,
+            "coverage": coverage,
             "failures": [
                 {"platform": f.platform, "query": f.query, "reason": f.reason}
                 for f in result.failures
             ],
-            "conversations_needing_follow_up": [
-                t.model_dump(mode="json") for t in needs_follow_up
-            ],
-            "peers": [rp.profile.model_dump(mode="json") for rp in result.peers],
-            "contributions": [c.model_dump(mode="json") for c in result.candidates],
-            "idea_candidates": [j.model_dump(mode="json") for j in idea_candidates],
+            "opportunity_ids": [o.id for o in result.opportunities],
         }, ensure_ascii=False, indent=2))
         return
-    focus = build_today_focus(
-        peers=result.peers,
-        contributions=result.candidates,
-        threads=needs_follow_up,
-        ideas=idea_candidates,
-        now=now,
-    )
+    typer.echo(f"snapshot: {snapshot.id if snapshot else 'none'}")
+    typer.echo(json.dumps(coverage, ensure_ascii=False))
+
+
+@connect_app.command("today")
+def connect_today(
+    limit: int = typer.Option(10, "--limit", help="展示机会数（目标 8–12）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """纯读取候选与关系投影，不调用网络/LLM。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    focus, snapshot = _load_today_payload(ws, settings, limit=limit)
+    if snapshot is not None:
+        _record_presentations(
+            ws, snapshot.id, [o.id for o in focus["opportunities"]["items"]]
+        )
+    if as_json:
+        typer.echo(json.dumps({
+            "snapshot_id": snapshot.id if snapshot else None,
+            "context_fingerprint": snapshot.context_fingerprint if snapshot else "",
+            "conversations_needing_follow_up": [
+                t.model_dump(mode="json") for t in focus["conversations"]["items"]
+            ],
+            "opportunities": [
+                o.model_dump(mode="json") for o in focus["opportunities"]["items"]
+            ],
+            "idea_candidates": [
+                j.model_dump(mode="json") for j in focus["ideas"]["items"]
+            ],
+        }, ensure_ascii=False, indent=2))
+        return
+    if snapshot is None:
+        typer.echo("no discovery snapshot; run: uv run finch connect refresh")
+        return
     typer.echo(_render_daily(focus))
+
+
+@connect_app.command("daily")
+def connect_daily(
+    refresh: bool = typer.Option(False, "--refresh", help="先刷新再读取"),
+    limit: int = typer.Option(10, "--limit", help="展示机会数"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """连接主循环入口：默认等同 today；``--refresh`` 时先有界刷新。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    snapshot = DiscoverySnapshotRepository(ws).latest()
+    need_refresh = refresh or not _snapshot_fresh(
+        snapshot, settings.engagement.snapshot_ttl_hours
+    )
+    if need_refresh:
+        result = _run_discovery(settings)
+        if result.status == "failed" and snapshot is not None:
+            pass  # keep previous
+        else:
+            snapshot = _persist_discovery(ws, result)
+
+    focus, snapshot = _load_today_payload(ws, settings, limit=limit)
+    if snapshot is not None:
+        _record_presentations(
+            ws, snapshot.id, [o.id for o in focus["opportunities"]["items"]]
+        )
+
+    if as_json:
+        typer.echo(json.dumps({
+            "snapshot_id": snapshot.id if snapshot else None,
+            "refreshed": need_refresh,
+            "conversations_needing_follow_up": [
+                t.model_dump(mode="json") for t in focus["conversations"]["items"]
+            ],
+            "peers": [rp.profile.model_dump(mode="json") for rp in focus["peers"]["items"]],
+            "opportunities": [
+                o.model_dump(mode="json") for o in focus["opportunities"]["items"]
+            ],
+            "contributions": [
+                c.model_dump(mode="json") for c in focus["contributions"]["items"]
+            ],
+            "idea_candidates": [
+                j.model_dump(mode="json") for j in focus["ideas"]["items"]
+            ],
+        }, ensure_ascii=False, indent=2))
+        return
+    if snapshot is None:
+        typer.echo("no discovery snapshot; run: uv run finch connect refresh")
+        return
+    typer.echo(_render_daily(focus))
+
+
+@connect_app.command("more")
+def connect_more(
+    snapshot_id: str = typer.Option(..., "--snapshot", help="快照 ID"),
+    limit: int = typer.Option(5, "--limit", help="追加展示数"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """从快照剩余未呈现合格机会中取下一批（无网络/LLM）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    snapshot = DiscoverySnapshotRepository(ws).get(snapshot_id)
+    if snapshot is None:
+        typer.echo(f"snapshot not found: {snapshot_id}")
+        raise typer.Exit(code=1)
+    presented = PresentationRecordRepository(ws).presented_ids(snapshot_id)
+    remaining_ids = [
+        oid for oid in snapshot.ranked_opportunity_ids if oid not in presented
+    ]
+    if not remaining_ids:
+        msg = "no more qualified opportunities in snapshot; run connect refresh to search again"
+        if as_json:
+            typer.echo(json.dumps({"opportunities": [], "message": msg}, ensure_ascii=False))
+            return
+        typer.echo(msg)
+        return
+    batch_ids = remaining_ids[:limit]
+    opps = OpportunityRepository(ws).list_by_ids(batch_ids)
+    _record_presentations(ws, snapshot_id, [o.id for o in opps])
+    if as_json:
+        typer.echo(json.dumps({
+            "snapshot_id": snapshot_id,
+            "opportunities": [o.model_dump(mode="json") for o in opps],
+        }, ensure_ascii=False, indent=2))
+        return
+    typer.echo(_render_opportunity_cards(opps, limit=limit))
+
+
+@connect_app.command("expand")
+def connect_expand(
+    from_id: str | None = typer.Option(None, "--from", help="机会 ID"),
+    scope: str | None = typer.Option(None, "--scope", help="范围文本"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """有界扩展来源或范围；一跳社交扩展当前不支持时明确说明。"""
+    msg = (
+        "bounded expand from discussion participants is not enabled yet; "
+        "use connect refresh with adjacent_queries / current_questions, "
+        "or connect prepare --opportunity <id> for deep read"
+    )
+    if from_id or scope:
+        detail = f"requested from={from_id!r} scope={scope!r}. {msg}"
+    else:
+        detail = msg
+    if as_json:
+        typer.echo(json.dumps({"supported": False, "message": detail}, ensure_ascii=False))
+        return
+    typer.echo(detail)
 
 
 @connect_app.command("prepare")
 def connect_prepare(
+    opportunity_id: str | None = typer.Option(
+        None, "--opportunity", help="机会 ID（选中后深度准备）"
+    ),
+    limit: int = typer.Option(3, "--limit", help="无 --opportunity 时最多准备条数"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """为发现结果准备互动提案并落库（只读发现 + 落库，不做审批/执行）。"""
+    """为选中机会准备互动提案（默认最多 3 条；不把浏览列表写成完整回复）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
-    result = _run_discovery(settings)
-    _persist_discovery(ws, result)
+    proposals: list[InteractionProposal] = []
+    if opportunity_id:
+        proposal = _prepare_opportunity(settings, ws, opportunity_id)
+        if proposal is None:
+            typer.echo(f"opportunity not found or could not prepare: {opportunity_id}")
+            raise typer.Exit(code=1)
+        proposals = [proposal]
+    else:
+        snapshot = DiscoverySnapshotRepository(ws).latest()
+        if snapshot is None:
+            typer.echo("no snapshot; run connect refresh first")
+            raise typer.Exit(code=1)
+        cap = max(1, min(limit, settings.engagement.max_reply_drafts))
+        ids = snapshot.ranked_opportunity_ids[:cap]
+        for oid in ids:
+            proposal = _prepare_opportunity(settings, ws, oid)
+            if proposal is not None:
+                proposals.append(proposal)
     if as_json:
         typer.echo(json.dumps(
-            [c.model_dump(mode="json") for c in result.candidates],
+            [p.model_dump(mode="json") for p in proposals],
             ensure_ascii=False, indent=2,
         ))
         return
-    if not result.candidates:
+    if not proposals:
         typer.echo("no interaction proposals")
         return
-    typer.echo(_render_proposal_cards(result.candidates))
+    typer.echo(_render_proposal_cards(proposals))
+
+
+@connect_app.command("feedback")
+def connect_feedback(
+    path: str = typer.Option(..., "--file", help="feedback.json"),
+) -> None:
+    """校验并记录推荐反馈（兴趣 / 行动维度）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    items = raw if isinstance(raw, list) else [raw]
+    repo = RecommendationFeedbackRepository(ws)
+    saved = 0
+    for item in items:
+        if "created_at" not in item:
+            item = {**item, "created_at": datetime.now(UTC).isoformat()}
+        if "id" not in item:
+            digest = hashlib.sha256(
+                f"{item.get('opportunity_id')}:{item.get('dimension')}:{item.get('value')}:{item['created_at']}".encode()
+            ).hexdigest()[:12]
+            item = {**item, "id": f"rfb_{digest}"}
+        try:
+            feedback = RecommendationFeedback.model_validate(item)
+        except ValidationError as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1) from exc
+        if feedback.dimension == "interest" and feedback.value not in {
+            "worth_following", "neutral", "unsuitable"
+        }:
+            typer.echo(f"invalid interest value: {feedback.value}")
+            raise typer.Exit(code=1)
+        if feedback.dimension == "action" and feedback.value not in {
+            "prepare", "save_for_later", "no_opening"
+        }:
+            typer.echo(f"invalid action value: {feedback.value}")
+            raise typer.Exit(code=1)
+        repo.upsert(feedback)
+        saved += 1
+    typer.echo(f"saved {saved} recommendation feedback record(s)")
 
 
 @connect_app.command("create")
@@ -1857,10 +2262,115 @@ def conversations_follow_up(
             "conversation_id": thread.id,
             "topic": thread.topic,
             "open_questions": open_questions,
+            "pending_triggers": [t.value for t in thread.pending_triggers],
             "next_step": next_step,
         }, ensure_ascii=False, indent=2))
         return
     typer.echo(_render_thread_card(thread, for_follow_up=True))
+
+
+@conversations_app.command("ingest")
+def conversations_ingest(
+    peer_id: str = typer.Option(..., "--peer", help="peer id"),
+    platform: str = typer.Option("x", "--platform"),
+    url: str = typer.Option("", "--url", help="消息 URL"),
+    body: str = typer.Option("", "--body", help="正文；缺省则标记未知"),
+    message_id: str | None = typer.Option(None, "--message-id", help="平台消息 ID"),
+    direction: str = typer.Option("unknown", "--direction", help="outbound|inbound|unknown"),
+    topic: str = typer.Option("general", "--topic"),
+    attested: bool = typer.Option(False, "--attested", help="用户声明属实"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """导入一条已发生的互动事实（不要求发布批准；幂等保留原发生时间）。"""
+    from finch.conversations.models import FollowUpTrigger
+    from finch.engagement.models import VerificationStatus
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    svc = ConversationService()
+    records = InteractionRecordRepository(ws)
+    threads = ConversationThreadRepository(ws)
+    existing = None
+    if message_id:
+        existing = records.find_by_platform_message_id(message_id)
+    elif url:
+        existing = records.find_by_source_url(url)
+    now = datetime.now(UTC)
+    verification = (
+        VerificationStatus.USER_ATTESTED if attested else VerificationStatus.UNVERIFIED
+    )
+    body_text = body if body else ""
+    if not body_text and not url:
+        typer.echo("provide --body or --url")
+        raise typer.Exit(code=1)
+    rec = svc.ingest_record(
+        existing,
+        peer_id=peer_id,
+        platform=platform,
+        source_url=url or f"local:{message_id or 'unknown'}",
+        body=body_text or "[unknown body]",
+        occurred_at=existing.occurred_at if existing else now,
+        platform_message_id=message_id,
+        direction=direction,
+        verification_status=verification,
+        observed_at=now,
+    )
+    records.upsert(rec)
+    thread = threads.get(ConversationService().open_thread(peer_id=peer_id, topic=topic).id)
+    if thread is None:
+        thread = svc.open_thread(peer_id=peer_id, topic=topic, root_message_id=message_id)
+    thread = svc.append_interaction(thread, rec.id, occurred_at=rec.occurred_at)
+    if direction == "inbound":
+        thread = svc.add_trigger(thread, FollowUpTrigger.NEW_REPLY)
+    threads.upsert(thread)
+    if as_json:
+        typer.echo(json.dumps({
+            "record": rec.model_dump(mode="json"),
+            "thread_id": thread.id,
+        }, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"ingested {rec.id} into {thread.id}")
+
+
+@conversations_app.command("defer")
+def conversations_defer(
+    conversation_id: str = typer.Argument(..., help="conversation id"),
+    days: int = typer.Option(7, "--days", help="推迟天数"),
+) -> None:
+    """推迟跟进（到期前不出现在 needs-follow-up）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = ConversationThreadRepository(ws)
+    thread = repo.get(conversation_id)
+    if thread is None:
+        typer.echo(f"conversation not found: {conversation_id}")
+        raise typer.Exit(code=1)
+    until = datetime.now(UTC) + timedelta(days=days)
+    updated = ConversationService().defer(thread, until=until)
+    repo.upsert(updated)
+    typer.echo(f"deferred {conversation_id} until {until.isoformat()}")
+
+
+@conversations_app.command("close")
+def conversations_close(
+    conversation_id: str = typer.Argument(..., help="conversation id"),
+) -> None:
+    """关闭对话线索。"""
+    from finch.conversations.models import ThreadStatus
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = ConversationThreadRepository(ws)
+    thread = repo.get(conversation_id)
+    if thread is None:
+        typer.echo(f"conversation not found: {conversation_id}")
+        raise typer.Exit(code=1)
+    updated = ConversationService().set_status(thread, ThreadStatus.CLOSED)
+    repo.upsert(updated)
+    typer.echo(f"closed {conversation_id}")
 
 
 @practice_app.command("start")

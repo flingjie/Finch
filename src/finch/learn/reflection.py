@@ -35,6 +35,12 @@ Answer exactly five questions:
 ## Conversation threads
 {threads}
 
+## Concrete messages (excerpts)
+{messages}
+
+## Idea position changes
+{idea_diffs}
+
 ## Published feedback
 {feedbacks}
 
@@ -76,6 +82,8 @@ class WeeklyReflectionService:
         feedbacks: list[Feedback] | None = None,
         threads: list[ConversationThread] | None = None,
         voice_profile: VoiceProfile | None = None,
+        message_excerpts: list[str] | None = None,
+        idea_diffs: list[str] | None = None,
     ) -> WeeklyReflection:
         metrics = {
             "reviewed_drafts": report.reviewed_drafts,
@@ -100,6 +108,8 @@ class WeeklyReflectionService:
                     relationship_metrics=_render_metrics(rel.model_dump()),
                     metrics=_render_metrics(metrics),
                     threads=_render_threads(threads or []),
+                    messages=_render_message_excerpts(message_excerpts or []),
+                    idea_diffs=_render_idea_diffs(idea_diffs or []),
                     feedbacks=_render_feedbacks(feedbacks or []),
                     voice=profile.model_dump_json(),
                 ),
@@ -126,9 +136,43 @@ def _render_threads(threads: list[ConversationThread]) -> str:
         return "(none)"
     return "\n".join(
         f"- [{t.id}] {t.topic} (open={len(t.open_questions)}, agreements={len(t.agreements)}, "
-        f"experiments={len(t.possible_experiments)})"
+        f"experiments={len(t.possible_experiments)}, triggers={len(t.pending_triggers)})"
         for t in threads
     )
+
+
+def _render_message_excerpts(excerpts: list[str]) -> str:
+    if not excerpts:
+        return "(none — no concrete messages supplied)"
+    return "\n".join(f"- {e}" for e in excerpts[:8])
+
+
+def _render_idea_diffs(diffs: list[str]) -> str:
+    if not diffs:
+        return "(none — no idea position changes this week, or honestly unchanged)"
+    return "\n".join(f"- {d}" for d in diffs[:8])
+
+
+def idea_revision_diff_lines(jobs: list) -> list[str]:
+    """Build before/after lines from ContentJob.position_revisions for weekly reflection."""
+    lines: list[str] = []
+    for job in jobs:
+        revisions = getattr(job, "position_revisions", None) or []
+        if len(revisions) < 2:
+            if revisions:
+                lines.append(
+                    f"[{job.id}] single revision: {revisions[-1].claim} "
+                    f"(reason={revisions[-1].change_reason or 'n/a'})"
+                )
+            else:
+                lines.append(f"[{job.id}] unchanged — no position revisions recorded")
+            continue
+        before, after = revisions[-2], revisions[-1]
+        lines.append(
+            f"[{job.id}] before={before.claim!r} → after={after.claim!r} "
+            f"(reason={after.change_reason or 'n/a'}; sources={after.source_refs})"
+        )
+    return lines
 
 
 def render_reflection(reflection: WeeklyReflection) -> str:

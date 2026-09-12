@@ -32,11 +32,12 @@ Finch 是一个**同行连接与个人表达系统**：帮助你发现值得长�
 | 对象 | 归属 | 规则 |
 |---|---|---|
 | `PeerProfile` | 关系领域 | 记录「这个人是谁、为什么值得继续交流」。外部作者按 `platform + author_id` 幂等归一化。 |
-| `InteractionProposal` | 关系领域 | 待批准建议，不是已发生的互动。含 `contribution_type` / `why_this_person` / `why_now` / `expected_conversation_opening`。 |
-| `InteractionRecord` | 关系领域 | 单独记录真正发生过的互动事实。不能用 Proposal 状态替代。 |
-| `ConversationThread` | 关系领域 | 同一同行、同一主题的多次互动串联。 |
-| `AuthorIdea` | 表达领域 | 只表达用户自己的立场。来源：个人实践、已发生的对话、用户输入。 |
-| `VoiceProfile` | 表达领域 | 只从用户亲写文本、明确批准样本、用户修改后的最终版本更新。 |
+| `Opportunity` | 关系领域 | 轻量交流机会（人 + 具体内容 + 为何 + 切入点）。发现结果，无审批状态机；每日浏览 8–12，不含完整回复草稿。 |
+| `InteractionProposal` | 关系领域 | 用户选中后深度准备的待批准建议，不是已发生的互动。含 `contribution_type` / `why_this_person` / `why_now` / `expected_conversation_opening`。 |
+| `InteractionRecord` | 关系领域 | 单独记录真正发生过的互动事实（可无 proposal_id）。不能用 Proposal 状态替代。 |
+| `ConversationThread` | 关系领域 | 同一同行、同一主题的多次互动串联；跟进由新回复/承诺/新证据等触发，时间陈旧 alone 不触发对外联系。 |
+| `AuthorIdea` | 表达领域 | 只表达用户自己的立场（修订历史 append-only；草稿 ≠ 观点已证实）。来源：个人实践、已发生的对话、用户输入。 |
+| `VoiceProfile` | 表达领域 | 只从用户亲写文本、明确批准样本、用户修改后的最终版本更新；不因发现反馈自动调整。 |
 
 **三条铁律：**
 

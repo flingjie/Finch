@@ -1,11 +1,11 @@
 """配置加载：finch.yaml + 环境变量覆盖。"""
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Paths(BaseModel):
@@ -123,7 +123,7 @@ class PeerValueWeights(BaseModel):
 
 
 class EngagementSettings(BaseModel):
-    """互动轨道配置（执行计划 5 配置设计）。"""
+    """互动轨道配置（分层预算：轻量发现 → 语义筛选 → 展示 → 深度准备）。"""
 
     enabled: bool = True
     schedule: str = "every_run"
@@ -135,19 +135,73 @@ class EngagementSettings(BaseModel):
     max_reply_drafts: int = 3
     max_public_replies: int = 2
     per_author_daily_limit: int = 1
-    max_peers_per_run: int = 5
+    # Layered budgets (problem-led connection A).
+    max_discovery_authors: int = 50
+    max_semantic_authors: int = 20
+    max_display_opportunities: int = 10
+    # Legacy alias for max_semantic_authors (kept for old YAML / callers).
+    max_peers_per_run: int = 20
     max_posts_per_peer: int = 3
+    snapshot_ttl_hours: int = 24
     public_expression_requires_approval: bool = True
     weights: ScoringWeights = Field(default_factory=ScoringWeights)
     peer_value_weights: PeerValueWeights = Field(default_factory=PeerValueWeights)
 
+    @model_validator(mode="after")
+    def _sync_semantic_cap(self) -> "EngagementSettings":
+        # If only the legacy field was set in older configs, prefer it when the
+        # new field still has its default and legacy differs.
+        if self.max_peers_per_run != 20 and self.max_semantic_authors == 20:
+            self.max_semantic_authors = self.max_peers_per_run
+        else:
+            self.max_peers_per_run = self.max_semantic_authors
+        return self
+
 
 class InterestsSettings(BaseModel):
-    """兴趣主题配置（稳定 / 探索 / 排除）。"""
+    """兴趣上下文：长期兴趣、当前问题、探索方向、排除项（单一真相源）。
 
-    stable: list[str] = Field(default_factory=list)
-    exploring: list[str] = Field(default_factory=list)
-    excluded: list[str] = Field(default_factory=list)
+    兼容旧 YAML 键 ``stable`` / ``exploring`` / ``excluded``。
+    """
+
+    long_term_interests: list[str] = Field(default_factory=list)
+    current_questions: list[str] = Field(default_factory=list)
+    explore_directions: list[str] = Field(default_factory=list)
+    excluded_content: list[str] = Field(default_factory=list)
+    adjacent_queries: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_aliases(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        if "long_term_interests" not in out and "stable" in out:
+            out["long_term_interests"] = out.pop("stable")
+        elif "stable" in out:
+            out.pop("stable")
+        if "explore_directions" not in out and "exploring" in out:
+            out["explore_directions"] = out.pop("exploring")
+        elif "exploring" in out:
+            out.pop("exploring")
+        if "excluded_content" not in out and "excluded" in out:
+            out["excluded_content"] = out.pop("excluded")
+        elif "excluded" in out:
+            out.pop("excluded")
+        return out
+
+    # ---- read-compat properties for call sites still using old names ----
+    @property
+    def stable(self) -> list[str]:
+        return self.long_term_interests
+
+    @property
+    def exploring(self) -> list[str]:
+        return self.explore_directions
+
+    @property
+    def excluded(self) -> list[str]:
+        return self.excluded_content
 
 
 class Settings(BaseModel):

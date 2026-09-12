@@ -52,20 +52,28 @@ engagement:
   max_reply_drafts: 3
   max_public_replies: 2
   per_author_daily_limit: 1
+  max_discovery_authors: 50
+  max_semantic_authors: 20
+  max_display_opportunities: 10
+  snapshot_ttl_hours: 24
   public_expression_requires_approval: true
 
 interests:
-  stable:
+  long_term_interests:
     - agent reliability
     - agent evals
     - graph engineering
     - agent harness
-  exploring:
+  current_questions: []
+  explore_directions:
     - durable execution
     - failure replay
     - dynamic graph
     - production agent failures
-  excluded:
+  adjacent_queries:
+    - checkpoint
+    - compensation
+  excluded_content:
     - AI news
     - funding and valuation
     - evidence-free model rankings

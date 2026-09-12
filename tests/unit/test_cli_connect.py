@@ -20,6 +20,8 @@ from finch.engagement.models import (
     InteractionAction,
     InteractionProposal,
     InteractionStatus,
+    Opportunity,
+    SuggestedMode,
 )
 from finch.engagement.relationship import PeerValue
 from finch.peers.models import PeerProfile, PlatformIdentity, RelationshipStage
@@ -28,6 +30,7 @@ from finch.storage.repositories import (
     ConversationThreadRepository,
     InteractionRecordRepository,
     InteractionRepository,
+    OpportunityRepository,
     PeerRepository,
 )
 from finch.storage.workspace import Workspace
@@ -204,6 +207,22 @@ def test_connect_create_saves_proposal(monkeypatch, tmp_path):
 
 # ---- finch connect daily ----
 
+def _opportunity() -> Opportunity:
+    return Opportunity(
+        id="opp_test_1",
+        peer_id="peer_abc",
+        source_refs=["https://x.com/alice/status/1"],
+        source_excerpt="interesting engineering take on deterministic graphs",
+        content_fingerprint="abc",
+        why_relevant="Concrete overlap with deterministic graph practice",
+        opening="Ask how they replay failures across graph nodes",
+        suggested_mode=SuggestedMode.DISCUSS,
+        novelty_reason="active thread",
+        score_total=0.82,
+        post=_post(),
+    )
+
+
 def _daily_result() -> EngagementRunResult:
     profile = PeerProfile(
         id="peer_abc",
@@ -226,11 +245,13 @@ def _daily_result() -> EngagementRunResult:
     return EngagementRunResult(
         run_id="daily_test",
         posts_found=1,
-        candidates=[_candidate()],
+        candidates=[],
+        opportunities=[_opportunity()],
         peers=[RankedPeer(profile=profile, value=value)],
         failures=[],
         status="succeeded",
         summary="ok",
+        context_fingerprint="ctx",
     )
 
 
@@ -240,60 +261,77 @@ def test_connect_daily_persists_peers_and_renders_sections(monkeypatch, tmp_path
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "run_discovery_engagement_flow", lambda *a, **k: _daily_result())
 
-    r = CliRunner().invoke(app, ["connect", "daily"])
+    r = CliRunner().invoke(app, ["connect", "daily", "--refresh"])
     assert r.exit_code == 0, r.output
     assert "需要继续的对话" in r.output
-    assert "谁: Alice" in r.output
-    assert "为什么值得连: writes concretely about agent memory" in r.output
-    assert "下一步上下文: ask about relationship facts" in r.output
-    assert "uv run finch peers show peer_abc" in r.output
-    assert "peer_value=" not in r.output
+    assert "新发现的交流机会" in r.output
+    assert "为何推荐: Concrete overlap with deterministic graph practice" in r.output
+    assert "切入点: Ask how they replay failures across graph nodes" in r.output
+    assert "草稿预览:" not in r.output
+    assert "观点候选" in r.output
+    assert PeerRepository(ws).get("peer_abc") is not None
+    assert OpportunityRepository(ws).get("opp_test_1") is not None
+
+
+def test_connect_prepare_with_opportunity(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    OpportunityRepository(ws).upsert(_opportunity())
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "fetch_post_by_url", lambda *a, **k: _post())
+    monkeypatch.setattr(
+        cli,
+        "score_posts",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setattr(cli, "generate_proposals", lambda *a, **k: [_candidate()])
+
+    r = CliRunner().invoke(app, ["connect", "prepare", "--opportunity", "opp_test_1"])
+    assert r.exit_code == 0, r.output
     assert "动作: 回复" in r.output
     assert "草稿预览: a draft reply" in r.output
-    assert "uv run finch connect approve x:post_1:draft_reply" in r.output
-    assert "可贡献的具体内容" in r.output
-    assert "观点候选" in r.output
-    # 发现结果落库，供 peers show / connect approve 进入。
-    assert PeerRepository(ws).get("peer_abc") is not None
     assert InteractionRepository(ws).get("x:post_1:draft_reply") is not None
 
 
-def test_connect_prepare_renders_decision_cards(monkeypatch, tmp_path):
+def test_connect_prepare_caps_at_three(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.engagement.models import DiscoverySnapshot
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    ids = []
+    for i in range(5):
+        oid = f"opp_{i}"
+        ids.append(oid)
+        OpportunityRepository(ws).upsert(
+            _opportunity().model_copy(
+                update={"id": oid, "source_refs": [f"https://x.com/a/status/{i}"]}
+            )
+        )
+    DiscoverySnapshotRepository(ws).upsert(
+        DiscoverySnapshot(
+            id="snap1",
+            created_at=datetime.now(UTC),
+            context_fingerprint="c",
+            ranked_opportunity_ids=ids,
+        )
+    )
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "run_discovery_engagement_flow", lambda *a, **k: _daily_result())
+    monkeypatch.setattr(cli, "fetch_post_by_url", lambda *a, **k: _post())
+    calls = {"n": 0}
 
-    r = CliRunner().invoke(app, ["connect", "prepare"])
+    def _gen(*a, **k):
+        calls["n"] += 1
+        return [_candidate(f"x:post_{calls['n']}:draft_reply")]
+
+    monkeypatch.setattr(cli, "generate_proposals", _gen)
+    monkeypatch.setattr(cli, "score_posts", lambda *a, **k: [])
+
+    r = CliRunner().invoke(app, ["connect", "prepare", "--limit", "3"])
     assert r.exit_code == 0, r.output
-    assert "动作: 回复" in r.output
-    assert "为什么是这个人: writes about deterministic graphs" in r.output
-    assert "为什么现在: thread is still active" in r.output
-    assert "草稿预览: a draft reply" in r.output
-    assert "uv run finch connect approve x:post_1:draft_reply" in r.output
-    assert "\tdraft_reply\t" not in r.output
-    assert "peer_value=" not in r.output
-
-
-def test_connect_prepare_caps_cards(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-
-    def _many():
-        result = _daily_result()
-        result.candidates = [
-            _candidate(f"x:post_{i}:draft_reply") for i in range(8)
-        ]
-        return result
-
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "run_discovery_engagement_flow", lambda *a, **k: _many())
-
-    r = CliRunner().invoke(app, ["connect", "prepare"])
-    assert r.exit_code == 0, r.output
-    assert r.output.count("动作:") == 6
-    assert "共 8 个候选，以上 6 个。" in r.output
-    assert "uv run finch connect approve x:post_0:draft_reply" in r.output
-    assert "uv run finch connect reject x:post_0:draft_reply --reason ..." in r.output
-    assert "x:post_6:draft_reply" not in r.output
+    assert calls["n"] == 3
 
 
 def test_connect_daily_json(monkeypatch, tmp_path):
@@ -301,12 +339,69 @@ def test_connect_daily_json(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "run_discovery_engagement_flow", lambda *a, **k: _daily_result())
 
-    r = CliRunner().invoke(app, ["connect", "daily", "--json"])
+    r = CliRunner().invoke(app, ["connect", "daily", "--refresh", "--json"])
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
-    assert payload["run_id"] == "daily_test"
+    assert payload["snapshot_id"] == "daily_test"
     assert [p["id"] for p in payload["peers"]] == ["peer_abc"]
-    assert [c["id"] for c in payload["contributions"]] == ["x:post_1:draft_reply"]
+    assert [o["id"] for o in payload["opportunities"]] == ["opp_test_1"]
+
+
+def test_connect_today_is_pure_read(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    result = _daily_result()
+    cli._persist_discovery(ws, result)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    def boom(*a, **k):
+        raise AssertionError("today must not call discovery")
+
+    monkeypatch.setattr(cli, "run_discovery_engagement_flow", boom)
+    r = CliRunner().invoke(app, ["connect", "today", "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["snapshot_id"] == "daily_test"
+    assert len(payload["opportunities"]) == 1
+
+
+def test_connect_more_no_network(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    result = _daily_result()
+    extra = _opportunity().model_copy(update={"id": "opp_test_2", "peer_id": "peer_abc"})
+    result = result.model_copy(
+        update={"opportunities": [*result.opportunities, extra]}
+    )
+    # Fix ranked ids via persist
+    snap = cli._persist_discovery(ws, result)
+    assert snap is not None
+    # Present first only
+    from finch.storage.repositories import PresentationRecordRepository
+    from finch.engagement.models import PresentationRecord
+
+    PresentationRecordRepository(ws).upsert(
+        PresentationRecord(
+            id=f"{snap.id}:opp_test_1",
+            snapshot_id=snap.id,
+            opportunity_id="opp_test_1",
+            presented_at=datetime.now(UTC),
+        )
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(
+        cli,
+        "run_discovery_engagement_flow",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no discovery")),
+    )
+    r = CliRunner().invoke(
+        app, ["connect", "more", "--snapshot", snap.id, "--limit", "5", "--json"]
+    )
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert [o["id"] for o in payload["opportunities"]] == ["opp_test_2"]
 
 
 def test_connect_daily_preserves_accumulated_peer_fields(monkeypatch, tmp_path):
@@ -326,7 +421,7 @@ def test_connect_daily_preserves_accumulated_peer_fields(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "run_discovery_engagement_flow", lambda *a, **k: _daily_result())
 
-    r = CliRunner().invoke(app, ["connect", "daily"])
+    r = CliRunner().invoke(app, ["connect", "daily", "--refresh"])
     assert r.exit_code == 0, r.output
 
     persisted = PeerRepository(ws).get("peer_abc")

@@ -2,36 +2,37 @@
 
 见 `_shared/agent-presentation.md` 的共享原则。本文件是形状真源与命令映射。
 
-## 形状
+## 两种密度
+
+| 密度 | 何时 | 内容 |
+|---|---|---|
+| **轻量列表** | 浏览「今天有哪些人」 | 8–12 张：谁 / 内容链接 / 为何推荐 / 切入点或值得了解；**无完整回复草稿** |
+| **深度卡片** | 用户选中后准备互动 | 最多 **3** 条：完整草稿 + 风险 + 批准命令 |
+
+已有对话区独立呈现，不占 8–12 发现名额。
+
+## 形状（浏览）
 
 ```text
-今天发现 12 位同行候选，最值得先连的是：
+今天有 10 个新交流机会（另有 2 条需要继续的对话）：
 
-**@alice — 在做 Agent 关系记忆** 〔最推荐〕
+1. @alice — 新实验：failure replay + diff
+   内容：https://x.com/alice/status/…
+   为何推荐：与你的 checkpoint 实践具体重叠，有新增数据
+   切入点：问他们如何验证补偿在部分失败后仍成立
+   → 准备：uv run finch connect prepare --opportunity opp_…
 
-共同话题是长期同行关系与互动上下文。对方最近在讨论「发现人之后如何记住聊过什么」，和你正在做的 connection-first 方向重叠，有明确可贡献的实践问题，不是纯新闻或推广。
+2. @dave — 跨领域：saga 补偿表
+   …
+（先了解也可：模式 learn，不必立刻回复）
 
-主页：https://x.com/alice  
-代表帖：https://x.com/alice/status/…
-
-下一步上下文：围绕「互动反思要落成什么事实」开口，避免先推销 Finch。
-
-另外两条可选：
-
-2. @bob — 写过失败案例复盘，适合交换实验设计  
-   主页：https://x.com/bob
-3. @cara — 主题接近但互动历史浅，先观察再开口  
-   主页：https://x.com/cara
-
-其余更像弱信号，暂不优先：4… 
-
-回复「准备互动 1」「展开 2」或「换一批」。
+回复「准备互动 1」「展开 2」「再给 5 位」或「今天只浏览」。
 ```
-
-主视觉必须带可点击链接：至少 **主页**；有证据帖时再带一条 **代表帖**。不要只写 `@handle`。素材来自 `finch connect daily` 的同行段，或 `finch peers list` / `show` 决策卡（谁 / 为什么值得连 / 主页 / 代表帖 / 下一步上下文 / 共同话题）。
 
 ## 用户下一轮 → CLI
 
-- `准备互动 N` → `uv run finch connect prepare`（或对该 peer 相关帖子 `connect create --input <url>`），再进入 interaction-preparation 呈现
-- `展开 N` → `uv run finch peers show {peer_id}`，用人话补共同主题与下一步上下文
-- `换一批` → 从本次未展示同行再挑最多 3 条；没有则给 `uv run finch peers list`
+- `准备互动 N` → `uv run finch connect prepare --opportunity {opportunity_id}`（每次默认最多 3）
+- `展开 N` → 补互补点/分歧/上下文；仍不自动生成 10 份草稿
+- `再给 5 位` / `换一批` → `uv run finch connect more --snapshot {snapshot_id} --limit 5`（不重复、不调网络/LLM）
+- `今天只浏览` → 只 `today`，不进入 prepare/approve
+- 无快照或过期 → Skill 先 `uv run finch connect refresh`，再 `today`

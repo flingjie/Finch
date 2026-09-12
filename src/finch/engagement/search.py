@@ -182,10 +182,15 @@ def fetch_post_by_url(
 
 
 def build_queries(interests: InterestsSettings) -> list[str]:
-    """由稳定 + 探索兴趣生成查询词列表（每词一条查询，直接作为查询字符串）。"""
+    """由长期兴趣 + 当前问题 + 探索方向 + 相邻机制查询生成查询词列表。"""
     queries: list[str] = []
     seen: set[str] = set()
-    for term in [*interests.stable, *interests.exploring]:
+    for term in [
+        *interests.long_term_interests,
+        *interests.current_questions,
+        *interests.explore_directions,
+        *interests.adjacent_queries,
+    ]:
         query = term.strip()
         key = query.casefold()
         if query and key not in seen:
@@ -195,16 +200,28 @@ def build_queries(interests: InterestsSettings) -> list[str]:
 
 
 def is_excluded(post: ExternalPost, excluded: Sequence[str]) -> bool:
-    """本地排除过滤：正文或匹配主题包含排除词（大小写不敏感的子串匹配）。"""
+    """本地排除过滤：正文或匹配主题包含排除词（大小写不敏感的子串匹配）。
+
+    有真实实践信号的发布帖不能仅因「发布」等歧义词被删除。
+    """
+    from finch.engagement.opportunity import (
+        _AMBIGUOUS_EXCLUDE_TOKENS,
+        looks_like_practice_release,
+    )
+
     content = post.content.casefold()
+    practice = looks_like_practice_release(post.content)
     for term in excluded:
         token = term.strip().casefold()
         if not token:
             continue
-        if token in content:
-            return True
-        if any(token in topic.casefold() for topic in post.matched_topics):
-            return True
+        hit_content = token in content
+        hit_topic = any(token in topic.casefold() for topic in post.matched_topics)
+        if not hit_content and not hit_topic:
+            continue
+        if token in _AMBIGUOUS_EXCLUDE_TOKENS and practice:
+            continue
+        return True
     return False
 
 
@@ -287,6 +304,6 @@ def search_engagement_posts(
                 raw.extend(result)
 
     cap = max(0, engagement.max_posts_scanned)
-    kept = [post for post in raw if not is_excluded(post, interests.excluded)]
+    kept = [post for post in raw if not is_excluded(post, interests.excluded_content)]
     posts = dedupe(kept, skip_ids=skip_ids)[:cap]
     return EngagementSearchOutcome(posts=posts, failures=failures)

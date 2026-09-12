@@ -137,11 +137,41 @@ def test_build_queries_from_stable_and_exploring():
     assert build_queries(interests) == ["a", "b", "c"]
 
 
+def test_build_queries_includes_questions_and_adjacent():
+    interests = InterestsSettings(
+        long_term_interests=["agent reliability"],
+        current_questions=["how to recover from partial tool failure?"],
+        explore_directions=["human handoff"],
+        adjacent_queries=["checkpoint", "补偿"],
+    )
+    assert build_queries(interests) == [
+        "agent reliability",
+        "how to recover from partial tool failure?",
+        "human handoff",
+        "checkpoint",
+        "补偿",
+    ]
+
+
+def test_build_queries_works_without_current_questions():
+    interests = InterestsSettings(long_term_interests=["agent reliability"], current_questions=[])
+    assert build_queries(interests) == ["agent reliability"]
+
+
 def test_is_excluded_by_content_and_topic_case_insensitive():
     excluded = ["AI 新闻搬运", "融资"]
     assert is_excluded(_post(content="这是一篇 ai 新闻搬运 的帖子"), excluded) is True
     assert is_excluded(_post(content="fine", matched_topics=["融资与估值"]), excluded) is True
     assert is_excluded(_post(content="unrelated"), excluded) is False
+
+
+def test_is_excluded_does_not_drop_practice_release_for_发布():
+    post = _post(
+        content="发布了失败复盘实验：checkpoint + 补偿表，附实测 diff 与代码片段。",
+        matched_topics=["checkpoint"],
+    )
+    assert is_excluded(post, ["发布"]) is False
+    assert is_excluded(_post(content="今天发布融资新闻"), ["发布", "融资"]) is True
 
 
 def test_dedupe_by_platform_and_id():

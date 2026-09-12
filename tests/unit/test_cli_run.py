@@ -26,10 +26,7 @@ class _FakeReflectionService:
     def __init__(self, runner):
         self.runner = runner
 
-    def reflect(
-        self, report, *, relationship_metrics=None, feedbacks=None, threads=None,
-        voice_profile=None,
-    ):
+    def reflect(self, report, **kwargs):
         return WeeklyReflection(
             insight="i", strongest_expression="s", meaningful_connection="m",
             next_practice="n", stop_doing="x", voice_update_candidate="v",

@@ -31,6 +31,7 @@ packages = ["src/finch"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src", "tests/unit"]
 addopts = "-q"
 
 [tool.ruff]

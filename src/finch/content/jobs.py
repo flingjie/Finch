@@ -4,10 +4,11 @@
 ``PROPOSED → CONFIRMED → DRAFTED``（或 ``→ SKIPPED``）与作者立场。
 """
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from finch.content.models import RecommendedFormat
 
@@ -46,13 +47,29 @@ class AuthorPosition(BaseModel):
     change_mind_if: str | None = None
 
 
+class PositionRevision(BaseModel):
+    """观点修订历史条目（append-only；草稿生成 ≠ 观点已证实）。"""
+
+    claim: str
+    assumptions: list[str] = Field(default_factory=list)
+    counterexample: str = ""
+    scope: str = ""
+    source_refs: list[str] = Field(default_factory=list)
+    change_reason: str = ""
+    confirmed_by_user: bool = False
+    created_at: datetime
+    decision: str = ""
+    tradeoff: str = ""
+
+
 class ContentJob(BaseModel):
     """idea 候选的持久化实体：定义内容目标、作者立场与状态。
 
     - reader_problem / core_message / why_now / author_position 是 Writer 与 Critic
       检查器的约束对象；
     - source_card_ids / candidate_id 供收件箱「个人证据」轨道投影（idea 流恒为空）；
-    - origin / generation_key / generator_* / content_fingerprint 是幂等键与溯源元数据。
+    - origin / generation_key / generator_* / content_fingerprint 是幂等键与溯源元数据；
+    - raw_user_text 保留用户原话；position_revisions 为 append-only 修订史。
     """
 
     id: str
@@ -75,6 +92,8 @@ class ContentJob(BaseModel):
     generator_name: str | None = None
     generator_version: str | None = None
     content_fingerprint: str | None = None
+    raw_user_text: str = ""
+    position_revisions: list[PositionRevision] = Field(default_factory=list)
 
     @field_validator("origin", mode="before")
     @classmethod
