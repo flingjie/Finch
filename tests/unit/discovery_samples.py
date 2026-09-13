@@ -40,7 +40,10 @@ def _post(
 FAMILIAR_VIEW = _post(
     id="fam_1",
     author_id="alice",
-    content="Agent reliability still means replaying the same failure until the graph is deterministic.",
+    content=(
+        "Agent reliability still means replaying the same failure "
+        "until the graph is deterministic."
+    ),
     matched_topics=["agent reliability"],
 )
 
@@ -48,7 +51,10 @@ FAMILIAR_VIEW = _post(
 NEW_AUTHOR = _post(
     id="new_1",
     author_id="newbie_carol",
-    content="First write-up: we checkpoint tool calls before each compensation step. Looking for critique.",
+    content=(
+        "First write-up: we checkpoint tool calls before each compensation step. "
+        "Looking for critique."
+    ),
     matched_topics=["agent reliability", "checkpoint"],
 )
 
@@ -64,7 +70,10 @@ OLD_AUTHOR_NEW_EXPERIMENT = _post(
 CROSS_DOMAIN_METHOD = _post(
     id="cross_1",
     author_id="db_dave",
-    content="Saga compensation tables taught us to separate intent from side effects — same pattern as agent handoff.",
+    content=(
+        "Saga compensation tables taught us to separate intent from side effects "
+        "— same pattern as agent handoff."
+    ),
     matched_topics=["distributed systems", "compensation"],
 )
 
@@ -72,7 +81,10 @@ CROSS_DOMAIN_METHOD = _post(
 LEARN_ONLY = _post(
     id="learn_1",
     author_id="observer_erin",
-    content="Annotated notes on human–agent handoff checklists from three production outages (no ask).",
+    content=(
+        "Annotated notes on human–agent handoff checklists from three "
+        "production outages (no ask)."
+    ),
     matched_topics=["human handoff"],
 )
 
@@ -92,7 +104,10 @@ MISSING_SOURCE = ExternalPost(
 DUPLICATE_OF_FAMILIAR = _post(
     id="fam_1_dup",
     author_id="alice",
-    content="Agent reliability still means replaying the same failure until the graph is deterministic.",
+    content=(
+        "Agent reliability still means replaying the same failure "
+        "until the graph is deterministic."
+    ),
     matched_topics=["agent reliability"],
 )
 

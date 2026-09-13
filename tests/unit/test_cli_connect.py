@@ -379,8 +379,8 @@ def test_connect_more_no_network(monkeypatch, tmp_path):
     snap = cli._persist_discovery(ws, result)
     assert snap is not None
     # Present first only
-    from finch.storage.repositories import PresentationRecordRepository
     from finch.engagement.models import PresentationRecord
+    from finch.storage.repositories import PresentationRecordRepository
 
     PresentationRecordRepository(ws).upsert(
         PresentationRecord(

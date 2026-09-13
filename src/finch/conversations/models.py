@@ -16,11 +16,28 @@ class ThreadStatus(StrEnum):
     DEFERRED = "deferred"
 
 
-class ThreadNote(BaseModel):
-    """带来源的线程笔记（共识 / 分歧 / 未解问题 / 实验）。"""
+class ObservationKind(StrEnum):
+    """线程内观察笔记种类（问题 / 当前办法 / 使用反馈）。"""
 
+    PROBLEM = "problem"
+    WORKAROUND = "workaround"
+    USAGE_FEEDBACK = "usage_feedback"
+
+
+class ThreadNote(BaseModel):
+    """带来源的线程笔记。
+
+    旧笔记可能只有 ``text`` + 可选 ``source_ref``（``id`` 空、``kind`` 空）。
+    新的 observation 笔记要求稳定 ``id``、必填 ``source_ref`` 与 ``kind``。
+    """
+
+    id: str = ""
     text: str
     source_ref: str | None = None
+    kind: ObservationKind | None = None
+    tool_ref: str | None = None
+    supersedes_id: str | None = None
+    superseded: bool = False
 
 
 class CommitmentStatus(StrEnum):
@@ -74,6 +91,7 @@ class ConversationThread(BaseModel):
     agreement_notes: list[ThreadNote] = Field(default_factory=list)
     disagreement_notes: list[ThreadNote] = Field(default_factory=list)
     experiment_notes: list[ThreadNote] = Field(default_factory=list)
+    observation_notes: list[ThreadNote] = Field(default_factory=list)
     commitments: list[Commitment] = Field(default_factory=list)
     experiments: list[MiniExperiment] = Field(default_factory=list)
     root_message_id: str | None = None
@@ -81,3 +99,4 @@ class ConversationThread(BaseModel):
     defer_until: datetime | None = None
     last_activity_at: datetime | None = None
     status: ThreadStatus = ThreadStatus.ACTIVE
+    revision: int = 1

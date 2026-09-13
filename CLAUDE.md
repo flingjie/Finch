@@ -4,7 +4,7 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 
 ## Project
 
-Finch is a peer-connection and personal-expression system, not a content-generation tool. It discovers peers worth long-term conversation via `gh` (GitHub evidence) and `opencli` (Twitter/X), understands the problems they're solving, prepares valuable interactions, and threads those into ongoing relationship context — then forms the user's own viewpoints from practice and conversation and writes content that sounds like them. Content production is the *result* of connection, not the goal. The north-star metric is how many "contextual, continuable" peer relationships are added or deepened each week. Canonical definition: `docs/product-contract.md`. Finch is fully standalone — no builderDNA dependency.
+Finch is a peer-connection and personal-expression system, not a content-generation tool. It discovers peers and real tool users worth long-term conversation via `gh` (GitHub evidence) and `opencli` (Twitter/X), understands the situations they're in, prepares valuable interactions, and threads those into ongoing relationship context — then forms the user's own viewpoints from practice and conversation and writes content that sounds like them. Problem/workaround/usage feedback lives as conversation-thread notes, not a separate problem or payments domain. Content production is the _result_ of connection, not the goal. The north-star metric is how many "contextual, continuable" peer relationships are added or deepened each week. Canonical definition: `docs/product-contract.md`. Finch is fully standalone — no builderDNA dependency.
 
 ## Commands
 
@@ -80,6 +80,6 @@ Pipeline files: `models.py` (Opportunity + proposals) → `search.py` → `peer_
 ## Conventions
 
 - Python 3.12+; Pydantic 2 models (`StrEnum`/`Literal`/`Field`); domain models serialize to YAML/Markdown/JSONL files keyed by deterministic IDs, written via `Workspace.atomic_write` (idempotent overwrite).
-- Domain services are deterministic and single-threaded — state transitions, retries, and fault isolation (try/except) live in Python; no `asyncio.gather`. Bounded `ThreadPoolExecutor` parallelism is allowed *inside* a service step for independent I/O-bound subprocess calls (codex/git/opencli), always via `pool.map` so result order matches serial exactly.
+- Domain services are deterministic and single-threaded — state transitions, retries, and fault isolation (try/except) live in Python; no `asyncio.gather`. Bounded `ThreadPoolExecutor` parallelism is allowed _inside_ a service step for independent I/O-bound subprocess calls (codex/git/opencli), always via `pool.map` so result order matches serial exactly.
 - Bilingual (Chinese/English) docstrings are common; match the surrounding file.
 - Ruff selects `E,F,I,B,UP`; alembic migration scripts are excluded from linting.

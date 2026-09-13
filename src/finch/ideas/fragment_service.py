@@ -56,6 +56,10 @@ be rewritten as the user's own experience.
 Rules:
 - Only form a stance from the user's own experience, the user's explicit judgments, or
   verified conversation conclusions. External author viewpoints stay third-person.
+- observation_notes with kind problem / workaround / usage_feedback are OTHER-PARTY or
+  shared-work reports — put them in boundaries.known as "peer report: …"; never rewrite
+  as first-person lived practice unless the user separately attests their own practice.
+- Do not invent savings percentages or "payment validated" claims.
 - boundaries.known only holds verified conclusions; unresolved disagreements go to
   boundaries.unknown.
 - communication_goal: continue_discussion | invite_counterexample | summarize_practice |
@@ -187,6 +191,13 @@ class FragmentService:
         agreements / disagreements / possible_experiments），来源可追溯到 thread 与原始互动。
         """
         interactions = interactions or []
+        from finch.conversations.service import active_observation_notes
+
+        active_notes = active_observation_notes(thread)
+        peer_reports = [
+            f"peer report ({n.kind.value if n.kind else 'note'}): {n.text}"
+            for n in active_notes
+        ]
         thread_text = json.dumps(
             {
                 "topic": thread.topic,
@@ -194,12 +205,37 @@ class FragmentService:
                 "agreements": thread.agreements,
                 "disagreements": thread.disagreements,
                 "possible_experiments": thread.possible_experiments,
+                "observation_notes": [
+                    {
+                        "kind": n.kind.value if n.kind else None,
+                        "text": n.text,
+                        "source_ref": n.source_ref,
+                        "tool_ref": n.tool_ref,
+                    }
+                    for n in active_notes
+                ],
+                "open_commitments": [
+                    {"text": c.text, "owner": c.owner, "source_ref": c.source_ref}
+                    for c in thread.commitments
+                    if c.status.value == "open"
+                ],
             },
             ensure_ascii=False,
         )
         out = cast(
             IdeaDraftOutput,
             self.runner.run(_THREAD_PROMPT.format(thread=thread_text), IdeaDraftOutput),
+        )
+        # Enforce peer-report boundaries even if the model softens them.
+        merged_known = list(dict.fromkeys([*peer_reports, *out.boundaries.known]))
+        out = out.model_copy(
+            update={
+                "boundaries": IdeaBoundaries(
+                    known=merged_known,
+                    inferred=out.boundaries.inferred,
+                    unknown=out.boundaries.unknown,
+                )
+            }
         )
         source_refs = [SourceRef(type="conversation", ref=thread.id, summary=thread.topic)]
         source_refs.extend(

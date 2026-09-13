@@ -24,7 +24,12 @@ from .content.voice import (
 )
 from .content.writer import rewrite_with_instruction
 from .conversations.models import ConversationThread
-from .conversations.service import ConversationService
+from .conversations.service import (
+    ConversationService,
+    ConversationServiceError,
+    active_observation_notes,
+    commitment_id_for,
+)
 from .drafts.service import DraftCreateResult, DraftService
 from .engagement.flow import EngagementRunResult, run_discovery_engagement_flow
 from .engagement.metrics import compute_relationship_metrics
@@ -227,8 +232,17 @@ def _action_label(action: InteractionAction) -> str:
 
 
 def _thread_next_step(thread: ConversationThread) -> str:
-    if thread.open_questions:
+    open_commitments = [c for c in thread.commitments if c.status.value == "open"]
+    notes = active_observation_notes(thread)
+    if open_commitments:
+        return "履行或确认自己的开放承诺"
+    if thread.open_questions or thread.open_question_notes:
         return "回答未解问题或提出实验"
+    if notes:
+        kinds = {n.kind.value for n in notes if n.kind is not None}
+        if "usage_feedback" in kinds:
+            return "基于使用反馈准备一条有上下文的跟进"
+        return "澄清 observation 中仍未知的问题"
     return "已无未解问题；确认是否关闭或延续新主题"
 
 
@@ -382,15 +396,24 @@ def _render_proposal_cards(
 
 
 def _render_thread_card(thread: ConversationThread, *, for_follow_up: bool = False) -> str:
-    """对话线索决策卡：话题 / 未解问题 / 建议下一步。"""
+    """对话线索决策卡：话题 / 未解问题 / 观察笔记 / 建议下一步。"""
     lines = [f"话题: {thread.topic}"]
     if thread.open_questions:
         lines.append(f"未解问题: {'; '.join(thread.open_questions)}")
-    if for_follow_up or thread.open_questions:
+    notes = active_observation_notes(thread)
+    if notes:
+        summary = "; ".join(
+            f"{n.kind.value if n.kind else 'note'}: {n.text[:60]}" for n in notes[:3]
+        )
+        lines.append(f"观察: {summary}")
+    open_c = [c for c in thread.commitments if c.status.value == "open"]
+    if open_c:
+        lines.append(f"开放承诺: {len(open_c)}")
+    if for_follow_up or thread.open_questions or notes or open_c:
         lines.append(f"建议下一步: {_thread_next_step(thread)}")
     if for_follow_up:
         lines.append(f"uv run finch conversations show {thread.id}")
-    elif thread.open_questions:
+    elif thread.open_questions or notes or open_c:
         lines.append(f"uv run finch conversations follow-up {thread.id}")
     else:
         lines.append(f"uv run finch conversations show {thread.id}")
@@ -426,6 +449,7 @@ def _render_thread_detail(thread: ConversationThread) -> str:
         f"话题: {thread.topic}",
         f"同行: {thread.peer_id}",
         f"状态: {thread.status.value}",
+        f"revision: {thread.revision}",
     ]
     if thread.open_questions:
         lines.append(f"未解问题: {'; '.join(thread.open_questions)}")
@@ -435,7 +459,19 @@ def _render_thread_detail(thread: ConversationThread) -> str:
         lines.append(f"分歧: {', '.join(thread.disagreements)}")
     if thread.possible_experiments:
         lines.append(f"可实验: {', '.join(thread.possible_experiments)}")
-    if thread.open_questions:
+    notes = active_observation_notes(thread)
+    if notes:
+        lines.append("观察笔记:")
+        for n in notes:
+            kind = n.kind.value if n.kind else "note"
+            tool = f" tool={n.tool_ref}" if n.tool_ref else ""
+            lines.append(f"  - [{kind}] {n.text} (src={n.source_ref}{tool})")
+    open_c = [c for c in thread.commitments if c.status.value == "open"]
+    if open_c:
+        lines.append("开放承诺:")
+        for c in open_c:
+            lines.append(f"  - {c.text or c.id} (src={c.source_ref})")
+    if thread.open_questions or notes or open_c:
         lines.append(f"uv run finch conversations follow-up {thread.id}")
     return "\n".join(lines)
 
@@ -1132,15 +1168,31 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
         if (r.body or r.published_body)
     ]
     idea_diffs = idea_revision_diff_lines(ContentJobRepository(ws).list_jobs())
+    from finch.conversations.service import active_observation_notes
+
+    all_threads = ConversationThreadRepository(ws).list_all()
+    observation_lines: list[str] = []
+    commitment_lines: list[str] = []
+    for t in all_threads:
+        for n in active_observation_notes(t):
+            kind = n.kind.value if n.kind else "note"
+            observation_lines.append(f"[{t.id}] {kind}: {n.text[:120]}")
+        for c in t.commitments:
+            if c.status.value == "open":
+                commitment_lines.append(
+                    f"[{t.id}] open ({c.owner}): {c.text or c.id}"
+                )
     try:
         reflection = WeeklyReflectionService(runner).reflect(
             report,
             relationship_metrics=rel_metrics,
             feedbacks=window_feedbacks,
-            threads=ConversationThreadRepository(ws).list_all(),
+            threads=all_threads,
             voice_profile=load_voice_profile(settings.paths.voice_profile_path),
             message_excerpts=message_excerpts,
             idea_diffs=idea_diffs,
+            observation_notes=observation_lines,
+            open_commitments=commitment_lines,
         )
     except (RuntimeError, StructuredOutputError) as exc:
         typer.echo(f"weekly reflection failed: {exc}")
@@ -1749,6 +1801,7 @@ def connect_refresh(
     ws.ensure()
     previous = DiscoverySnapshotRepository(ws).latest()
     result = _run_discovery(settings)
+    snapshot: DiscoverySnapshot | None
     if result.status == "failed" and previous is not None:
         snapshot = previous
         coverage = {
@@ -2256,14 +2309,31 @@ def conversations_follow_up(
         typer.echo(f"conversation not found: {conversation_id}")
         raise typer.Exit(code=1)
     open_questions = thread.open_questions
+    notes = [
+        {
+            "id": n.id,
+            "kind": n.kind.value if n.kind else None,
+            "text": n.text,
+            "source_ref": n.source_ref,
+            "tool_ref": n.tool_ref,
+        }
+        for n in active_observation_notes(thread)
+    ]
     next_step = _thread_next_step(thread)
     if as_json:
         typer.echo(json.dumps({
             "conversation_id": thread.id,
             "topic": thread.topic,
             "open_questions": open_questions,
+            "observation_notes": notes,
+            "commitments": [
+                c.model_dump(mode="json")
+                for c in thread.commitments
+                if c.status.value == "open"
+            ],
             "pending_triggers": [t.value for t in thread.pending_triggers],
             "next_step": next_step,
+            "revision": thread.revision,
         }, ensure_ascii=False, indent=2))
         return
     typer.echo(_render_thread_card(thread, for_follow_up=True))
@@ -2279,10 +2349,19 @@ def conversations_ingest(
     direction: str = typer.Option("unknown", "--direction", help="outbound|inbound|unknown"),
     topic: str = typer.Option("general", "--topic"),
     attested: bool = typer.Option(False, "--attested", help="用户声明属实"),
+    note_kind: str | None = typer.Option(
+        None, "--note-kind", help="problem|workaround|usage_feedback"
+    ),
+    note: str | None = typer.Option(None, "--note", help="观察笔记正文"),
+    tool_ref: str | None = typer.Option(None, "--tool-ref", help="可选工具名/链接"),
+    notes_file: str | None = typer.Option(None, "--notes-file", help="多条笔记 JSON 列表"),
+    expected_revision: int | None = typer.Option(
+        None, "--expected-revision", help="写入笔记时的期望 revision"
+    ),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
     """导入一条已发生的互动事实（不要求发布批准；幂等保留原发生时间）。"""
-    from finch.conversations.models import FollowUpTrigger
+    from finch.conversations.models import FollowUpTrigger, ObservationKind
     from finch.engagement.models import VerificationStatus
 
     settings = load_settings()
@@ -2323,14 +2402,174 @@ def conversations_ingest(
     thread = svc.append_interaction(thread, rec.id, occurred_at=rec.occurred_at)
     if direction == "inbound":
         thread = svc.add_trigger(thread, FollowUpTrigger.NEW_REPLY)
+
+    note_payloads: list[dict] = []
+    if notes_file:
+        try:
+            loaded = json.loads(Path(notes_file).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            typer.echo(f"invalid --notes-file: {exc}")
+            raise typer.Exit(code=1) from exc
+        if not isinstance(loaded, list):
+            typer.echo("--notes-file must be a JSON list")
+            raise typer.Exit(code=1)
+        note_payloads.extend(loaded)
+    if note_kind or note:
+        if not note_kind or not note:
+            typer.echo("--note-kind and --note must be provided together")
+            raise typer.Exit(code=1)
+        note_payloads.append(
+            {"kind": note_kind, "text": note, "tool_ref": tool_ref}
+        )
+
+    if note_payloads:
+        rev = expected_revision if expected_revision is not None else thread.revision
+        known = set(thread.interaction_ids) | {rec.id}
+        for payload in note_payloads:
+            if not isinstance(payload, dict):
+                typer.echo("each note must be a JSON object")
+                raise typer.Exit(code=1)
+            try:
+                kind_raw = payload.get("kind")
+                if not isinstance(kind_raw, str) or not kind_raw.strip():
+                    raise ValueError("note kind is required")
+                tool_raw = payload.get("tool_ref")
+                supersedes_raw = payload.get("supersedes_id")
+                obs = svc.build_observation_note(
+                    kind=ObservationKind(kind_raw),
+                    text=str(payload.get("text") or ""),
+                    source_ref=str(payload.get("source_ref") or rec.id),
+                    tool_ref=None if tool_raw is None else str(tool_raw),
+                    supersedes_id=None if supersedes_raw is None else str(supersedes_raw),
+                )
+                thread = svc.upsert_observation_note(
+                    thread,
+                    obs,
+                    expected_revision=rev,
+                    known_interaction_ids=known,
+                )
+                rev = thread.revision
+            except (ConversationServiceError, ValueError) as exc:
+                typer.echo(f"note rejected: {exc}")
+                raise typer.Exit(code=1) from exc
+
     threads.upsert(thread)
     if as_json:
         typer.echo(json.dumps({
             "record": rec.model_dump(mode="json"),
             "thread_id": thread.id,
+            "revision": thread.revision,
+            "observation_notes": [
+                n.model_dump(mode="json") for n in active_observation_notes(thread)
+            ],
         }, ensure_ascii=False, indent=2))
         return
-    typer.echo(f"ingested {rec.id} into {thread.id}")
+    typer.echo(f"ingested {rec.id} into {thread.id} (rev {thread.revision})")
+
+
+@conversations_app.command("note")
+def conversations_note(
+    conversation_id: str = typer.Argument(..., help="conversation id"),
+    path: str = typer.Option(..., "--file", help="note.json"),
+    expected_revision: int = typer.Option(..., "--expected-revision"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """向线索追加一条 observation 笔记（带 revision 校验）。"""
+    from finch.conversations.models import ObservationKind
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = ConversationThreadRepository(ws)
+    thread = repo.get(conversation_id)
+    if thread is None:
+        typer.echo(f"conversation not found: {conversation_id}")
+        raise typer.Exit(code=1)
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        typer.echo(f"invalid note file: {exc}")
+        raise typer.Exit(code=1) from exc
+    if not isinstance(raw, dict):
+        typer.echo("note file must be a JSON object")
+        raise typer.Exit(code=1)
+    svc = ConversationService()
+    try:
+        kind_raw = raw.get("kind")
+        if not isinstance(kind_raw, str) or not kind_raw.strip():
+            raise ValueError("note kind is required")
+        tool_raw = raw.get("tool_ref")
+        supersedes_raw = raw.get("supersedes_id")
+        obs = svc.build_observation_note(
+            kind=ObservationKind(kind_raw),
+            text=str(raw.get("text") or ""),
+            source_ref=str(raw.get("source_ref") or ""),
+            tool_ref=None if tool_raw is None else str(tool_raw),
+            supersedes_id=None if supersedes_raw is None else str(supersedes_raw),
+        )
+        updated = svc.upsert_observation_note(
+            thread,
+            obs,
+            expected_revision=expected_revision,
+            known_interaction_ids=set(thread.interaction_ids),
+        )
+    except (ConversationServiceError, ValueError) as exc:
+        typer.echo(f"note rejected: {exc}")
+        raise typer.Exit(code=1) from exc
+    repo.upsert(updated)
+    if as_json:
+        typer.echo(updated.model_dump_json(indent=2))
+    else:
+        typer.echo(f"noted {obs.id} on {updated.id} revision={updated.revision}")
+
+
+@conversations_app.command("commit")
+def conversations_commit(
+    conversation_id: str = typer.Argument(..., help="conversation id"),
+    text: str = typer.Option(..., "--text", help="承诺正文（须用户明确）"),
+    source_ref: str = typer.Option(..., "--source-ref", help="InteractionRecord id"),
+    due: str | None = typer.Option(None, "--due", help="到期时间 ISO8601"),
+    owner: str = typer.Option("self", "--owner", help="self|peer"),
+    expected_revision: int | None = typer.Option(None, "--expected-revision"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """记录一条明确承诺（不能从礼貌回复推断）。"""
+    from finch.conversations.models import Commitment
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = ConversationThreadRepository(ws)
+    thread = repo.get(conversation_id)
+    if thread is None:
+        typer.echo(f"conversation not found: {conversation_id}")
+        raise typer.Exit(code=1)
+    if source_ref not in thread.interaction_ids:
+        # Also allow any known record id in workspace
+        if InteractionRecordRepository(ws).get(source_ref) is None:
+            typer.echo(f"source_ref not found: {source_ref}")
+            raise typer.Exit(code=1)
+    due_at = datetime.fromisoformat(due) if due else None
+    commitment = Commitment(
+        id=commitment_id_for(source_ref, text),
+        owner=owner,  # type: ignore[arg-type]
+        source_ref=source_ref,
+        text=text,
+        due_at=due_at,
+    )
+    svc = ConversationService()
+    try:
+        updated = svc.add_commitment(
+            thread, commitment, expected_revision=expected_revision
+        )
+    except ConversationServiceError as exc:
+        typer.echo(f"commit rejected: {exc}")
+        raise typer.Exit(code=1) from exc
+    repo.upsert(updated)
+    if as_json:
+        typer.echo(commitment.model_dump_json(indent=2))
+    else:
+        typer.echo(f"commitment {commitment.id} on {updated.id}")
 
 
 @conversations_app.command("defer")

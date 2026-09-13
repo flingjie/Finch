@@ -4,7 +4,12 @@ from datetime import datetime
 
 from finch.content.jobs import AuthorPosition
 from finch.content.models import RecommendedFormat
-from finch.conversations.models import ConversationThread, ThreadStatus
+from finch.conversations.models import (
+    ConversationThread,
+    ObservationKind,
+    ThreadNote,
+    ThreadStatus,
+)
 from finch.engagement.models import ConversationEvidence, InteractionRecord
 from finch.ideas.fragment_service import FragmentService, IdeaDraftOutput
 from finch.ideas.models import IdeaBoundaries
@@ -95,6 +100,30 @@ def test_from_thread_preserves_communication_goal():
     svc = FragmentService(FakeRunner(out))
     idea = svc.from_thread(thread)
     assert idea.communication_goal == "invite_counterexample"
+
+
+def test_from_thread_merges_peer_usage_notes_into_boundaries():
+    thread = ConversationThread(
+        id="thread_1",
+        peer_id="p",
+        topic="tool trial",
+        observation_notes=[
+            ThreadNote(
+                id="n1",
+                text="试了一下，导入比手工快",
+                source_ref="rec_1",
+                kind=ObservationKind.USAGE_FEEDBACK,
+                tool_ref="tool-a",
+            )
+        ],
+    )
+    svc = FragmentService(FakeRunner(_out()))
+    idea = svc.from_thread(thread)
+    assert any(
+        k.startswith("peer report (usage_feedback):") and "导入比手工快" in k
+        for k in idea.boundaries.known
+    )
+    assert idea.origin == "conversation"
 
 
 

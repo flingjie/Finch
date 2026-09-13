@@ -25,5 +25,13 @@
 ## hard-fail 不被平均分掩盖
 
 - Evidence / Safety 门禁是硬失败，命中即停，不进加权平均分。
-- Safety hard-fail：`secret_detected`、`private_repo_content`、`nonexistent_commit`、`twitter_write_command`。
+- Safety hard-fail：`secret_detected`、`private_repo_content`、`nonexistent_commit`、`twitter_write_command`、
+  无来源的效果数字 / 「用户愿意付费已验证」、把对方试用反馈写成作者亲历。
 - Evidence 硬门禁：`evidence_card_id` 非空且 ∈ 匹配集、蕴含成立、confidence `assertable`（VERIFIED/SUPPORTED/USER_CONFIRMED）。
+
+## 对话反馈与成果归属
+
+- 线程 `observation_notes`（problem / workaround / usage_feedback）是对方或共同工作的记录，
+  不是作者独自取得效果的证明。
+- 对方说「更快了」不得改写为精确节省百分比；无付款证据不得写「付费已验证」。
+- 私人对话默认不直接公开引用；公开案例需脱敏或已允许公开的材料。

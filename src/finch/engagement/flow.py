@@ -28,6 +28,7 @@ from .scoring import prefilter_posts, rank_candidates, score_posts
 from .search import (
     PostSearchFailure,
     PostSearchProvider,
+    QueryClassCoverage,
     RedditPostSearchProvider,
     XPostSearchProvider,
     search_engagement_posts,
@@ -95,11 +96,30 @@ def _render_failures(failures: list[PostSearchFailure]) -> list[str]:
     return lines
 
 
+def _render_coverage(coverage: list[QueryClassCoverage]) -> list[str]:
+    if not coverage:
+        return []
+    lines = ["query coverage:"]
+    for item in coverage:
+        gap = ""
+        if item.queries == 0:
+            gap = " (no queries configured)"
+        elif item.returned == 0:
+            gap = " (coverage gap: zero returned)"
+        fail = f", failures={len(item.failure_reasons)}" if item.failure_reasons else ""
+        lines.append(
+            f"  - {item.query_class}: queries={item.queries} returned={item.returned} "
+            f"kept={item.kept}{fail}{gap}"
+        )
+    return lines
+
+
 def _render_summary(
     *,
     posts_found: int,
     opportunities: list[Opportunity],
     failures: list[PostSearchFailure],
+    coverage: list[QueryClassCoverage] | None = None,
 ) -> str:
     lines = [
         f"engagement: {posts_found} post(s) found, {len(opportunities)} opportunity(ies)"
@@ -110,13 +130,20 @@ def _render_summary(
         lines.append(f"   - why: {_snippet(opp.why_relevant)}")
         if opp.opening:
             lines.append(f"   - opening: {_snippet(opp.opening)}")
+    if coverage:
+        lines.extend(_render_coverage(coverage))
     if failures:
         lines.extend(_render_failures(failures))
     return "\n".join(lines)
 
 
-def _render_empty(failures: list[PostSearchFailure]) -> str:
+def _render_empty(
+    failures: list[PostSearchFailure],
+    coverage: list[QueryClassCoverage] | None = None,
+) -> str:
     lines = ["engagement: no posts found"]
+    if coverage:
+        lines.extend(_render_coverage(coverage))
     if failures:
         lines.extend(_render_failures(failures))
     return "\n".join(lines)
@@ -260,7 +287,7 @@ def run_discovery_engagement_flow(
             opportunities=[],
             failures=outcome.failures,
             status="empty",
-            summary=_render_empty(outcome.failures),
+            summary=_render_empty(outcome.failures, outcome.coverage),
             context_fingerprint=ctx_fp,
         )
 
@@ -276,6 +303,7 @@ def run_discovery_engagement_flow(
             posts_found=len(outcome.posts),
             opportunities=opportunities,
             failures=outcome.failures,
+            coverage=outcome.coverage,
         ),
         context_fingerprint=ctx_fp,
     )

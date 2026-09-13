@@ -73,6 +73,11 @@ interests:
   adjacent_queries:
     - checkpoint
     - compensation
+  usage_queries:
+    - "manual regression triage"
+    - "how do you currently reconcile exports"
+    - "workaround for flaky agent evals"
+    - "spent all day copying between tools"
   excluded_content:
     - AI news
     - funding and valuation

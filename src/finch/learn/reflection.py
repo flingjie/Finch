@@ -17,7 +17,7 @@ from finch.llm.base import StructuredInferenceRunner
 
 _REFLECT_PROMPT = """\
 You write a weekly reflection centered on meaningful connections and repeat interactions.
-Do not produce a list of generic advice.
+Do not produce a list of generic advice. Do not invent a commercial funnel or payment score.
 
 Answer exactly five questions:
 1. Who did the user form a real back-and-forth exchange with this week?
@@ -26,8 +26,20 @@ Answer exactly five questions:
 4. Which three relationships should be continued next week?
 5. Which expressions sounded more and more like the user?
 
+Also weave in these fact examples when present (say honestly if absent):
+- Which exchange concretely helped someone, and what evidence (notes/interactions)?
+- Which feedback changed the next reply or material to provide?
+- Which of the user's own commitments are done vs still open?
+- Which practice formed an expressible viewpoint?
+
 ## Relationship metrics (computed in code)
 {relationship_metrics}
+
+## Observation / usage notes (computed in code)
+{observation_notes}
+
+## Open commitments (computed in code)
+{open_commitments}
 
 ## Deterministic metrics (computed in code)
 {metrics}
@@ -84,6 +96,8 @@ class WeeklyReflectionService:
         voice_profile: VoiceProfile | None = None,
         message_excerpts: list[str] | None = None,
         idea_diffs: list[str] | None = None,
+        observation_notes: list[str] | None = None,
+        open_commitments: list[str] | None = None,
     ) -> WeeklyReflection:
         metrics = {
             "reviewed_drafts": report.reviewed_drafts,
@@ -106,6 +120,8 @@ class WeeklyReflectionService:
             self.runner.run(
                 _REFLECT_PROMPT.format(
                     relationship_metrics=_render_metrics(rel.model_dump()),
+                    observation_notes=_render_lines(observation_notes or []),
+                    open_commitments=_render_lines(open_commitments or []),
                     metrics=_render_metrics(metrics),
                     threads=_render_threads(threads or []),
                     messages=_render_message_excerpts(message_excerpts or []),
@@ -120,6 +136,12 @@ class WeeklyReflectionService:
 
 def _render_metrics(metrics: dict) -> str:
     return "\n".join(f"- {k}: {v}" for k, v in metrics.items())
+
+
+def _render_lines(lines: list[str]) -> str:
+    if not lines:
+        return "(none — no trial/usage activity this week is fine)"
+    return "\n".join(f"- {line}" for line in lines[:12])
 
 
 def _render_feedbacks(feedbacks: list[Feedback]) -> str:

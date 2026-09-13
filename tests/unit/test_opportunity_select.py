@@ -1,6 +1,14 @@
 """交流机会选择单元测试。"""
 
-from datetime import UTC, datetime
+
+from discovery_samples import (
+    CROSS_DOMAIN_METHOD,
+    FAMILIAR_VIEW,
+    LEARN_ONLY,
+    MISSING_SOURCE,
+    NEW_AUTHOR,
+    OLD_AUTHOR_NEW_EXPERIMENT,
+)
 
 from finch.engagement.models import ConversationScore, ExternalPost, SuggestedMode
 from finch.engagement.opportunity import (
@@ -10,14 +18,6 @@ from finch.engagement.opportunity import (
     select_opportunity_set,
 )
 from finch.engagement.scoring import ScoredPost
-from discovery_samples import (
-    CROSS_DOMAIN_METHOD,
-    FAMILIAR_VIEW,
-    LEARN_ONLY,
-    MISSING_SOURCE,
-    NEW_AUTHOR,
-    OLD_AUTHOR_NEW_EXPERIMENT,
-)
 
 
 def _scored(post: ExternalPost, *, total: float = 0.85) -> ScoredPost:

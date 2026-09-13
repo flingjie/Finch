@@ -143,14 +143,58 @@ def test_build_queries_includes_questions_and_adjacent():
         current_questions=["how to recover from partial tool failure?"],
         explore_directions=["human handoff"],
         adjacent_queries=["checkpoint", "补偿"],
+        usage_queries=["manual regression triage"],
     )
     assert build_queries(interests) == [
         "agent reliability",
-        "how to recover from partial tool failure?",
         "human handoff",
+        "how to recover from partial tool failure?",
+        "manual regression triage",
         "checkpoint",
         "补偿",
     ]
+
+
+def test_build_tagged_queries_peer_usage_adjacent():
+    from finch.engagement.search import build_tagged_queries
+
+    interests = InterestsSettings(
+        long_term_interests=["agent reliability"],
+        explore_directions=["durable execution"],
+        current_questions=["manual regression"],
+        usage_queries=["how do you currently reconcile exports"],
+        adjacent_queries=["checkpoint"],
+    )
+    tagged = build_tagged_queries(interests)
+    peer = [t.text for t in tagged if t.query_class == "peer"]
+    usage = [t.text for t in tagged if t.query_class == "usage"]
+    adjacent = [t.text for t in tagged if t.query_class == "adjacent"]
+    assert peer == ["agent reliability", "durable execution"]
+    assert usage == ["manual regression", "how do you currently reconcile exports"]
+    assert adjacent == ["checkpoint"]
+
+
+def test_search_reports_coverage_gap_for_empty_usage_class():
+    class FakeClient:
+        def search(self, query, *, product="top", limit=20):
+            return [_tweet(id=f"id_{query}", text=query, url=f"https://x.com/a/status/{hash(query)}")]
+
+    outcome = search_engagement_posts(
+        [XPostSearchProvider(client=FakeClient())],
+        InterestsSettings(
+            long_term_interests=["agent reliability"],
+            usage_queries=[],
+            current_questions=[],
+            adjacent_queries=[],
+        ),
+        EngagementSettings(max_posts_scanned=30),
+    )
+    by_class = {c.query_class: c for c in outcome.coverage}
+    assert by_class["peer"].queries == 1
+    assert by_class["peer"].returned >= 1
+    assert by_class["usage"].queries == 0
+    assert by_class["usage"].returned == 0
+    assert outcome.posts
 
 
 def test_build_queries_works_without_current_questions():

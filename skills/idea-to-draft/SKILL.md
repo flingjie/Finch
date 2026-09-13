@@ -35,6 +35,7 @@ description: >
 - 不从外部信号补造个人经历（见 `_shared/evidence-policy.md`）。
 - 不自动发布（见 `_shared/publication-safety.md`）。
 - 不把 AI 生成文本直接加入 VoiceProfile（→ `voice-profile`）。
+- 无来源的效果数字、付费「已验证」主张、以及把对方试用写成自己亲历 → Critic 硬失败。
 
 ## 参考
 

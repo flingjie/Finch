@@ -169,6 +169,7 @@ class InterestsSettings(BaseModel):
     explore_directions: list[str] = Field(default_factory=list)
     excluded_content: list[str] = Field(default_factory=list)
     adjacent_queries: list[str] = Field(default_factory=list)
+    usage_queries: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod

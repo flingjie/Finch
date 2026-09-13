@@ -6,8 +6,8 @@
 
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Literal, Protocol
 
 from finch.reddit.models import RedditPost
 from finch.reddit.opencli_client import RedditOpenCliClient
@@ -16,6 +16,8 @@ from finch.twitter.opencli_client import OpenCliClient
 
 from ..settings import EngagementSettings, InterestsSettings
 from .models import ExternalPost, Platform
+
+QueryClass = Literal["peer", "usage", "adjacent"]
 
 
 class PostSearchError(RuntimeError):
@@ -42,14 +44,35 @@ class PostSearchFailure:
     platform: Platform
     query: str | None
     reason: str
+    query_class: QueryClass | None = None
+
+
+@dataclass(frozen=True)
+class TaggedQuery:
+    """带类别的查询词：peer / usage / adjacent。"""
+
+    text: str
+    query_class: QueryClass
+
+
+@dataclass
+class QueryClassCoverage:
+    """单类查询覆盖统计；空类如实报告，不用低质量结果凑数。"""
+
+    query_class: QueryClass
+    queries: int = 0
+    returned: int = 0
+    kept: int = 0
+    failure_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass
 class EngagementSearchOutcome:
-    """一次搜索汇总：有效帖子 + 部分失败记录。"""
+    """一次搜索汇总：有效帖子 + 部分失败记录 + 按类覆盖。"""
 
     posts: list[ExternalPost]
     failures: list[PostSearchFailure]
+    coverage: list[QueryClassCoverage] = field(default_factory=list)
 
 
 class PostSearchProvider(Protocol):
@@ -181,22 +204,28 @@ def fetch_post_by_url(
     return external.model_copy(update={"matched_topics": [topic] if topic else []})
 
 
-def build_queries(interests: InterestsSettings) -> list[str]:
-    """由长期兴趣 + 当前问题 + 探索方向 + 相邻机制查询生成查询词列表。"""
-    queries: list[str] = []
+def build_tagged_queries(interests: InterestsSettings) -> list[TaggedQuery]:
+    """同行 / 使用情境 / 相邻领域分类去重；跨类同一词只保留先出现的类别。"""
+    out: list[TaggedQuery] = []
     seen: set[str] = set()
-    for term in [
-        *interests.long_term_interests,
-        *interests.current_questions,
-        *interests.explore_directions,
-        *interests.adjacent_queries,
-    ]:
-        query = term.strip()
-        key = query.casefold()
-        if query and key not in seen:
-            seen.add(key)
-            queries.append(query)
-    return queries
+
+    def _add(terms: Sequence[str], query_class: QueryClass) -> None:
+        for term in terms:
+            query = term.strip()
+            key = query.casefold()
+            if query and key not in seen:
+                seen.add(key)
+                out.append(TaggedQuery(text=query, query_class=query_class))
+
+    _add([*interests.long_term_interests, *interests.explore_directions], "peer")
+    _add([*interests.current_questions, *interests.usage_queries], "usage")
+    _add(interests.adjacent_queries, "adjacent")
+    return out
+
+
+def build_queries(interests: InterestsSettings) -> list[str]:
+    """扁平查询列表（兼容旧调用）；顺序为 peer → usage → adjacent。"""
+    return [q.text for q in build_tagged_queries(interests)]
 
 
 def is_excluded(post: ExternalPost, excluded: Sequence[str]) -> bool:
@@ -250,32 +279,31 @@ def search_engagement_posts(
     *,
     skip_ids: set[str] | None = None,
 ) -> EngagementSearchOutcome:
-    """统一搜索入口：遍历 provider × 查询词，本地过滤、去重并按上限截断。
+    """统一搜索入口：遍历 provider × 分类查询词，本地过滤、去重并按上限截断。
 
-    部分失败处理：单个 provider 或单条查询失败不会中断其余 provider；失败会记录到返回的
-    ``EngagementSearchOutcome.failures`` 中，而非静默吞掉。不可用（``available()`` 为 False）
-    的 provider 也会记录一条 ``query=None`` 的失败，便于调用方感知未启用状态。
+    覆盖 peer / usage / adjacent（有配置时）；部分失败不中断其余查询；空类写入 coverage 缺口。
     """
-    queries = build_queries(interests)
-
-    # available() 只评估一次（它可能反映运行期健康状态，两次调用会错位回放）。
+    tagged = build_tagged_queries(interests)
     availability = [(provider, provider.available()) for provider in providers]
 
-    # 拍平 (provider, query) 搜索任务，保持 provider 主序 + query 次序；available()
-    # 检查与失败注入保持串行，只有真正的 search 调用并行化。
-    tasks: list[tuple[PostSearchProvider, str]] = []
+    tasks: list[tuple[PostSearchProvider, TaggedQuery]] = []
     for provider, available in availability:
         if available:
-            for query in queries:
+            for query in tagged:
                 tasks.append((provider, query))
 
-    def _search(task: tuple[PostSearchProvider, str]) -> list[ExternalPost] | PostSearchFailure:
+    def _search(
+        task: tuple[PostSearchProvider, TaggedQuery],
+    ) -> list[ExternalPost] | PostSearchFailure:
         provider, query = task
         try:
-            return provider.search(query, limit=engagement.max_posts_scanned)
+            return provider.search(query.text, limit=engagement.max_posts_scanned)
         except Exception as exc:  # noqa: BLE001 - 单条失败不得中断整轮
             return PostSearchFailure(
-                platform=provider.platform, query=query, reason=str(exc)
+                platform=provider.platform,
+                query=query.text,
+                reason=str(exc),
+                query_class=query.query_class,
             )
 
     if len(tasks) <= 1:
@@ -284,9 +312,18 @@ def search_engagement_posts(
         with ThreadPoolExecutor(max_workers=max(1, engagement.search_concurrency)) as pool:
             results = list(pool.map(_search, tasks))
 
-    # 按任务顺序回放结果，重新注入 unavailable provider 的失败。
     raw: list[ExternalPost] = []
     failures: list[PostSearchFailure] = []
+    returned_by_class: dict[QueryClass, int] = {"peer": 0, "usage": 0, "adjacent": 0}
+    failure_by_class: dict[QueryClass, list[str]] = {
+        "peer": [],
+        "usage": [],
+        "adjacent": [],
+    }
+    query_count_by_class: dict[QueryClass, int] = {"peer": 0, "usage": 0, "adjacent": 0}
+    for q in tagged:
+        query_count_by_class[q.query_class] += 1
+
     task_iter = iter(results)
     for provider, available in availability:
         if not available:
@@ -296,14 +333,38 @@ def search_engagement_posts(
                 )
             )
             continue
-        for _query in queries:
+        for query in tagged:
             result = next(task_iter)
             if isinstance(result, PostSearchFailure):
                 failures.append(result)
+                failure_by_class[query.query_class].append(result.reason)
             else:
+                returned_by_class[query.query_class] += len(result)
                 raw.extend(result)
 
     cap = max(0, engagement.max_posts_scanned)
     kept = [post for post in raw if not is_excluded(post, interests.excluded_content)]
     posts = dedupe(kept, skip_ids=skip_ids)[:cap]
-    return EngagementSearchOutcome(posts=posts, failures=failures)
+
+    texts: dict[QueryClass, set[str]] = {
+        "peer": {q.text.casefold() for q in tagged if q.query_class == "peer"},
+        "usage": {q.text.casefold() for q in tagged if q.query_class == "usage"},
+        "adjacent": {q.text.casefold() for q in tagged if q.query_class == "adjacent"},
+    }
+    kept_by: dict[QueryClass, int] = {"peer": 0, "usage": 0, "adjacent": 0}
+    for p in posts:
+        for qclass, keys in texts.items():
+            if any(t.casefold() in keys for t in p.matched_topics):
+                kept_by[qclass] += 1
+
+    coverage = [
+        QueryClassCoverage(
+            query_class=qclass,
+            queries=query_count_by_class[qclass],
+            returned=returned_by_class[qclass],
+            kept=kept_by[qclass],
+            failure_reasons=list(failure_by_class[qclass]),
+        )
+        for qclass in ("peer", "usage", "adjacent")
+    ]
+    return EngagementSearchOutcome(posts=posts, failures=failures, coverage=coverage)

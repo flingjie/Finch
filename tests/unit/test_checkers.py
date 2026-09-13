@@ -408,7 +408,7 @@ def test_safety_checker_flags_secret_deterministic():
     draft = _draft(body="my token is ghp_abcdefghijklmnopqrstuvwxyz123")
     result = checker.check(CheckContext(draft=draft, cards=[_card("ev_1")]))
     assert result.passed is False
-    assert result.severity == "high"
+    assert result.severity == "hard_fail"
     assert result.requires_human_input is True
     assert any("secret" in i for i in result.issues)
 
@@ -442,13 +442,25 @@ def test_safety_checker_passes_clean_body_without_runner():
     assert result.requires_human_input is False
 
 
-def test_safety_hit_routes_to_needs_input_in_aggregate():
+def test_safety_secret_routes_to_reject_in_aggregate():
     safety = SafetyChecker().check(
         CheckContext(
             draft=_draft(body="my token is ghp_abcdefghijklmnopqrstuvwxyz123"),
             cards=[_card("ev_1")],
         )
     )
+    assert safety.requires_human_input is True
+    assert aggregate_checks([safety]) == "reject"
+
+
+def test_safety_high_human_input_routes_to_needs_input_in_aggregate():
+    runner = FakeRunner(
+        SimpleNamespace(invented_personal_experience=True, unsupported_metric=False)
+    )
+    safety = SafetyChecker(runner).check(
+        CheckContext(draft=_draft(body="I personally fixed this."), cards=[_card("ev_1")])
+    )
+    assert safety.severity == "high"
     assert safety.requires_human_input is True
     assert aggregate_checks([safety]) == "needs_input"
 

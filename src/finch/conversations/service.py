@@ -19,7 +19,31 @@ from .models import (
     CommitmentStatus,
     ConversationThread,
     FollowUpTrigger,
+    ObservationKind,
+    ThreadNote,
     ThreadStatus,
+)
+
+
+class ConversationServiceError(ValueError):
+    """对话线索校验失败（修订冲突、缺来源等）。"""
+
+
+_POLITE_INTEREST_MARKERS = (
+    "有空看看",
+    "很有趣",
+    "interesting",
+    "maybe later",
+    "有空再说",
+    "之后看看",
+)
+
+_USAGE_SUCCESS_MARKERS = (
+    "跑通",
+    "用起来了",
+    "started using",
+    "completed",
+    "运行成功",
 )
 
 
@@ -44,6 +68,36 @@ def record_id_for(
     else:
         key = f"peer:{peer_id}:{occurred_at.isoformat()}"
     return f"rec_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
+
+
+def note_id_for(source_ref: str, kind: ObservationKind, text: str) -> str:
+    """由 source_ref + kind + 文本指纹派生稳定笔记 id。"""
+    digest = hashlib.sha256(
+        f"{source_ref}|{kind.value}|{text.strip()}".encode()
+    ).hexdigest()
+    return f"note_{digest[:12]}"
+
+
+def commitment_id_for(source_ref: str, text: str) -> str:
+    digest = hashlib.sha256(f"{source_ref}|{text.strip()}".encode()).hexdigest()
+    return f"cmt_{digest[:12]}"
+
+
+def refuse_polite_interest_as_usage_success(kind: ObservationKind, text: str) -> None:
+    """礼貌兴趣不得记为 usage_feedback 成功类陈述。"""
+    if kind is not ObservationKind.USAGE_FEEDBACK:
+        return
+    blob = text.casefold()
+    if any(m.casefold() in blob for m in _POLITE_INTEREST_MARKERS):
+        if not any(m.casefold() in blob for m in _USAGE_SUCCESS_MARKERS):
+            raise ConversationServiceError(
+                "polite interest cannot be recorded as usage_feedback success"
+            )
+
+
+def active_observation_notes(thread: ConversationThread) -> list[ThreadNote]:
+    """未 superseded 的 observation 笔记。"""
+    return [n for n in thread.observation_notes if not n.superseded]
 
 
 class ConversationService:
@@ -98,13 +152,117 @@ class ConversationService:
         return thread.model_copy(update={"pending_triggers": []})
 
     def add_commitment(
-        self, thread: ConversationThread, commitment: Commitment
+        self,
+        thread: ConversationThread,
+        commitment: Commitment,
+        *,
+        expected_revision: int | None = None,
     ) -> ConversationThread:
+        if expected_revision is not None and expected_revision != thread.revision:
+            raise ConversationServiceError(
+                f"revision conflict: expected {expected_revision}, "
+                f"current {thread.revision}"
+            )
         updated = thread.model_copy(deep=True)
         if any(c.id == commitment.id for c in updated.commitments):
             return updated
         updated.commitments.append(commitment)
+        if expected_revision is not None:
+            updated.revision = thread.revision + 1
         return self.add_trigger(updated, FollowUpTrigger.OWN_COMMITMENT)
+
+    def build_observation_note(
+        self,
+        *,
+        kind: ObservationKind | str,
+        text: str,
+        source_ref: str,
+        tool_ref: str | None = None,
+        supersedes_id: str | None = None,
+    ) -> ThreadNote:
+        if not text or not text.strip():
+            raise ConversationServiceError("note text is required")
+        if not source_ref or not source_ref.strip():
+            raise ConversationServiceError("source_ref is required")
+        obs_kind = ObservationKind(kind) if isinstance(kind, str) else kind
+        refuse_polite_interest_as_usage_success(obs_kind, text)
+        return ThreadNote(
+            id=note_id_for(source_ref.strip(), obs_kind, text),
+            text=text.strip(),
+            source_ref=source_ref.strip(),
+            kind=obs_kind,
+            tool_ref=tool_ref,
+            supersedes_id=supersedes_id,
+        )
+
+    def upsert_observation_note(
+        self,
+        thread: ConversationThread,
+        note: ThreadNote,
+        *,
+        expected_revision: int,
+        known_interaction_ids: set[str] | None = None,
+    ) -> ConversationThread:
+        """幂等写入 observation 笔记；修订冲突明确报错。"""
+        if expected_revision != thread.revision:
+            raise ConversationServiceError(
+                f"revision conflict: expected {expected_revision}, "
+                f"current {thread.revision}"
+            )
+        if note.kind is None:
+            raise ConversationServiceError("observation note kind is required")
+        if not note.source_ref:
+            raise ConversationServiceError("source_ref is required")
+        if known_interaction_ids is not None and note.source_ref not in known_interaction_ids:
+            # Allow URL-style refs only when they match an interaction id already on thread
+            # or the explicit known set; otherwise refuse dangling refs.
+            if note.source_ref not in thread.interaction_ids:
+                raise ConversationServiceError(
+                    f"source_ref not found: {note.source_ref}"
+                )
+
+        refuse_polite_interest_as_usage_success(note.kind, note.text)
+        updated = thread.model_copy(deep=True)
+
+        # Idempotent: same id already active → no-op (no revision bump).
+        for existing in updated.observation_notes:
+            if existing.id == note.id and not existing.superseded:
+                return thread
+
+        # Same source_ref+kind with different text: require supersedes of prior active.
+        same_slot = [
+            n
+            for n in updated.observation_notes
+            if not n.superseded
+            and n.kind == note.kind
+            and n.source_ref == note.source_ref
+        ]
+        if same_slot and not note.supersedes_id:
+            # Treat identical text as already covered by id check; different text needs
+            # explicit supersede.
+            prior = same_slot[-1]
+            if prior.text.strip() == note.text.strip():
+                return thread
+            raise ConversationServiceError(
+                "correcting an observation requires supersedes_id"
+            )
+
+        if note.supersedes_id:
+            found = False
+            for i, existing in enumerate(updated.observation_notes):
+                if existing.id == note.supersedes_id:
+                    updated.observation_notes[i] = existing.model_copy(
+                        update={"superseded": True}
+                    )
+                    found = True
+            if not found:
+                raise ConversationServiceError(
+                    f"supersedes target not found: {note.supersedes_id}"
+                )
+
+        updated.observation_notes.append(note)
+        updated.revision = thread.revision + 1
+        return updated
 
     def needs_follow_up(
         self, thread: ConversationThread, *, now: datetime, stale_days: int = 7

@@ -1,6 +1,8 @@
 # Finch
 
-Finch 是一个**同行连接与个人表达系统**。它帮你发现值得长期交流的同行，理解对方正在解决的问题，准备有价值的互动，延续对话并积累关系上下文，最终从实践与交流中形成自己的观点，写出像自己的内容。
+Finch 是一个**同行连接与个人表达系统**。它帮你发现值得长期交流的同行与真实工具使用者，理解对方情境与具体阻碍，准备有价值的互动，延续对话并积累关系上下文，最终从实践与交流中形成自己的观点，写出像自己的内容。
+
+Finch 记录对话事实、明确承诺与线程内问题/使用反馈笔记；不做跨来源痛点聚类或产品机会评分（那是 builderDNA），也不做产业战略（Quinn）。工具收款权威记录属于具体工具项目。
 
 > 完整定义见 [`docs/product-contract.md`](docs/product-contract.md)。Finch 独立运行，不依赖任何其他项目（如 builderDNA）。
 
@@ -8,10 +10,10 @@ Finch 是一个**同行连接与个人表达系统**。它帮你发现值得长�
 
 ## 两条循环
 
-- **连接主循环**：发现同行 → 准备互动 → 记录关系 → 继续对话。这是 Finch 每天首先呈现的东西（`finch connect daily`）。
+- **连接主循环**：发现同行/使用者 → 准备互动 → 记录关系 → 继续对话。这是 Finch 每天首先呈现的东西（`finch connect daily`）。
 - **表达复利循环**：从实践与对话形成观点 → 写成像自己的内容 → 吸引更多同行。它服从连接目标。
 
-北极星指标：**每周新增或加深多少个「有上下文、可继续」的同行关系**。粉丝数、发帖数、草稿数都不是核心指标。
+北极星指标：**每周新增或加深多少个「有上下文、可继续」的同行关系**。粉丝数、发帖数、草稿数都不是核心指标。PeerProfile 不是 CRM lead；Opportunity 不是商业机会。
 
 ## 安装
 
@@ -34,7 +36,7 @@ uv run finch connect prepare --opportunity ID   # 深度准备（默认每次最
 uv run finch connect feedback --file feedback.json
 uv run finch peers list / show <peer_id> # 同行档案与关系上下文
 uv run finch connect approve / reject / edit / record
-uv run finch conversations list --needs-follow-up / show / follow-up / ingest / defer / close
+uv run finch conversations list --needs-follow-up / show / follow-up / ingest / note / commit / defer / close
 
 # —— 表达复利循环 ——
 uv run finch ideas commit / create / list / show / confirm / revise-position / skip
