@@ -185,3 +185,64 @@ def test_thread_repository_deleting_search_does_not_lose_context(tmp_path):
 
     assert repo.get(thread.id) is not None
     assert len(repo.list_all()) == 1
+
+
+def test_future_due_commitment_does_not_queue_trigger():
+    svc = ConversationService()
+    thread = svc.open_thread(peer_id="peer_abc", topic="t")
+    future = datetime(2026, 12, 1, tzinfo=UTC)
+    thread = svc.add_commitment(
+        thread,
+        Commitment(
+            id="c_future",
+            owner="self",
+            source_ref="user:said",
+            status=CommitmentStatus.OPEN,
+            due_at=future,
+            text="share next month",
+        ),
+    )
+    assert FollowUpTrigger.OWN_COMMITMENT not in thread.pending_triggers
+    assert svc.needs_follow_up(thread, now=datetime(2026, 9, 8, tzinfo=UTC)) is False
+    assert svc.needs_follow_up(thread, now=future) is True
+
+
+def test_experiment_add_and_record_triggers_new_evidence():
+    from finch.conversations.models import MiniExperiment
+
+    svc = ConversationService()
+    thread = svc.open_thread(peer_id="peer_abc", topic="t")
+    thread = svc.add_experiment(
+        thread,
+        MiniExperiment(hypothesis="retry reduces timeouts", method="run once"),
+        source_ref="user:adopted",
+        expected_revision=1,
+    )
+    assert len(thread.experiments) == 1
+    # Idempotent
+    again = svc.add_experiment(
+        thread,
+        MiniExperiment(hypothesis="retry reduces timeouts", method="run once"),
+        source_ref="user:adopted",
+    )
+    assert len(again.experiments) == 1
+    updated = svc.record_experiment_result(
+        thread,
+        hypothesis="retry reduces timeouts",
+        actual_result="still timed out once",
+        artifact_ref="note:1",
+        expected_revision=thread.revision,
+    )
+    assert updated.experiments[0].actual_result == "still timed out once"
+    assert FollowUpTrigger.NEW_EVIDENCE in updated.pending_triggers
+
+
+def test_mark_important_review_due_without_auto_greet():
+    svc = ConversationService()
+    thread = svc.open_thread(peer_id="peer_abc", topic="t")
+    now = datetime(2026, 9, 1, tzinfo=UTC)
+    thread = svc.mark_important(thread, cadence_days=30, now=now, expected_revision=1)
+    assert thread.important_review_enabled is True
+    assert thread.next_review_at is not None
+    assert svc.needs_follow_up(thread, now=now) is False
+    assert svc.needs_follow_up(thread, now=thread.next_review_at) is True
