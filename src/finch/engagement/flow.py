@@ -61,6 +61,7 @@ class EngagementRunResult(BaseModel):
     status: Literal["succeeded", "empty", "failed"]
     summary: str
     context_fingerprint: str = ""
+    source_coverage: dict[str, object] = Field(default_factory=dict)
 
 
 def _build_providers(
@@ -194,10 +195,22 @@ def run_discovery_engagement_flow(
     )
     providers = _build_providers(engagement.platforms, opencli, reddit_opencli)
     outcome = None
+    project_posts_count = 0
+    project_failures: list[dict[str, str]] = []
+    opportunities: list[Opportunity] = []
+    semantic_peers: list = []
     try:
         outcome = search_engagement_posts(
             providers, interests, engagement, skip_ids=skip_ids
         )
+        # Project → people (fail-closed): merge synthetic posts; never abort social results.
+        from finch.engagement.project_discovery import discover_project_participants
+
+        project = discover_project_participants(interests, seed_posts=outcome.posts)
+        project_posts_count = len(project.posts)
+        project_failures = list(project.failures)
+        if project.posts:
+            outcome.posts = list(outcome.posts) + project.posts
         posts = prefilter_posts(
             outcome.posts, min_length=_MIN_CONTENT_LENGTH, skip_ids=skip_ids
         )
@@ -233,26 +246,53 @@ def run_discovery_engagement_flow(
             scored, min_candidate_score=engagement.min_candidate_score
         )
 
+        from finch.engagement.opportunity import assign_next_action
+
+        practice_refs = list(interests.practice_refs)
+        has_practice = bool(practice_refs)
+        time_budget = interests.time_budget_minutes
+
         raw_opps: list[Opportunity] = []
         for sp in ranked:
             assess = sp.assessment
             if assess is None:
-                raw_opps.append(scored_post_to_opportunity(sp))
-                continue
-            raw_opps.append(
-                scored_post_to_opportunity(
+                opp = scored_post_to_opportunity(sp)
+            else:
+                mode = _mode_from_assessment(assess.suggested_mode)
+                shared = (assess.shared_problem or "").strip()
+                # Link user practice only when opening/why suggests a concrete contribution.
+                basis = list(practice_refs) if (
+                    has_practice and (assess.opening.strip() or mode == SuggestedMode.DISCUSS)
+                ) else []
+                next_action, minutes = assign_next_action(
+                    mode, has_practice=bool(basis), time_budget=time_budget
+                )
+                opp = scored_post_to_opportunity(
                     sp,
                     why_relevant=assess.why_relevant
                     or (assess.reasons[0] if assess.reasons else "concrete overlap"),
                     opening=assess.opening,
-                    suggested_mode=_mode_from_assessment(assess.suggested_mode),
+                    suggested_mode=mode,
                     topic_tags=assess.topic_tags or list(sp.post.matched_topics),
                     role_tags=assess.role_tags,
                     novelty_reason=assess.novelty_reason,
                     uncertainty=assess.uncertainty,
+                    shared_problem=shared,
+                    contribution_basis_refs=basis,
+                    next_action=next_action,
+                    estimated_minutes=minutes,
                     complementarity=assess.complementarity,
                 )
-            )
+            if opp.next_action is None:
+                action, minutes = assign_next_action(
+                    opp.suggested_mode,
+                    has_practice=bool(opp.contribution_basis_refs),
+                    time_budget=time_budget,
+                )
+                opp = opp.model_copy(
+                    update={"next_action": action, "estimated_minutes": minutes}
+                )
+            raw_opps.append(opp)
 
         opportunities = select_opportunity_set(
             raw_opps,
@@ -279,16 +319,38 @@ def run_discovery_engagement_flow(
             context_fingerprint=ctx_fp,
         )
 
-    if not outcome.posts:
+    coverage_payload: dict[str, object] = {
+        "query_classes": [
+            {
+                "query_class": c.query_class,
+                "queries": c.queries,
+                "returned": c.returned,
+                "kept": c.kept,
+                "allocated": getattr(c, "allocated", 0),
+                "failure_reasons": list(c.failure_reasons),
+            }
+            for c in (outcome.coverage if outcome else [])
+        ],
+        "project_path": {
+            "posts": project_posts_count,
+            "failures": project_failures,
+        },
+    }
+
+    if not outcome or not outcome.posts:
         return EngagementRunResult(
             run_id=run_id,
             posts_found=0,
             candidates=[],
             opportunities=[],
-            failures=outcome.failures,
+            failures=outcome.failures if outcome else [],
             status="empty",
-            summary=_render_empty(outcome.failures, outcome.coverage),
+            summary=_render_empty(
+                outcome.failures if outcome else [],
+                outcome.coverage if outcome else None,
+            ),
             context_fingerprint=ctx_fp,
+            source_coverage=coverage_payload,
         )
 
     return EngagementRunResult(
@@ -306,4 +368,5 @@ def run_discovery_engagement_flow(
             coverage=outcome.coverage,
         ),
         context_fingerprint=ctx_fp,
+        source_coverage=coverage_payload,
     )

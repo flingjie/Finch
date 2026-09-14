@@ -10,7 +10,9 @@
 只允许提问或明确标注推测，禁止虚构案例/代码/实验。
 """
 
+import hashlib
 import json
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
@@ -36,10 +38,56 @@ _QUOTE_MIN_EVIDENCE = 0.60
 _OBSERVE_MIN_RELATIONSHIP = 0.80
 _BOOKMARK_MIN_RELEVANCE = 0.60
 
+_FABRICATED_EXPERIENCE = re.compile(
+    r"(我测试过|我也遇到过|I(?:'| ha)?ve tested|I also (?:ran into|hit|saw))",
+    re.IGNORECASE,
+)
 
-def generation_key_for(*, peer_id: str, post_id: str, action: InteractionAction) -> str:
-    """幂等键 ``peer + source + action + prompt_version``：相同 key 不重复创建 Proposal。"""
-    return f"{peer_id}:{post_id}:{action.value}:{_PROMPT_VERSION}"
+
+def context_version_for(
+    *,
+    practice_refs: Sequence[str] | None = None,
+    current_questions: Sequence[str] | None = None,
+) -> str:
+    """Short fingerprint of user practice/questions for generation_key invalidation."""
+    parts = [
+        ",".join(sorted(x.strip().casefold() for x in (practice_refs or []) if x.strip())),
+        ",".join(
+            sorted(x.strip().casefold() for x in (current_questions or []) if x.strip())
+        ),
+    ]
+    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:12]
+
+
+def generation_key_for(
+    *,
+    peer_id: str,
+    post_id: str,
+    action: InteractionAction,
+    context_version: str = "",
+) -> str:
+    """幂等键 ``peer + source + action + prompt_version [+ context]``。"""
+    base = f"{peer_id}:{post_id}:{action.value}:{_PROMPT_VERSION}"
+    if context_version:
+        return f"{base}:{context_version}"
+    return base
+
+
+def blocks_fabricated_experience(draft: str, *, has_basis: bool) -> bool:
+    """True when draft claims personal experience without contribution_basis_refs."""
+    if has_basis:
+        return False
+    return bool(_FABRICATED_EXPERIENCE.search(draft or ""))
+
+
+def rewrite_fabricated_to_question(draft: str, opening: str = "") -> str:
+    """Replace fabricated experience claims with a concrete question."""
+    if opening.strip():
+        return opening.strip()
+    return (
+        "想请教一下：你在实践里最先踩到的具体卡点是什么？"
+        "我还没亲自跑过，想先对齐假设。"
+    )
 
 
 class ProposalItem(BaseModel):
@@ -92,6 +140,9 @@ def generate_proposals(
     runner: CodexRunner,
     scored: list[ScoredPost],
     engagement: EngagementSettings,
+    *,
+    context_version: str = "",
+    contribution_basis_refs: Sequence[str] | None = None,
 ) -> list[InteractionProposal]:
     """把排序后的 ``ScoredPost`` 转为 ``InteractionProposal``（只读提案）。
 
@@ -101,9 +152,12 @@ def generate_proposals(
     - ``max_reply_drafts`` 封顶草稿类动作数、``max_bookmarks`` 封顶 bookmark 数；超限帖子直接
       丢弃，无论 LLM 返回多少条草稿都不会超限。
     - 草稿类帖子一次性 batch 调用 LLM；模型漏掉或给出空草稿时保守丢弃该草稿候选（不伪造草稿）。
+    - 无实践依据时禁止「我测试过」类虚构亲历；命中则改写为提问。
     """
     if not scored:
         return []
+
+    has_basis = bool(contribution_basis_refs)
 
     # 1) 确定性动作 + 门槛防御。
     actions: dict[str, InteractionAction] = {}
@@ -153,22 +207,30 @@ def generate_proposals(
         action = actions[post_id]
         peer_id = peer_id_for(sp.post.platform, sp.post.author_id)
         generation_key = generation_key_for(
-            peer_id=peer_id, post_id=sp.post.id, action=action
+            peer_id=peer_id,
+            post_id=sp.post.id,
+            action=action,
+            context_version=context_version,
         )
         if action in (InteractionAction.DRAFT_REPLY, InteractionAction.DRAFT_QUOTE):
             proposal = drafts.get(post_id)
             if proposal is None or not proposal.draft.strip():
                 continue
+            draft = proposal.draft
+            risks = list(proposal.factual_risks)
+            if blocks_fabricated_experience(draft, has_basis=has_basis):
+                draft = rewrite_fabricated_to_question(draft)
+                risks.append("rewrote fabricated personal experience to a question")
             candidates.append(
                 InteractionProposal(
                     id=f"{sp.post.platform}:{sp.post.id}:{action.value}",
                     post=sp.post,
                     score=sp.score,
                     action=action,
-                    draft=proposal.draft,
+                    draft=draft,
                     intent=proposal.intent,
                     source_summary=proposal.source_summary,
-                    factual_risks=proposal.factual_risks,
+                    factual_risks=risks,
                     approval_required=True,
                     peer_id=peer_id,
                     generation_key=generation_key,

@@ -298,8 +298,6 @@ def test_connect_prepare_caps_at_three(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
-    from finch.engagement.models import DiscoverySnapshot
-    from finch.storage.repositories import DiscoverySnapshotRepository
 
     ids = []
     for i in range(5):
@@ -310,14 +308,6 @@ def test_connect_prepare_caps_at_three(monkeypatch, tmp_path):
                 update={"id": oid, "source_refs": [f"https://x.com/a/status/{i}"]}
             )
         )
-    DiscoverySnapshotRepository(ws).upsert(
-        DiscoverySnapshot(
-            id="snap1",
-            created_at=datetime.now(UTC),
-            context_fingerprint="c",
-            ranked_opportunity_ids=ids,
-        )
-    )
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "fetch_post_by_url", lambda *a, **k: _post())
     calls = {"n": 0}
@@ -329,9 +319,21 @@ def test_connect_prepare_caps_at_three(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "generate_proposals", _gen)
     monkeypatch.setattr(cli, "score_posts", lambda *a, **k: [])
 
-    r = CliRunner().invoke(app, ["connect", "prepare", "--limit", "3"])
-    assert r.exit_code == 0, r.output
+    args = ["connect", "prepare"]
+    for oid in ids:
+        args.extend(["--opportunity", oid])
+    r = CliRunner().invoke(app, args)
+    assert r.exit_code == 1, r.output
     assert calls["n"] == 3
+    assert "batch limit is 3" in r.output
+
+
+def test_connect_prepare_requires_selection(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    r = CliRunner().invoke(app, ["connect", "prepare"])
+    assert r.exit_code == 1
+    assert "selection required" in r.output
 
 
 def test_connect_daily_json(monkeypatch, tmp_path):

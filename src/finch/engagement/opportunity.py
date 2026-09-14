@@ -6,10 +6,12 @@ Opportunity 是发现结果；本模块只做组合选择，不生成回复草�
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import UTC, datetime
 
-from finch.engagement.models import ExternalPost, Opportunity, SuggestedMode
+from finch.engagement.models import ExternalPost, NextAction, Opportunity, SuggestedMode
 from finch.engagement.scoring import ScoredPost
+from finch.peers.models import EvidenceStatus
 from finch.peers.service import peer_id_for
 
 _ASSESSMENT_VERSION = "1"
@@ -29,6 +31,14 @@ _CROSS_MARKERS = (
     "机制",
 )
 _EXPLORE_MARKERS = ("explore", "open", "探索", "开放")
+
+_RT_ONLY = re.compile(
+    r"^\s*(rt\s*@|转发|reposted|reposted from)\b", re.IGNORECASE
+)
+_BIO_THIN = re.compile(
+    r"^\s*(i'?m|i am|我是|building|founder|engineer|developer)\b.{0,80}$",
+    re.IGNORECASE,
+)
 
 
 def content_fingerprint(content: str) -> str:
@@ -58,6 +68,86 @@ def context_fingerprint(
         assessment_version,
     ]
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+
+
+def looks_like_practice_release(content: str) -> bool:
+    """实践发布帖信号：避免仅因「发布」一词被排除。"""
+    text = content.casefold()
+    signals = (
+        "实验",
+        "复盘",
+        "failure",
+        "checkpoint",
+        "replay",
+        "实测",
+        "代码",
+        "diff",
+        "补偿",
+        "experiment",
+        "postmortem",
+    )
+    return any(s in text for s in signals)
+
+
+def infer_evidence_status(
+    content: str,
+    *,
+    practical_evidence: float = 0.0,
+) -> EvidenceStatus:
+    """Infer practice-evidence status from post text + LLM practical_evidence dim."""
+    text = content.strip()
+    if not text or _RT_ONLY.match(text) or (
+        len(text) < 80 and _BIO_THIN.match(text) and practical_evidence < 0.4
+    ):
+        return EvidenceStatus.PENDING_REVIEW
+    if practical_evidence >= 0.55 or looks_like_practice_release(text):
+        sourced_markers = (
+            "http://",
+            "https://",
+            "github.com",
+            "demo",
+            "diff",
+            "pr #",
+            "issue #",
+            "commit",
+            "复现",
+            "实测",
+            "日志",
+        )
+        lower = text.casefold()
+        if any(m in lower for m in sourced_markers):
+            return EvidenceStatus.SOURCED
+        return EvidenceStatus.AUTHOR_STATED
+    if practical_evidence >= 0.35:
+        return EvidenceStatus.AUTHOR_STATED
+    return EvidenceStatus.PENDING_REVIEW
+
+
+def assign_next_action(
+    mode: SuggestedMode,
+    *,
+    has_practice: bool,
+    time_budget: int = 20,
+    prefer_case: bool = False,
+) -> tuple[NextAction, int]:
+    """Derive display next_action + estimated_minutes from mode and user practice.
+
+    Never invents personal experience; busy budgets shrink try/repro toward ask/observe.
+    """
+    budget = max(1, time_budget)
+    if mode == SuggestedMode.LEARN:
+        return "observe", min(5, budget)
+    if mode == SuggestedMode.INVESTIGATE:
+        if budget <= 10:
+            return "ask", min(10, budget)
+        action: NextAction = "repro" if prefer_case else "try"
+        return action, min(20, budget)
+    # discuss
+    if has_practice:
+        if prefer_case:
+            return "case", min(15, budget)
+        return "reply", min(15, budget)
+    return "ask", min(10, budget)
 
 
 def _has_real_source(post: ExternalPost) -> bool:
@@ -107,6 +197,11 @@ def scored_post_to_opportunity(
     role_tags: list[str] | None = None,
     novelty_reason: str = "",
     uncertainty: str = "",
+    shared_problem: str = "",
+    contribution_basis_refs: list[str] | None = None,
+    next_action: NextAction | None = None,
+    estimated_minutes: int | None = None,
+    evidence_status: EvidenceStatus | str | None = None,
     complementarity: float = 0.0,
     discovered_via: str = "topic_search",
     assessed_at: datetime | None = None,
@@ -127,6 +222,17 @@ def scored_post_to_opportunity(
             open_text = f"Ask about the concrete claim: {excerpt[:100]}"
         else:
             mode = SuggestedMode.LEARN
+    status = evidence_status
+    if status is None:
+        status = infer_evidence_status(
+            post.content, practical_evidence=scored.score.practical_evidence
+        )
+    status_value = status.value if isinstance(status, EvidenceStatus) else str(status)
+    uncertainty_text = uncertainty
+    if status_value == EvidenceStatus.PENDING_REVIEW.value and not uncertainty_text.strip():
+        uncertainty_text = "待了解：仅有简介或转发，实践证据不足"
+    elif status_value == EvidenceStatus.AUTHOR_STATED.value and not uncertainty_text.strip():
+        uncertainty_text = "作者自述实践，未见独立来源核验"
     return Opportunity(
         id=opportunity_id_for(peer_id, source_ref, fp),
         peer_id=peer_id,
@@ -141,7 +247,12 @@ def scored_post_to_opportunity(
         opening=open_text,
         suggested_mode=mode,
         novelty_reason=novelty_reason or "",
-        uncertainty=uncertainty,
+        uncertainty=uncertainty_text,
+        shared_problem=shared_problem.strip(),
+        contribution_basis_refs=list(contribution_basis_refs or []),
+        next_action=next_action,
+        estimated_minutes=estimated_minutes,
+        evidence_status=status_value,
         assessed_at=assessed_at or datetime.now(UTC),
         assessment_version=_ASSESSMENT_VERSION,
         score_total=scored.score.total,
@@ -160,6 +271,7 @@ def select_opportunity_set(
     """选择有差异的机会组合。
 
     - 质量准入；同一作者每批一条主机会（其余来源挂 related_source_refs）
+    - pending_review 不占核心名额，仅当合格池不足时补入并保留 uncertainty
     - 已呈现相同内容指纹默认抑制
     - 熟悉作者无内容增量时软降权
     - 软多样性：尽量 ≥2 跨领域、≤1 开放探索（仅有合格候选才满足，不凑数）
@@ -169,9 +281,20 @@ def select_opportunity_set(
     familiar = familiar_peer_ids or set()
 
     qualified = [c for c in candidates if quality_gate(c)]
-    # Deduplicate by content fingerprint; keep best score then stable id.
+    core = [
+        c
+        for c in qualified
+        if c.evidence_status != EvidenceStatus.PENDING_REVIEW.value
+    ]
+    pending = [
+        c
+        for c in qualified
+        if c.evidence_status == EvidenceStatus.PENDING_REVIEW.value
+    ]
+    # Prefer core; only use pending_review to fill if core underfills.
+    pool = core if core else pending
     by_fp: dict[str, Opportunity] = {}
-    for opp in qualified:
+    for opp in pool:
         if opp.content_fingerprint in seen_fp:
             continue
         prev = by_fp.get(opp.content_fingerprint)
@@ -179,7 +302,6 @@ def select_opportunity_set(
             by_fp[opp.content_fingerprint] = opp
     unique = list(by_fp.values())
 
-    # Soft penalty: familiar author without novelty_reason
     def sort_key(opp: Opportunity) -> tuple:
         penalty = 0.0
         if opp.peer_id in familiar and not opp.novelty_reason.strip():
@@ -188,7 +310,6 @@ def select_opportunity_set(
 
     unique.sort(key=sort_key)
 
-    # One primary per author; hang extra sources on the primary.
     by_author: dict[str, Opportunity] = {}
     extras: dict[str, list[str]] = {}
     for opp in unique:
@@ -196,7 +317,6 @@ def select_opportunity_set(
             by_author[opp.peer_id] = opp
         else:
             extras.setdefault(opp.peer_id, []).extend(opp.source_refs)
-    primaries = list(by_author.values())
     for peer_id, refs in extras.items():
         primary = by_author[peer_id]
         related = list(dict.fromkeys([*primary.related_source_refs, *refs]))
@@ -211,12 +331,10 @@ def select_opportunity_set(
     cross_count = 0
     explore_count = 0
 
-    # First pass: take top by score, tracking soft diversity.
     for opp in primaries:
         if len(selected) >= limit:
             break
         if _is_open_explore(opp) and explore_count >= _MAX_OPEN_EXPLORE:
-            # defer open explore beyond soft max unless we would underfill
             continue
         selected.append(opp)
         if _is_cross_domain(opp):
@@ -224,7 +342,6 @@ def select_opportunity_set(
         if _is_open_explore(opp):
             explore_count += 1
 
-    # Soft fill: if under cross-domain target and room remains, pull cross from remainder.
     if cross_count < _MIN_CROSS_DOMAIN and len(selected) < limit:
         selected_ids = {o.id for o in selected}
         for opp in primaries:
@@ -237,7 +354,6 @@ def select_opportunity_set(
                 selected_ids.add(opp.id)
                 cross_count += 1
 
-    # If soft-explore skip left us short, fill with best remaining (including explore).
     if len(selected) < min(limit, len(primaries)):
         selected_ids = {o.id for o in selected}
         for opp in primaries:
@@ -247,27 +363,33 @@ def select_opportunity_set(
                 selected.append(opp)
                 selected_ids.add(opp.id)
 
+    if len(selected) < limit and core:
+        pending_by_fp: dict[str, Opportunity] = {}
+        for opp in pending:
+            if opp.content_fingerprint in seen_fp:
+                continue
+            if any(o.peer_id == opp.peer_id for o in selected):
+                continue
+            prev = pending_by_fp.get(opp.content_fingerprint)
+            if prev is None or (opp.score_total, opp.id) > (prev.score_total, prev.id):
+                pending_by_fp[opp.content_fingerprint] = opp
+        pending_list = sorted(pending_by_fp.values(), key=sort_key)
+        selected_ids = {o.id for o in selected}
+        for opp in pending_list:
+            if len(selected) >= limit:
+                break
+            if opp.id in selected_ids:
+                continue
+            labeled = opp
+            if not labeled.uncertainty.strip():
+                labeled = opp.model_copy(
+                    update={"uncertainty": "待了解：仅有简介或转发，实践证据不足"}
+                )
+            selected.append(labeled)
+            selected_ids.add(opp.id)
+
     selected.sort(key=sort_key)
     return selected[:limit]
-
-
-def looks_like_practice_release(content: str) -> bool:
-    """实践发布帖信号：避免仅因「发布」一词被排除。"""
-    text = content.casefold()
-    signals = (
-        "实验",
-        "复盘",
-        "failure",
-        "checkpoint",
-        "replay",
-        "实测",
-        "代码",
-        "diff",
-        "补偿",
-        "experiment",
-        "postmortem",
-    )
-    return any(s in text for s in signals)
 
 
 _AMBIGUOUS_EXCLUDE_TOKENS = frozenset({"发布", "release", "ship", "shipping"})

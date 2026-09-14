@@ -232,10 +232,28 @@ def _action_label(action: InteractionAction) -> str:
 
 
 def _thread_next_step(thread: ConversationThread) -> str:
-    open_commitments = [c for c in thread.commitments if c.status.value == "open"]
+    now = datetime.now(UTC)
+    # Important review due with no new facts → remind only, never auto-greet.
+    if (
+        thread.important_review_enabled
+        and thread.next_review_at is not None
+        and thread.next_review_at <= now
+        and not thread.pending_triggers
+    ):
+        return "审阅近况 / 继续观察（重要关系周期回顾；无新事实不制造问候）"
+    open_commitments = [
+        c
+        for c in thread.commitments
+        if c.status.value == "open" and (c.due_at is None or c.due_at <= now)
+    ]
     notes = active_observation_notes(thread)
     if open_commitments:
         return "履行或确认自己的开放承诺"
+    trigger_vals = {
+        t.value if hasattr(t, "value") else str(t) for t in thread.pending_triggers
+    }
+    if "new_evidence" in trigger_vals:
+        return "分享新证据或实验结果并继续对话"
     if thread.open_questions or thread.open_question_notes:
         return "回答未解问题或提出实验"
     if notes:
@@ -243,6 +261,8 @@ def _thread_next_step(thread: ConversationThread) -> str:
         if "usage_feedback" in kinds:
             return "基于使用反馈准备一条有上下文的跟进"
         return "澄清 observation 中仍未知的问题"
+    if thread.pending_triggers:
+        return "处理待跟进触发（新回复/承诺/证据/相关更新）"
     return "已无未解问题；确认是否关闭或延续新主题"
 
 
@@ -270,24 +290,43 @@ def _peer_signal_post_url(peer: PeerProfile) -> str | None:
 
 
 def _render_opportunity_card(opp: Opportunity, *, index: int | None = None) -> str:
-    """轻量机会卡：人 / 链接 / 为何推荐 / 切入点（无完整草稿）。"""
+    """轻量机会卡：正在做什么 / 为何相关 / 可贡献什么 / 下一步 / 时间与不确定性。"""
     prefix = f"{index}. " if index is not None else ""
     who = opp.peer_id
     if opp.post is not None:
         who = opp.post.author_name or opp.post.author_id or opp.peer_id
     link = opp.source_refs[0] if opp.source_refs else ""
+    doing = opp.shared_problem.strip() or opp.source_excerpt.strip() or opp.novelty_reason.strip()
+    if not doing and opp.post is not None:
+        doing = " ".join(opp.post.content.split())[:120]
     lines = [
         f"{prefix}谁: {who}",
         f"模式: {opp.suggested_mode.value}",
     ]
     if link:
-        lines.append(f"内容: {link}")
+        lines.append(f"来源: {link}")
+    if doing:
+        lines.append(f"正在做什么: {doing}")
     if opp.why_relevant.strip():
-        lines.append(f"为何推荐: {opp.why_relevant}")
-    if opp.opening.strip():
-        lines.append(f"切入点: {opp.opening}")
+        lines.append(f"为何相关: {opp.why_relevant}")
+    if opp.contribution_basis_refs:
+        lines.append(f"可贡献什么: 关联实践 {', '.join(opp.contribution_basis_refs[:3])}")
+        if opp.opening.strip():
+            lines.append(f"切入点: {opp.opening}")
+    elif opp.opening.strip():
+        lines.append(f"可贡献什么: 需先准备 — {opp.opening}")
     elif opp.suggested_mode.value == "learn":
-        lines.append("切入点: （先了解，暂不回复）")
+        lines.append("可贡献什么: 需先准备（先了解）")
+    else:
+        lines.append("可贡献什么: 需先准备")
+    action = opp.next_action or "observe"
+    minutes = opp.estimated_minutes
+    if minutes is not None:
+        lines.append(f"建议下一步: {action}（约 {minutes} 分钟）")
+    else:
+        lines.append(f"建议下一步: {action}")
+    if opp.uncertainty.strip():
+        lines.append(f"不确定性: {opp.uncertainty}")
     if opp.novelty_reason.strip():
         lines.append(f"增量: {opp.novelty_reason}")
     lines.append(f"uv run finch connect prepare --opportunity {opp.id}")
@@ -1601,6 +1640,7 @@ def _persist_discovery(
             "posts_found": result.posts_found,
             "opportunity_count": len(result.opportunities),
             "status": result.status,
+            **(result.source_coverage or {}),
         },
         failures=[
             {"platform": f.platform, "query": f.query or "", "reason": f.reason}
@@ -1740,7 +1780,18 @@ def _prepare_opportunity(
     ws: Workspace,
     opportunity_id: str,
 ) -> InteractionProposal | None:
-    """对指定机会深读并生成提案（≤ prepare 路径，不刷全量发现）。"""
+    """对指定机会深读并生成提案（≤ prepare 路径，不刷全量发现）。
+
+    try/repro/observe → 无公开回复草稿的最小贡献清单（observe_author）。
+    ask/reply/case → 草稿路径；无实践依据时拦截虚构亲历。
+    """
+    from finch.engagement.opportunity import assign_next_action
+    from finch.engagement.proposals import (
+        context_version_for,
+        generation_key_for,
+    )
+    from finch.peers.service import peer_id_for
+
     opp = OpportunityRepository(ws).get(opportunity_id)
     if opp is None:
         return None
@@ -1754,11 +1805,75 @@ def _prepare_opportunity(
         post = opp.post
     if post is None:
         return None
+
+    practice_refs = list(settings.interests.practice_refs)
+    # Prefer opportunity-linked basis; fall back to interests.
+    basis = list(opp.contribution_basis_refs) or list(practice_refs)
+    time_budget = settings.interests.time_budget_minutes
+    next_action = opp.next_action
+    minutes = opp.estimated_minutes
+    if next_action is None:
+        next_action, minutes = assign_next_action(
+            opp.suggested_mode,
+            has_practice=bool(basis),
+            time_budget=time_budget,
+        )
+    elif minutes is None:
+        _, minutes = assign_next_action(
+            opp.suggested_mode,
+            has_practice=bool(basis),
+            time_budget=time_budget,
+        )
+
+    ctx_ver = context_version_for(
+        practice_refs=practice_refs,
+        current_questions=settings.interests.current_questions,
+    )
+    peer_id = opp.peer_id or peer_id_for(post.platform, post.author_id)
+
+    # Min-contribution path: no public reply draft.
+    if next_action in {"try", "repro", "observe"}:
+        from finch.engagement.models import ConversationScore
+
+        checklist = _min_contribution_checklist(opp, next_action, minutes or 10, basis)
+        action = InteractionAction.OBSERVE_AUTHOR
+        score = ConversationScore(
+            relevance=0.8,
+            novelty=0.7,
+            discussability=0.5,
+            practical_evidence=0.7,
+            relationship_value=0.5,
+            total=0.75,
+            reasons=[opp.why_relevant or "selected opportunity"],
+        )
+        proposal = InteractionProposal(
+            id=f"{post.platform}:{post.id}:{action.value}",
+            post=post,
+            score=score,
+            action=action,
+            draft="",  # no public reply
+            intent=checklist,
+            source_summary=opp.source_excerpt or (post.content[:200] if post else ""),
+            factual_risks=["min contribution — not yet done; do not mark complete"],
+            approval_required=False,
+            peer_id=peer_id,
+            why_this_person=opp.why_relevant,
+            expected_conversation_opening=opp.opening,
+            why_now=opp.novelty_reason or opp.shared_problem or opp.why_relevant,
+            generation_key=generation_key_for(
+                peer_id=peer_id,
+                post_id=post.id,
+                action=action,
+                context_version=ctx_ver,
+            ),
+        )
+        InteractionRepository(ws).upsert(proposal, run_id=f"prepare_{opportunity_id}")
+        return proposal
+
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     scored = score_posts(runner, [post], settings.engagement.weights)
     ranked = rank_candidates(scored, min_candidate_score=settings.engagement.min_candidate_score)
     if not ranked:
-        # Still attempt a proposal from a synthetic scored post at threshold.
         from finch.engagement.models import ConversationScore
 
         synthetic = ScoredPost(
@@ -1774,7 +1889,13 @@ def _prepare_opportunity(
             ),
         )
         ranked = [synthetic]
-    proposals = generate_proposals(runner, ranked, settings.engagement)
+    proposals = generate_proposals(
+        runner,
+        ranked,
+        settings.engagement,
+        context_version=ctx_ver,
+        contribution_basis_refs=basis,
+    )
     if not proposals:
         return None
     proposal = proposals[0]
@@ -1789,6 +1910,32 @@ def _prepare_opportunity(
         )
     InteractionRepository(ws).upsert(proposal, run_id=f"prepare_{opportunity_id}")
     return proposal
+
+
+def _min_contribution_checklist(
+    opp: Opportunity,
+    next_action: str,
+    minutes: int,
+    basis: list[str],
+) -> str:
+    """Internal checklist for try/repro/observe — not a public reply draft."""
+    lines = [
+        f"最小贡献（{next_action}，约 {minutes} 分钟）",
+        f"对象: {opp.shared_problem or opp.source_excerpt[:120] or opp.id}",
+    ]
+    if next_action == "observe":
+        lines.append("动作: 阅读来源与上下文，记下一个具体问题；暂不回复。")
+    elif next_action == "try":
+        lines.append("动作: 按对方分享试跑一个具体任务，记录卡点（未完成不算已试用）。")
+    else:
+        lines.append("动作: 复现对方描述的边界/失败，记录结果引用（artifact）。")
+    if basis:
+        lines.append("可用个人实践: " + ", ".join(basis[:5]))
+    else:
+        lines.append("个人实践: 无 — 只提问或观察，禁止声称已测试。")
+    if opp.uncertainty:
+        lines.append(f"不确定性: {opp.uncertainty}")
+    return "\n".join(lines)
 
 
 @connect_app.command("refresh")
@@ -1964,62 +2111,124 @@ def connect_expand(
     scope: str | None = typer.Option(None, "--scope", help="范围文本"),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """有界扩展来源或范围；一跳社交扩展当前不支持时明确说明。"""
-    msg = (
-        "bounded expand from discussion participants is not enabled yet; "
-        "use connect refresh with adjacent_queries / current_questions, "
-        "or connect prepare --opportunity <id> for deep read"
-    )
-    if from_id or scope:
-        detail = f"requested from={from_id!r} scope={scope!r}. {msg}"
-    else:
-        detail = msg
-    if as_json:
-        typer.echo(json.dumps({"supported": False, "message": detail}, ensure_ascii=False))
+    """有界扩展：一跳讨论参与者（--from）或按范围从缓存/有界搜索重选（--scope）。"""
+    if not from_id and not scope:
+        msg = "pass --from <opportunity_id> or --scope TEXT"
+        if as_json:
+            typer.echo(json.dumps({"ok": False, "message": msg}, ensure_ascii=False))
+        else:
+            typer.echo(msg)
+        raise typer.Exit(code=1)
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+
+    from finch.engagement.expand import expand_by_scope, expand_from_opportunity
+
+    if from_id:
+        opps, snap, message = expand_from_opportunity(
+            settings, ws, from_id, runner=runner
+        )
+        payload = {
+            "ok": True,
+            "message": message,
+            "snapshot_id": snap.id if snap else None,
+            "opportunities": [o.model_dump(mode="json") for o in opps],
+        }
+        if as_json:
+            typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+            return
+        typer.echo(message)
+        if opps:
+            typer.echo(_render_opportunity_cards(opps, limit=len(opps)))
         return
-    typer.echo(detail)
+
+    assert scope is not None
+    opps, message = expand_by_scope(settings, ws, scope, runner=runner)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "ok": True,
+                    "message": message,
+                    "opportunities": [o.model_dump(mode="json") for o in opps],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    typer.echo(message)
+    if opps:
+        typer.echo(_render_opportunity_cards(opps, limit=len(opps)))
 
 
 @connect_app.command("prepare")
 def connect_prepare(
-    opportunity_id: str | None = typer.Option(
-        None, "--opportunity", help="机会 ID（选中后深度准备）"
+    opportunity_ids: list[str] | None = typer.Option(
+        None,
+        "--opportunity",
+        help="选中的机会 ID（可重复；本批最多 3；必须至少指定一个）",
     ),
-    limit: int = typer.Option(3, "--limit", help="无 --opportunity 时最多准备条数"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """为选中机会准备互动提案（默认最多 3 条；不把浏览列表写成完整回复）。"""
+    """为选中机会准备互动提案（必须 --opportunity；本批最多 3；不把浏览列表写成完整回复）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
+    ids = list(opportunity_ids or [])
+    if not ids:
+        typer.echo(
+            "selection required: pass one or more --opportunity <id> "
+            "(browse with connect today; do not prepare the whole list)"
+        )
+        raise typer.Exit(code=1)
+    cap = settings.engagement.max_reply_drafts
+    over_cap = len(ids) > cap
+    selected = ids[:cap]
     proposals: list[InteractionProposal] = []
-    if opportunity_id:
-        proposal = _prepare_opportunity(settings, ws, opportunity_id)
+    misses: list[str] = []
+    for oid in selected:
+        proposal = _prepare_opportunity(settings, ws, oid)
         if proposal is None:
-            typer.echo(f"opportunity not found or could not prepare: {opportunity_id}")
-            raise typer.Exit(code=1)
-        proposals = [proposal]
-    else:
-        snapshot = DiscoverySnapshotRepository(ws).latest()
-        if snapshot is None:
-            typer.echo("no snapshot; run connect refresh first")
-            raise typer.Exit(code=1)
-        cap = max(1, min(limit, settings.engagement.max_reply_drafts))
-        ids = snapshot.ranked_opportunity_ids[:cap]
-        for oid in ids:
-            proposal = _prepare_opportunity(settings, ws, oid)
-            if proposal is not None:
-                proposals.append(proposal)
+            misses.append(oid)
+        else:
+            proposals.append(proposal)
+    # Record selection on latest snapshot when present.
+    snap_repo = DiscoverySnapshotRepository(ws)
+    snapshot = snap_repo.latest()
+    if snapshot is not None:
+        merged = list(dict.fromkeys([*snapshot.selected_opportunity_ids, *selected]))
+        snap_repo.upsert(
+            snapshot.model_copy(update={"selected_opportunity_ids": merged})
+        )
     if as_json:
-        typer.echo(json.dumps(
-            [p.model_dump(mode="json") for p in proposals],
-            ensure_ascii=False, indent=2,
-        ))
+        payload = {
+            "proposals": [p.model_dump(mode="json") for p in proposals],
+            "misses": misses,
+            "over_cap": over_cap,
+            "cap": cap,
+        }
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        if over_cap or misses or not proposals:
+            raise typer.Exit(code=1)
         return
-    if not proposals:
-        typer.echo("no interaction proposals")
-        return
-    typer.echo(_render_proposal_cards(proposals))
+    if proposals:
+        typer.echo(_render_proposal_cards(proposals))
+    if misses:
+        typer.echo(
+            "could not prepare: " + ", ".join(misses)
+        )
+    if over_cap:
+        typer.echo(
+            f"batch limit is {cap}; prepared first {cap} of {len(ids)} selected"
+        )
+    if over_cap or misses or not proposals:
+        if not proposals:
+            typer.echo("no interaction proposals")
+        raise typer.Exit(code=1)
 
 
 @connect_app.command("feedback")
@@ -2349,6 +2558,11 @@ def conversations_ingest(
     direction: str = typer.Option("unknown", "--direction", help="outbound|inbound|unknown"),
     topic: str = typer.Option("general", "--topic"),
     attested: bool = typer.Option(False, "--attested", help="用户声明属实"),
+    trigger: str | None = typer.Option(
+        None,
+        "--trigger",
+        help="可选显式触发：related_update|new_evidence（inbound 仍自动 new_reply）",
+    ),
     note_kind: str | None = typer.Option(
         None, "--note-kind", help="problem|workaround|usage_feedback"
     ),
@@ -2402,6 +2616,12 @@ def conversations_ingest(
     thread = svc.append_interaction(thread, rec.id, occurred_at=rec.occurred_at)
     if direction == "inbound":
         thread = svc.add_trigger(thread, FollowUpTrigger.NEW_REPLY)
+    if trigger:
+        try:
+            thread = svc.add_trigger(thread, FollowUpTrigger(trigger))
+        except ValueError:
+            typer.echo(f"invalid --trigger: {trigger}")
+            raise typer.Exit(code=1) from None
 
     note_payloads: list[dict] = []
     if notes_file:

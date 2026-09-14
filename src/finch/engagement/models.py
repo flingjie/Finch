@@ -111,6 +111,10 @@ class SuggestedMode(StrEnum):
     INVESTIGATE = "investigate"
 
 
+# Display next-action for browse cards (Python-derived; not a second LLM enum).
+NextAction = Literal["reply", "ask", "try", "repro", "case", "observe"]
+
+
 class Opportunity(BaseModel):
     """轻量交流机会（发现结果，无审批状态机）。
 
@@ -132,6 +136,11 @@ class Opportunity(BaseModel):
     suggested_mode: SuggestedMode = SuggestedMode.DISCUSS
     novelty_reason: str = ""
     uncertainty: str = ""
+    shared_problem: str = ""
+    contribution_basis_refs: list[str] = Field(default_factory=list)
+    next_action: NextAction | None = None
+    estimated_minutes: int | None = None
+    evidence_status: str | None = None  # mirrors peers.EvidenceStatus value when set
     assessed_at: datetime | None = None
     assessment_version: str = "1"
     # Optional score snapshot for ranking (deterministic total from Python).
@@ -151,6 +160,7 @@ class DiscoverySnapshot(BaseModel):
     failures: list[dict[str, str]] = Field(default_factory=list)
     ranked_opportunity_ids: list[str] = Field(default_factory=list)
     ranking_version: str = "1"
+    selected_opportunity_ids: list[str] = Field(default_factory=list)
 
 
 class PresentationRecord(BaseModel):

@@ -7,6 +7,7 @@ from finch.engagement.search import (
     ProviderUnavailableError,
     RedditPostSearchProvider,
     XPostSearchProvider,
+    allocate_query_budgets,
     build_queries,
     dedupe,
     is_excluded,
@@ -363,3 +364,12 @@ def test_search_evaluates_available_once():
     assert outcome.failures == []
     # available() 只应评估一次（两个 query 共享同一 provider 状态）
     assert calls == {"available": 1}
+
+
+def test_allocate_query_budgets_50_30_20():
+    budgets = allocate_query_budgets(30)
+    assert budgets["peer"] == 15
+    assert budgets["adjacent"] == 9
+    assert budgets["usage"] == 6
+    assert sum(budgets.values()) == 30
+    assert allocate_query_budgets(0) == {"peer": 0, "adjacent": 0, "usage": 0}

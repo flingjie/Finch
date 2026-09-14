@@ -48,6 +48,7 @@ class ConversationScoreInput(BaseModel):
     opening: str = ""
     novelty_reason: str = ""
     uncertainty: str = ""
+    shared_problem: str = ""
 
 
 class ScoreItem(BaseModel):

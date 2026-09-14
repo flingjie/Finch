@@ -100,3 +100,7 @@ class ConversationThread(BaseModel):
     last_activity_at: datetime | None = None
     status: ThreadStatus = ThreadStatus.ACTIVE
     revision: int = 1
+    # Opt-in important-relationship periodic review (default off).
+    important_review_enabled: bool = False
+    review_cadence_days: int | None = None
+    next_review_at: datetime | None = None

@@ -122,3 +122,65 @@ def test_seen_fingerprint_suppressed():
         [opp], limit=5, seen_fingerprints={opp.content_fingerprint}
     )
     assert selected == []
+
+
+def test_assign_next_action_modes():
+    from finch.engagement.opportunity import assign_next_action
+
+    assert assign_next_action(SuggestedMode.LEARN, has_practice=False) == ("observe", 5)
+    assert assign_next_action(SuggestedMode.DISCUSS, has_practice=False)[0] == "ask"
+    assert assign_next_action(SuggestedMode.DISCUSS, has_practice=True)[0] == "reply"
+    assert assign_next_action(SuggestedMode.INVESTIGATE, has_practice=False, time_budget=20)[0] == "try"
+    assert assign_next_action(SuggestedMode.INVESTIGATE, has_practice=False, time_budget=10)[0] == "ask"
+
+
+def test_pending_review_excluded_from_core_set():
+    from finch.peers.models import EvidenceStatus
+
+    core = _opp(NEW_AUTHOR, evidence_status=EvidenceStatus.SOURCED)
+    thin = _opp(
+        FAMILIAR_VIEW,
+        evidence_status=EvidenceStatus.PENDING_REVIEW,
+        why_relevant="Concrete overlap with failure-replay practice and checkpoints",
+        opening="Ask how they validate compensation after a partial tool failure",
+    )
+    selected = select_opportunity_set([core, thin], limit=10)
+    assert all(o.evidence_status != EvidenceStatus.PENDING_REVIEW.value for o in selected)
+    assert core.id in {o.id for o in selected}
+
+
+def test_pending_review_fills_only_when_core_empty():
+    from finch.peers.models import EvidenceStatus
+
+    thin = _opp(
+        NEW_AUTHOR,
+        evidence_status=EvidenceStatus.PENDING_REVIEW,
+        why_relevant="Concrete overlap with failure-replay practice and checkpoints",
+        opening="Ask how they validate compensation after a partial tool failure",
+    )
+    selected = select_opportunity_set([thin], limit=10)
+    assert len(selected) == 1
+    assert selected[0].evidence_status == EvidenceStatus.PENDING_REVIEW.value
+    assert "待了解" in selected[0].uncertainty
+
+
+def test_old_opportunity_yaml_loads_without_new_fields():
+    """Optional Value Discovery fields must default when absent."""
+    from datetime import UTC, datetime
+
+    from finch.engagement.models import Opportunity
+
+    opp = Opportunity.model_validate(
+        {
+            "id": "opp_legacy",
+            "peer_id": "peer_x",
+            "why_relevant": "Concrete overlap with failure-replay practice",
+            "opening": "Ask about compensation after partial failure",
+            "suggested_mode": "discuss",
+            "assessed_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    assert opp.next_action is None
+    assert opp.estimated_minutes is None
+    assert opp.shared_problem == ""
+    assert opp.contribution_basis_refs == []

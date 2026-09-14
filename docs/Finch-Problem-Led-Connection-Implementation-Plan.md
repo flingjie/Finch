@@ -2,8 +2,8 @@
 
 版本：v3，第一性原理 review 后的完整替代方案  
 日期：2026-09-12  
-状态：待实施；本次仅更新计划，没有修改项目代码。  
-代码依据：此前静态阅读的 `flingjie/Finch@23ba4cfc036fcbe9e1e81ea55a004ab155f46756`，未在本次重新检查最新分支或运行测试。实施前比较差异，优先复用已存在能力。本文新增字段、命令、文件为拟议契约。
+状态：A/B 已落地（`4765065` Opportunity 浏览 / snapshot / connect today·more·prepare）；C/D 与扩展路径见 [Value Discovery v3](Finch-Value-Discovery-Implementation-Plan.md)。  
+代码依据：基线已演进；以仓库当前 `main` 与 Value Discovery 计划为准。本文保留为 Problem-Led 决策记录。
 
 ## 1. 目标与范围
 

@@ -63,7 +63,30 @@ class QueryClassCoverage:
     queries: int = 0
     returned: int = 0
     kept: int = 0
+    allocated: int = 0
     failure_reasons: list[str] = field(default_factory=list)
+
+
+# Default recall slot shares: peer 50% / adjacent 30% / usage 20% of max_posts_scanned.
+_QUERY_BUDGET_SHARES: dict[QueryClass, float] = {
+    "peer": 0.50,
+    "adjacent": 0.30,
+    "usage": 0.20,
+}
+
+
+def allocate_query_budgets(max_posts: int) -> dict[QueryClass, int]:
+    """Split max_posts into peer/adjacent/usage slots (50/30/20); remainder to peer."""
+    cap = max(0, max_posts)
+    if cap == 0:
+        return {"peer": 0, "adjacent": 0, "usage": 0}
+    peer = int(cap * _QUERY_BUDGET_SHARES["peer"])
+    adjacent = int(cap * _QUERY_BUDGET_SHARES["adjacent"])
+    usage = int(cap * _QUERY_BUDGET_SHARES["usage"])
+    # Fix rounding so sum == cap.
+    assigned = peer + adjacent + usage
+    peer += cap - assigned
+    return {"peer": peer, "adjacent": adjacent, "usage": usage}
 
 
 @dataclass
@@ -343,19 +366,65 @@ def search_engagement_posts(
                 raw.extend(result)
 
     cap = max(0, engagement.max_posts_scanned)
+    budgets = allocate_query_budgets(cap)
     kept = [post for post in raw if not is_excluded(post, interests.excluded_content)]
-    posts = dedupe(kept, skip_ids=skip_ids)[:cap]
+    deduped = dedupe(kept, skip_ids=skip_ids)
 
     texts: dict[QueryClass, set[str]] = {
         "peer": {q.text.casefold() for q in tagged if q.query_class == "peer"},
         "usage": {q.text.casefold() for q in tagged if q.query_class == "usage"},
         "adjacent": {q.text.casefold() for q in tagged if q.query_class == "adjacent"},
     }
-    kept_by: dict[QueryClass, int] = {"peer": 0, "usage": 0, "adjacent": 0}
-    for p in posts:
+
+    def _classes_for(post: ExternalPost) -> list[QueryClass]:
+        matched: list[QueryClass] = []
         for qclass, keys in texts.items():
-            if any(t.casefold() in keys for t in p.matched_topics):
-                kept_by[qclass] += 1
+            if any(t.casefold() in keys for t in post.matched_topics):
+                matched.append(qclass)
+        return matched or ["peer"]
+
+    # First pass: fill per-class slots. Empty class releases unused budget afterward.
+    by_class: dict[QueryClass, list[ExternalPost]] = {
+        "peer": [],
+        "adjacent": [],
+        "usage": [],
+    }
+    used_ids: set[tuple[str, str]] = set()
+    for post in deduped:
+        for qclass in _classes_for(post):
+            if len(by_class[qclass]) >= budgets[qclass]:
+                continue
+            key = (post.platform, post.id)
+            if key in used_ids:
+                continue
+            by_class[qclass].append(post)
+            used_ids.add(key)
+            break
+
+    # Release unused slots from empty/underfilled classes to remaining posts.
+    unused = sum(budgets[c] - len(by_class[c]) for c in budgets)
+    overflow: list[ExternalPost] = []
+    if unused > 0:
+        for post in deduped:
+            key = (post.platform, post.id)
+            if key in used_ids:
+                continue
+            overflow.append(post)
+            used_ids.add(key)
+            if len(overflow) >= unused:
+                break
+
+    posts: list[ExternalPost] = []
+    for qclass in ("peer", "adjacent", "usage"):
+        posts.extend(by_class[qclass])
+    posts.extend(overflow)
+    posts = posts[:cap]
+
+    kept_by: dict[QueryClass, int] = {
+        "peer": len(by_class["peer"]),
+        "adjacent": len(by_class["adjacent"]),
+        "usage": len(by_class["usage"]),
+    }
 
     coverage = [
         QueryClassCoverage(
@@ -363,6 +432,7 @@ def search_engagement_posts(
             queries=query_count_by_class[qclass],
             returned=returned_by_class[qclass],
             kept=kept_by[qclass],
+            allocated=budgets[qclass],
             failure_reasons=list(failure_by_class[qclass]),
         )
         for qclass in ("peer", "usage", "adjacent")

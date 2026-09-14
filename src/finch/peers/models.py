@@ -9,6 +9,14 @@ from pydantic import BaseModel, Field
 Platform = Literal["x", "reddit"]
 
 
+class EvidenceStatus(StrEnum):
+    """实践证据状态：有来源 / 作者自述 / 待了解（仅 bio/转发）。"""
+
+    SOURCED = "sourced"
+    AUTHOR_STATED = "author_stated"
+    PENDING_REVIEW = "pending_review"
+
+
 class RelationshipStage(StrEnum):
     """关系阶段：仅用于恢复上下文，不作为强制推进漏斗。"""
 
@@ -44,3 +52,6 @@ class PeerProfile(BaseModel):
     next_context: str = ""
     possible_next_actions: list[str] = Field(default_factory=list)
     source_refs: list[str] = Field(default_factory=list)
+    current_work: str = ""
+    practice_evidence_refs: list[str] = Field(default_factory=list)
+    evidence_status: EvidenceStatus | None = None

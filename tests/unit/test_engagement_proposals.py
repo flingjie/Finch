@@ -247,3 +247,22 @@ def test_generate_proposals_makes_single_batch_llm_call():
     runner = FakeRunner(items=[_item("p1"), _item("p2")])
     generate_proposals(runner, posts, EngagementSettings())
     assert runner.calls == 1
+
+
+def test_fabricated_experience_rewritten_without_basis():
+    from finch.engagement.proposals import blocks_fabricated_experience, context_version_for
+
+    assert blocks_fabricated_experience("我测试过这个方案", has_basis=False)
+    assert not blocks_fabricated_experience("我测试过这个方案", has_basis=True)
+    post = _scored("p1", score=_score(discussability=0.9, novelty=0.9, practical_evidence=0.1))
+    runner = FakeRunner(items=[_item("p1", draft="我测试过这个失败恢复路径，效果不错。")])
+    candidates = generate_proposals(
+        runner, [post], EngagementSettings(), contribution_basis_refs=[]
+    )
+    assert candidates
+    assert "我测试过" not in candidates[0].draft
+    assert any("fabricated" in r for r in candidates[0].factual_risks)
+
+    v1 = context_version_for(practice_refs=["a"], current_questions=["q"])
+    v2 = context_version_for(practice_refs=["b"], current_questions=["q"])
+    assert v1 != v2

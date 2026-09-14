@@ -170,6 +170,8 @@ class InterestsSettings(BaseModel):
     excluded_content: list[str] = Field(default_factory=list)
     adjacent_queries: list[str] = Field(default_factory=list)
     usage_queries: list[str] = Field(default_factory=list)
+    practice_refs: list[str] = Field(default_factory=list)
+    time_budget_minutes: int = Field(default=20, ge=1)
 
     @model_validator(mode="before")
     @classmethod

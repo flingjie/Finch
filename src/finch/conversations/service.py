@@ -19,6 +19,7 @@ from .models import (
     CommitmentStatus,
     ConversationThread,
     FollowUpTrigger,
+    MiniExperiment,
     ObservationKind,
     ThreadNote,
     ThreadStatus,
@@ -169,7 +170,13 @@ class ConversationService:
         updated.commitments.append(commitment)
         if expected_revision is not None:
             updated.revision = thread.revision + 1
-        return self.add_trigger(updated, FollowUpTrigger.OWN_COMMITMENT)
+        # Only queue OWN_COMMITMENT when due now / undated; future due waits for due_at.
+        from datetime import UTC
+
+        now = datetime.now(UTC)
+        if commitment.due_at is None or commitment.due_at <= now:
+            return self.add_trigger(updated, FollowUpTrigger.OWN_COMMITMENT)
+        return updated
 
     def build_observation_note(
         self,
@@ -270,8 +277,8 @@ class ConversationService:
         """是否需要跟进（可对外呈现）。
 
         CLOSED 不跟进；DEFERRED 且未到期不跟进。
-        触发：pending_triggers、开放承诺、未解问题。
-        ``stale_days`` 保留签名兼容，但**单独过期不触发**对外联系。
+        触发：pending_triggers、到期开放承诺、未解问题、到期重要关系回顾。
+        未来到期的承诺 alone 不触发；``stale_days`` 保留签名兼容，但**单独过期不触发**对外联系。
         """
         del stale_days  # time alone must not contact the other person
         if thread.status is ThreadStatus.CLOSED:
@@ -281,21 +288,141 @@ class ConversationService:
                 return False
         if thread.pending_triggers:
             return True
-        if any(c.status is CommitmentStatus.OPEN for c in thread.commitments):
-            return True
+        for c in thread.commitments:
+            if c.status is not CommitmentStatus.OPEN:
+                continue
+            # Open commitment with no due_at still needs follow-up (explicit promise).
+            # Future due_at alone does not fire until due.
+            if c.due_at is None or c.due_at <= now:
+                return True
         if thread.open_questions or thread.open_question_notes:
+            return True
+        if (
+            thread.important_review_enabled
+            and thread.next_review_at is not None
+            and thread.next_review_at <= now
+        ):
             return True
         return False
 
-    def is_stale_for_internal_review(
-        self, thread: ConversationThread, *, now: datetime, stale_days: int = 7
-    ) -> bool:
-        """内部复查用：时间陈旧，不意味着应联系对方。"""
-        if thread.status is ThreadStatus.CLOSED:
-            return False
-        if thread.last_activity_at is None:
-            return True
-        return (now - thread.last_activity_at).days >= stale_days
+    def add_experiment(
+        self,
+        thread: ConversationThread,
+        experiment: MiniExperiment,
+        *,
+        expected_revision: int | None = None,
+        source_ref: str = "",
+    ) -> ConversationThread:
+        """Adopt a MiniExperiment (explicit only). Suggestions never auto-create."""
+        if expected_revision is not None and expected_revision != thread.revision:
+            raise ConversationServiceError(
+                f"revision conflict: expected {expected_revision}, "
+                f"current {thread.revision}"
+            )
+        updated = thread.model_copy(deep=True)
+        # Idempotent on hypothesis + method (+ optional source in artifact_ref).
+        key = (
+            experiment.hypothesis.strip().casefold(),
+            (experiment.method or "").strip().casefold(),
+            (source_ref or experiment.artifact_ref or "").strip().casefold(),
+        )
+        for existing in updated.experiments:
+            existing_key = (
+                existing.hypothesis.strip().casefold(),
+                (existing.method or "").strip().casefold(),
+                (existing.artifact_ref or "").strip().casefold(),
+            )
+            if existing_key == key:
+                return updated
+        to_add = experiment
+        if source_ref and not experiment.artifact_ref:
+            to_add = experiment.model_copy(update={"artifact_ref": source_ref})
+        updated.experiments.append(to_add)
+        if expected_revision is not None:
+            updated.revision = thread.revision + 1
+        return updated
+
+    def record_experiment_result(
+        self,
+        thread: ConversationThread,
+        *,
+        hypothesis: str,
+        actual_result: str,
+        artifact_ref: str | None = None,
+        expected_revision: int | None = None,
+    ) -> ConversationThread:
+        """Record result on matching experiment; appends NEW_EVIDENCE trigger."""
+        if expected_revision is not None and expected_revision != thread.revision:
+            raise ConversationServiceError(
+                f"revision conflict: expected {expected_revision}, "
+                f"current {thread.revision}"
+            )
+        if not actual_result.strip():
+            raise ConversationServiceError("actual_result is required")
+        updated = thread.model_copy(deep=True)
+        target = hypothesis.strip().casefold()
+        found = False
+        for i, exp in enumerate(updated.experiments):
+            if exp.hypothesis.strip().casefold() == target:
+                updates: dict = {"actual_result": actual_result.strip()}
+                if artifact_ref:
+                    updates["artifact_ref"] = artifact_ref
+                updated.experiments[i] = exp.model_copy(update=updates)
+                found = True
+                break
+        if not found:
+            raise ConversationServiceError(f"experiment not found: {hypothesis}")
+        if expected_revision is not None:
+            updated.revision = thread.revision + 1
+        return self.add_trigger(updated, FollowUpTrigger.NEW_EVIDENCE)
+
+    def mark_important(
+        self,
+        thread: ConversationThread,
+        *,
+        cadence_days: int,
+        now: datetime,
+        expected_revision: int | None = None,
+    ) -> ConversationThread:
+        """Opt-in important-relationship periodic review (remind only, no auto-greet)."""
+        if cadence_days < 1:
+            raise ConversationServiceError("cadence_days must be >= 1")
+        if expected_revision is not None and expected_revision != thread.revision:
+            raise ConversationServiceError(
+                f"revision conflict: expected {expected_revision}, "
+                f"current {thread.revision}"
+            )
+        from datetime import timedelta
+
+        next_at = now + timedelta(days=cadence_days)
+        updates = {
+            "important_review_enabled": True,
+            "review_cadence_days": cadence_days,
+            "next_review_at": next_at,
+        }
+        if expected_revision is not None:
+            updates["revision"] = thread.revision + 1
+        return thread.model_copy(update=updates)
+
+    def clear_important_review(
+        self,
+        thread: ConversationThread,
+        *,
+        expected_revision: int | None = None,
+    ) -> ConversationThread:
+        if expected_revision is not None and expected_revision != thread.revision:
+            raise ConversationServiceError(
+                f"revision conflict: expected {expected_revision}, "
+                f"current {thread.revision}"
+            )
+        updates: dict = {
+            "important_review_enabled": False,
+            "review_cadence_days": None,
+            "next_review_at": None,
+        }
+        if expected_revision is not None:
+            updates["revision"] = thread.revision + 1
+        return thread.model_copy(update=updates)
 
     def ingest_record(
         self,
