@@ -49,7 +49,7 @@ engagement:
   search_concurrency: 4
   min_candidate_score: 0.72
   max_bookmarks: 5
-  max_reply_drafts: 3
+  max_reply_drafts: 10
   max_public_replies: 2
   per_author_daily_limit: 1
   max_discovery_authors: 50

@@ -31,7 +31,7 @@
 
 ## 用户下一轮 → CLI
 
-- `准备互动 N` → `uv run finch connect prepare --opportunity {opportunity_id}`（每次默认最多 3）
+- `准备互动 N` → `uv run finch connect prepare --opportunity {opportunity_id}`（每次默认最多 10）
 - `展开 N` → 补互补点/分歧/上下文；仍不自动生成 10 份草稿
 - `再给 5 位` / `换一批` → `uv run finch connect more --snapshot {snapshot_id} --limit 5`（不重复、不调网络/LLM）
 - `今天只浏览` → 只 `today`，不进入 prepare/approve

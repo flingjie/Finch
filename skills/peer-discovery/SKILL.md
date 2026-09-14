@@ -12,7 +12,7 @@ description: >
 
 从公开讨论中发现值得交流的机会。职责：在预算内刷新或读取快照，产出 **8–12 张轻量机会卡**，
 已有对话独立呈现、不占发现名额。覆盖有实践证据的 builder（含闭源/业务场景自述，须标注）；
-候选不足如实显示覆盖缺口，不用低质量结果凑数。深度准备默认最多 3 位，由用户选中后交给
+候选不足如实显示覆盖缺口，不用低质量结果凑数。深度准备默认最多 10 位，由用户选中后交给
 `interaction-preparation` / `finch connect prepare --opportunity`。
 
 本 Skill 只调用 Finch CLI，不复制业务逻辑。关系粗筛与机会选择的确定性总分由 Python 计算，
@@ -24,7 +24,7 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 - 或统一入口：`finch connect daily`（缺快照/过期自动刷新；显式 `--refresh` 强制刷新）
 - 再来几位：`finch connect more --snapshot <id> --limit 5`（不重复、不调网络/LLM）
 - 有界扩展：`finch connect expand --from <opportunity_id>` 或 `--scope TEXT`
-- 准备互动：`finch connect prepare --opportunity <id>`（可重复；每次最多 3；**必须选中**）
+- 准备互动：`finch connect prepare --opportunity <id>`（可重复；每次最多 10；**必须选中**）
 - 反馈：`finch connect feedback --file feedback.json`
 
 ## 产出契约

@@ -141,7 +141,7 @@ ALL_SAMPLE_POSTS: list[ExternalPost] = [
 BASELINE_DAILY_SHAPE = {
     "show_peers_cap": 3,
     "pool_max_peers_per_run": 5,
-    "max_reply_drafts": 3,
+    "max_reply_drafts": 10,
     "always_runs_discovery": True,
     "generates_drafts_on_daily": True,
 }

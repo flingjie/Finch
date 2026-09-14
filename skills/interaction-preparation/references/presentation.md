@@ -35,4 +35,4 @@
 - `批准 N` → `uv run finch connect approve {proposal_id}`（批准只记发布意图，不等于已发出）
 - `改草稿 N` → 把修订写入文件后 `uv run finch connect edit {proposal_id} --file <path>`
 - `跳过 N` → `uv run finch connect reject {proposal_id} --reason "..."`
-- `换一批` → 再跑 `uv run finch connect prepare`，或从本次未展示提案再挑最多 3 条
+- `换一批` → 再跑 `uv run finch connect prepare`，或从本次未展示提案再挑最多 10 条

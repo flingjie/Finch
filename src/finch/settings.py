@@ -132,7 +132,7 @@ class EngagementSettings(BaseModel):
     search_concurrency: int = Field(default=4, ge=1)
     min_candidate_score: float = 0.72
     max_bookmarks: int = 5
-    max_reply_drafts: int = 3
+    max_reply_drafts: int = 10
     max_public_replies: int = 2
     per_author_daily_limit: int = 1
     # Layered budgets (problem-led connection A).

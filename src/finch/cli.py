@@ -2184,11 +2184,14 @@ def connect_expand(
 def connect_prepare(
     opportunity_ids: Annotated[
         list[str] | None,
-        typer.Option("--opportunity", help="选中的机会 ID（可重复；本批最多 3；必须至少指定一个）"),
+        typer.Option(
+            "--opportunity",
+            help="选中的机会 ID（可重复；本批最多 10；必须至少指定一个）",
+        ),
     ] = None,
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """为选中机会准备互动提案（必须 --opportunity；本批最多 3；不把浏览列表写成完整回复）。"""
+    """为选中机会准备互动提案（必须 --opportunity；本批最多 10；不把浏览列表写成完整回复）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()

@@ -294,13 +294,13 @@ def test_connect_prepare_with_opportunity(monkeypatch, tmp_path):
     assert InteractionRepository(ws).get("x:post_1:draft_reply") is not None
 
 
-def test_connect_prepare_caps_at_three(monkeypatch, tmp_path):
+def test_connect_prepare_caps_at_ten(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
 
     ids = []
-    for i in range(5):
+    for i in range(12):
         oid = f"opp_{i}"
         ids.append(oid)
         OpportunityRepository(ws).upsert(
@@ -324,8 +324,8 @@ def test_connect_prepare_caps_at_three(monkeypatch, tmp_path):
         args.extend(["--opportunity", oid])
     r = CliRunner().invoke(app, args)
     assert r.exit_code == 1, r.output
-    assert calls["n"] == 3
-    assert "batch limit is 3" in r.output
+    assert calls["n"] == 10
+    assert "batch limit is 10" in r.output
 
 
 def test_connect_prepare_requires_selection(monkeypatch, tmp_path):

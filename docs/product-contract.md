@@ -37,7 +37,7 @@ Finch 是一个**同行连接与个人表达系统**：帮助你发现值得长�
 |---|---|---|
 | `PeerProfile` | 关系领域 | 记录「这个人是谁、为什么值得继续交流」。外部作者按 `platform + author_id` 幂等归一化。可含 `current_work`、实践证据引用与证据状态（sourced / author_stated / pending_review）。**不是 lead。** |
 | `Opportunity` | 关系领域 | 轻量**交流**机会。发现结果，无审批状态机；每日浏览 8–12，不含完整回复草稿。浏览卡固定呈现：正在做什么、为何相关、可贡献什么、下一步、时间与不确定性（附来源）。含 `shared_problem`、`contribution_basis_refs`、`next_action`、`estimated_minutes`。**不是商业机会。** |
-| `InteractionProposal` | 关系领域 | 用户选中后深度准备的待批准建议，不是已发生的互动。默认每次最多 3 位选中机会；可含最小贡献（试用/复现/观察）而无公开回复草稿。含 `contribution_type` / `why_this_person` / `why_now` / `expected_conversation_opening`。 |
+| `InteractionProposal` | 关系领域 | 用户选中后深度准备的待批准建议，不是已发生的互动。默认每次最多 10 位选中机会；可含最小贡献（试用/复现/观察）而无公开回复草稿。含 `contribution_type` / `why_this_person` / `why_now` / `expected_conversation_opening`。 |
 | `InteractionRecord` | 关系领域 | 单独记录真正发生过的互动事实（可无 proposal_id）。不能用 Proposal 状态替代。 |
 | `ConversationThread` | 关系领域 | 同一同行、同一主题的多次互动串联；问题/workaround/使用反馈以线程笔记形式挂在线索上（必填 `source_ref`）；跟进由新回复/承诺到期/新证据/相关更新触发，时间陈旧 alone 不触发对外联系。重要关系周期回顾默认关闭、用户主动开启。 |
 | `AuthorIdea` | 表达领域 | 只表达用户自己的立场（修订历史 append-only；草稿 ≠ 观点已证实）。来源：个人实践、已发生的对话、用户输入。 |

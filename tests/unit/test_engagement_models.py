@@ -136,7 +136,7 @@ def test_settings_defaults_for_engagement_and_interests():
     assert s.engagement.max_posts_scanned == 30
     assert s.engagement.min_candidate_score == 0.72
     assert s.engagement.max_bookmarks == 5
-    assert s.engagement.max_reply_drafts == 3
+    assert s.engagement.max_reply_drafts == 10
     assert s.engagement.max_public_replies == 2
     assert s.engagement.per_author_daily_limit == 1
     assert s.engagement.public_expression_requires_approval is True

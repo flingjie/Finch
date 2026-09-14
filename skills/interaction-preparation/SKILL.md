@@ -18,7 +18,7 @@ description: >
 
 ## CLI
 
-- 必须指定机会：`finch connect prepare --opportunity <id>`（可重复，本批最多 3）
+- 必须指定机会：`finch connect prepare --opportunity <id>`（可重复，本批最多 10）
 - 批准 / 拒绝 / 改草稿：`approve` / `reject` / `edit`
 
 ## 产出契约（InteractionProposal）
@@ -33,7 +33,7 @@ description: >
 
 见 `_shared/agent-presentation.md` 与 `references/presentation.md`。本 Skill 做编辑式推荐，不贴 `connect prepare` 的 TSV 原文。
 
-读完 CLI 后：点名最值得先做的一条 + 草稿或最小动作预览 → 最多展开 3 条 →
+读完 CLI 后：点名最值得先做的一条 + 草稿或最小动作预览 → 最多展开 10 条 →
 「批准 1 / 改草稿 1 / 跳过 / 换一批」。内部保留序号 → `proposal_id`。
 
 区分三种结果（复用 `suggested_mode` / `ContributionType`，不平行造枚举）：
