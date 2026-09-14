@@ -305,6 +305,16 @@ class ConversationService:
             return True
         return False
 
+    def is_stale_for_internal_review(
+        self, thread: ConversationThread, *, now: datetime, stale_days: int = 7
+    ) -> bool:
+        """内部复查用：时间陈旧，不意味着应联系对方。"""
+        if thread.status is ThreadStatus.CLOSED:
+            return False
+        if thread.last_activity_at is None:
+            return True
+        return (now - thread.last_activity_at).days >= stale_days
+
     def add_experiment(
         self,
         thread: ConversationThread,

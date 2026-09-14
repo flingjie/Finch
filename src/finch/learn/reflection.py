@@ -32,6 +32,12 @@ Also weave in these fact examples when present (say honestly if absent):
 - Which of the user's own commitments are done vs still open?
 - Which practice formed an expressible viewpoint?
 
+Recommendation diagnosis order (do not invent a score):
+1. If candidates were unsuitable → recall/coverage problem
+2. If candidates were suitable but unused → prepare cost / time budget
+3. If acted but little reply → opening / timing
+4. If replied but not continued → follow-up quality
+
 ## Relationship metrics (computed in code)
 {relationship_metrics}
 

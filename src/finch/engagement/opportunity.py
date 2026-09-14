@@ -363,7 +363,8 @@ def select_opportunity_set(
                 selected.append(opp)
                 selected_ids.add(opp.id)
 
-    if len(selected) < limit and core:
+    # pending_review only when there is no core pool (never pad core slots with 待了解).
+    if not core and pending and len(selected) < limit:
         pending_by_fp: dict[str, Opportunity] = {}
         for opp in pending:
             if opp.content_fingerprint in seen_fp:

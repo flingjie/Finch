@@ -178,6 +178,14 @@ class RelationshipMetrics(BaseModel):
     ideas_from_conversations: int = 0      # 由对话形成的观点候选数
     collaboration_signals: int = 0         # 含 agreements 或 possible_experiments 的对话数
     stale_conversations: int = 0           # 需要跟进（超期/有未解问题）的对话数
+    # Value Discovery P4 diagnosis (sourced counts; not a relationship score).
+    bidirectional_threads: int = 0         # 双方均有消息的线索
+    help_with_source: int = 0              # usage_feedback 或带 artifact 的实验结果
+    open_commitments: int = 0              # 未完成承诺
+    presented_opportunities: int = 0
+    worth_following: int = 0
+    prepared_count: int = 0
+    recorded_interactions: int = 0
 
 
 def compute_relationship_metrics(
@@ -188,11 +196,37 @@ def compute_relationship_metrics(
     snapshots: list[FeedbackSnapshot],
     jobs: list[ContentJob],
     now: datetime,
+    presentation_count: int = 0,
+    worth_following_count: int = 0,
+    prepared_count: int = 0,
 ) -> RelationshipMetrics:
     """从关系领域数据聚合关系质量指标（纯函数，无 IO）。"""
+    from finch.conversations.models import CommitmentStatus, ObservationKind
+    from finch.conversations.service import active_observation_notes
+
     per_peer: dict[str, int] = {}
+    dirs_by_thread_peer: dict[str, set[str]] = {}
     for rec in interactions:
         per_peer[rec.peer_id] = per_peer.get(rec.peer_id, 0) + 1
+        dirs_by_thread_peer.setdefault(rec.peer_id, set()).add(rec.direction)
+
+    bidirectional = 0
+    help_count = 0
+    open_cmts = 0
+    for t in threads:
+        peer_dirs = dirs_by_thread_peer.get(t.peer_id, set())
+        # Approximate bidirectional: both inbound and outbound on same peer,
+        # or ≥2 interactions with substance (notes/body).
+        if "inbound" in peer_dirs and "outbound" in peer_dirs and len(t.interaction_ids) >= 2:
+            bidirectional += 1
+        notes = active_observation_notes(t)
+        if any(n.kind == ObservationKind.USAGE_FEEDBACK for n in notes):
+            help_count += 1
+        if any(e.actual_result.strip() and e.artifact_ref for e in t.experiments):
+            help_count += 1
+        open_cmts += sum(
+            1 for c in t.commitments if c.status is CommitmentStatus.OPEN
+        )
 
     svc = ConversationService()
     return RelationshipMetrics(
@@ -205,6 +239,13 @@ def compute_relationship_metrics(
         ideas_from_conversations=sum(1 for j in jobs if j.origin == "conversation"),
         collaboration_signals=sum(1 for t in threads if t.agreements or t.possible_experiments),
         stale_conversations=sum(1 for t in threads if svc.needs_follow_up(t, now=now)),
+        bidirectional_threads=bidirectional,
+        help_with_source=help_count,
+        open_commitments=open_cmts,
+        presented_opportunities=presentation_count,
+        worth_following=worth_following_count,
+        prepared_count=prepared_count,
+        recorded_interactions=len(interactions),
     )
 
 
@@ -217,10 +258,19 @@ def render_relationship_metrics(m: RelationshipMetrics) -> str:
             "## 关系质量（首要）",
             f"- 有实质反馈的互动: {m.meaningful_interactions}",
             f"- 继续的对话: {m.continued_conversations}",
+            f"- 双向有内容线索: {m.bidirectional_threads}",
+            f"- 有来源的帮助: {m.help_with_source}",
+            f"- 未完成承诺: {m.open_commitments}",
             f"- 重复互动同行: {m.repeat_peers}",
             f"- 新相关同行: {m.new_relevant_peers}",
             f"- 对话形成的观点: {m.ideas_from_conversations}",
             f"- 协作信号: {m.collaboration_signals}",
             f"- 待跟进对话: {m.stale_conversations}",
+            "",
+            "## 推荐诊断（呈现 → 认可 → 准备 → 记录）",
+            f"- 已呈现机会: {m.presented_opportunities}",
+            f"- 值得了解反馈: {m.worth_following}",
+            f"- 已准备: {m.prepared_count}",
+            f"- 已记录互动: {m.recorded_interactions}",
         ]
     )

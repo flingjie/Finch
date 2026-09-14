@@ -265,8 +265,8 @@ def test_connect_daily_persists_peers_and_renders_sections(monkeypatch, tmp_path
     assert r.exit_code == 0, r.output
     assert "需要继续的对话" in r.output
     assert "新发现的交流机会" in r.output
-    assert "为何推荐: Concrete overlap with deterministic graph practice" in r.output
-    assert "切入点: Ask how they replay failures across graph nodes" in r.output
+    assert "为何相关: Concrete overlap with deterministic graph practice" in r.output
+    assert "Ask how they replay failures across graph nodes" in r.output
     assert "草稿预览:" not in r.output
     assert "观点候选" in r.output
     assert PeerRepository(ws).get("peer_abc") is not None

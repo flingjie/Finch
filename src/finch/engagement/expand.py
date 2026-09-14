@@ -200,13 +200,15 @@ def expand_by_scope(
         long_term_interests=list(settings.interests.long_term_interests),
         excluded_content=list(settings.interests.excluded_content),
     )
-    providers = [
+    # Temporarily shrink scan budget for expand.
+    engagement = settings.engagement.model_copy(
+        update={"max_posts_scanned": min(12, settings.engagement.max_posts_scanned)}
+    )
+    providers_seq: list = [
         XPostSearchProvider(OpenCliClient()),
         RedditPostSearchProvider(RedditOpenCliClient()),
     ]
-    # Temporarily shrink scan budget for expand.
-    engagement = settings.engagement.model_copy(update={"max_posts_scanned": min(12, settings.engagement.max_posts_scanned)})
-    outcome = search_engagement_posts(providers, interests, engagement)
+    outcome = search_engagement_posts(providers_seq, interests, engagement)
     if not outcome.posts:
         return matched, f"cache had {len(matched)}; extra search returned none for scope={scope!r}"
 

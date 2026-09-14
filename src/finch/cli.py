@@ -5,7 +5,7 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Annotated, cast
 
 import typer
 import yaml
@@ -1192,6 +1192,18 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
     window_feedbacks = [
         fb for fb in FeedbackRepository(ws).list_feedbacks() if fb.recorded_at >= since
     ]
+    presentations = PresentationRecordRepository(ws).list_all()
+    rec_feedback = RecommendationFeedbackRepository(ws).list_all()
+    worth = sum(
+        1
+        for f in rec_feedback
+        if f.dimension == "interest" and f.value == "worth_following"
+    )
+    prepared = sum(
+        1
+        for p in InteractionRepository(ws).list_all()
+        if p.status.value in {"proposed", "approved", "executed", "rejected"}
+    )
     rel_metrics = compute_relationship_metrics(
         peers=PeerRepository(ws).list_all(),
         interactions=InteractionRecordRepository(ws).list_all(),
@@ -1199,6 +1211,9 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
         snapshots=FeedbackSnapshotRepository(ws).list_all(),
         jobs=ContentJobRepository(ws).list_jobs(),
         now=datetime.now(UTC),
+        presentation_count=len(presentations),
+        worth_following_count=worth,
+        prepared_count=prepared,
     )
     records = InteractionRecordRepository(ws).list_all()
     message_excerpts = [
@@ -2167,11 +2182,10 @@ def connect_expand(
 
 @connect_app.command("prepare")
 def connect_prepare(
-    opportunity_ids: list[str] | None = typer.Option(
-        None,
-        "--opportunity",
-        help="选中的机会 ID（可重复；本批最多 3；必须至少指定一个）",
-    ),
+    opportunity_ids: Annotated[
+        list[str] | None,
+        typer.Option("--opportunity", help="选中的机会 ID（可重复；本批最多 3；必须至少指定一个）"),
+    ] = None,
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
     """为选中机会准备互动提案（必须 --opportunity；本批最多 3；不把浏览列表写成完整回复）。"""
@@ -2790,6 +2804,110 @@ def conversations_commit(
         typer.echo(commitment.model_dump_json(indent=2))
     else:
         typer.echo(f"commitment {commitment.id} on {updated.id}")
+
+
+@conversations_app.command("experiment")
+def conversations_experiment(
+    action: str = typer.Argument(..., help="add | record"),
+    conversation_id: str = typer.Argument(..., help="conversation id"),
+    hypothesis: str = typer.Option(..., "--hypothesis", help="假设"),
+    method: str = typer.Option("", "--method", help="最小方法"),
+    expected: str = typer.Option("", "--expected", help="期望观察"),
+    result: str = typer.Option("", "--result", help="实际结果（record 必填）"),
+    source_ref: str = typer.Option("", "--source-ref", help="来源引用"),
+    artifact_ref: str | None = typer.Option(None, "--artifact-ref", help="结果产物引用"),
+    expected_revision: int | None = typer.Option(None, "--expected-revision"),
+) -> None:
+    """采纳小实验（add）或记录结果（record）。建议动作不会自动变成实验。"""
+    from finch.conversations.models import MiniExperiment
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = ConversationThreadRepository(ws)
+    thread = repo.get(conversation_id)
+    if thread is None:
+        typer.echo(f"conversation not found: {conversation_id}")
+        raise typer.Exit(code=1)
+    svc = ConversationService()
+    try:
+        if action == "add":
+            if not source_ref.strip():
+                typer.echo("--source-ref is required when adding an experiment")
+                raise typer.Exit(code=1)
+            exp = MiniExperiment(
+                hypothesis=hypothesis,
+                method=method,
+                expected_observation=expected,
+                artifact_ref=source_ref.strip(),
+            )
+            updated = svc.add_experiment(
+                thread,
+                exp,
+                expected_revision=expected_revision,
+                source_ref=source_ref.strip(),
+            )
+        elif action == "record":
+            if not result.strip():
+                typer.echo("--result is required for record")
+                raise typer.Exit(code=1)
+            updated = svc.record_experiment_result(
+                thread,
+                hypothesis=hypothesis,
+                actual_result=result,
+                artifact_ref=artifact_ref or (source_ref.strip() or None),
+                expected_revision=expected_revision,
+            )
+        else:
+            typer.echo("action must be add or record")
+            raise typer.Exit(code=1)
+    except ConversationServiceError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    repo.upsert(updated)
+    typer.echo(f"experiment {action} on {updated.id} revision={updated.revision}")
+
+
+@conversations_app.command("mark-important")
+def conversations_mark_important(
+    conversation_id: str = typer.Argument(..., help="conversation id"),
+    cadence_days: int = typer.Option(30, "--cadence-days", help="回顾周期（天）"),
+    clear: bool = typer.Option(False, "--clear", help="关闭周期回顾"),
+    expected_revision: int | None = typer.Option(None, "--expected-revision"),
+) -> None:
+    """将线索标为重要同行并设定周期回顾（默认关闭；到期只提醒审阅，不自动问候）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = ConversationThreadRepository(ws)
+    thread = repo.get(conversation_id)
+    if thread is None:
+        typer.echo(f"conversation not found: {conversation_id}")
+        raise typer.Exit(code=1)
+    svc = ConversationService()
+    try:
+        if clear:
+            updated = svc.clear_important_review(
+                thread, expected_revision=expected_revision
+            )
+        else:
+            updated = svc.mark_important(
+                thread,
+                cadence_days=cadence_days,
+                now=datetime.now(UTC),
+                expected_revision=expected_revision,
+            )
+    except ConversationServiceError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    repo.upsert(updated)
+    if clear:
+        typer.echo(f"cleared important review on {updated.id}")
+    else:
+        typer.echo(
+            f"marked important {updated.id} cadence={cadence_days}d "
+            f"next={updated.next_review_at}"
+        )
 
 
 @conversations_app.command("defer")
