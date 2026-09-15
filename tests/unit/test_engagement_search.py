@@ -175,6 +175,20 @@ def test_build_tagged_queries_peer_usage_adjacent():
     assert adjacent == ["checkpoint"]
 
 
+def test_build_tagged_queries_includes_material_terms():
+    from finch.engagement.search import build_tagged_queries
+
+    interests = InterestsSettings(current_questions=["agent evals"])
+    tagged = build_tagged_queries(
+        interests, material_terms=["failure replay", "agent evals"]
+    )
+    usage = [t.text for t in tagged if t.query_class == "usage"]
+    assert "agent evals" in usage
+    assert "failure replay" in usage
+    # Dedup: material term matching current_questions appears once.
+    assert usage.count("agent evals") == 1
+
+
 def test_search_reports_coverage_gap_for_empty_usage_class():
     class FakeClient:
         def search(self, query, *, product="top", limit=20):

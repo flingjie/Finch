@@ -93,6 +93,11 @@ class IdeaService:
             generator_name=idea.generator.skill,
             generator_version=idea.generator.version,
             content_fingerprint=fingerprint,
+            source_kind=idea.source_kind,
+            facts=list(idea.facts),
+            interpretation=idea.interpretation,
+            evidence_status=idea.evidence_status,
+            limitations=idea.limitations,
         )
         self.jobs.upsert_job(job)
         return job

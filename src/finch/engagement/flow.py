@@ -225,6 +225,8 @@ def run_discovery_engagement_flow(
         )[: engagement.max_discovery_authors]
 
         # Semantic assess at most max_semantic_authors.
+        # ``max_deep_assess`` is the BiP suggested deep-eval budget (config comment);
+        # discovery still uses max_semantic_authors so Value Discovery recall is unchanged.
         semantic_peers = ranked_peers[: engagement.max_semantic_authors]
         relationship_by_peer: dict[str, float] = {}
         selected_posts: list[ExternalPost] = []

@@ -397,19 +397,36 @@ def _render_peer_detail(peer: PeerProfile) -> str:
 
 
 def _render_proposal_card(proposal: InteractionProposal) -> str:
-    """互动提案决策卡：动作 / 理由 / 草稿预览；批准命令带真实 id。"""
+    """互动提案决策卡：对方问题 / 贡献点 / 证据 / 提纲 / 下一步；完整草稿仅在有时展示。"""
+    outline = (proposal.outline or "").strip()
     draft = (proposal.revised_draft or proposal.draft or "").strip()
-    preview = " ".join(draft.split())[:120] if draft else "-"
     lines = [f"动作: {_action_label(proposal.action)}"]
-    if (proposal.why_this_person or "").strip():
+    if (proposal.source_summary or "").strip():
+        lines.append(f"对方问题: {proposal.source_summary.strip()}")
+    if (proposal.value_added or "").strip():
+        lines.append(f"我能补充: {proposal.value_added.strip()}")
+    elif (proposal.why_this_person or "").strip():
         lines.append(f"为什么是这个人: {proposal.why_this_person}")
+    if proposal.contribution_basis_refs:
+        lines.append(f"证据: {', '.join(proposal.contribution_basis_refs[:5])}")
+    if outline:
+        lines.append("提纲:")
+        for raw in outline.splitlines():
+            bullet = raw.strip()
+            if bullet:
+                lines.append(f"  - {bullet.lstrip('- ').strip()}")
+    elif draft:
+        preview = " ".join(draft.split())[:120]
+        lines.append(f"草稿预览: {preview}")
     if (proposal.why_now or "").strip():
         lines.append(f"为什么现在: {proposal.why_now}")
     if (proposal.expected_conversation_opening or "").strip():
         lines.append(f"预期开口: {proposal.expected_conversation_opening}")
-    lines.append(f"草稿预览: {preview}")
+    if proposal.factual_risks:
+        lines.append(f"事实风险: {'; '.join(proposal.factual_risks[:3])}")
     if proposal.status == InteractionStatus.PROPOSED:
-        lines.append(f"uv run finch connect approve {proposal.id}")
+        lines.append(f"下一步: uv run finch connect approve {proposal.id}")
+        lines.append(f"登记发布: uv run finch connect record {proposal.id} --url <url>")
     return "\n".join(lines)
 
 
@@ -1784,7 +1801,7 @@ def _render_daily(focus: TodayFocus) -> str:
             _with_more(opp_body, len(opps["items"]), opps["total"]),
         ),
         _section(
-            "从近期交流产生的观点候选",
+            "可分享的素材 / 观点候选",
             _with_more(idea_body, len(ideas["items"]), ideas["total"]),
         ),
     ])
@@ -1910,6 +1927,7 @@ def _prepare_opportunity(
         settings.engagement,
         context_version=ctx_ver,
         contribution_basis_refs=basis,
+        full_draft=False,
     )
     if not proposals:
         return None
@@ -1985,6 +2003,7 @@ def connect_refresh(
         typer.echo(json.dumps({
             "snapshot_id": snapshot.id if snapshot else None,
             "coverage": coverage,
+            "partial": bool(result.failures) or result.status != "succeeded",
             "failures": [
                 {"platform": f.platform, "query": f.query, "reason": f.reason}
                 for f in result.failures
@@ -1994,6 +2013,11 @@ def connect_refresh(
         return
     typer.echo(f"snapshot: {snapshot.id if snapshot else 'none'}")
     typer.echo(json.dumps(coverage, ensure_ascii=False))
+    if result.failures or result.status != "succeeded":
+        typer.echo(
+            f"部分结果：status={result.status}, "
+            f"failures={len(result.failures)}（已返回已有机会，未静默清空）"
+        )
 
 
 @connect_app.command("today")
@@ -2292,28 +2316,142 @@ def connect_feedback(
 def connect_create(
     input_url: str = typer.Option(..., "--input", help="帖子 URL"),
     topic: str = typer.Option("", "--topic", help="帖子主题（可选）"),
+    from_idea: str | None = typer.Option(
+        None, "--from-idea", help="已有 idea / ContentJob id（个人素材）"
+    ),
+    note: str | None = typer.Option(
+        None, "--note", help="个人笔记原文（无 commit 也可；会先落为 idea）"
+    ),
+    full_draft: bool = typer.Option(
+        False, "--draft", help="生成完整回复草稿（默认只给提纲）"
+    ),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """为一个具体帖子 URL 生成互动提案（抓取 → 评分 → 选动作 → 草稿 → 存为 PROPOSED）。"""
+    """帖子 URL + 可选个人素材 → 提纲或暂不回复（默认不写完整草稿）。
+
+    流程：抓取帖子 → 贡献点检查 → 评分 → 提纲/草稿 → 存为 PROPOSED。
+    无贡献时打印「暂不回复」并退出 0，不落库回复提案。
+    """
+    from finch.engagement.contribution import assess_job_contribution
+    from finch.engagement.proposals import ready_gate_blocks
+    from finch.ideas.fragment_service import FragmentService
+    from finch.ideas.service import IdeaService
+
+    if from_idea and note:
+        typer.echo("pass only one of --from-idea / --note")
+        raise typer.Exit(code=1)
+
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+
+    job: ContentJob | None = None
+    if from_idea:
+        job = ContentJobRepository(ws).get_job(from_idea)
+        if job is None:
+            typer.echo(f"idea not found: {from_idea}")
+            raise typer.Exit(code=1)
+    elif note:
+        try:
+            idea = FragmentService(runner).from_text(note)
+            job = IdeaService(ContentJobRepository(ws)).create_candidate(idea)
+            job = job.model_copy(update={"raw_user_text": note})
+            ContentJobRepository(ws).upsert_job(job)
+        except (RuntimeError, StructuredOutputError, ValueError) as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1) from exc
+
     post = fetch_post_by_url(
         input_url, opencli=OpenCliClient(), reddit_opencli=RedditOpenCliClient(), topic=topic
     )
     if post is None:
         typer.echo(f"could not fetch post: {input_url}")
         raise typer.Exit(code=1)
+
+    if job is not None:
+        ok, reason = assess_job_contribution(post, job)
+        if not ok:
+            payload = {"status": "no_reply", "reason": reason, "url": input_url}
+            if as_json:
+                typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                typer.echo(f"暂不回复：{reason}")
+            return
+    else:
+        reason = "无个人素材：仅允许提问式提纲，不得声称亲历"
+
     engagement = settings.engagement
     scored = score_posts(runner, [post], engagement.weights, relationship_by_peer={})
     ranked = rank_candidates(scored, min_candidate_score=engagement.min_candidate_score)
-    candidates = generate_proposals(runner, ranked, engagement)
+    if not ranked:
+        # Manual URL path: still allow outline when contribution check passed.
+        from finch.engagement.models import ConversationScore
+
+        ranked = [
+            ScoredPost(
+                post=post,
+                score=ConversationScore(
+                    relevance=0.8,
+                    novelty=0.8,
+                    discussability=0.8,
+                    practical_evidence=0.7,
+                    relationship_value=0.5,
+                    total=0.78,
+                    reasons=[reason],
+                ),
+            )
+        ]
+
+    basis = [job.id] if job is not None else list(settings.interests.practice_refs)
+    repo = InteractionRepository(ws)
+    candidates = generate_proposals(
+        runner,
+        ranked,
+        engagement,
+        contribution_basis_refs=basis,
+        full_draft=full_draft,
+        facts=job.facts if job else None,
+        core_message=job.core_message if job else "",
+        interpretation=job.interpretation if job else "",
+        job=job,
+    )
     if not candidates:
-        typer.echo("no proposal above threshold")
+        msg = "暂不回复：模型未产出可用提纲，且缺少可贡献增量"
+        if as_json:
+            typer.echo(json.dumps(
+                {"status": "no_reply", "reason": msg, "url": input_url},
+                ensure_ascii=False,
+                indent=2,
+            ))
+        else:
+            typer.echo(msg)
         return
+
     candidate = candidates[0]
-    InteractionRepository(ws).upsert(candidate, run_id="create")
+    body = (candidate.draft or candidate.outline or "")
+    blocks = ready_gate_blocks(body=body, job=job)
+    if blocks and "secret_detected" in blocks:
+        if as_json:
+            typer.echo(json.dumps(
+                {"status": "blocked", "reasons": blocks, "url": input_url},
+                ensure_ascii=False,
+                indent=2,
+            ))
+        else:
+            typer.echo(f"暂不回复：敏感内容不得进入可发布状态（{', '.join(blocks)}）")
+        return
+
+    # Idempotent: same generation_key returns existing proposal.
+    if candidate.generation_key:
+        existing = repo.find_by_generation_key(candidate.generation_key)
+        if existing is not None:
+            candidate = existing
+        else:
+            repo.upsert(candidate, run_id="create")
+    else:
+        repo.upsert(candidate, run_id="create")
+
     if as_json:
         typer.echo(candidate.model_dump_json(indent=2))
     else:
@@ -2323,11 +2461,28 @@ def connect_create(
 @connect_app.command("approve")
 def connect_approve(proposal_id: str = typer.Argument(..., help="proposal id")) -> None:
     """批准提案（PROPOSED→APPROVED，幂等；批准只创建发布意图，不等于已发布）。"""
+    from finch.engagement.proposals import ready_gate_blocks
+
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
+    repo = InteractionRepository(ws)
+    proposal = repo.get(proposal_id)
+    if proposal is None:
+        typer.echo(f"proposal not found: {proposal_id}")
+        raise typer.Exit(code=1)
+    body = proposal.revised_draft or proposal.draft or proposal.outline or ""
+    job = None
+    for ref in proposal.contribution_basis_refs:
+        job = ContentJobRepository(ws).get_job(ref)
+        if job is not None:
+            break
+    blocks = ready_gate_blocks(body=body, job=job)
+    if blocks:
+        typer.echo(f"cannot approve: {', '.join(blocks)}")
+        raise typer.Exit(code=1)
     try:
-        InteractionRepository(ws).approve(proposal_id)
+        repo.approve(proposal_id)
     except KeyError:
         typer.echo(f"proposal not found: {proposal_id}")
         raise typer.Exit(code=1) from None
@@ -2356,7 +2511,7 @@ def connect_edit(
     proposal_id: str = typer.Argument(..., help="proposal id"),
     path: str = typer.Option(..., "--file", help="人工修订后的草稿文件"),
 ) -> None:
-    """保存人工修订草稿到 revised_draft（不自动批准、不改变发布权限）。"""
+    """保存人工修订草稿；修改正文使旧批准失效（回到 PROPOSED，revision+1）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -2370,8 +2525,7 @@ def connect_edit(
         typer.echo(f"cannot read file: {exc}")
         raise typer.Exit(code=1) from exc
     repo.edit(proposal_id, revised)
-    typer.echo(f"edited {proposal_id}")
-
+    typer.echo(f"edited {proposal_id} (approval invalidated if previously approved)")
 
 @connect_app.command("record")
 def connect_record(

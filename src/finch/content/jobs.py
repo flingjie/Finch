@@ -21,6 +21,12 @@ CommunicationGoal = Literal[
 # Normalized to three values with legacy read-compat.
 IdeaOrigin = Literal["practice", "conversation", "synthesis"]
 
+# Material source kind (Build-in-Public): how the idea was captured.
+SourceKind = Literal["note", "commit", "log", "artifact", "post", "conversation"]
+
+# Evidence status for personal claims on an idea (facts vs attribution).
+EvidenceStatus = Literal["observed", "externally_reported", "unverified"]
+
 # 旧工作区中已存的 legacy origin 值 → 新枚举（读取时归一化，避免校验崩溃）。
 # ``search`` 从无生产路径，但历史上若曾落库，其语义最接近社区信号综合 → 归入 synthesis。
 _LEGACY_ORIGIN = {"commit": "practice", "user": "practice", "search": "synthesis"}
@@ -69,7 +75,9 @@ class ContentJob(BaseModel):
       检查器的约束对象；
     - source_card_ids / candidate_id 供收件箱「个人证据」轨道投影（idea 流恒为空）；
     - origin / generation_key / generator_* / content_fingerprint 是幂等键与溯源元数据；
-    - raw_user_text 保留用户原话；position_revisions 为 append-only 修订史。
+    - raw_user_text 保留用户原话；position_revisions 为 append-only 修订史；
+    - source_kind / facts / interpretation / evidence_status / limitations 区分
+      可追溯事实与用户判断（回复提纲可引用笔记；原创草稿仍须 Evidence Card）。
     """
 
     id: str
@@ -94,6 +102,12 @@ class ContentJob(BaseModel):
     content_fingerprint: str | None = None
     raw_user_text: str = ""
     position_revisions: list[PositionRevision] = Field(default_factory=list)
+    # ---- Build-in-Public：事实 / 判断分列 ----
+    source_kind: SourceKind | None = None
+    facts: list[str] = Field(default_factory=list)
+    interpretation: str = ""
+    evidence_status: EvidenceStatus | None = None
+    limitations: str = ""
 
     @field_validator("origin", mode="before")
     @classmethod

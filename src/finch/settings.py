@@ -123,7 +123,13 @@ class PeerValueWeights(BaseModel):
 
 
 class EngagementSettings(BaseModel):
-    """互动轨道配置（分层预算：轻量发现 → 语义筛选 → 展示 → 深度准备）。"""
+    """互动轨道配置（分层预算：轻量发现 → 语义筛选 → 展示 → 深度准备）。
+
+    建议初始预算（未实测性能承诺，见 Build-in-Public 计划 §6）：
+    - 每次最多取 ``max_posts_scanned`` 条新候选（默认 30）；
+    - 最多深评 ``max_deep_assess`` 条（默认 5；语义作者上限仍用 max_semantic_authors）；
+    - 展示最多 ``max_display_interactions`` 条互动机会 + ``max_display_follow_ups`` 条跟进。
+    """
 
     enabled: bool = True
     schedule: str = "every_run"
@@ -139,6 +145,10 @@ class EngagementSettings(BaseModel):
     max_discovery_authors: int = 50
     max_semantic_authors: int = 20
     max_display_opportunities: int = 10
+    # Build-in-Public display budgets (config; not yet measured).
+    max_deep_assess: int = 5
+    max_display_interactions: int = 3
+    max_display_follow_ups: int = 2
     # Legacy alias for max_semantic_authors (kept for old YAML / callers).
     max_peers_per_run: int = 20
     max_posts_per_peer: int = 3

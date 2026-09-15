@@ -151,7 +151,7 @@ def test_generate_proposals_populates_peer_id_and_generation_key():
     c = generate_proposals(runner, [post], EngagementSettings())[0]
 
     assert c.peer_id == peer_id_for("x", "u")
-    assert c.generation_key == f"{c.peer_id}:p1:draft_quote:1"
+    assert c.generation_key == f"{c.peer_id}:p1:draft_quote:2"
 
 
 def test_generation_key_is_stable_across_regeneration():

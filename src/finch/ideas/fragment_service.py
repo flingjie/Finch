@@ -11,7 +11,13 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
-from finch.content.jobs import AuthorPosition, CommunicationGoal, IdeaOrigin
+from finch.content.jobs import (
+    AuthorPosition,
+    CommunicationGoal,
+    EvidenceStatus,
+    IdeaOrigin,
+    SourceKind,
+)
 from finch.content.models import RecommendedFormat
 from finch.conversations.models import ConversationThread, ThreadStatus
 from finch.engagement.models import ConversationEvidence, InteractionRecord
@@ -29,6 +35,15 @@ engineering Idea candidate. Return JSON matching the schema.
 Rules:
 - core_point is ONE central claim. Split multiple claims into multiple candidates.
 - observation states what was actually observed; do not invent personal experience.
+- facts: short sourced snippets of what was observed (not judgments). Empty if none.
+- interpretation: the user's judgment, separate from facts. May be empty.
+- evidence_status:
+  - "observed" only when the user clearly describes their own lived practice/test.
+  - "externally_reported" when the text reports someone else's experiment/article.
+  - "unverified" when the claim is speculative or lacks a clear source.
+  Never promote externally_reported material into first-person "observed".
+- source_kind: note | commit | log | artifact | post | conversation (best fit).
+- limitations: optional caveats / scope gaps.
 - intent is "stance" (you have a clear position) or "exploration" (open-ended, no
   complete conclusion yet). Choose "exploration" when there is no complete conclusion.
 - author_position carries claim / decision / tradeoff; mark nothing as confirmed.
@@ -60,6 +75,10 @@ Rules:
   shared-work reports — put them in boundaries.known as "peer report: …"; never rewrite
   as first-person lived practice unless the user separately attests their own practice.
 - Do not invent savings percentages or "payment validated" claims.
+- facts vs interpretation: facts are verified conclusions / peer reports; interpretation
+  is the user's judgment. evidence_status is usually "observed" only for the user's own
+  attested practice; peer reports stay "externally_reported".
+- source_kind is "conversation".
 - boundaries.known only holds verified conclusions; unresolved disagreements go to
   boundaries.unknown.
 - communication_goal: continue_discussion | invite_counterexample | summarize_practice |
@@ -69,7 +88,8 @@ Rules:
 
 {thread}
 
-Return JSON matching the schema (core_point / observation / reader_problem / why_worth_saying /
+Return JSON matching the schema (core_point / observation / facts / interpretation /
+evidence_status / source_kind / limitations / reader_problem / why_worth_saying /
 intent / open_question / author_position / boundaries / recommended_format / communication_goal).
 """
 
@@ -84,6 +104,8 @@ Rules:
   an empty core_point ("").
 - Never invent personal experience. The user has NOT personally lived every signal; the
   candidate must remain a third-person, attributed synthesis (boundaries keep it hedged).
+- evidence_status must be "externally_reported" (never "observed").
+- source_kind is "post" (community signals).
 - author_position is always proposed, never confirmed.
 - recommended_format: reply | quote | short_post | thread | dm | do_not_publish.
 
@@ -91,7 +113,8 @@ Rules:
 
 {signal_text}
 
-Return JSON matching the schema (core_point / observation / reader_problem / why_worth_saying /
+Return JSON matching the schema (core_point / observation / facts / interpretation /
+evidence_status / source_kind / limitations / reader_problem / why_worth_saying /
 intent / open_question / author_position / boundaries / recommended_format / communication_goal).
 """
 
@@ -101,11 +124,18 @@ def _to_candidate(
     *,
     origin: IdeaOrigin,
     source_refs: list[SourceRef],
+    source_kind: SourceKind | None = None,
+    evidence_status: EvidenceStatus | None = None,
 ) -> IdeaCandidate:
     # 注意：此处的 ``id`` 只是候选自带的展示性 id；真正的 ``ContentJob.id`` 由
     # ``IdeaService.create_candidate`` 按同一公式（sha256(core_point)）重算并落库，
     # 因此这里的 id 公式与 create_candidate 必须保持一致（不要单独改动其一）。
     core = out.core_point
+    kind = source_kind or out.source_kind
+    status = evidence_status or out.evidence_status
+    # Never promote externally_reported into observed if caller forced observed wrongly.
+    if status == "observed" and kind in ("post",) and origin == "synthesis":
+        status = "externally_reported"
     return IdeaCandidate(
         id=f"idea_{hashlib.sha256(core.encode('utf-8')).hexdigest()[:8]}",
         origin=origin,
@@ -121,6 +151,11 @@ def _to_candidate(
         recommended_format=out.recommended_format,
         communication_goal=out.communication_goal,
         generator=IdeaGenerator(skill=_GENERATOR_SKILL, version=_GENERATOR_VERSION),
+        source_kind=kind,
+        facts=list(out.facts),
+        interpretation=out.interpretation or "",
+        evidence_status=status,
+        limitations=out.limitations or "",
     )
 
 
@@ -137,7 +172,11 @@ class IdeaDraftOutput(BaseModel):
     boundaries: IdeaBoundaries = Field(default_factory=IdeaBoundaries)
     recommended_format: RecommendedFormat = RecommendedFormat.SHORT_POST
     communication_goal: CommunicationGoal | None = None
-
+    facts: list[str] = Field(default_factory=list)
+    interpretation: str = ""
+    evidence_status: EvidenceStatus | None = None
+    source_kind: SourceKind | None = None
+    limitations: str = ""
 
 class FragmentService:
     """把用户输入 / ConversationEvidence 提炼为 IdeaCandidate（纯领域逻辑）。"""
@@ -154,7 +193,17 @@ class FragmentService:
                 IdeaDraftOutput,
             ),
         )
-        return _to_candidate(out, origin="practice", source_refs=[])
+        # Default note path: never invent observed if model omitted status.
+        status = out.evidence_status or "unverified"
+        if status == "observed" and not (out.facts or out.observation.strip()):
+            status = "unverified"
+        return _to_candidate(
+            out,
+            origin="practice",
+            source_refs=[],
+            source_kind=out.source_kind or "note",
+            evidence_status=status,
+        )
 
     def from_conversation(self, evidence: ConversationEvidence) -> IdeaCandidate:
         """已验证 ConversationEvidence → IdeaCandidate，origin=conversation。
@@ -177,7 +226,13 @@ class FragmentService:
         source_refs = [
             SourceRef(type="conversation", ref=evidence.id, summary=evidence.statement)
         ]
-        return _to_candidate(out, origin="conversation", source_refs=source_refs)
+        return _to_candidate(
+            out,
+            origin="conversation",
+            source_refs=source_refs,
+            source_kind=out.source_kind or "conversation",
+            evidence_status=out.evidence_status or "observed",
+        )
 
     def from_thread(
         self,
@@ -242,7 +297,13 @@ class FragmentService:
             SourceRef(type="conversation", ref=rec.id, summary=rec.source_url)
             for rec in interactions
         )
-        return _to_candidate(out, origin="conversation", source_refs=source_refs)
+        return _to_candidate(
+            out,
+            origin="conversation",
+            source_refs=source_refs,
+            source_kind="conversation",
+            evidence_status=out.evidence_status or "observed",
+        )
 
     def from_signals(
         self,
@@ -297,4 +358,10 @@ class FragmentService:
         )
         if not (out.core_point or "").strip():
             return None
-        return _to_candidate(out, origin="synthesis", source_refs=source_refs)
+        return _to_candidate(
+            out,
+            origin="synthesis",
+            source_refs=source_refs,
+            source_kind="post",
+            evidence_status="externally_reported",
+        )

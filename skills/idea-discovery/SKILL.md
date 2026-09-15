@@ -21,6 +21,11 @@ description: >
 - **commit 来源**：`finch ideas commit [--since 7d]`。默认当前 checkout 的 origin、近 7 天；
   只有用户点名别的仓库才传 `--repo`。见 `references/commit-signals.md`。
 - **fragment 来源**：`finch ideas create --text "..."`，见 `references/fragment-signals.md`。
+  无 commit 也可；产出会带 `source_kind` / `facts` / `interpretation` / `evidence_status`
+  （`observed` / `externally_reported` / `unverified`）。外部文章描述实验 →
+  `externally_reported`，不得写成第一人称亲历。
+- 与讨论配对：`finch connect create --input <url> --from-idea <id>` 或 `--note "..."`
+  （默认提纲，零贡献时「暂不回复」）。
 - **conversation 来源**：`finch ideas create --conversation <thread_id>`，读取线索与
   `observation_notes`（problem / workaround / usage_feedback）作为**对方**报告，不得改写为
   作者亲历；本人实践须用户明确输入。见 `references/conversation-signals.md`。
@@ -38,6 +43,7 @@ description: >
 
 - `core_point` 单一中心主张；`observation` 是实际观察到的；`intent` 为 `stance`（有立场）
   或 `exploration`（无完整结论也允许输出）。
+- `facts` 与 `interpretation` 分列；`evidence_status` 决定能否声称亲历。
 - `source_refs` 可追溯；`author_position.status` 一律 `proposed`。
 - `boundaries.known/inferred/unknown` 传递到 Draft 校验。
 - 对方自述「更快了」不得改写为精确节省百分比；无付款证据不得写「用户愿意付费已验证」。

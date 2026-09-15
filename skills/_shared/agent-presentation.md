@@ -8,8 +8,9 @@ Skill 调用 Finch CLI 之后，目标是帮用户做选择，不是汇报系统
 2. **决策卡**：
    - **浏览列表**（peer-discovery / connect today）：可展示 8–12 张轻量卡，每张含正在做什么 /
      为何相关 / 可贡献什么 / 下一步 / 时间与不确定性；不要为整表生成完整回复。
-   - **深度准备**（interaction-preparation / connect prepare）：仅用户选中的机会；主视觉最多展开
-     **3** 条；其余折叠为一行列表。试用/复现/观察可无公开回复草稿。
+   - **深度准备**（interaction-preparation / connect prepare|create）：仅用户选中的机会或
+     手动 URL；主视觉最多展开 **3** 条；默认展示提纲（问题 / 贡献 / 证据 / 下一步），
+     完整草稿仅在用户要求时；无贡献允许「暂不回复」。试用/复现/观察可无公开回复草稿。
 3. **操作**：自然语言下一步（各 skill 自己的动词，见各 skill 的 `references/presentation.md`）。
 
 ## 约束

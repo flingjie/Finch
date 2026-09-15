@@ -227,8 +227,16 @@ def fetch_post_by_url(
     return external.model_copy(update={"matched_topics": [topic] if topic else []})
 
 
-def build_tagged_queries(interests: InterestsSettings) -> list[TaggedQuery]:
-    """同行 / 使用情境 / 相邻领域分类去重；跨类同一词只保留先出现的类别。"""
+def build_tagged_queries(
+    interests: InterestsSettings,
+    *,
+    material_terms: Sequence[str] | None = None,
+) -> list[TaggedQuery]:
+    """同行 / 使用情境 / 相邻领域分类去重；跨类同一词只保留先出现的类别。
+
+    ``material_terms``：来自个人笔记 facts / 近期 ContentJob 的窄查询（Build-in-Public），
+    归入 usage 类，与 current_questions 一起优先于相邻领域。
+    """
     out: list[TaggedQuery] = []
     seen: set[str] = set()
 
@@ -241,7 +249,15 @@ def build_tagged_queries(interests: InterestsSettings) -> list[TaggedQuery]:
                 out.append(TaggedQuery(text=query, query_class=query_class))
 
     _add([*interests.long_term_interests, *interests.explore_directions], "peer")
-    _add([*interests.current_questions, *interests.usage_queries], "usage")
+    _add(
+        [
+            *interests.current_questions,
+            *interests.usage_queries,
+            *(material_terms or []),
+            *interests.practice_refs,
+        ],
+        "usage",
+    )
     _add(interests.adjacent_queries, "adjacent")
     return out
 

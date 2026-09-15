@@ -16,6 +16,10 @@ description: >
 `finch conversations show` / `finch conversations follow-up` / `ingest` / `note` /
 `commit`），不复制业务逻辑。跟进判定由代码确定性计算；「下一步说什么」由本 Skill 补充。
 
+用户在平台发布后：先 `finch connect approve`（若有提案）→ 实际发送 →
+`finch connect record <proposal_id> --url …`；无提案时用 `finch conversations ingest`
+登记真实互动。登记后可用 `follow-up` 恢复上下文。**不要**把 Proposal 状态当成已发布。
+
 跟进只由真实触发驱动：`new_reply` / `own_commitment` / `new_evidence` /
 `related_update`。提供样本或试用的承诺必须是用户明确记录的 `Commitment`。无回复 ≠ 拒绝；
 时间陈旧 alone 不触发对外联系。

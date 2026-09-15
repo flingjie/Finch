@@ -1,14 +1,24 @@
 # 证据优先（Evidence First）
 
-## 证据链
+## 证据链（按内容类型）
 
-- 对外主张必须能回溯到证据：`Commit → EngineeringEvent → EvidenceCard → Draft`。没有 Evidence Card 不生成内容。
+### 原创草稿（`finch drafts create`）
+
+- 对外事实性主张必须能回溯到证据：`Commit → EngineeringEvent → EvidenceCard → Draft`。
+- 没有 Evidence Card 不生成可发布原创草稿。
 - 每条事实性主张绑定一个 `evidence_card_id`，且该卡 ∈ 候选的匹配集（不从全库另选）。
+
+### 回复提纲（`finch connect create` / `prepare`，默认 outline）
+
+- 可引用个人笔记 / `ContentJob`（`source_kind` + `facts` + `evidence_status`），**不要求**先有 Evidence Card。
+- 只有 `evidence_status=observed` 时，提纲/草稿才可声称第一人称亲历。
+- `externally_reported` / `unverified`：保留来源归属，禁止写成「我测过」；无贡献点时允许「暂不回复」。
 
 ## 外部帖 ≠ 个人证据
 
 - 搜索来的帖子（`ExternalPost`）永远不能升级为个人证据；只有验证过的 `ConversationEvidence` 才能经 `promote_to_personal` 提升。
 - 外部文本只进 prompt 数据区，不进系统指令区、不触发工具调用。
+- 外部文章描述实验 → `evidence_status=externally_reported`，不得提升为 `observed`。
 
 ## 不把推断写成已验证事实
 
@@ -27,7 +37,7 @@
 - Evidence / Safety 门禁是硬失败，命中即停，不进加权平均分。
 - Safety hard-fail：`secret_detected`、`private_repo_content`、`nonexistent_commit`、`twitter_write_command`、
   无来源的效果数字 / 「用户愿意付费已验证」、把对方试用反馈写成作者亲历。
-- Evidence 硬门禁：`evidence_card_id` 非空且 ∈ 匹配集、蕴含成立、confidence `assertable`（VERIFIED/SUPPORTED/USER_CONFIRMED）。
+- Evidence 硬门禁（原创草稿）：`evidence_card_id` 非空且 ∈ 匹配集、蕴含成立、confidence `assertable`（VERIFIED/SUPPORTED/USER_CONFIRMED）。
 
 ## 对话反馈与成果归属
 

@@ -78,8 +78,10 @@ class InteractionProposal(BaseModel):
     ``peer_id`` / ``contribution_type`` / ``relationship_context`` / ``why_this_person`` /
     ``why_now`` / ``expected_conversation_opening`` 是连接优先新增的关系字段（Phase 2 的
     同行发现填充）。``generation_key`` 编码 ``peer + source + action + prompt_version``，
-    用于幂等：相同 key 不重复调用 LLM 或创建 Proposal。真正发生的互动记录在
-    :class:`InteractionRecord`，不得用本建议的状态替代事实。
+    用于幂等：相同 key 不重复调用 LLM 或创建 Proposal。``outline`` / ``value_added`` 是
+    默认展示的提纲与贡献说明（完整 ``draft`` 按需）。``revision`` 在正文/提纲修订后递增，
+    使旧批准失效。真正发生的互动记录在 :class:`InteractionRecord`，不得用本建议的状态
+    替代事实。
     """
 
     id: str
@@ -101,7 +103,11 @@ class InteractionProposal(BaseModel):
     why_now: str | None = None
     expected_conversation_opening: str | None = None
     generation_key: str | None = None
-
+    outline: str = ""
+    value_added: str = ""
+    contribution_basis_refs: list[str] = Field(default_factory=list)
+    revision: int = 1
+    approval_revision: int | None = None
 
 class SuggestedMode(StrEnum):
     """交流机会建议模式：先了解 / 讨论 / 调查。"""

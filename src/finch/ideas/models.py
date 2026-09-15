@@ -15,7 +15,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from finch.content.jobs import AuthorPosition, CommunicationGoal, IdeaOrigin
+from finch.content.jobs import (
+    AuthorPosition,
+    CommunicationGoal,
+    EvidenceStatus,
+    IdeaOrigin,
+    SourceKind,
+)
 from finch.content.models import RecommendedFormat
 
 
@@ -59,3 +65,8 @@ class IdeaCandidate(BaseModel):
     recommended_format: RecommendedFormat
     communication_goal: CommunicationGoal | None = None
     generator: IdeaGenerator
+    source_kind: SourceKind | None = None
+    facts: list[str] = Field(default_factory=list)
+    interpretation: str = ""
+    evidence_status: EvidenceStatus | None = None
+    limitations: str = ""

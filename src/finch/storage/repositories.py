@@ -271,13 +271,36 @@ class InteractionRepository:
         self.upsert(candidate.model_copy(update=updates), run_id="")
 
     def approve(self, candidate_id: str) -> None:
-        self._update(candidate_id, status=InteractionStatus.APPROVED, reject_reason=None)
+        candidate = self.get(candidate_id)
+        if candidate is None:
+            raise KeyError(candidate_id)
+        self.upsert(
+            candidate.model_copy(
+                update={
+                    "status": InteractionStatus.APPROVED,
+                    "reject_reason": None,
+                    "approval_revision": candidate.revision,
+                }
+            ),
+            run_id="",
+        )
 
     def reject(self, candidate_id: str, reason: str) -> None:
         self._update(candidate_id, status=InteractionStatus.REJECTED, reject_reason=reason)
 
     def edit(self, candidate_id: str, revised_draft: str) -> None:
-        self._update(candidate_id, revised_draft=revised_draft)
+        """Save revised body; bump revision and invalidate prior approval."""
+        candidate = self.get(candidate_id)
+        if candidate is None:
+            raise KeyError(candidate_id)
+        updates: dict[str, object] = {
+            "revised_draft": revised_draft,
+            "revision": candidate.revision + 1,
+            "approval_revision": None,
+        }
+        if candidate.status == InteractionStatus.APPROVED:
+            updates["status"] = InteractionStatus.PROPOSED
+        self.upsert(candidate.model_copy(update=updates), run_id="")
 
     def record_execution(self, candidate_id: str, outcome: str, detail: str) -> None:
         candidate = self.get(candidate_id)
