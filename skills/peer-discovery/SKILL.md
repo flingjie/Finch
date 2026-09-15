@@ -49,6 +49,7 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 
 ## 边界
 
+- 用户点名具体人（handle / 主页）时，这不是发现请求 → `interaction-preparation` 的 `connect with`。不要用今日机会名单顶替。
 - 不替用户形成观点（→ `idea-discovery`）。
 - 不把别人的经历写成用户经历；仅有 bio/转发时标记待了解，不占核心证据位。
 - 普通浏览不生成完整回复（→ `interaction-preparation`）。

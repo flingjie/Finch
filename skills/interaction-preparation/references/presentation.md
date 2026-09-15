@@ -4,6 +4,23 @@
 
 ## 形状
 
+### 点名（`connect with`）
+
+用户映射：`点名 @handle` / `连接 github.com/user` → `finch connect with --x|--github ...`
+
+```text
+已把 @iFurySt（X）收进连接对象，并准备了 1 条提纲：
+
+**回复 @iFurySt：…** 〔来源：X〕
+为什么是这个人：…
+提纲：…
+回复「批准」「改提纲」或「跳过」。
+```
+
+GitHub 用「讨论提纲」，说明由用户自行发送。不要列出今日其他候选人。
+
+### 批量准备（`prepare` / `create`）
+
 ```text
 为你准备了 5 条互动建议，最值得先发的是：
 

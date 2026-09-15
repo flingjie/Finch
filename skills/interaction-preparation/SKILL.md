@@ -3,6 +3,7 @@ name: interaction-preparation
 description: >
   基于具体同行、帖子和用户证据生成互动建议（回复 / 引用 / 私信 / 最小贡献）。输入
   PeerProfile 与选中的 Opportunity，产出待批准的 InteractionProposal（默认提纲，完整草稿按需）。
+  用户点名具体 handle/URL 也视为已选中，走 `connect with` 而非浏览名单。
   用于「帮我给这个人准备一次有价值的互动」「先给一个二十分钟内能做的测试」类请求。
 ---
 
@@ -12,12 +13,16 @@ description: >
 待批准的 `InteractionProposal`（含 `contribution_type`、`why_this_person`、`why_now`、
 `expected_conversation_opening`；**默认 outline**，完整 `draft` 仅在用户要求或 `--draft` 时）。
 
-本 Skill 只调用 Finch CLI（`finch connect prepare` / `finch connect create` /
-`finch connect approve` / `finch connect reject` / `finch connect edit` / `record`），
+本 Skill 只调用 Finch CLI（`finch connect with` / `finch connect prepare` /
+`finch connect create` / `finch connect approve` / `finch connect reject` /
+`finch connect edit` / `record`），
 不复制业务逻辑、不直接改数据库。动作选择由代码确定性决定；提纲与关系字段由语义判断生成。
 
 ## CLI
 
+- 点名一个人：`finch connect with --x <handle|url>` 或 `--github <handle|url>`
+  （可选 `--note` / `--from-idea` / `--draft`）。跳过浏览，直接落 PeerProfile 并准备 1 条提纲。
+- 用户只给裸 handle、没说来源：先问 X 还是 GitHub，再调用本命令。禁止为此翻 `var/peers/` 或跑 `connect today`。
 - 选中机会：`finch connect prepare --opportunity <id>`（可重复；本批有上限）
 - 手动帖子 + 笔记：`finch connect create --input <url> [--from-idea <id>|--note "..."] [--draft]`
 - 批准 / 拒绝 / 改草稿：`approve` / `reject` / `edit`

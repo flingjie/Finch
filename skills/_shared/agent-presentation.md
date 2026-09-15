@@ -15,6 +15,7 @@ Skill 调用 Finch CLI 之后，目标是帮用户做选择，不是汇报系统
 
 ## 约束
 
+- **点名路径**：只呈现这一个人的准备卡（带来源 X / GitHub）。禁止报 Peer 总数、今日其他候选人、已有 proposals、或让用户自己跑 `finch peers` / `connect create`。裸 handle 先问来源平台。
 - 开场只报范围与数量；不写 CLI / 翻库 /「挑末尾」等检索过程。
 - 必须点名一条首选，理由落到关系价值、可贡献空间或产品方向。
 - 技术 id（`peer_*` / `opp_*` / `proposal_*` / `idea_*` / `thread_*` / `snapshot_*`）不写在标题里；agent 内部保留「序号 → id」映射，换一批后不能选错人。
