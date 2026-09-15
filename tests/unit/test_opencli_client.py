@@ -165,6 +165,24 @@ class TestOpenCliClientSearch:
             client.search("hello")
 
 
+class TestOpenCliClientTweets:
+    def test_tweets_passes_username_and_limit(self, monkeypatch):
+        captured = {}
+
+        def fake_run(argv, timeout):
+            captured["argv"] = argv
+            return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+        monkeypatch.setattr("finch.twitter.opencli_client._run", fake_run)
+        OpenCliClient().tweets("iFurySt", limit=20)
+        argv = captured["argv"]
+        assert argv[1:4] == ["twitter", "tweets", "iFurySt"]
+        assert "--limit" in argv
+        assert "20" in argv
+        assert "-f" in argv
+        assert "json" in argv
+
+
 class TestOpenCliClientBookmarks:
     def test_bookmarks_returns_tweets(self, monkeypatch):
         def fake_run(argv, timeout):

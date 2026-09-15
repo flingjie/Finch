@@ -212,6 +212,16 @@ class OpenCliClient:
         tweets = _call(argv, timeout=30.0)
         return tweets[0] if tweets else None
 
+    def tweets(self, username: str, *, limit: int = 20) -> list[Tweet]:
+        """读取用户近期推文（只读）。"""
+        argv = [
+            "opencli", "twitter", "tweets",
+            username,
+            "--limit", str(limit),
+            "-f", "json",
+        ]
+        return _call(argv, timeout=60.0)
+
     def whoami(self) -> dict:
         """读取当前登录账号（stable user_id + handle）。"""
         argv = ["opencli", "twitter", "whoami", "-f", "json"]
