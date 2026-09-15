@@ -7,7 +7,10 @@ from .models import PeerProfile, Platform, PlatformIdentity
 
 def peer_id_for(platform: str, author_id: str) -> str:
     """由 ``(platform, author_id)`` 派生稳定 peer id（幂等：同一作者恒同 id）。"""
-    digest = hashlib.sha256(f"{platform}:{author_id}".encode()).hexdigest()
+    ident = author_id.strip()
+    if platform == "github":
+        ident = ident.lower()
+    digest = hashlib.sha256(f"{platform}:{ident}".encode()).hexdigest()
     return f"peer_{digest[:12]}"
 
 
@@ -25,6 +28,8 @@ def profile_url_for(
         return f"https://x.com/{handle}"
     if platform == "reddit":
         return f"https://www.reddit.com/user/{handle}"
+    if platform == "github":
+        return f"https://github.com/{handle}"
     return None
 
 
@@ -44,16 +49,20 @@ class PeerService:
         url: str | None = None,
     ) -> PeerProfile:
         """从单平台作者首次发现创建一个 DISCOVERED 阶段 PeerProfile。"""
+        ident = author_id.strip()
+        if platform == "github":
+            ident = ident.lower()
+        display = username or author_id
         identity = PlatformIdentity(
             platform=platform,
-            author_id=author_id,
+            author_id=ident,
             username=username,
-            url=url or profile_url_for(platform, username=username, author_id=author_id),
+            url=url or profile_url_for(platform, username=username, author_id=ident),
         )
         return PeerProfile(
-            id=peer_id_for(platform, author_id),
+            id=peer_id_for(platform, ident),
             platform_identities=[identity],
-            display_name=username or author_id,
+            display_name=display,
         )
 
     def merge_identity(

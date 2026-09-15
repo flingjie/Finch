@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 EvidenceOrigin = Literal["personal", "external", "conversation"]
-Platform = Literal["x", "reddit"]
+Platform = Literal["x", "reddit", "github"]
 
 
 class ExternalPost(BaseModel):

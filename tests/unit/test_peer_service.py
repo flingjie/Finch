@@ -126,3 +126,22 @@ def test_merge_discovered_does_not_mutate_existing():
     discovered = svc.from_author(platform="x", author_id="alice")
     svc.merge_discovered(existing, discovered)
     assert existing.why_relevant == "keep me"  # 原对象不变
+
+
+def test_github_author_id_is_case_insensitive():
+    assert peer_id_for("github", "iFurySt") == peer_id_for("github", "ifuryst")
+    assert peer_id_for("x", "ifuryst") != peer_id_for("github", "ifuryst")
+
+
+def test_profile_url_for_github():
+    assert profile_url_for("github", username="iFurySt") == "https://github.com/iFurySt"
+    assert profile_url_for("github", author_id="ifuryst") == "https://github.com/ifuryst"
+
+
+def test_from_author_github_lowercases_id():
+    profile = PeerService().from_author(
+        platform="github", author_id="iFurySt", username="iFurySt"
+    )
+    assert profile.id == peer_id_for("github", "ifuryst")
+    assert profile.platform_identities[0].author_id == "ifuryst"
+    assert profile.platform_identities[0].url == "https://github.com/iFurySt"
