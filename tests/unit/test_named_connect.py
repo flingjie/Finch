@@ -340,6 +340,82 @@ def test_connect_named_github_persists_github_proposal(tmp_path, monkeypatch):
     assert saved.post.platform == "github"
 
 
+def test_connect_named_x_peer_id_derived_from_post_author(tmp_path, monkeypatch):
+    """handle 大小写与帖子作者不一致时，peer id 以抓到的帖子作者为准（不产生孤儿档案）。"""
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    candidate = _proposal()  # peer_id / post 均基于 "iFurySt"
+    monkeypatch.setattr(
+        "finch.engagement.named.score_posts",
+        lambda *a, **k: [ScoredPost(post=_x_post(), score=candidate.score)],
+    )
+    monkeypatch.setattr(
+        "finch.engagement.named.rank_candidates",
+        lambda scored, **k: scored,
+    )
+    monkeypatch.setattr(
+        "finch.engagement.named.generate_proposals",
+        lambda *a, **k: [candidate],
+    )
+    # 用户输入小写 handle，但 profile 确认存在、帖子作者是 "iFurySt"。
+    target = NamedTarget(
+        platform="x",
+        handle="ifuryst",
+        identity_url="https://x.com/ifuryst",
+    )
+    result = connect_named(
+        target=target,
+        ws=ws,
+        settings=settings,
+        runner=CodexRunner(),
+        opencli=_FakeOpenCli(),  # tweets author == "iFurySt"
+    )
+    assert result.status == "ok"
+    author_id = peer_id_for("x", "iFurySt")
+    handle_id = peer_id_for("x", "ifuryst")
+    assert result.peer is not None
+    assert result.peer.id == author_id
+    assert PeerRepository(ws).get(author_id) is not None
+    # 不应为用户输入的小写 handle 留下孤儿档案。
+    if handle_id != author_id:
+        assert PeerRepository(ws).get(handle_id) is None
+    assert [p.id for p in PeerRepository(ws).list_all()] == [author_id]
+
+
+def test_connect_named_github_repo_listing_error_persists_peer(tmp_path):
+    """list_public_repos 抛 GhError 时落 peer 并返回暂不回复，不抛栈。"""
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+
+    def _raise_repos(login, limit=20):
+        raise GhError("boom")
+
+    gh = SimpleNamespace(
+        user=lambda login: {"login": login, "html_url": f"https://github.com/{login}"},
+        list_public_repos=_raise_repos,
+    )
+    target = NamedTarget(
+        platform="github",
+        handle="ifuryst",
+        identity_url="https://github.com/ifuryst",
+    )
+    result = connect_named(
+        target=target,
+        ws=ws,
+        settings=settings,
+        runner=CodexRunner(),
+        gh=gh,
+    )
+    assert result.status == "no_reply"
+    assert "暂不回复" in result.message
+    peer = PeerRepository(ws).get(peer_id_for("github", "ifuryst"))
+    assert peer is not None
+    assert peer.evidence_status.value == "pending_review"
+    assert InteractionRepository(ws).list_all() == []
+
+
 def test_connect_named_github_user_missing_does_not_persist(tmp_path):
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)

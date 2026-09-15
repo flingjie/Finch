@@ -217,7 +217,6 @@ def _fetch_x(
 
     if opencli.profile(target.handle) is None:
         return None, []
-    peer = service.from_author(platform="x", author_id=target.handle, username=target.handle)
     try:
         tweets = opencli.tweets(target.handle, limit=20)
     except Exception:  # noqa: BLE001 — fail-closed，回退到 search
@@ -229,6 +228,19 @@ def _fetch_x(
         external = _to_external_post(tweet, topic="named")
         if external is not None:
             posts.append(external)
+    # 从抓到的帖子作者派生 peer，保证与下游 peer_id_for(post.author_id) 一致；
+    # 无帖子时身份已由 profile 确认，回退用户输入的 handle。
+    if posts:
+        author = posts[0]
+        peer = service.from_author(
+            platform="x",
+            author_id=author.author_id,
+            username=author.author_name or author.author_id,
+        )
+    else:
+        peer = service.from_author(
+            platform="x", author_id=target.handle, username=target.handle
+        )
     return peer, posts
 
 
@@ -241,10 +253,12 @@ def _fetch_github(
     """
     service = PeerService()
     try:
-        gh.user(target.handle)
+        data = gh.user(target.handle)
     except GhError:
         return None, []
-    peer = service.from_author(platform="github", author_id=target.handle)
+    peer = service.from_author(
+        platform="github", author_id=target.handle, username=data["login"]
+    )
 
     if target.content_url:
         repo_match = _GH_REPO.match(target.content_url)
@@ -259,7 +273,11 @@ def _fetch_github(
         return peer, [post] if post is not None else []
 
     posts: list[ExternalPost] = []
-    for repo in gh.list_public_repos(target.handle, limit=20):
+    try:
+        repos = gh.list_public_repos(target.handle, limit=20)
+    except GhError:
+        return peer, []
+    for repo in repos:
         external = github_repo_to_post(repo)
         if external is not None:
             posts.append(external)
@@ -303,7 +321,10 @@ def connect_named(
     merged = PeerService().merge_discovered(peer_repo.get(peer.id), peer)
 
     if not posts:
-        merged = merged.model_copy(update={"evidence_status": EvidenceStatus.PENDING_REVIEW})
+        if merged.evidence_status is None:
+            merged = merged.model_copy(
+                update={"evidence_status": EvidenceStatus.PENDING_REVIEW}
+            )
         peer_repo.upsert(merged)
         return NamedConnectResult(
             status="no_reply",
