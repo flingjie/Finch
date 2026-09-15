@@ -31,6 +31,7 @@ description: >
 ## 边界
 
 - 不冒充表达训练（→ `expression-practice`）。
+- 不从未经确认的 `topic-dialogue` 结果直接写草稿；完成讨论 ≠ 立场已确认（须用户保存为观点候选并 `confirm`）。
 - 不改变已确认立场（claim/decision/tradeoff 只原样表达，见 `_shared/author-position.md`）。
 - 不从外部信号补造个人经历（见 `_shared/evidence-policy.md`）。
 - 不自动发布（见 `_shared/publication-safety.md`）。

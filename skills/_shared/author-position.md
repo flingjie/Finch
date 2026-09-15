@@ -18,3 +18,10 @@
 - `revise_position` 更新立场内容但**不改变状态**（`proposed` 仍 `proposed`，`confirmed` 仍 `confirmed`）。
 - 修稿（revise draft）只改措辞/表达，不推翻已确认的立场；要推翻须重新走确认流程。
 
+## topic-dialogue 与练习上下文
+
+- `topic-dialogue` 的 `current_judgment` 是会话内练习上下文，不是已确认的 `AuthorIdea`。
+- 不得把 AI 在讨论中提出的论点、反例或推测写入用户确认立场。
+- 只有用户明确说出或明确认可的判断，经「保存为观点候选」进入 `idea-discovery`（仍为 `proposed`），再经 `finch ideas confirm` 后才算确认。
+- 完成讨论 ≠ 立场已确认；不得因讨论结束而自动 `confirm`。
+

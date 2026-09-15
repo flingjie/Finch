@@ -9,7 +9,8 @@ description: >
   真正搞懂", "检验我是不是真懂了", "用费曼技巧练一下", "test my understanding",
   "probe where my explanation breaks down", "explain it to me simply"). It turns
   "我以为我懂了" into "我能用简单的话讲清楚". It does NOT craft a message for an
-  external audience (→ sticky-message) or analyze a sales/buyer conversation
+  external audience (→ sticky-message), form or challenge a judgment about what the
+  user believes (→ topic-dialogue), or analyze a sales/buyer conversation
   (→ human-selling).
 ---
 

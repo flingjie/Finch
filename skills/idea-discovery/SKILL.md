@@ -50,6 +50,7 @@ description: >
 
 ## 边界
 
+- 观点尚未成形、需要先讨论判断时 → `topic-dialogue`；用户说「保存这个观点」后再接收讨论结果，来源可标 `practice`，状态仍为 `proposed`。
 - 外部帖子不能直接变成个人观点（见 `_shared/evidence-policy.md`）。
 - 不生成草稿（→ `idea-to-draft` / `expression-practice`）。
 - 不负责搜索交流对象（→ `peer-discovery`）。

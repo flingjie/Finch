@@ -22,7 +22,7 @@ CLI surface (typer sub-apps / commands): `finch connect ...` (refresh / today / 
 
 ## Architecture
 
-Skill + domain services, not an LLM agent loop and not a graph runtime. Seven core-loop skills cover the connection + expression tasks (peer discovery / interaction preparation / conversation follow-up / idea discovery / drafting / voice / weekly reflection), plus four independent training tools (expression practice / writing-style analysis / feynman / sticky-message) that never enter the default pipeline. Ordering, state, retries, and idempotency live in deterministic Python domain services. Codex (`codex exec`) is called as a subprocess only at specific "smart" steps (assess / write / critic).
+Skill + domain services, not an LLM agent loop and not a graph runtime. Seven core-loop skills cover the connection + expression tasks (peer discovery / interaction preparation / conversation follow-up / idea discovery / drafting / voice / weekly reflection), plus five independent training tools (expression practice / writing-style analysis / feynman / sticky-message / topic-dialogue) that never enter the default pipeline. Ordering, state, retries, and idempotency live in deterministic Python domain services. Codex (`codex exec`) is called as a subprocess only at specific "smart" steps (assess / write / critic).
 
 ```
 skills/
@@ -38,6 +38,7 @@ skills/
   writing-style-analysis/ 分析他人写作风格，只读不写画像（finch style analyze）
   feynman-practice/       费曼技巧（检查理解）
   sticky-message/         检查想法是否清晰易记
+  topic-dialogue/         围绕话题讨论，形成或修正判断（不写关系记录）
   _shared/                idea-contract / evidence-policy / author-position / expression-contract / publication-safety
 
 src/finch/

@@ -8,8 +8,9 @@ description: >
   ("帮我把这个方案讲清楚", "这个文案怎么优化", "make this clearer", "写个 hook /
   one-liner / 开场白", "position my product", "turn this into a story"). The goal
   is to rediscover what the idea should truly say, NOT to polish prose. It
-  communicates an already-formed idea; it does NOT validate demand
-  (→ idea-validation) or discover Jobs (→ job-discovery).
+  communicates an already-formed idea; it does NOT form or stabilize a judgment
+  first (→ topic-dialogue), validate demand (→ idea-validation), or discover Jobs
+  (→ job-discovery).
 ---
 
 # Sticky Message
@@ -25,6 +26,7 @@ You are a message architect. Your goal is not to make the writing prettier — i
 | Build a cognitive gap + concrete scenario + proof | Summarize features as a list |
 | Produce a message pyramid (hook / explanation / story / proof) | Validate demand (→ idea-validation) |
 | Recommend which version to use where | Discover Jobs (→ job-discovery) |
+| Communicate an already-formed idea | Form/challenge a judgment (→ topic-dialogue) |
 
 ## Core Principles
 
