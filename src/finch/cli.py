@@ -43,6 +43,7 @@ from .engagement.models import (
     PresentationRecord,
     RecommendationFeedback,
 )
+from .engagement.named import connect_named, parse_named_target
 from .engagement.proposals import generate_proposals
 from .engagement.scoring import ScoredPost, rank_candidates, score_posts
 from .engagement.search import fetch_post_by_url
@@ -122,7 +123,9 @@ app.add_typer(drafts_app, name="drafts")
 review_app = typer.Typer(help="Review original drafts (accept/revise/skip, no auto-publish)")
 app.add_typer(review_app, name="review")
 
-connect_app = typer.Typer(help="连接主循环：daily / prepare / approve / reject / edit / record")
+connect_app = typer.Typer(
+    help="连接主循环：daily / prepare / with / approve / reject / edit / record"
+)
 app.add_typer(connect_app, name="connect")
 
 peers_app = typer.Typer(help="同行档案与关系上下文")
@@ -2456,6 +2459,105 @@ def connect_create(
         typer.echo(candidate.model_dump_json(indent=2))
     else:
         typer.echo(_render_proposal_card(candidate))
+
+
+@connect_app.command("with")
+def connect_with(
+    x: str | None = typer.Option(None, "--x", help="X handle 或 URL"),
+    github: str | None = typer.Option(None, "--github", help="GitHub handle 或 URL"),
+    from_idea: str | None = typer.Option(None, "--from-idea", help="已有 idea / ContentJob id"),
+    note: str | None = typer.Option(None, "--note", help="个人笔记原文"),
+    full_draft: bool = typer.Option(False, "--draft", help="生成完整回复草稿"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """点名一个人：落 PeerProfile 并准备一条提纲（跳过今日浏览）。"""
+    from finch.ideas.fragment_service import FragmentService
+    from finch.ideas.service import IdeaService
+
+    if from_idea and note:
+        typer.echo("pass only one of --from-idea / --note")
+        raise typer.Exit(code=1)
+    if bool(x) == bool(github):
+        typer.echo("pass exactly one of --x / --github")
+        raise typer.Exit(code=1)
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+
+    job: ContentJob | None = None
+    if from_idea:
+        job = ContentJobRepository(ws).get_job(from_idea)
+        if job is None:
+            typer.echo(f"idea not found: {from_idea}")
+            raise typer.Exit(code=1)
+    elif note:
+        try:
+            idea = FragmentService(runner).from_text(note)
+            job = IdeaService(ContentJobRepository(ws)).create_candidate(idea)
+            job = job.model_copy(update={"raw_user_text": note})
+            ContentJobRepository(ws).upsert_job(job)
+        except (RuntimeError, StructuredOutputError, ValueError) as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1) from exc
+
+    try:
+        target = parse_named_target("x" if x else "github", x or github or "")
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    result = connect_named(
+        target=target,
+        ws=ws,
+        settings=settings,
+        runner=runner,
+        job=job,
+        full_draft=full_draft,
+    )
+
+    if result.status == "failed":
+        typer.echo(result.message)
+        raise typer.Exit(code=1)
+
+    if result.status in {"no_reply", "blocked"}:
+        if as_json:
+            typer.echo(
+                json.dumps(
+                    {"status": result.status, "message": result.message},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(result.message)
+        return
+
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "status": result.status,
+                    "message": result.message,
+                    "peer_id": result.peer.id if result.peer else None,
+                    "opportunity_id": (result.opportunity.id if result.opportunity else None),
+                    "proposal": (
+                        result.proposal.model_dump(mode="json") if result.proposal else None
+                    ),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+
+    source = (
+        f"来源：X @{target.handle}" if target.platform == "x" else f"来源：GitHub {target.handle}"
+    )
+    typer.echo(source)
+    if result.proposal is not None:
+        typer.echo(_render_proposal_card(result.proposal))
 
 
 @connect_app.command("approve")

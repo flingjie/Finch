@@ -546,3 +546,45 @@ def test_conversations_follow_up_restores_context(monkeypatch, tmp_path):
     assert "uv run finch conversations show t_q" in r.output
     assert "next_step:" not in r.output
     assert "conversation:" not in r.output
+
+
+def test_connect_with_requires_exactly_one_source(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    r = CliRunner().invoke(app, ["connect", "with"])
+    assert r.exit_code == 1
+    assert "--x" in r.output or "github" in r.output
+    r = CliRunner().invoke(
+        app, ["connect", "with", "--x", "a", "--github", "b"]
+    )
+    assert r.exit_code == 1
+
+
+def test_connect_with_x_renders_source_and_saves(monkeypatch, tmp_path):
+    from finch.engagement.named import NamedConnectResult
+    from finch.peers.service import PeerService
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    peer = PeerService().from_author(platform="x", author_id="iFurySt", username="iFurySt")
+    candidate = _candidate()
+    candidate = candidate.model_copy(update={"peer_id": peer.id, "outline": "问 replay"})
+
+    def fake_connect_named(**kwargs):
+        PeerRepository(ws).upsert(peer)
+        InteractionRepository(ws).upsert(candidate, run_id="with")
+        return NamedConnectResult(
+            status="ok",
+            message="ok",
+            peer=peer,
+            proposal=candidate,
+        )
+
+    monkeypatch.setattr(cli, "connect_named", fake_connect_named)
+    r = CliRunner().invoke(app, ["connect", "with", "--x", "iFurySt"])
+    assert r.exit_code == 0, r.output
+    assert "X" in r.output or "x.com" in r.output
+    assert InteractionRepository(ws).get(candidate.id) is not None
+
