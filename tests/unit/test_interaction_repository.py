@@ -55,6 +55,30 @@ def _repo(tmp_path) -> InteractionRepository:
     return InteractionRepository(ws)
 
 
+def test_upsert_github_proposal_id_with_slash(tmp_path):
+    repo = _repo(tmp_path)
+    post = ExternalPost(
+        id="iFurySt/keep",
+        platform="github",
+        url="https://github.com/iFurySt/keep",
+        author_id="iFurySt",
+        author_name="iFurySt",
+        content="agent eval harness",
+        published_at=datetime(2026, 9, 1, 12, 0, 0),
+    )
+    candidate = _candidate(
+        pid="iFurySt/keep",
+        id="github:iFurySt/keep:draft_reply",
+        post=post,
+    )
+    repo.upsert(candidate, run_id="run-1")
+
+    got = repo.get("github:iFurySt/keep:draft_reply")
+    assert got is not None
+    assert got.id == "github:iFurySt/keep:draft_reply"
+    assert got.post.id == "iFurySt/keep"
+
+
 def test_upsert_get_roundtrip(tmp_path):
     ws = Workspace(tmp_path)
     repo = InteractionRepository(ws)

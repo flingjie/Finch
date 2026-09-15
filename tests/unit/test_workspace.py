@@ -88,6 +88,13 @@ def test_safe_filename_maps_colon(tmp_path):
     assert ws.safe_filename("intent:abc") == "intent_abc"
 
 
+def test_safe_filename_maps_slash_in_github_proposal_id(tmp_path):
+    ws = Workspace(tmp_path)
+    assert ws.safe_filename("github:iFurySt/keep:draft_reply") == (
+        "github_iFurySt_keep_draft_reply"
+    )
+
+
 def test_jsonl_append_and_read(tmp_path):
     ws = Workspace(tmp_path)
     p = tmp_path / "critic.jsonl"

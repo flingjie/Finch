@@ -33,10 +33,10 @@ class Workspace:
 
     @staticmethod
     def safe_filename(name: str) -> str:
-        """文件名消毒：拒绝路径穿越，``:`` 映射为 ``_``（复合 id 兜底）。"""
-        if ".." in name or "/" in name or "\x00" in name:
+        """文件名消毒：拒绝路径穿越与 NUL，``:`` / ``/`` 映射为 ``_``（复合 id 兜底）。"""
+        if ".." in name or "\x00" in name:
             raise ValueError(f"unsafe filename: {name!r}")
-        return name.replace(":", "_")
+        return name.replace(":", "_").replace("/", "_")
 
     def atomic_write(self, path: Path, text: str) -> None:
         """写唯一临时文件后 ``os.replace`` 原子替换（同目录保证原子性）。"""
