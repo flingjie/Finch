@@ -135,3 +135,47 @@ def test_list_commit_details_preserves_order(monkeypatch):
     shas = ["c", "a", "b"]
     out = client.list_commit_details("x/y", shas, workers=2)
     assert [d.sha for d in out] == shas
+
+
+def test_user_parses_login(monkeypatch):
+    _set(json.dumps({"login": "iFurySt", "html_url": "https://github.com/iFurySt"}), monkeypatch)
+    data = GhClient().user("iFurySt")
+    assert data["login"] == "iFurySt"
+    assert data["html_url"] == "https://github.com/iFurySt"
+
+
+def test_list_public_repos_filters_and_caps(monkeypatch):
+    _set(
+        json.dumps(
+            [
+                {
+                    "full_name": "iFurySt/keep",
+                    "html_url": "https://github.com/iFurySt/keep",
+                    "description": "agent eval harness",
+                    "owner": {"login": "iFurySt"},
+                    "private": False,
+                    "fork": False,
+                    "archived": False,
+                    "disabled": False,
+                    "pushed_at": "2026-09-04T06:05:12Z",
+                },
+                {
+                    "full_name": "iFurySt/forked",
+                    "html_url": "https://github.com/iFurySt/forked",
+                    "description": "nope",
+                    "owner": {"login": "iFurySt"},
+                    "private": False,
+                    "fork": True,
+                    "archived": False,
+                    "disabled": False,
+                    "pushed_at": "2026-09-04T06:05:12Z",
+                },
+            ]
+        ),
+        monkeypatch,
+    )
+    repos = GhClient().list_public_repos("iFurySt", limit=20)
+    assert [r.name_with_owner for r in repos] == ["iFurySt/keep"]
+    assert repos[0].description == "agent eval harness"
+    assert repos[0].pushed_at is not None
+

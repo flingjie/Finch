@@ -22,6 +22,36 @@ class RepoSummary(BaseModel):
     disabled: bool = False
 
 
+class PublicRepo(BaseModel):
+    """Another user's public repository (named-person connect; not the local evidence pipeline)."""
+
+    name_with_owner: str
+    url: str
+    owner_login: str
+    description: str = ""
+    pushed_at: datetime | None = None
+    is_private: bool = False
+    is_fork: bool = False
+    archived: bool = False
+    disabled: bool = False
+
+
+def parse_public_repo(data: dict) -> PublicRepo:
+    owner = data.get("owner") or {}
+    login = owner.get("login") or (data.get("full_name") or "").split("/", 1)[0]
+    return PublicRepo(
+        name_with_owner=data["full_name"],
+        url=data.get("html_url") or f"https://github.com/{data['full_name']}",
+        owner_login=login,
+        description=data.get("description") or "",
+        pushed_at=data.get("pushed_at"),
+        is_private=data.get("private", False),
+        is_fork=data.get("fork", False),
+        archived=data.get("archived", False),
+        disabled=data.get("disabled", False),
+    )
+
+
 class CommitSummary(BaseModel):
     sha: str
     message: str

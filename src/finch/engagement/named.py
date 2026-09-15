@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC
 from typing import Literal
 
 from pydantic import BaseModel
+
+from finch.engagement.models import ExternalPost
+from finch.github.models import PublicRepo
 
 NamedPlatform = Literal["x", "github"]
 
@@ -138,3 +142,23 @@ def _bare_handle(text: str) -> str:
     if not _HANDLE.match(text):
         raise ValueError(f"invalid handle: {text}")
     return text.lstrip("@")
+
+
+def github_repo_to_post(repo: PublicRepo) -> ExternalPost | None:
+    if repo.pushed_at is None:
+        return None
+    published = repo.pushed_at
+    if published.tzinfo is None:
+        published = published.replace(tzinfo=UTC)
+    owner = repo.owner_login.strip().lower()
+    content = repo.description.strip() or repo.name_with_owner
+    return ExternalPost(
+        id=repo.name_with_owner,
+        platform="github",
+        url=repo.url,
+        author_id=owner,
+        author_name=repo.owner_login,
+        content=content,
+        published_at=published,
+        matched_topics=["named"],
+    )

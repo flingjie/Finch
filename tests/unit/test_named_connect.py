@@ -1,6 +1,9 @@
+from datetime import UTC, datetime
+
 import pytest
 
-from finch.engagement.named import parse_named_target
+from finch.engagement.named import github_repo_to_post, parse_named_target
+from finch.github.models import PublicRepo
 
 
 def test_parse_x_handle_and_profile_url():
@@ -52,3 +55,32 @@ def test_parse_rejects_wrong_host_and_empty():
         parse_named_target("x", "")
     with pytest.raises(ValueError):
         parse_named_target("github", "https://github.com/iFurySt/Finch/issues/1")
+
+
+def test_github_repo_to_post_skips_missing_time():
+    assert github_repo_to_post(
+        PublicRepo(
+            name_with_owner="a/b",
+            url="https://github.com/a/b",
+            owner_login="a",
+            description="hi",
+        )
+    ) is None
+
+
+def test_github_repo_to_post_maps_external_post():
+    post = github_repo_to_post(
+        PublicRepo(
+            name_with_owner="iFurySt/keep",
+            url="https://github.com/iFurySt/keep",
+            owner_login="iFurySt",
+            description="agent eval harness",
+            pushed_at=datetime(2026, 9, 4, 6, 5, 12, tzinfo=UTC),
+        )
+    )
+    assert post is not None
+    assert post.platform == "github"
+    assert post.id == "iFurySt/keep"
+    assert post.author_id == "ifuryst"
+    assert post.content == "agent eval harness"
+

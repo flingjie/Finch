@@ -8,11 +8,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from finch.github.models import (
     CommitDetail,
     CommitSummary,
+    PublicRepo,
     PullRequest,
     RepoInfo,
     RepoSummary,
     parse_commit_detail,
     parse_commit_summary,
+    parse_public_repo,
     parse_pull_request,
     parse_repo_summary,
     parse_repo_view,
@@ -100,6 +102,56 @@ class GhClient:
         )
         assert isinstance(data, list)
         return [parse_repo_summary(item) for item in data]
+
+    def user(self, login: str) -> dict:
+        data = self._gh_json(
+            ["gh", "api", "-H", "Accept: application/vnd.github+json", f"users/{login}"]
+        )
+        assert isinstance(data, dict)
+        return {"login": data["login"], "html_url": data.get("html_url") or ""}
+
+    def list_public_repos(self, login: str, limit: int = 20) -> list[PublicRepo]:
+        cap = max(1, min(limit, 100))
+        data = self._gh_json(
+            [
+                "gh",
+                "api",
+                "-H",
+                "Accept: application/vnd.github+json",
+                f"users/{login}/repos?type=owner&sort=pushed&direction=desc&per_page={cap}",
+            ],
+            timeout=60.0,
+        )
+        assert isinstance(data, list)
+        out: list[PublicRepo] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            repo = parse_public_repo(item)
+            if repo.is_private or repo.is_fork or repo.archived or repo.disabled:
+                continue
+            if repo.pushed_at is None:
+                continue
+            out.append(repo)
+            if len(out) >= cap:
+                break
+        return out
+
+    def public_repo(self, name_with_owner: str) -> PublicRepo:
+        data = self._gh_json(
+            [
+                "gh",
+                "api",
+                "-H",
+                "Accept: application/vnd.github+json",
+                f"repos/{name_with_owner}",
+            ]
+        )
+        assert isinstance(data, dict)
+        repo = parse_public_repo(data)
+        if repo.is_private:
+            raise GhError(f"repository is private: {name_with_owner}")
+        return repo
 
     def list_commits(
         self, repo: str, since: str | None = None, per_page: int = 100
