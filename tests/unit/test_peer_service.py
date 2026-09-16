@@ -103,7 +103,8 @@ def test_merge_discovered_preserves_accumulated_fields():
     merged = svc.merge_discovered(existing, discovered)
 
     # 积累的关系字段不丢，新身份幂等并入（不重复）。
-    assert merged.relationship_stage is RelationshipStage.CONVERSING
+    # conversing is normalized to recurring on model validate.
+    assert merged.relationship_stage is RelationshipStage.RECURRING
     assert merged.why_relevant == "writes concretely about flaky evals"
     assert merged.next_context == "ask about the replay harness"
     assert merged.shared_topics == ["agent evals"]

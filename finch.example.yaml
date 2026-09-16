@@ -14,6 +14,15 @@ repository_discovery:
   lookback_hours: 24
   max_repos: 10
 
+opencli:
+  profile: work
+  format: json
+  command_timeout_seconds: 60
+  browser_connect_timeout_seconds: 45
+  max_parallel_local: 3
+  max_parallel_browser: 1
+  allow_write_commands: false
+
 twitter:
   daily_limit: 100
   per_query_limit: 20

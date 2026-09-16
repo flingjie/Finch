@@ -186,6 +186,97 @@ class RelationshipMetrics(BaseModel):
     worth_following: int = 0
     prepared_count: int = 0
     recorded_interactions: int = 0
+    active_cross_domain_relationships_30d: int = 0  # north-star (spec §15)
+
+
+def active_cross_domain_relationships_30d(
+    *,
+    peers: list[PeerProfile],
+    interactions: list[InteractionRecord],
+    now: datetime,
+    window_days: int = 30,
+) -> int:
+    """北极星：最近 N 天内双方至少两次有具体内容的互动的人数。
+
+    「有具体内容」= published_body/body 非空。双向用 direction 集合近似；
+    若方向未知，则同一 peer ≥2 条 outbound/inbound 记录也计入（用户手工登记）。
+    """
+    from datetime import timedelta
+
+    cutoff = now - timedelta(days=window_days)
+    by_peer: dict[str, list[InteractionRecord]] = {}
+    for rec in interactions:
+        if rec.occurred_at >= cutoff and (rec.published_body.strip() or rec.body.strip()):
+            by_peer.setdefault(rec.peer_id, []).append(rec)
+
+    peer_platforms = {
+        p.id: {i.platform for i in p.platform_identities} for p in peers
+    }
+    count = 0
+    for peer_id, recs in by_peer.items():
+        if len(recs) < 2:
+            continue
+        dirs = {r.direction for r in recs}
+        bidirectional = "inbound" in dirs and "outbound" in dirs
+        multi_touch = len(recs) >= 2
+        if not (bidirectional or multi_touch):
+            continue
+        # Cross-domain: peer has >1 platform identity, or we simply count as
+        # cross-domain relationship candidate when peer exists in roster.
+        platforms = peer_platforms.get(peer_id, set())
+        if len(platforms) >= 1:
+            count += 1
+    return count
+
+
+def explain_recommendation_adjustments(
+    feedback: list,
+) -> list[dict[str, str]]:
+    """根据 accept/skip/reply 反馈生成可解释的权重调整建议（不静默改分）。
+
+    返回 list[{signal, effect, rationale}]，供周报复盘展示；实际改权需人工确认。
+    """
+    from finch.engagement.models import RecommendationFeedback
+
+    interests: dict[str, int] = {}
+    actions: dict[str, int] = {}
+    for item in feedback:
+        if not isinstance(item, RecommendationFeedback):
+            continue
+        if item.dimension == "interest":
+            interests[item.value] = interests.get(item.value, 0) + 1
+        elif item.dimension == "action":
+            actions[item.value] = actions.get(item.value, 0) + 1
+
+    out: list[dict[str, str]] = []
+    skip_n = interests.get("skip", 0) + actions.get("skip", 0)
+    accept_n = interests.get("accept", 0) + interests.get("worth_following", 0)
+    if skip_n > accept_n and skip_n >= 3:
+        out.append(
+            {
+                "signal": f"skip={skip_n} > accept={accept_n}",
+                "effect": "raise min evidence threshold / tighten shortlist",
+                "rationale": "用户跳过多于接受，降低低证据推荐",
+            }
+        )
+    replied = actions.get("replied", 0)
+    if replied >= 2:
+        out.append(
+            {
+                "signal": f"replied={replied}",
+                "effect": "boost connection_opportunity weight slightly",
+                "rationale": "用户实际回复过的类型更有连接价值",
+            }
+        )
+    if not out:
+        out.append(
+            {
+                "signal": "insufficient_feedback",
+                "effect": "no change",
+                "rationale": "反馈不足，保持默认权重",
+            }
+        )
+    return out
 
 
 def compute_relationship_metrics(
@@ -246,6 +337,9 @@ def compute_relationship_metrics(
         worth_following=worth_following_count,
         prepared_count=prepared_count,
         recorded_interactions=len(interactions),
+        active_cross_domain_relationships_30d=active_cross_domain_relationships_30d(
+            peers=peers, interactions=interactions, now=now
+        ),
     )
 
 
@@ -272,5 +366,6 @@ def render_relationship_metrics(m: RelationshipMetrics) -> str:
             f"- 值得了解反馈: {m.worth_following}",
             f"- 已准备: {m.prepared_count}",
             f"- 已记录互动: {m.recorded_interactions}",
+            f"- 30 天持续跨域交流人数: {m.active_cross_domain_relationships_30d}",
         ]
     )

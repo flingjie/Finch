@@ -4,9 +4,9 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-Platform = Literal["x", "reddit", "github"]
+Platform = Literal["x", "reddit", "github", "v2ex", "weixin", "xiaohongshu"]
 
 
 class EvidenceStatus(StrEnum):
@@ -18,14 +18,29 @@ class EvidenceStatus(StrEnum):
 
 
 class RelationshipStage(StrEnum):
-    """关系阶段：仅用于恢复上下文，不作为强制推进漏斗。"""
+    """关系阶段：仅用于恢复上下文，不作为强制推进漏斗。
+
+    跨平台计划阶段：discovered → engaged → recurring → practicing → collaborating
+    （+ dormant）。保留 ``relevant`` / ``conversing`` 以便旧 YAML 可读；
+    ``conversing`` 加载时归一为 ``recurring``。
+    """
 
     DISCOVERED = "discovered"
-    RELEVANT = "relevant"
+    RELEVANT = "relevant"  # legacy; treat as score signal, not a funnel stage
     ENGAGED = "engaged"
-    CONVERSING = "conversing"
+    CONVERSING = "conversing"  # legacy alias for recurring
+    RECURRING = "recurring"
+    PRACTICING = "practicing"
     COLLABORATING = "collaborating"
     DORMANT = "dormant"
+
+    @classmethod
+    def normalize(cls, value: "RelationshipStage | str") -> "RelationshipStage":
+        """将 legacy 值映射到当前阶段词汇。"""
+        stage = cls(value) if not isinstance(value, cls) else value
+        if stage == cls.CONVERSING:
+            return cls.RECURRING
+        return stage
 
 
 class PlatformIdentity(BaseModel):
@@ -55,3 +70,11 @@ class PeerProfile(BaseModel):
     current_work: str = ""
     practice_evidence_refs: list[str] = Field(default_factory=list)
     evidence_status: EvidenceStatus | None = None
+    person_id: str | None = None
+
+    @field_validator("relationship_stage", mode="before")
+    @classmethod
+    def _normalize_stage(cls, v: object) -> object:
+        if v == "conversing" or v == RelationshipStage.CONVERSING:
+            return RelationshipStage.RECURRING
+        return v

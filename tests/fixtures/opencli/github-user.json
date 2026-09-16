@@ -1,0 +1,9 @@
+[
+  {
+    "login": "example-dev",
+    "id": 12345,
+    "name": "Example Dev",
+    "bio": "Builds tools in public",
+    "html_url": "https://github.com/example-dev"
+  }
+]

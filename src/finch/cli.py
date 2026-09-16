@@ -5,7 +5,7 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
 import typer
 import yaml
@@ -32,7 +32,11 @@ from .conversations.service import (
 )
 from .drafts.service import DraftCreateResult, DraftService
 from .engagement.flow import EngagementRunResult, run_discovery_engagement_flow
-from .engagement.metrics import compute_relationship_metrics
+from .engagement.metrics import (
+    compute_relationship_metrics,
+    explain_recommendation_adjustments,
+    render_relationship_metrics,
+)
 from .engagement.models import (
     DiscoverySnapshot,
     InteractionAction,
@@ -111,6 +115,9 @@ app.add_typer(github_app, name="github")
 twitter_app = typer.Typer(help="Twitter 搜索与读取")
 app.add_typer(twitter_app, name="twitter")
 
+sources_app = typer.Typer(help="跨平台 OpenCLI 采集源（只读）")
+app.add_typer(sources_app, name="sources")
+
 voice_app = typer.Typer(help="Manage the author voice profile (local, no auto-publish)")
 app.add_typer(voice_app, name="voice")
 
@@ -130,6 +137,18 @@ app.add_typer(connect_app, name="connect")
 
 peers_app = typer.Typer(help="同行档案与关系上下文")
 app.add_typer(peers_app, name="peers")
+
+people_app = typer.Typer(help="跨平台人物 shortlist（People First）")
+app.add_typer(people_app, name="people")
+
+connections_app = typer.Typer(help="连接机会与互动记录（用户亲自发布）")
+app.add_typer(connections_app, name="connections")
+
+collisions_app = typer.Typer(help="跨领域碰撞")
+app.add_typer(collisions_app, name="collisions")
+
+experiments_app = typer.Typer(help="一周内小实验")
+app.add_typer(experiments_app, name="experiments")
 
 conversations_app = typer.Typer(help="对话线索与跟进")
 app.add_typer(conversations_app, name="conversations")
@@ -680,6 +699,65 @@ def diagnose() -> None:
     typer.echo("opencli:")
     typer.echo(f"  version: {opencli_ver or 'unavailable'}")
     typer.echo(f"  doctor: {opencli_doctor}")
+
+
+@sources_app.command("doctor")
+def sources_doctor(
+    smoke: bool = typer.Option(True, "--smoke/--no-smoke", help="对各源跑最小只读探测"),
+) -> None:
+    """跨平台 OpenCLI 环境自检（只读；不写 Cookie/Token）。"""
+    from finch.sources.doctor import format_doctor_report, run_doctor
+
+    settings = load_settings()
+    report = run_doctor(
+        profile=settings.opencli.profile,
+        run_smoke=smoke,
+    )
+    typer.echo(format_doctor_report(report))
+    if not report.opencli_ok:
+        raise typer.Exit(code=1)
+    bad = [s for s in report.sources if s.status.value == "UNAVAILABLE"]
+    if len(bad) == len(report.sources):
+        raise typer.Exit(code=1)
+
+
+@sources_app.command("sync")
+def sources_sync(
+    source: str | None = typer.Option(
+        None, "--source", help="twitter|reddit|github|v2ex|weixin|xiaohongshu"
+    ),
+    all_sources: bool = typer.Option(False, "--all", help="同步全部已注册源"),
+    query: list[str] = typer.Option([], "--query", "-q", help="查询词（可重复）"),
+    url: list[str] = typer.Option([], "--url", help="URL 导入（公众号/笔记等）"),
+    limit: int = typer.Option(20, "--limit", help="每查询条数上限"),
+) -> None:
+    """只读同步：raw 落盘 → RawArtifact 标准化（单源失败不阻塞）。"""
+    from finch.sources.connectors import DiscoveryContext
+    from finch.sources.models import Source
+    from finch.sources.orchestrator import DiscoveryOrchestrator
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    orch = DiscoveryOrchestrator(ws)
+    ctx = DiscoveryContext(queries=list(query), urls=list(url), limit=limit)
+
+    if all_sources or source is None:
+        results = orch.sync_all(context_by_source={s: ctx for s in Source})
+    else:
+        try:
+            src = Source(source)
+        except ValueError as exc:
+            typer.echo(f"unknown source: {source}")
+            raise typer.Exit(code=1) from exc
+        results = [orch.sync_source(src, ctx)]
+
+    for r in results:
+        typer.echo(
+            f"{r.source.value}: {r.status.value} "
+            f"raw={r.raw_count} norm={r.normalized_count} new={r.created_count}"
+            + (f" ({r.detail})" if r.detail else "")
+        )
 
 
 @github_app.command("reflect")
@@ -1631,6 +1709,47 @@ def review_skip(
         typer.echo(result.model_dump_json(indent=2))
     else:
         typer.echo(f"skipped {draft_id} (reason: {reason})")
+
+
+@review_app.command("weekly")
+def review_weekly(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """周/月复盘：关系北极星 + 可解释推荐反馈调整建议。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    peers = PeerRepository(ws).list_all()
+    interactions = InteractionRecordRepository(ws).list_all()
+    rel = compute_relationship_metrics(
+        peers=peers,
+        interactions=interactions,
+        threads=ConversationThreadRepository(ws).list_all(),
+        snapshots=FeedbackSnapshotRepository(ws).list_all(),
+        jobs=ContentJobRepository(ws).list_jobs(),
+        now=datetime.now(UTC),
+    )
+    adjustments = explain_recommendation_adjustments(
+        RecommendationFeedbackRepository(ws).list_all()
+    )
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "metrics": rel.model_dump(mode="json"),
+                    "recommendation_adjustments": adjustments,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    typer.echo(render_relationship_metrics(rel))
+    typer.echo("\n## 推荐调整建议（需人工确认）")
+    for adj in adjustments:
+        typer.echo(f"- signal: {adj['signal']}")
+        typer.echo(f"  effect: {adj['effect']}")
+        typer.echo(f"  why: {adj['rationale']}")
 
 
 def _run_discovery(settings: Settings) -> EngagementRunResult:
@@ -2690,6 +2809,200 @@ def peers_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
         typer.echo("no peers")
         return
     typer.echo(_render_peer_cards(peers))
+
+
+@people_app.command("shortlist")
+def people_shortlist(
+    today: bool = typer.Option(True, "--today/--all", help="今日三槽位 shortlist"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """以人为核心的每日 shortlist（最多 3 槽；宁缺毋滥）。"""
+    from finch.peers.evidence_repo import CreatorEvidenceRepository
+    from finch.peers.person_service import PersonRepository, PersonService
+    from finch.peers.scoring import score_person
+    from finch.peers.shortlist import ShortlistCandidate, select_daily_shortlist
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    peers = PeerRepository(ws).list_all()
+    person_svc = PersonService(PersonRepository(ws))
+    evidence_repo = CreatorEvidenceRepository(ws)
+    candidates: list[ShortlistCandidate] = []
+    for peer in peers:
+        person = person_svc.ensure_from_peer(peer)
+        evs = evidence_repo.list_for_person(person.person_id)
+        score = score_person(evs)
+        platform = (
+            peer.platform_identities[0].platform if peer.platform_identities else ""
+        )
+        artifact_ids = [e.artifact_id for e in evs]
+        # Also accept practice_evidence_refs / source_refs as traceable evidence.
+        if len(artifact_ids) < 2:
+            artifact_ids = list(
+                dict.fromkeys([*artifact_ids, *peer.source_refs, *peer.practice_evidence_refs])
+            )
+        candidates.append(
+            ShortlistCandidate(
+                peer=peer,
+                person_id=person.person_id,
+                score=score,
+                artifact_ids=artifact_ids[:8],
+                why=peer.why_relevant,
+                platform=platform,
+            )
+        )
+    items = select_daily_shortlist(candidates) if today else []
+    if as_json:
+        payload = [
+            {
+                "slot": i.slot.value,
+                "peer_id": i.candidate.peer.id,
+                "person_id": i.candidate.person_id,
+                "score": i.candidate.score.total,
+                "artifact_ids": i.candidate.artifact_ids,
+                "why": i.candidate.why,
+                "platform": i.candidate.platform,
+            }
+            for i in items
+        ]
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not items:
+        typer.echo("no shortlist candidates (need ≥2 traceable artifacts each)")
+        return
+    for i, item in enumerate(items, 1):
+        c = item.candidate
+        typer.echo(f"{i}. [{item.slot.value}] {c.peer.display_name or c.peer.id}")
+        typer.echo(f"   platform={c.platform} score={c.score.total:.2f}")
+        typer.echo(f"   evidence: {', '.join(c.artifact_ids[:3])}")
+        if c.why:
+            typer.echo(f"   why: {c.why}")
+
+
+@connections_app.command("today")
+def connections_today(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """今日连接面：委托 people shortlist --today。"""
+    people_shortlist(today=True, as_json=as_json)
+
+
+@connections_app.command("record")
+def connections_record(
+    person: str = typer.Option(..., "--person", help="person_id 或 peer_id"),
+    url: str = typer.Option("", "--url", help="互动链接（可选）"),
+    body: str = typer.Option("", "--body", help="已发送正文摘要"),
+    platform: str = typer.Option("x", "--platform", help="平台"),
+    direction: str = typer.Option("outbound", "--direction", help="outbound|inbound"),
+) -> None:
+    """用户亲自发布后登记互动（MVP 不验证远端是否真正发布）。"""
+    from finch.connections.service import apply_stage_upgrade, review_relationship
+    from finch.engagement.models import InteractionRecord, VerificationStatus
+    from finch.peers.person_service import PersonRepository, PersonService
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    peer_repo = PeerRepository(ws)
+    peer = peer_repo.get(person)
+    person_id = person
+    if peer is None:
+        # try as person_id → first linked peer
+        prow = PersonRepository(ws).get(person)
+        if prow and prow.identities:
+            peer = peer_repo.get(prow.identities[0].peer_id)
+            person_id = prow.person_id
+    if peer is None:
+        typer.echo(f"person/peer not found: {person}")
+        raise typer.Exit(code=1)
+
+    person_svc = PersonService(PersonRepository(ws))
+    ensured = person_svc.ensure_from_peer(peer)
+    person_id = ensured.person_id
+    if peer.person_id != person_id:
+        peer = peer.model_copy(update={"person_id": person_id})
+
+    record_id = f"rec_{hashlib.sha256(f'{peer.id}:{url}:{body}'.encode()).hexdigest()[:12]}"
+    now = datetime.now(UTC)
+    record = InteractionRecord(
+        id=record_id,
+        peer_id=peer.id,
+        platform=platform,
+        source_url=url or f"manual:{peer.id}",
+        published_body=body,
+        body=body,
+        occurred_at=now,
+        observed_at=now,
+        direction=cast(Literal["outbound", "inbound", "unknown"], direction),
+        verification_status=VerificationStatus.USER_ATTESTED,
+        provenance="connections.record",
+    )
+    InteractionRecordRepository(ws).upsert(record)
+
+    prior = InteractionRecordRepository(ws).list_by_peer(peer.id)
+    review = review_relationship(
+        peer,
+        person_id=person_id,
+        bidirectional_exchanges=len(prior),
+        natural_next_reason="user recorded a public interaction",
+    )
+    updated = apply_stage_upgrade(peer, review)
+    peer_repo.upsert(updated)
+    typer.echo(f"recorded {record.id}; stage → {updated.relationship_stage.value}")
+
+
+@collisions_app.command("weekly")
+def collisions_weekly(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """本周只深度处理一个最值得验证的碰撞。"""
+    from finch.collisions.models import pick_weekly_collision
+    from finch.collisions.repository import CollisionRepository
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    cards = CollisionRepository(ws).list_all()
+    picked = pick_weekly_collision(cards)
+    if picked is None:
+        typer.echo("no collisions")
+        return
+    if as_json:
+        typer.echo(json.dumps(picked.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"collision: {picked.collision_id}")
+    typer.echo(f"  {picked.their_domain} × {picked.your_domain}")
+    typer.echo(f"  question: {picked.shared_question}")
+    typer.echo(f"  hypothesis: {picked.falsifiable_hypothesis}")
+
+
+@experiments_app.command("start")
+def experiments_start(
+    collision_id: str = typer.Argument(..., help="collision id"),
+    action: str = typer.Option(..., "--action", help="最小行动"),
+    observe: str = typer.Option(..., "--observe", help="观察计划"),
+    stop: str = typer.Option(..., "--stop", help="停止条件"),
+) -> None:
+    """从 CollisionCard 启动一周内小实验。"""
+    from finch.collisions.models import start_experiment
+    from finch.collisions.repository import CollisionRepository, ExperimentRepository
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    card = CollisionRepository(ws).get(collision_id)
+    if card is None:
+        typer.echo(f"collision not found: {collision_id}")
+        raise typer.Exit(code=1)
+    exp = start_experiment(
+        card,
+        minimal_action=action,
+        observation_plan=observe,
+        stop_condition=stop,
+    )
+    ExperimentRepository(ws).save(exp)
+    typer.echo(f"started {exp.experiment_id} due {exp.due_at}")
 
 
 @peers_app.command("show")

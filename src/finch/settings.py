@@ -93,6 +93,18 @@ class TwitterSettings(BaseModel):
     blocked_authors: list[str] = Field(default_factory=list)
 
 
+class OpenCliSettings(BaseModel):
+    """OpenCLI 网关配置（跨平台只读采集）。"""
+
+    profile: str | None = None
+    format: str = "json"
+    command_timeout_seconds: int = 60
+    browser_connect_timeout_seconds: int = 45
+    max_parallel_local: int = 3
+    max_parallel_browser: int = 1
+    allow_write_commands: bool = False
+
+
 class ScoringWeights(BaseModel):
     """互动评分五维权重（执行计划 5 默认评分权重表）。
 
@@ -221,6 +233,7 @@ class Settings(BaseModel):
     repositories: list[str] = Field(default_factory=list)
     repository_discovery: RepositoryDiscovery = Field(default_factory=RepositoryDiscovery)
     twitter: TwitterSettings = Field(default_factory=TwitterSettings)
+    opencli: OpenCliSettings = Field(default_factory=OpenCliSettings)
     quality_gates: QualityGates = Field(default_factory=QualityGates)
     paths: Paths = Field(default_factory=Paths)
     engagement: EngagementSettings = Field(default_factory=EngagementSettings)

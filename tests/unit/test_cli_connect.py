@@ -429,7 +429,7 @@ def test_connect_daily_preserves_accumulated_peer_fields(monkeypatch, tmp_path):
     persisted = PeerRepository(ws).get("peer_abc")
     assert persisted is not None
     assert persisted.shared_topics == ["graphs"]
-    assert persisted.relationship_stage == RelationshipStage.CONVERSING
+    assert persisted.relationship_stage == RelationshipStage.RECURRING
     assert persisted.why_relevant == "writes concretely"
     assert persisted.next_context == "ask about replay"
 

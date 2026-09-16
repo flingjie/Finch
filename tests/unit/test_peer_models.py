@@ -12,6 +12,8 @@ def test_relationship_stage_values():
     assert RelationshipStage.RELEVANT.value == "relevant"
     assert RelationshipStage.ENGAGED.value == "engaged"
     assert RelationshipStage.CONVERSING.value == "conversing"
+    assert RelationshipStage.RECURRING.value == "recurring"
+    assert RelationshipStage.PRACTICING.value == "practicing"
     assert RelationshipStage.COLLABORATING.value == "collaborating"
     assert RelationshipStage.DORMANT.value == "dormant"
 

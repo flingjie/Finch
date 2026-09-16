@@ -1,10 +1,14 @@
-"""opencli 只读封装（spec 5.3）"""
+"""opencli 只读封装（spec 5.3）— 执行经 OpenCliGateway，策略与 sources.policy 对齐。"""
 
 import json
 import os
 
 from finch.github.gh_client import _run
-from finch.opencli import run_opencli
+from finch.sources.models import ResultKind, SourceCommandBlocked
+from finch.sources.opencli_gateway import OpenCliGateway
+from finch.sources.policy import _ALLOW as _POLICY_ALLOW
+from finch.sources.policy import _DENY as _POLICY_DENY
+from finch.sources.policy import check_allowlist as _shared_check_allowlist
 
 from .models import (
     Tweet,
@@ -14,66 +18,16 @@ from .models import (
     TwitterSourceUnavailable,
 )
 
-# spec 5.3: 允许的只读命令前缀（发现后更新为 19 个 read 命令）
-_ALLOWLIST: set[str] = {
-    "twitter search",
-    "twitter thread",
-    "twitter bookmarks",
-    "twitter bookmark-folders",
-    "twitter bookmark-folder",
-    "twitter timeline",
-    "twitter tweets",
-    "twitter likes",
-    "twitter profile",
-    "twitter whoami",
-    "twitter notifications",
-    "twitter trending",
-    "twitter followers",
-    "twitter following",
-    "twitter list-tweets",
-    "twitter lists",
-    "twitter article",
-    "twitter download",
-    "twitter device-follow",
-}
-
-# spec 5.3: 明确阻断的写命令（26 个 write 命令）
-_DENYLIST: set[str] = {
-    "twitter post",
-    "twitter reply",
-    "twitter quote",
-    "twitter like",
-    "twitter unlike",
-    "twitter retweet",
-    "twitter unretweet",
-    "twitter follow",
-    "twitter unfollow",
-    "twitter follow-batch",
-    "twitter block",
-    "twitter unblock",
-    "twitter bookmark",
-    "twitter unbookmark",
-    "twitter delete",
-    "twitter hide-reply",
-    "twitter login",
-    "twitter reply-dm",
-    "twitter accept",
-    "twitter list-create",
-    "twitter list-delete",
-    "twitter list-add",
-    "twitter list-add-batch",
-    "twitter list-remove",
-    "twitter list-remove-batch",
-}
+_ALLOWLIST: set[str] = set(_POLICY_ALLOW.get("twitter", frozenset()))
+_DENYLIST: set[str] = set(_POLICY_DENY.get("twitter", frozenset()))
 
 
 def _check_allowlist(argv: list[str]) -> None:
-    """Defense in depth：检查命令前缀是否在 allowlist 中且不在 denylist 中."""
-    twitter_cmd = " ".join(argv[1:3])
-    if twitter_cmd in _DENYLIST:
-        raise TwitterCommandBlocked(f"Command blocked by policy: {twitter_cmd}")
-    if twitter_cmd not in _ALLOWLIST:
-        raise TwitterCommandBlocked(f"Command not in allowlist: {twitter_cmd}")
+    """Defense in depth：委托共享策略，保留 TwitterCommandBlocked 类型。"""
+    try:
+        _shared_check_allowlist(argv)
+    except SourceCommandBlocked as exc:
+        raise TwitterCommandBlocked(str(exc)) from exc
 
 
 def _parse_json(stdout: str) -> list:
@@ -83,7 +37,6 @@ def _parse_json(stdout: str) -> list:
     except json.JSONDecodeError as exc:
         raise TwitterError(f"Invalid JSON from opencli: {exc}") from exc
     if not isinstance(data, list):
-        # 某些命令可能返回单条
         if isinstance(data, dict):
             data = [data]
         else:
@@ -110,40 +63,35 @@ def _parse_tweets(stdout: str) -> list[Tweet]:
 
 
 def _browser_flags() -> list[str]:
-    """opencli 浏览器通用选项：默认后台窗口 + 复用登录会话.
-
-    - ``--window background``：不弹到最前面抢焦点；可用 ``OPENCLI_WINDOW`` 环境变量
-      覆盖（与 opencli 自身约定一致）。
-    - ``--site-session persistent``：复用已登录的站点会话，而不是每次新开会话/窗口。
-
-    说明：Finch 的 twitter 只读命令（search/thread/bookmarks/…）策略均为 ``cookie``，
-    本身需要 Chrome 登录态（无 PUBLIC 替代），但上述 flag 可避免抢焦点与反复开窗。
-    """
+    """opencli 浏览器通用选项：默认后台窗口 + 复用登录会话."""
     window = os.environ.get("OPENCLI_WINDOW", "background")
     return ["--window", window, "--site-session", "persistent"]
 
 
-def _raw_json(argv: list[str], timeout: float = 60.0) -> list[dict]:
-    """执行 opencli 命令并返回原始 JSON 列表（不做 Tweet 模型转换）。
+def _raise_for_result(result) -> None:
+    """将 gateway ResultKind 映射为 Twitter 异常。"""
+    if result.kind in {ResultKind.SUCCESS, ResultKind.EMPTY}:
+        return
+    stderr = result.stderr_summary or ""
+    if result.kind == ResultKind.AUTH_REQUIRED:
+        raise TwitterSourceUnavailable(f"Twitter not logged in: {stderr}")
+    if result.kind == ResultKind.BRIDGE_DOWN:
+        raise TwitterSourceUnavailable(f"Browser bridge unavailable: {stderr}")
+    if "rate" in stderr.lower() or "too many" in stderr.lower():
+        raise TwitterRateLimited(f"Rate limited: {stderr}")
+    raise TwitterError(f"opencli failed (exit={result.exit_code}): {stderr}")
 
-    保留原始字段：缺失字段不会被 Pydantic 默认值（如 ``likes=0``/``views=0``）
-    污染。
-    """
+
+def _raw_json(argv: list[str], timeout: float = 60.0) -> list[dict]:
+    """执行 opencli 命令并返回原始 JSON 列表（不做 Tweet 模型转换）。"""
     _check_allowlist(argv)
-    r = run_opencli(
-        [*argv, *_browser_flags()], run_fn=_run, timeout=timeout
+    result = OpenCliGateway(run_fn=_run).run_argv(
+        [*argv, *_browser_flags()], timeout=timeout
     )
-    if not r["ok"]:
-        stderr = (r["stderr"] or "").strip()
-        # spec 5.3: Bridge 离线/未登录/限流检测
-        if "not logged in" in stderr.lower() or "login" in stderr.lower():
-            raise TwitterSourceUnavailable(f"Twitter not logged in: {stderr}")
-        if "bridge" in stderr.lower() or "daemon" in stderr.lower():
-            raise TwitterSourceUnavailable(f"Browser bridge unavailable: {stderr}")
-        if "rate" in stderr.lower() or "too many" in stderr.lower():
-            raise TwitterRateLimited(f"Rate limited: {stderr}")
-        raise TwitterError(f"opencli failed (exit={r['exit_code']}): {stderr}")
-    return _parse_json(r["stdout"])
+    _raise_for_result(result)
+    if result.kind == ResultKind.EMPTY:
+        return []
+    return list(result.rows) if result.rows else _parse_json(result.stdout_raw or "[]")
 
 
 def _call(argv: list[str], timeout: float = 60.0) -> list[Tweet]:
@@ -166,48 +114,68 @@ class OpenCliClient:
     def search(self, query: str, *, product: str = "top", limit: int = 20) -> list[Tweet]:
         """搜索推文（spec 5.3）."""
         argv = [
-            "opencli", "twitter", "search",
+            "opencli",
+            "twitter",
+            "search",
             query,
-            "--product", product,
-            "--limit", str(limit),
-            "-f", "json",
+            "--product",
+            product,
+            "--limit",
+            str(limit),
+            "-f",
+            "json",
         ]
         return _call(argv, timeout=60.0)
 
     def thread(self, url: str, *, limit: int = 50) -> list[Tweet]:
         """读取推文线程."""
         argv = [
-            "opencli", "twitter", "thread",
+            "opencli",
+            "twitter",
+            "thread",
             url,
-            "--limit", str(limit),
-            "-f", "json",
+            "--limit",
+            str(limit),
+            "-f",
+            "json",
         ]
         return _call(argv, timeout=60.0)
 
     def bookmarks(self, *, limit: int = 20) -> list[Tweet]:
         """读取书签."""
         argv = [
-            "opencli", "twitter", "bookmarks",
-            "--limit", str(limit),
-            "-f", "json",
+            "opencli",
+            "twitter",
+            "bookmarks",
+            "--limit",
+            str(limit),
+            "-f",
+            "json",
         ]
         return _call(argv, timeout=60.0)
 
     def timeline(self, *, limit: int = 20) -> list[Tweet]:
         """读取时间线."""
         argv = [
-            "opencli", "twitter", "timeline",
-            "--limit", str(limit),
-            "-f", "json",
+            "opencli",
+            "twitter",
+            "timeline",
+            "--limit",
+            str(limit),
+            "-f",
+            "json",
         ]
         return _call(argv, timeout=60.0)
 
     def profile(self, username: str) -> Tweet | None:
         """读取用户资料（返回 profile 信息包装为 Tweet-like）."""
         argv = [
-            "opencli", "twitter", "profile",
+            "opencli",
+            "twitter",
+            "profile",
             username,
-            "-f", "json",
+            "-f",
+            "json",
         ]
         tweets = _call(argv, timeout=30.0)
         return tweets[0] if tweets else None
@@ -215,10 +183,14 @@ class OpenCliClient:
     def tweets(self, username: str, *, limit: int = 20) -> list[Tweet]:
         """读取用户近期推文（只读）。"""
         argv = [
-            "opencli", "twitter", "tweets",
+            "opencli",
+            "twitter",
+            "tweets",
             username,
-            "--limit", str(limit),
-            "-f", "json",
+            "--limit",
+            str(limit),
+            "-f",
+            "json",
         ]
         return _call(argv, timeout=60.0)
 

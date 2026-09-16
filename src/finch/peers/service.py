@@ -30,6 +30,12 @@ def profile_url_for(
         return f"https://www.reddit.com/user/{handle}"
     if platform == "github":
         return f"https://github.com/{handle}"
+    if platform == "v2ex":
+        return f"https://www.v2ex.com/member/{handle}"
+    if platform == "xiaohongshu":
+        return f"https://www.xiaohongshu.com/user/profile/{handle}"
+    if platform == "weixin":
+        return None
     return None
 
 

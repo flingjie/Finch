@@ -1,10 +1,14 @@
-"""opencli Reddit 只读封装（spec 2026-09-05）。"""
+"""opencli Reddit 只读封装 — 执行经 OpenCliGateway，策略与 sources.policy 对齐。"""
 
 import json
 import os
 
 from finch.github.gh_client import _run
-from finch.opencli import run_opencli
+from finch.sources.models import ResultKind, SourceCommandBlocked
+from finch.sources.opencli_gateway import OpenCliGateway
+from finch.sources.policy import _ALLOW as _POLICY_ALLOW
+from finch.sources.policy import _DENY as _POLICY_DENY
+from finch.sources.policy import check_allowlist as _shared_check_allowlist
 
 from .models import (
     RedditCommandBlocked,
@@ -14,43 +18,16 @@ from .models import (
     RedditSourceUnavailable,
 )
 
-# 允许的只读命令前缀
-_ALLOWLIST: set[str] = {
-    "reddit search",
-    "reddit hot",
-    "reddit subreddit",
-    "reddit frontpage",
-    "reddit home",
-    "reddit popular",
-    "reddit user",
-    "reddit read",
-    "reddit saved",
-    "reddit upvoted",
-    "reddit subscribed",
-    "reddit subreddit-info",
-    "reddit whoami",
-    "reddit user-posts",
-    "reddit user-comments",
-}
-
-# 明确阻断的写命令
-_DENYLIST: set[str] = {
-    "reddit comment",
-    "reddit reply",
-    "reddit save",
-    "reddit upvote",
-    "reddit subscribe",
-    "reddit login",
-}
+_ALLOWLIST: set[str] = set(_POLICY_ALLOW.get("reddit", frozenset()))
+_DENYLIST: set[str] = set(_POLICY_DENY.get("reddit", frozenset()))
 
 
 def _check_allowlist(argv: list[str]) -> None:
-    """Defense in depth：检查命令前缀是否在 allowlist 中且不在 denylist 中."""
-    reddit_cmd = " ".join(argv[1:3])
-    if reddit_cmd in _DENYLIST:
-        raise RedditCommandBlocked(f"Command blocked by policy: {reddit_cmd}")
-    if reddit_cmd not in _ALLOWLIST:
-        raise RedditCommandBlocked(f"Command not in allowlist: {reddit_cmd}")
+    """Defense in depth：委托共享策略，保留 RedditCommandBlocked 类型。"""
+    try:
+        _shared_check_allowlist(argv)
+    except SourceCommandBlocked as exc:
+        raise RedditCommandBlocked(str(exc)) from exc
 
 
 def _parse_posts(stdout: str) -> list[RedditPost]:
@@ -81,22 +58,37 @@ def _browser_flags() -> list[str]:
     return ["--window", window, "--site-session", "persistent"]
 
 
+def _raise_for_result(result) -> None:
+    if result.kind in {ResultKind.SUCCESS, ResultKind.EMPTY}:
+        return
+    stderr = result.stderr_summary or ""
+    if result.kind == ResultKind.AUTH_REQUIRED:
+        raise RedditSourceUnavailable(f"Reddit not logged in: {stderr}")
+    if result.kind == ResultKind.BRIDGE_DOWN:
+        raise RedditSourceUnavailable(f"Browser bridge unavailable: {stderr}")
+    if "rate" in stderr.lower() or "too many" in stderr.lower():
+        raise RedditRateLimited(f"Rate limited: {stderr}")
+    raise RedditError(f"opencli failed (exit={result.exit_code}): {stderr}")
+
+
 def _call(argv: list[str], timeout: float = 60.0) -> list[RedditPost]:
     """执行 opencli 命令并解析结果."""
     _check_allowlist(argv)
-    r = run_opencli(
-        [*argv, *_browser_flags()], run_fn=_run, timeout=timeout
+    result = OpenCliGateway(run_fn=_run).run_argv(
+        [*argv, *_browser_flags()], timeout=timeout
     )
-    if not r["ok"]:
-        stderr = (r["stderr"] or "").strip()
-        if "not logged in" in stderr.lower() or "login" in stderr.lower():
-            raise RedditSourceUnavailable(f"Reddit not logged in: {stderr}")
-        if "bridge" in stderr.lower() or "daemon" in stderr.lower():
-            raise RedditSourceUnavailable(f"Browser bridge unavailable: {stderr}")
-        if "rate" in stderr.lower() or "too many" in stderr.lower():
-            raise RedditRateLimited(f"Rate limited: {stderr}")
-        raise RedditError(f"opencli failed (exit={r['exit_code']}): {stderr}")
-    return _parse_posts(r["stdout"])
+    _raise_for_result(result)
+    if result.kind == ResultKind.EMPTY:
+        return []
+    if result.rows:
+        posts: list[RedditPost] = []
+        for item in result.rows:
+            try:
+                posts.append(RedditPost.model_validate(item))
+            except Exception:  # noqa: BLE001
+                continue
+        return posts
+    return _parse_posts(result.stdout_raw or "[]")
 
 
 class RedditOpenCliClient:

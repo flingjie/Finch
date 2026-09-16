@@ -29,13 +29,21 @@ Finch 是一个**同行连接与个人表达系统**：帮助你发现值得长�
 
 > 每周新增或加深多少个「有上下文、可继续」的同行关系。
 
+跨平台创作者网络补充指标（与上者兼容，用于月度复盘）：
+
+> `active_cross_domain_relationships_30d`：最近 30 天内，双方至少发生两次有具体内容的互动，并围绕作品、问题或实践持续交流的人数。
+
 粉丝数、发帖数、草稿数、点赞、曝光都不是核心成功指标，仅作辅助数据。点赞、愿意试用、实际使用、获得价值、付款分别表述，不合成商业总分。`topic-dialogue` 等模拟讨论是练习上下文，不是同行关系进展，不得计入北极星指标，也不得写入 `InteractionRecord`、`ConversationThread` 或关系指标。
+
+每日连接面并存：`finch connect today`（8–12 浏览）与 `finch connections today` / `finch people shortlist --today`（至多 3 槽位 People First）。后者成熟后再切换默认。
 
 ## 对象所有权
 
 | 对象 | 归属 | 规则 |
 |---|---|---|
-| `PeerProfile` | 关系领域 | 记录「这个人是谁、为什么值得继续交流」。外部作者按 `platform + author_id` 幂等归一化。可含 `current_work`、实践证据引用与证据状态（sourced / author_stated / pending_review）。**不是 lead。** |
+| `PeerProfile` | 关系领域 | 记录「这个人是谁、为什么值得继续交流」。外部作者按 `platform + author_id` 幂等归一化。可含 `current_work`、实践证据引用与证据状态（sourced / author_stated / pending_review）。可选 `person_id` 链接跨平台 Person。**不是 lead。** |
+| `Person` | 关系领域 | 跨平台自然人；身份合并需互链或多项弱证据，禁止仅凭同名自动合并。 |
+| `CreatorEvidence` | 关系领域 | 创作者证据卡（≠ 用户 GitHub EvidenceCard 表达管线）；必须引用 `artifact_id`。 |
 | `Opportunity` | 关系领域 | 轻量**交流**机会。发现结果，无审批状态机；每日浏览 8–12，不含完整回复草稿。浏览卡固定呈现：正在做什么、为何相关、可贡献什么、下一步、时间与不确定性（附来源）。含 `shared_problem`、`contribution_basis_refs`、`next_action`、`estimated_minutes`。**不是商业机会。** |
 | `InteractionProposal` | 关系领域 | 用户选中后深度准备的待批准建议，不是已发生的互动。默认每次最多 10 位选中机会；可含最小贡献（试用/复现/观察）而无公开回复草稿。含 `contribution_type` / `why_this_person` / `why_now` / `expected_conversation_opening`。 |
 | `InteractionRecord` | 关系领域 | 单独记录真正发生过的互动事实（可无 proposal_id）。不能用 Proposal 状态替代。 |
