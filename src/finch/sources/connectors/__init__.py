@@ -23,6 +23,8 @@ class DiscoveryContext:
     limit: int = 20
     urls: list[str] = field(default_factory=list)
     cursor: str | None = None
+    mode: str = "query"
+    config_error: str = ""
     extra: dict = field(default_factory=dict)
 
 

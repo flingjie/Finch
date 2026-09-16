@@ -30,7 +30,8 @@ uv run finch diagnose                    # 探测 gh / opencli 可用性
 # —— 连接主循环 ——
 uv run finch connect refresh             # 有界刷新发现池 + 快照
 uv run finch connect today --limit 10    # 纯读：8–12 轻量机会 + 需跟进对话
-uv run finch connect daily [--refresh]   # 默认同 today；缺快照/过期或 --refresh 时刷新
+uv run finch connect daily [--refresh]   # 每日 50 人分层推荐（5 重点 / 15 摘要 / 30 浏览）
+uv run finch connect person <person_id>  # 查看某人完整证据与档案（只读）
 uv run finch connect more --snapshot ID --limit 5
 uv run finch connect prepare --opportunity ID   # 深度准备（默认每次最多 10）
 uv run finch connect feedback --file feedback.json

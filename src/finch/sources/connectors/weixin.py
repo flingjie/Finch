@@ -19,6 +19,22 @@ from finch.sources.models import (
 from finch.sources.plan_util import empty_capabilities, resolve_command
 
 
+def _parse_publish_time(value: Any) -> datetime | None:
+    """尽力解析搜狗/公众号发布时间；无法解析返回 None（投影时回退 retrieved_at）。"""
+    s = str(value or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt).replace(tzinfo=UTC)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 class WeixinConnector:
     source = Source.WEIXIN
 
@@ -35,9 +51,23 @@ class WeixinConnector:
         context: DiscoveryContext,
         capabilities: OpenCliCapabilities | None = None,
     ) -> list[OpenCliRequest]:
-        """仅对已知文章 URL 生成下载/阅读请求。"""
+        """query 模式走搜狗微信搜索；url 模式对已知文章 URL 生成下载/阅读请求。"""
         caps = capabilities or empty_capabilities()
         reqs: list[OpenCliRequest] = []
+        if context.queries:
+            search_cmd = resolve_command(caps, "weixin", ["search"])
+            if not search_cmd and not caps.surfaces:
+                search_cmd = "search"
+            if search_cmd:
+                for q in context.queries:
+                    reqs.append(
+                        OpenCliRequest(
+                            surface="weixin",
+                            command=search_cmd,
+                            args=(q, "-f", "json"),
+                            timeout_seconds=60,
+                        )
+                    )
         for url in context.urls:
             if "weixin" in url or "mp.weixin.qq.com" in url:
                 cmd = resolve_command(caps, "weixin", ["download", "read", "article"])
@@ -107,7 +137,13 @@ class WeixinConnector:
     def _row_to_artifact(self, row: dict[str, Any], now: datetime) -> RawArtifact | None:
         url = str(row.get("url") or row.get("canonical_url") or "").strip()
         title = str(row.get("title") or "")
-        text = str(row.get("content") or row.get("text") or row.get("body") or "")
+        text = str(
+            row.get("content")
+            or row.get("text")
+            or row.get("body")
+            or row.get("summary")
+            or ""
+        )
         if not url and not text:
             return None
         sid = str(row.get("id") or content_fingerprint(url or text))
@@ -117,6 +153,10 @@ class WeixinConnector:
             or row.get("biz")
             or ""
         )
+        if not author and url:
+            # 搜狗搜索结果不含公众号名；用文章 URL 作为临时身份。后续可在 adapter 中
+            # 提取 ``.s-p a``（公众号名）以得到账户级身份。
+            author = url
         body = f"{title}\n\n{text}".strip()
         fp = content_fingerprint(body, url=url)
         return RawArtifact(
@@ -130,7 +170,7 @@ class WeixinConnector:
             ),
             title=title or None,
             text=body,
-            published_at=None,
+            published_at=_parse_publish_time(row.get("publish_time")),
             metrics={},
             retrieved_at=now,
             capture_method="adapter",

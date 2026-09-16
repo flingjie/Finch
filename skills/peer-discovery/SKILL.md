@@ -21,7 +21,9 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 ## CLI
 
 - 看看今天：`finch connect today --limit 10`（纯读；无快照或过期时先 `finch connect refresh`）
-- 或统一入口：`finch connect daily`（缺快照/过期自动刷新；显式 `--refresh` 强制刷新）
+- 或统一入口：`finch connect daily`（缺快照/过期自动刷新；显式 `--refresh` 强制刷新；
+  输出每日 50 人分层推荐：5 今日重点 / 15 值得浏览 / 30 扩展发现 + 关系跟进）
+- 查看某人物完整证据：`finch connect person <person_id>`（只读，不生成互动准备）
 - 再来几位：`finch connect more --snapshot <id> --limit 5`（不重复、不调网络/LLM）
 - 有界扩展：`finch connect expand --from <opportunity_id>` 或 `--scope TEXT`
 - 准备互动：`finch connect prepare --opportunity <id>`（可重复；每次最多 10；**必须选中**）

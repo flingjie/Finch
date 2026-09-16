@@ -35,6 +35,18 @@ class V2exConnector:
         capabilities: OpenCliCapabilities | None = None,
     ) -> list[OpenCliRequest]:
         caps = capabilities or empty_capabilities()
+        if context.mode == "hot":
+            hot_cmd = resolve_command(caps, "v2ex", ["hot", "topics"])
+            if not hot_cmd:
+                return []
+            return [
+                OpenCliRequest(
+                    surface="v2ex",
+                    command=hot_cmd,
+                    args=("-f", "json"),
+                    timeout_seconds=60,
+                )
+            ]
         if context.queries:
             search_cmd = resolve_command(caps, "v2ex", ["search"])
             if not search_cmd:
@@ -48,17 +60,7 @@ class V2exConnector:
                 )
                 for q in context.queries
             ]
-        hot_cmd = resolve_command(caps, "v2ex", ["hot", "topics"])
-        if not hot_cmd:
-            return []
-        return [
-            OpenCliRequest(
-                surface="v2ex",
-                command=hot_cmd,
-                args=("-f", "json"),
-                timeout_seconds=60,
-            )
-        ]
+        return []
 
     def normalize(self, result: OpenCliResult) -> list[RawArtifact]:
         now = datetime.now(UTC)

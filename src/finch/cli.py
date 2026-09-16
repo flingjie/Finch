@@ -1785,6 +1785,78 @@ def _run_daily_full(settings: Settings):
     return run_daily_discovery(settings, runner=runner)
 
 
+def _recommendations_payload(recs) -> dict | None:
+    """Serialize a DailyRecommendationSet into a JSON-ready dict."""
+    if recs is None:
+        return None
+
+    def _row(r):
+        c = r.candidate
+        return {
+            "person_id": r.person_id,
+            "peer_id": c.peer.id,
+            "display_name": c.peer.display_name or c.peer.id,
+            "tier": r.tier,
+            "rank": r.rank,
+            "direction": r.direction,
+            "platform": c.platform,
+            "score": c.score.total,
+            "artifact_ids": list(c.artifact_ids),
+            "hit_labels": list(c.hit_labels),
+        }
+
+    return {
+        "priority": [_row(r) for r in recs.priority],
+        "summary": [_row(r) for r in recs.summary],
+        "browse": [_row(r) for r in recs.browse],
+        "shortfall": dict(recs.shortfall),
+    }
+
+
+def _render_recommendations(recs) -> list[str]:
+    """文本模式分层渲染：priority 带证据/命中，browse 每人一行。"""
+    if recs is None:
+        return []
+
+    def _name(c):
+        return c.peer.display_name or c.peer.id
+
+    lines: list[str] = []
+    if recs.priority:
+        lines.append(f"## 今日重点 ({len(recs.priority)})")
+        for r in recs.priority:
+            c = r.candidate
+            lines.append(
+                f"{r.rank + 1}. {_name(c)} ({c.platform}) "
+                f"score={c.score.total:.2f} [{r.direction}]"
+            )
+            lines.append(f"   evidence: {', '.join(c.artifact_ids[:3])}")
+            if c.hit_labels:
+                lines.append(f"   hit: {', '.join(c.hit_labels[:5])}")
+        lines.append("")
+    if recs.summary:
+        lines.append(f"## 值得浏览 ({len(recs.summary)})")
+        for r in recs.summary:
+            c = r.candidate
+            lines.append(
+                f"{r.rank + 1}. {_name(c)} ({c.platform}) "
+                f"score={c.score.total:.2f} [{r.direction}]"
+            )
+            lines.append(f"   evidence: {', '.join(c.artifact_ids[:2])}")
+        lines.append("")
+    if recs.browse:
+        lines.append(f"## 扩展发现 ({len(recs.browse)})")
+        for r in recs.browse:
+            c = r.candidate
+            lines.append(
+                f"{r.rank + 1}. {_name(c)} ({c.platform}) score={c.score.total:.2f}"
+            )
+        lines.append("")
+    if recs.shortfall:
+        lines.append(f"shortfall: {recs.shortfall}")
+    return lines
+
+
 def _persist_discovery(
     ws: Workspace,
     result: EngagementRunResult,
@@ -2201,10 +2273,10 @@ def connect_today(
 @connect_app.command("daily")
 def connect_daily(
     refresh: bool = typer.Option(False, "--refresh", help="先刷新再读取"),
-    limit: int = typer.Option(10, "--limit", help="展示机会数"),
+    limit: int = typer.Option(50, "--limit", help="展示机会数"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """连接主循环入口：People First 三槽位 + 浏览机会；``--refresh`` 时统一跨平台采集。"""
+    """连接主循环入口：每日 50 人分层推荐（5 重点 / 15 摘要 / 30 浏览）+ 浏览机会。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -2228,29 +2300,19 @@ def connect_daily(
             ws, snapshot.id, [o.id for o in focus["opportunities"]["items"]]
         )
 
-    # People-first shortlist block (from this refresh or recompute read-only)
-    shortlist_lines: list[str] = []
+    # Connection opportunities for the priority tier (backward-compat JSON field).
     connections_payload: list[dict] = []
-    if daily is not None and daily.shortlist:
-        for i, item in enumerate(daily.shortlist, 1):
-            c = item.candidate
-            shortlist_lines.append(
-                f"{i}. [{item.slot.value}] {c.peer.display_name or c.peer.id} "
-                f"({c.platform}) score={c.score.total:.2f}"
-            )
-            shortlist_lines.append(f"   evidence: {', '.join(c.artifact_ids[:3])}")
+    if daily is not None:
         for conn in daily.connections:
             connections_payload.append(conn.model_dump(mode="json"))
-            shortlist_lines.append(
-                f"   → {conn.decision.value}: {conn.their_problem or conn.why_not}"
-            )
-    elif not need_refresh:
-        shortlist_lines.append("(run with --refresh for people shortlist + connections)")
 
     if as_json:
         typer.echo(json.dumps({
             "snapshot_id": snapshot.id if snapshot else None,
             "refreshed": need_refresh,
+            "recommendations": _recommendations_payload(
+                daily.recommendations if daily else None
+            ),
             "shortlist": [
                 {
                     "slot": i.slot.value,
@@ -2281,11 +2343,58 @@ def connect_daily(
     if snapshot is None:
         typer.echo("no discovery snapshot; run: uv run finch connect refresh")
         return
-    if shortlist_lines:
-        typer.echo("## 今日三槽位（People First）")
-        typer.echo("\n".join(shortlist_lines))
+    rec_lines = _render_recommendations(daily.recommendations if daily else None)
+    if rec_lines:
+        typer.echo("\n".join(rec_lines))
+    else:
+        typer.echo("(run with --refresh for daily 50-people recommendations)")
         typer.echo("")
     typer.echo(_render_daily(focus))
+
+
+@connect_app.command("person")
+def connect_person(
+    person_id: str = typer.Argument(..., help="person_id 或 peer_id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """查看一个人的完整证据与档案（只读，不生成互动准备）。"""
+    from finch.peers.evidence_repo import CreatorEvidenceRepository
+    from finch.peers.person_service import PersonRepository
+    from finch.storage.repositories import PeerRepository
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    peer_repo = PeerRepository(ws)
+    person_repo = PersonRepository(ws)
+    evidence_repo = CreatorEvidenceRepository(ws)
+
+    peer = peer_repo.get(person_id)
+    person = person_repo.get(person_id)
+    if peer is None and person is not None and person.identities:
+        peer = peer_repo.get(person.identities[0].peer_id)
+    if person is None and peer is not None and peer.person_id:
+        person = person_repo.get(peer.person_id)
+    if peer is None:
+        typer.echo(f"person/peer not found: {person_id}")
+        raise typer.Exit(code=1)
+
+    resolved = person.person_id if person else (peer.person_id or "")
+    evs = evidence_repo.list_for_person(resolved) if resolved else []
+
+    if as_json:
+        typer.echo(json.dumps({
+            "person_id": resolved,
+            "peer": peer.model_dump(mode="json"),
+            "evidence": [e.model_dump(mode="json") for e in evs],
+        }, ensure_ascii=False, indent=2))
+        return
+    typer.echo(_render_peer_detail(peer))
+    if evs:
+        typer.echo("")
+        typer.echo(f"## 证据 ({len(evs)})")
+        for e in evs:
+            typer.echo(f"- [{e.kind.value}] {e.claim} (confidence={e.confidence:.2f})")
 
 
 @connect_app.command("more")

@@ -356,6 +356,14 @@ def test_connect_daily_json(monkeypatch, tmp_path):
     assert [o["id"] for o in payload["opportunities"]] == ["opp_test_1"]
 
 
+def test_connect_person_not_found(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    r = CliRunner().invoke(app, ["connect", "person", "does_not_exist"])
+    assert r.exit_code == 1
+    assert "not found" in r.output
+
+
 def test_connect_today_is_pure_read(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)

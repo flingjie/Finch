@@ -2,23 +2,33 @@
 
 from __future__ import annotations
 
-from finch.settings import Settings
+from finch.settings import Settings, SourceDiscoverySettings
 from finch.sources.connectors import DiscoveryContext
 from finch.sources.models import Source
 
 
-def _twitter_queries_from_settings(settings: Settings) -> list[str]:
-    src = settings.sources.twitter.queries
-    if src:
-        return list(src)
-    # Fall back to legacy twitter.queries[].text then interests.
-    texts: list[str] = []
-    for q in settings.twitter.queries:
-        if isinstance(q, dict) and q.get("text"):
-            texts.append(str(q["text"]))
-    if texts:
-        return texts
-    return list(settings.interests.long_term_interests[:5])
+def _plan(settings: Settings, src: Source) -> SourceDiscoverySettings:
+    return getattr(settings.sources, src.value)
+
+
+def _payload(settings: Settings, src: Source) -> tuple[list[str], list[str]]:
+    """返回 (queries, urls)；GitHub 用 users 当登录名，weixin 只走 urls。"""
+    if src == Source.TWITTER:
+        return list(settings.sources.twitter.queries), list(settings.sources.twitter.urls)
+    if src == Source.REDDIT:
+        return list(settings.sources.reddit.queries), list(settings.sources.reddit.urls)
+    if src == Source.GITHUB:
+        return list(settings.sources.github.users), []
+    if src == Source.V2EX:
+        return list(settings.sources.v2ex.queries), []
+    if src == Source.WEIXIN:
+        return list(settings.sources.weixin.queries), list(settings.sources.weixin.urls)
+    if src == Source.XIAOHONGSHU:
+        return (
+            list(settings.sources.xiaohongshu.queries),
+            list(settings.sources.xiaohongshu.urls),
+        )
+    return [], []
 
 
 def build_context_by_source(
@@ -32,8 +42,10 @@ def build_context_by_source(
 ) -> dict[Source, DiscoveryContext]:
     """Build per-source DiscoveryContext.
 
-    - Single ``source`` with CLI queries/urls → CLI only for that source.
+    - Single ``source`` with CLI queries/urls → CLI only for that source (bypasses enabled/mode).
     - ``all_sources`` / daily (no CLI override) → yaml ``sources.*`` fields only.
+    - Disabled sources (``enabled=false`` or ``mode=disabled``) are skipped.
+    - Enabled source without a valid query/URL carries ``config_error`` (→ CONFIG_ERROR).
     - GitHub context uses ``github.users`` as queries (logins), never topic words.
     """
     queries = list(cli_queries or [])
@@ -48,47 +60,25 @@ def build_context_by_source(
             if src == Source.GITHUB:
                 # GitHub queries are always logins; CLI --query treated as users.
                 out[src] = DiscoveryContext(queries=queries, urls=[], limit=limit)
-            elif src == Source.WEIXIN:
-                out[src] = DiscoveryContext(queries=[], urls=urls or queries, limit=limit)
             else:
+                # Weixin 与其它源一致：--query 走搜索，--url 走文章导入。
                 out[src] = DiscoveryContext(queries=queries, urls=urls, limit=limit)
             continue
 
-        # YAML / settings-driven plan (never share one topic query across platforms).
-        if src == Source.TWITTER:
-            out[src] = DiscoveryContext(
-                queries=_twitter_queries_from_settings(settings),
-                urls=list(settings.sources.twitter.urls),
-                limit=limit,
-            )
-        elif src == Source.REDDIT:
-            out[src] = DiscoveryContext(
-                queries=list(settings.sources.reddit.queries),
-                urls=list(settings.sources.reddit.urls),
-                limit=limit,
-            )
-        elif src == Source.GITHUB:
-            out[src] = DiscoveryContext(
-                queries=list(settings.sources.github.users),
-                urls=[],
-                limit=limit,
-            )
-        elif src == Source.V2EX:
-            out[src] = DiscoveryContext(
-                queries=list(settings.sources.v2ex.queries),
-                urls=[],
-                limit=limit,
-            )
-        elif src == Source.WEIXIN:
-            out[src] = DiscoveryContext(
-                queries=[],
-                urls=list(settings.sources.weixin.urls),
-                limit=limit,
-            )
-        elif src == Source.XIAOHONGSHU:
-            out[src] = DiscoveryContext(
-                queries=list(settings.sources.xiaohongshu.queries),
-                urls=list(settings.sources.xiaohongshu.urls),
-                limit=limit,
-            )
+        plan = _plan(settings, src)
+        if not plan.enabled or plan.mode == "disabled":
+            continue
+        q, u = _payload(settings, src)
+        if plan.mode == "query" and not q:
+            out[src] = DiscoveryContext(config_error=f"{src.value}: enabled but no queries")
+            continue
+        if plan.mode == "url" and not u:
+            out[src] = DiscoveryContext(config_error=f"{src.value}: enabled but no urls")
+            continue
+        out[src] = DiscoveryContext(
+            queries=q,
+            urls=u,
+            limit=plan.fetch_limit,
+            mode=plan.mode,
+        )
     return out

@@ -24,23 +24,82 @@ opencli:
   allow_write_commands: false
 
 # Per-source discovery queries for `connect daily --refresh` / `sources sync --all`.
-# Do NOT reuse one topic query for GitHub (users are logins, not themes).
+# Each source is explicit: `enabled` + `mode` (query | hot | url | disabled).
+# An `enabled: true` source with `mode: query`/`url` but no queries/urls is a
+# CONFIG_ERROR (never silently skipped). Do NOT reuse one topic query for GitHub
+# (users are logins, not themes).
 sources:
   twitter:
-    queries: []  # empty → fall back to twitter.queries[].text / interests
+    enabled: true
+    mode: query
+    fetch_limit: 200
+    recommendation_cap: 20
+    queries:
+      - '"agent reliability" OR "agent evals"'
+      - '"agent harness" OR "context engineering"'
+      - '"durable execution" OR "failure replay"'
     urls: []
   reddit:
-    queries: []
+    enabled: true
+    mode: query
+    fetch_limit: 100
+    recommendation_cap: 8
+    queries:
+      - "agent reliability production failure"
+      - "LLM agent evaluation real world"
     urls: []
   github:
+    # Add logins under `users`, then set enabled: true.
+    enabled: false
+    mode: query
+    fetch_limit: 100
+    recommendation_cap: 15
     users: []  # GitHub logins only, e.g. [jackwener, iFurySt]
   v2ex:
-    queries: []
+    enabled: true
+    mode: query
+    fetch_limit: 100
+    recommendation_cap: 12
+    queries:
+      - "AI Agent 实践"
+      - "大模型 应用 落地"
   weixin:
-    urls: []  # article links only
-  xiaohongshu:
-    queries: []
+    # 搜狗微信搜索（opencli weixin search）；`mode: url` 则按文章链接导入。
+    enabled: true
+    mode: query
+    fetch_limit: 50
+    recommendation_cap: 8
+    queries:
+      - "AI Agent 实践"
+      - "大模型 应用 落地"
     urls: []
+  xiaohongshu:
+    enabled: true
+    mode: query
+    fetch_limit: 100
+    recommendation_cap: 12
+    queries:
+      - "AI Agent 开发实践"
+      - "AI 工作流 复盘"
+    urls: []
+
+# Daily 50-person discovery: 5 priority / 15 summary / 30 browse tiers.
+# LLM budget is fixed: at most `semantic_assess_limit` people enter batch semantic
+# assessment, and `deep_prepare_limit` people get a full connection analysis —
+# regardless of how large the candidate pool grows.
+discovery:
+  daily_people:
+    target: 50
+    priority_count: 5
+    summary_count: 15
+    browse_count: 30
+    candidate_pool_size: 100
+    semantic_assess_limit: 20
+    deep_prepare_limit: 5
+    max_per_platform: 20
+    min_chinese_platforms_total: 15
+    min_artifacts_priority: 2
+    cooldown_days: 7
 
 twitter:
   daily_limit: 100

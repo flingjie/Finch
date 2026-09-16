@@ -13,9 +13,13 @@ from finch.discovery.daily import (
     opportunities_from_artifacts,
     run_daily_discovery,
 )
-from finch.peers.evidence_service import CreatorEvidenceBatch, CreatorEvidenceItem
+from finch.peers.evidence_service import (
+    CreatorEvidenceBatchOutput,
+    CreatorEvidenceBatchPerson,
+    CreatorEvidenceItem,
+)
 from finch.peers.person import CreatorEvidenceKind
-from finch.settings import Settings, SourceTwitterPlan, SourcesSettings
+from finch.settings import Settings, SourcesSettings, SourceTwitterPlan
 from finch.sources.fingerprint import artifact_id, content_fingerprint
 from finch.sources.models import AuthorIdentity, RawArtifact, Source
 from finch.sources.opencli_gateway import OpenCliGateway
@@ -43,31 +47,36 @@ def _art(sid: str, author: str, text: str) -> RawArtifact:
 
 class _FakeRunner:
     def run(self, prompt: str, output_model: type[BaseModel], *, timeout: float = 600.0):
-        if output_model is CreatorEvidenceBatch:
-            # Extract artifact ids from prompt heuristically
-            import re
+        if output_model is CreatorEvidenceBatchOutput:
+            import json as _json
 
-            ids = re.findall(r"twitter:post:\d+", prompt)
-            ids = list(dict.fromkeys(ids))[:2] or ["twitter:post:1", "twitter:post:2"]
-            return CreatorEvidenceBatch(
-                items=[
-                    CreatorEvidenceItem(
-                        artifact_id=ids[0],
-                        kind=CreatorEvidenceKind.CREATION,
-                        claim="built something",
-                        support=[ids[0]],
-                        first_hand=True,
-                        confidence=0.8,
-                    ),
-                    CreatorEvidenceItem(
-                        artifact_id=ids[1] if len(ids) > 1 else ids[0],
-                        kind=CreatorEvidenceKind.KNOWLEDGE_SHARING,
-                        claim="shared practice",
-                        support=[ids[1] if len(ids) > 1 else ids[0]],
-                        confidence=0.7,
-                    ),
-                ]
-            )
+            persons_data = _json.loads(prompt.split("## Persons\n", 1)[1].strip())
+            persons = []
+            for p in persons_data:
+                ids = [a["artifact_id"] for a in p["artifacts"]]
+                items = []
+                if ids:
+                    items = [
+                        CreatorEvidenceItem(
+                            artifact_id=ids[0],
+                            kind=CreatorEvidenceKind.CREATION,
+                            claim="built something",
+                            support=[ids[0]],
+                            first_hand=True,
+                            confidence=0.8,
+                        ),
+                        CreatorEvidenceItem(
+                            artifact_id=ids[1] if len(ids) > 1 else ids[0],
+                            kind=CreatorEvidenceKind.KNOWLEDGE_SHARING,
+                            claim="shared practice",
+                            support=[ids[1] if len(ids) > 1 else ids[0]],
+                            confidence=0.7,
+                        ),
+                    ]
+                persons.append(
+                    CreatorEvidenceBatchPerson(person_id=p["person_id"], items=items)
+                )
+            return CreatorEvidenceBatchOutput(persons=persons)
         if output_model is ConnectionOpportunityDraft:
             from finch.connections.service import ConnectionDecision
 
@@ -147,3 +156,56 @@ def test_run_daily_skips_network_with_seeded_artifacts(tmp_path: Path):
     assert result.engagement.status in {"succeeded", "empty"}
     # With evidence from fake runner, shortlist should populate
     assert len(result.shortlist) >= 1 or result.engagement.posts_found >= 2
+
+
+def test_run_daily_three_slot_cap_and_metrics(tmp_path: Path):
+    """Phase 0 回归：短名单仍 ≤3，观测指标被记录且不改变选择。"""
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    arts = []
+    for i, author in enumerate(["alice", "bob", "carol", "dave", "erin"]):
+        arts.append(
+            _art(
+                f"{i * 2 + 1}",
+                author,
+                f"first long enough post from {author} about agent reliability",
+            )
+        )
+        arts.append(
+            _art(
+                f"{i * 2 + 2}",
+                author,
+                f"second long enough post from {author} about eval trajectories",
+            )
+        )
+    for a in arts:
+        ArtifactRepository(ws).upsert(a)
+    from finch.sources.projector import ArtifactProjector
+
+    ArtifactProjector(ws).project(arts)
+
+    settings = Settings(
+        paths={"var_dir": tmp_path},  # type: ignore[arg-type]
+        sources=SourcesSettings(twitter=SourceTwitterPlan(queries=[])),
+        interests={"practice_refs": ["practice:1"], "long_term_interests": ["agents"]},  # type: ignore[arg-type]
+    )
+    settings.paths.var_dir = tmp_path
+
+    def fake_run(argv, timeout):
+        return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+    result = run_daily_discovery(
+        settings,
+        runner=_FakeRunner(),
+        gateway=OpenCliGateway(run_fn=fake_run),
+        skip_sync=True,
+        generate_collision=True,
+    )
+
+    # 观测指标不改变选择：priority 层（旧 shortlist 字段）不超过 priority_count=5。
+    assert len(result.shortlist) <= 5
+    assert result.recommendations is not None
+    assert result.metrics.recommended_count == result.recommendations.total
+    assert result.metrics.people_count >= 5
+    assert result.metrics.llm_calls >= 1
+

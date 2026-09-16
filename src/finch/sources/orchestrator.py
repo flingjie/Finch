@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -32,6 +33,27 @@ def default_connectors() -> dict[Source, SourceConnector]:
     }
 
 
+_ERROR_KINDS = {
+    ResultKind.BRIDGE_DOWN,
+    ResultKind.TIMEOUT,
+    ResultKind.AUTH_REQUIRED,
+    ResultKind.CONFIG_ERROR,
+    ResultKind.CANCELLED,
+    ResultKind.UNAVAILABLE,
+    ResultKind.BLOCKED,
+    ResultKind.ERROR,
+}
+
+
+def _error_type(result: SyncResult) -> str:
+    """Deterministic error label: specific ResultKind first, else non-READY status."""
+    if result.kind in _ERROR_KINDS:
+        return result.kind.value
+    if result.status != SourceStatus.READY:
+        return result.status.value
+    return ""
+
+
 @dataclass
 class SyncResult:
     source: Source
@@ -43,6 +65,8 @@ class SyncResult:
     projected_count: int = 0
     kind: ResultKind | None = None
     detail: str = ""
+    elapsed_seconds: float = 0.0
+    error_type: str = ""
     artifacts: list[RawArtifact] = field(default_factory=list)
 
 
@@ -72,6 +96,13 @@ class DiscoveryOrchestrator:
         context: DiscoveryContext | None = None,
     ) -> SyncResult:
         ctx = context or DiscoveryContext()
+        if ctx.config_error:
+            return SyncResult(
+                source=source,
+                status=SourceStatus.DEGRADED,
+                kind=ResultKind.CONFIG_ERROR,
+                detail=ctx.config_error,
+            )
         connector = self.connectors.get(source)
         if connector is None:
             return SyncResult(
@@ -95,7 +126,7 @@ class DiscoveryOrchestrator:
 
         # GitHub: special path via GhClient (creator depth: user/repos/commits/…)
         if source == Source.GITHUB and isinstance(connector, GitHubConnector):
-            for q in ctx.queries or ["octocat"]:
+            for q in ctx.queries:
                 fetch = getattr(connector, "fetch_creator", None) or connector.fetch_user
                 result = fetch(q)
                 last_kind = result.kind
@@ -229,20 +260,27 @@ class DiscoveryOrchestrator:
         sources: list[Source] | None = None,
         context_by_source: dict[Source, DiscoveryContext] | None = None,
     ) -> list[SyncResult]:
-        targets = sources or list(self.connectors.keys())
+        candidates = sources if sources is not None else list(self.connectors.keys())
+        if context_by_source is not None:
+            # 未启用/未配置的源不出现在 context_by_source 中，直接跳过（不是失败）。
+            targets = [s for s in candidates if s in context_by_source]
+        else:
+            targets = list(candidates)
         results: list[SyncResult] = []
         for src in targets:
             ctx = (context_by_source or {}).get(src) or DiscoveryContext()
+            started = time.perf_counter()
             try:
-                results.append(self.sync_source(src, ctx))
+                result = self.sync_source(src, ctx)
             except Exception as exc:  # noqa: BLE001
-                results.append(
-                    SyncResult(
-                        source=src,
-                        status=SourceStatus.DEGRADED,
-                        detail=f"unhandled: {exc}"[:300],
-                    )
+                result = SyncResult(
+                    source=src,
+                    status=SourceStatus.DEGRADED,
+                    detail=f"unhandled: {exc}"[:300],
                 )
+            result.elapsed_seconds = round(time.perf_counter() - started, 4)
+            result.error_type = _error_type(result)
+            results.append(result)
         return results
 
     @staticmethod

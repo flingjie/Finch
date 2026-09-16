@@ -105,31 +105,61 @@ class OpenCliSettings(BaseModel):
     allow_write_commands: bool = False
 
 
-class SourceTwitterPlan(BaseModel):
+class SourceDiscoverySettings(BaseModel):
+    """每个采集源：是否启用、模式、抓取上限与推荐配额（显式可见，不再隐式回退）。"""
+
+    enabled: bool = False
+    mode: Literal["query", "hot", "url", "disabled"] = "disabled"
+    fetch_limit: int = 50
+    recommendation_cap: int = 20
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_infer(cls, data: Any) -> Any:
+        """兼容旧 YAML：只有 queries/urls/users 而无 enabled/mode 时，推断为启用。"""
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        has_queries = bool(out.get("queries"))
+        has_urls = bool(out.get("urls"))
+        has_users = bool(out.get("users"))
+        has_payload = has_queries or has_urls or has_users
+        if "mode" not in out:
+            if has_users or has_queries:
+                out["mode"] = "query"
+            elif has_urls:
+                out["mode"] = "url"
+        if "enabled" not in out:
+            out["enabled"] = has_payload
+        return out
+
+
+class SourceTwitterPlan(SourceDiscoverySettings):
     queries: list[str] = Field(default_factory=list)
     urls: list[str] = Field(default_factory=list)
 
 
-class SourceRedditPlan(BaseModel):
+class SourceRedditPlan(SourceDiscoverySettings):
     queries: list[str] = Field(default_factory=list)
     urls: list[str] = Field(default_factory=list)
 
 
-class SourceGithubPlan(BaseModel):
+class SourceGithubPlan(SourceDiscoverySettings):
     """GitHub 查询是登录名，不是主题词。"""
 
     users: list[str] = Field(default_factory=list)
 
 
-class SourceV2exPlan(BaseModel):
+class SourceV2exPlan(SourceDiscoverySettings):
     queries: list[str] = Field(default_factory=list)
 
 
-class SourceWeixinPlan(BaseModel):
+class SourceWeixinPlan(SourceDiscoverySettings):
+    queries: list[str] = Field(default_factory=list)
     urls: list[str] = Field(default_factory=list)
 
 
-class SourceXiaohongshuPlan(BaseModel):
+class SourceXiaohongshuPlan(SourceDiscoverySettings):
     queries: list[str] = Field(default_factory=list)
     urls: list[str] = Field(default_factory=list)
 
@@ -269,6 +299,32 @@ class InterestsSettings(BaseModel):
         return self.excluded_content
 
 
+class DailyPeopleSettings(BaseModel):
+    """每日 50 人分层推荐预算：5 重点 / 15 摘要 / 30 浏览。
+
+    LLM 预算固定：``semantic_assess_limit`` 人进入语义评估（批量），
+    ``deep_prepare_limit`` 人进入连接分析；候选池从 100 增至 1000 时上限不变。
+    """
+
+    target: int = 50
+    priority_count: int = 5
+    summary_count: int = 15
+    browse_count: int = 30
+    candidate_pool_size: int = 100
+    semantic_assess_limit: int = 20
+    deep_prepare_limit: int = 5
+    max_per_platform: int = 20
+    min_chinese_platforms_total: int = 15
+    min_artifacts_priority: int = 2
+    cooldown_days: int = 7
+
+
+class DiscoverySettings(BaseModel):
+    """发现轨道配置（每日 50 人）。"""
+
+    daily_people: DailyPeopleSettings = Field(default_factory=DailyPeopleSettings)
+
+
 class Settings(BaseModel):
     repositories: list[str] = Field(default_factory=list)
     repository_discovery: RepositoryDiscovery = Field(default_factory=RepositoryDiscovery)
@@ -279,8 +335,31 @@ class Settings(BaseModel):
     paths: Paths = Field(default_factory=Paths)
     engagement: EngagementSettings = Field(default_factory=EngagementSettings)
     interests: InterestsSettings = Field(default_factory=InterestsSettings)
+    discovery: DiscoverySettings = Field(default_factory=DiscoverySettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
+
+
+def _warn_legacy_sources(data: dict) -> None:
+    """输出旧 YAML 迁移提示：``sources.*`` 现在需要显式 enabled/mode。"""
+    sources_raw = data.get("sources")
+    sources = sources_raw if isinstance(sources_raw, dict) else {}
+    legacy = [
+        name
+        for name, plan in sources.items()
+        if isinstance(plan, dict)
+        and ("enabled" not in plan or "mode" not in plan)
+        and (plan.get("queries") or plan.get("urls") or plan.get("users"))
+    ]
+    if legacy:
+        import sys
+
+        joined = ", ".join(sorted(legacy))
+        print(
+            f"[finch] 迁移提示：sources.{joined} 未显式配置 enabled/mode，"
+            "已按旧 YAML 自动推断；请显式写入 enabled/mode 以消除歧义。",
+            file=sys.stderr,
+        )
 
 
 def load_settings(path: Path | None = None) -> Settings:
@@ -290,6 +369,7 @@ def load_settings(path: Path | None = None) -> Settings:
     data: dict = {}
     if target.exists():
         data = yaml.safe_load(target.read_text()) or {}
+    _warn_legacy_sources(data)
     settings = Settings(**data)
     settings.paths.ensure()
     return settings

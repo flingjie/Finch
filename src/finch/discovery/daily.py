@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ from finch.connections.service import (
     build_connection_opportunity,
 )
 from finch.connections.store import ConnectionOpportunityRepository
+from finch.discovery.candidate_pool import PersonCandidate, build_pool
 from finch.engagement.flow import EngagementRunResult, RankedPeer
 from finch.engagement.models import (
     ConversationScore,
@@ -33,8 +35,9 @@ from finch.peers.evidence_repo import CreatorEvidenceRepository
 from finch.peers.evidence_service import CreatorEvidenceService
 from finch.peers.person_service import PersonRepository, PersonService
 from finch.peers.presentation import PersonPresentationRepository
+from finch.peers.recommendations import DailyRecommendationSet, select_daily_recommendations
 from finch.peers.scoring import score_person
-from finch.peers.shortlist import ShortlistCandidate, ShortlistItem, select_daily_shortlist
+from finch.peers.shortlist import ShortlistCandidate, ShortlistItem, ShortlistSlot
 from finch.settings import Settings
 from finch.sources.models import RawArtifact
 from finch.sources.opencli_gateway import OpenCliGateway
@@ -72,11 +75,41 @@ class DailyDiscoveryResult:
     run_id: str
     sync_results: list[SyncResult] = field(default_factory=list)
     shortlist: list[ShortlistItem] = field(default_factory=list)
+    recommendations: DailyRecommendationSet | None = None
     connections: list[ConnectionOpportunity] = field(default_factory=list)
     opportunities: list[Opportunity] = field(default_factory=list)
     engagement: EngagementRunResult | None = None
     collision_id: str = ""
     detail: str = ""
+    metrics: RunMetrics = field(default_factory=lambda: RunMetrics())
+
+
+@dataclass
+class SourceRunMetric:
+    """单源观测：数量 + 耗时 + 错误类型（不改变选择逻辑）。"""
+
+    raw_count: int = 0
+    normalized_count: int = 0
+    projected_count: int = 0
+    elapsed_seconds: float = 0.0
+    error_type: str = ""
+
+
+@dataclass
+class RunMetrics:
+    """每轮发现管线的计数观测，仅用于观测，不参与任何选择/排序。"""
+
+    raw_count: int = 0
+    normalized_count: int = 0
+    people_count: int = 0
+    eligible_count: int = 0
+    recommended_count: int = 0
+    llm_calls: int = 0
+    llm_input_persons: int = 0
+    llm_failures: int = 0
+    llm_elapsed_seconds: float = 0.0
+    filtered: dict[str, int] = field(default_factory=dict)
+    sources: dict[str, SourceRunMetric] = field(default_factory=dict)
 
 
 def artifact_to_external_post(art: RawArtifact) -> ExternalPost | None:
@@ -200,22 +233,22 @@ def build_shortlist_candidates(ws: Workspace) -> tuple[list[ShortlistCandidate],
     return candidates, recent
 
 
-def assess_connection_for_slot(
+def assess_connection(
     *,
     runner: StructuredInferenceRunner | CodexRunner,
-    item: ShortlistItem,
+    candidate: PersonCandidate,
     artifacts: list[RawArtifact],
     user_evidence_refs: list[str],
     user_contribution_hint: str = "",
 ) -> ConnectionOpportunity:
     allowed = {a.artifact_id for a in artifacts}
     prompt = _CONN_PROMPT.read_text().format(
-        peer_id=item.candidate.peer.id,
-        person_id=item.candidate.person_id,
-        display_name=item.candidate.peer.display_name,
-        platform=item.candidate.platform,
-        current_work=item.candidate.peer.current_work,
-        why_relevant=item.candidate.why,
+        peer_id=candidate.peer.id,
+        person_id=candidate.person_id,
+        display_name=candidate.peer.display_name,
+        platform=candidate.platform,
+        current_work=candidate.peer.current_work,
+        why_relevant=candidate.peer.why_relevant,
         their_artifacts=json.dumps(
             [
                 {
@@ -237,10 +270,10 @@ def assess_connection_for_slot(
         assert isinstance(draft, ConnectionOpportunityDraft)
     except Exception:
         return build_connection_opportunity(
-            peer=item.candidate.peer,
-            person_id=item.candidate.person_id,
+            peer=candidate.peer,
+            person_id=candidate.person_id,
             their_artifacts=list(allowed)[:8],
-            their_summary=item.candidate.peer.current_work or item.candidate.why,
+            their_summary=candidate.peer.current_work or candidate.peer.why_relevant,
             user_evidence_refs=user_evidence_refs,
             user_contribution=user_contribution_hint,
         )
@@ -257,8 +290,8 @@ def assess_connection_for_slot(
     if skip:
         return ConnectionOpportunity(
             opportunity_id=f"conn_{uuid4().hex[:12]}",
-            person_id=item.candidate.person_id,
-            peer_id=item.candidate.peer.id,
+            person_id=candidate.person_id,
+            peer_id=candidate.peer.id,
             their_problem=draft.their_problem,
             user_contribution="",
             why_now="",
@@ -268,8 +301,8 @@ def assess_connection_for_slot(
         )
     return ConnectionOpportunity(
         opportunity_id=f"conn_{uuid4().hex[:12]}",
-        person_id=item.candidate.person_id,
-        peer_id=item.candidate.peer.id,
+        person_id=candidate.person_id,
+        peer_id=candidate.peer.id,
         their_problem=draft.their_problem,
         user_contribution=draft.user_contribution.strip(),
         why_now=draft.why_now,
@@ -295,6 +328,7 @@ def run_daily_discovery(
     ws.ensure()
     run_id = f"daily_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
     result = DailyDiscoveryResult(run_id=run_id)
+    metrics = RunMetrics()
 
     gw = gateway or OpenCliGateway(profile=settings.opencli.profile)
     orch = DiscoveryOrchestrator(ws, gateway=gw)
@@ -312,42 +346,93 @@ def run_daily_discovery(
 
         artifacts = ArtifactRepository(ws).list_all()
 
+    # Observability only — never feeds selection/ranking.
+    for sr in result.sync_results:
+        metrics.raw_count += sr.raw_count
+        metrics.normalized_count += sr.normalized_count
+        metrics.sources[sr.source.value] = SourceRunMetric(
+            raw_count=sr.raw_count,
+            normalized_count=sr.normalized_count,
+            projected_count=sr.projected_count,
+            elapsed_seconds=sr.elapsed_seconds,
+            error_type=sr.error_type,
+        )
+    from finch.discovery.filtering import filter_artifacts
+
+    _, metrics.filtered = filter_artifacts(
+        artifacts, excluded_content=list(settings.interests.excluded_content)
+    )
+
     # Creator evidence via Codex (fail-soft per person)
     evidence_svc = CreatorEvidenceService(ws, runner=runner)
     if runner is not None:
+        ev_started = time.perf_counter()
         ev_result = evidence_svc.assess()
+        metrics.llm_elapsed_seconds = round(time.perf_counter() - ev_started, 4)
+        metrics.llm_calls += ev_result.assessed_persons + ev_result.skipped_persons
+        metrics.llm_input_persons += ev_result.assessed_persons
+        metrics.llm_failures += len(ev_result.failures)
         if ev_result.failures:
             result.detail = "; ".join(ev_result.failures[:3])
 
-    candidates, recent = build_shortlist_candidates(ws)
-    items = select_daily_shortlist(candidates, recent_platforms=recent)
-    presentations = PersonPresentationRepository(ws)
-    for item in items:
-        presentations.record_shown(
-            person_id=item.candidate.person_id,
-            peer_id=item.candidate.peer.id,
-            platform=item.candidate.platform,
-            slot=item.slot.value,
-        )
-    result.shortlist = items
+    candidates, _ = build_shortlist_candidates(ws)
+    pool = build_pool(
+        candidates,
+        settings=settings,
+        max_size=settings.discovery.daily_people.candidate_pool_size,
+    )
+    recs = select_daily_recommendations(pool.candidates, settings=settings)
+    result.recommendations = recs
 
-    # Connection opportunities for shortlist slots
+    metrics.people_count = len(candidates)
+    metrics.eligible_count = sum(
+        1 for c in candidates if len(c.artifact_ids) >= 2 and c.score.total > 0
+    )
+    metrics.recommended_count = recs.total
+    presentations = PersonPresentationRepository(ws)
+    for rec in recs.priority:
+        presentations.record_shown(
+            person_id=rec.person_id,
+            peer_id=rec.candidate.peer.id,
+            platform=rec.candidate.platform,
+            slot="priority",
+        )
+    # 兼容旧 shortlist 字段：priority 层转 ShortlistItem（旧展示/碰撞复用）。
+    result.shortlist = [
+        ShortlistItem(
+            slot=ShortlistSlot.NEW_CREATOR,
+            candidate=ShortlistCandidate(
+                peer=rec.candidate.peer,
+                person_id=rec.person_id,
+                score=rec.candidate.score,
+                artifact_ids=list(rec.candidate.artifact_ids),
+                why=rec.candidate.peer.why_relevant,
+                platform=rec.candidate.platform,
+                last_shown_at=rec.candidate.last_shown_at,
+                has_new_work=rec.candidate.has_new_work,
+            ),
+        )
+        for rec in recs.priority
+    ]
+
+    # Connection opportunities only for the priority tier (≤ deep_prepare_limit)
     conn_repo = ConnectionOpportunityRepository(ws)
     user_refs = list(settings.interests.practice_refs)
     if runner is not None:
         from finch.sources.store import ArtifactRepository
 
         art_repo = ArtifactRepository(ws)
-        for item in items:
-            arts = art_repo.list_by_ids(item.candidate.artifact_ids)
-            conn = assess_connection_for_slot(
+        for rec in recs.priority:
+            arts = art_repo.list_by_ids(rec.candidate.artifact_ids)
+            conn = assess_connection(
                 runner=runner,
-                item=item,
+                candidate=rec.candidate,
                 artifacts=arts,
                 user_evidence_refs=user_refs,
             )
             conn_repo.save(conn)
             result.connections.append(conn)
+            metrics.llm_calls += 1
 
     # Browse opportunities from artifacts (no second X/Reddit search)
     opps = opportunities_from_artifacts(
@@ -359,7 +444,7 @@ def run_daily_discovery(
         opp_repo.upsert(opp)
 
     peers_out: list[RankedPeer] = []
-    for item in items:
+    for item in result.shortlist:
         peers_out.append(
             RankedPeer(
                 profile=item.candidate.peer,
@@ -376,7 +461,7 @@ def run_daily_discovery(
             )
         )
 
-    status = "succeeded" if (items or opps) else "empty"
+    status = "succeeded" if (result.shortlist or opps) else "empty"
     engagement = EngagementRunResult(
         run_id=run_id,
         posts_found=len(artifacts),
@@ -384,7 +469,7 @@ def run_daily_discovery(
         peers=peers_out,
         failures=[],
         status=status,  # type: ignore[arg-type]
-        summary=f"sources→people shortlist={len(items)} opps={len(opps)}",
+        summary=f"sources→people shortlist={len(result.shortlist)} opps={len(opps)}",
         context_fingerprint=run_id,
         source_coverage={
             "sources": {
@@ -396,7 +481,7 @@ def run_daily_discovery(
                 }
                 for r in result.sync_results
             },
-            "shortlist": len(items),
+            "shortlist": len(result.shortlist),
             "connections": len(result.connections),
         },
     )
@@ -413,12 +498,14 @@ def run_daily_discovery(
     )
     DiscoverySnapshotRepository(ws).upsert(snapshot)
 
-    if generate_collision and runner is not None and items:
+    if generate_collision and runner is not None and result.shortlist:
         col = CollisionService(ws, runner=runner).generate_from_shortlist(
-            items,
+            result.shortlist,
             your_domains=list(settings.interests.long_term_interests),
         )
         if col.saved is not None:
             result.collision_id = col.saved.collision_id
+        metrics.llm_calls += 1
 
+    result.metrics = metrics
     return result

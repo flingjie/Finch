@@ -16,7 +16,6 @@ from finch.sources.orchestrator import DiscoveryOrchestrator
 from finch.sources.store import ArtifactRepository
 from finch.storage.workspace import Workspace
 
-
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "opencli"
 
 
@@ -73,6 +72,49 @@ class TestNormalize:
         assert art.source == Source.WEIXIN
         assert art.capture_method == "url_import"
         assert "T" in art.text
+
+    def test_weixin_search_row(self):
+        result = OpenCliResult(
+            rows=[
+                {
+                    "rank": 1,
+                    "page": 1,
+                    "title": "Agent 实践复盘",
+                    "url": "https://weixin.sogou.com/link?url=abc",
+                    "summary": "聊聊我们在生产环境落地 Agent 的复盘",
+                    "account": "京比特",
+                    "publish_time": "2026-09-01",
+                }
+            ],
+            exit_code=0,
+            kind=ResultKind.SUCCESS,
+        )
+        arts = WeixinConnector().normalize(result)
+        assert len(arts) == 1
+        assert "Agent 实践复盘" in arts[0].text
+        assert "复盘" in arts[0].text
+        # 搜狗搜索含公众号名 → 用公众号名作为身份
+        assert arts[0].author_identity.handle == "京比特"
+        assert arts[0].published_at is not None
+
+    def test_weixin_search_row_falls_back_to_url_when_no_account(self):
+        result = OpenCliResult(
+            rows=[
+                {
+                    "rank": 1,
+                    "page": 1,
+                    "title": "Agent 实践复盘",
+                    "url": "https://weixin.sogou.com/link?url=abc",
+                    "summary": "聊聊我们在生产环境落地 Agent 的复盘",
+                    "publish_time": "2026-09-01",
+                }
+            ],
+            exit_code=0,
+            kind=ResultKind.SUCCESS,
+        )
+        arts = WeixinConnector().normalize(result)
+        assert len(arts) == 1
+        assert arts[0].author_identity.handle == "https://weixin.sogou.com/link?url=abc"
 
     def test_xiaohongshu_row(self):
         result = OpenCliResult(
@@ -202,9 +244,38 @@ class TestCapabilityDrivenPlan:
             captured_at=datetime.now(UTC),
             surfaces={"v2ex": ["hot"]},
         )
-        reqs = V2exConnector().plan(DiscoveryContext(), capabilities=caps)
+        reqs = V2exConnector().plan(DiscoveryContext(mode="hot"), capabilities=caps)
         assert len(reqs) == 1
         assert reqs[0].command == "hot"
+
+    def test_v2ex_query_mode_ignores_hot(self):
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.models import OpenCliCapabilities
+
+        caps = OpenCliCapabilities(
+            snapshot_id="c1",
+            captured_at=datetime.now(UTC),
+            surfaces={"v2ex": ["hot"]},
+        )
+        # 默认 query 模式且无 queries → 不抓 hot。
+        assert V2exConnector().plan(DiscoveryContext(), capabilities=caps) == []
+
+    def test_weixin_query_mode_emits_search(self):
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.models import OpenCliCapabilities
+
+        caps = OpenCliCapabilities(
+            snapshot_id="c1",
+            captured_at=datetime.now(UTC),
+            surfaces={"weixin": ["search"]},
+        )
+        reqs = WeixinConnector().plan(
+            DiscoveryContext(queries=["AI Agent 实践"]), capabilities=caps
+        )
+        assert len(reqs) == 1
+        assert reqs[0].surface == "weixin"
+        assert reqs[0].command == "search"
+        assert reqs[0].args[0] == "AI Agent 实践"
 
 
 class TestArtifactIdempotency:
