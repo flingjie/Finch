@@ -16,6 +16,7 @@ from finch.sources.models import (
     Source,
     SourceStatus,
 )
+from finch.sources.plan_util import empty_capabilities, resolve_command
 
 
 class XiaohongshuConnector:
@@ -28,26 +29,35 @@ class XiaohongshuConnector:
             return SourceStatus.UNAVAILABLE
         return SourceStatus.READY
 
-    def plan(self, context: DiscoveryContext) -> list[OpenCliRequest]:
+    def plan(
+        self,
+        context: DiscoveryContext,
+        capabilities: OpenCliCapabilities | None = None,
+    ) -> list[OpenCliRequest]:
+        caps = capabilities or empty_capabilities()
         reqs: list[OpenCliRequest] = []
-        for q in context.queries:
-            reqs.append(
-                OpenCliRequest(
-                    surface="xiaohongshu",
-                    command="search",
-                    args=(q, "--limit", str(context.limit), "-f", "json"),
-                    timeout_seconds=60,
+        search_cmd = resolve_command(caps, "xiaohongshu", ["search"])
+        note_cmd = resolve_command(caps, "xiaohongshu", ["note", "read"])
+        if search_cmd:
+            for q in context.queries:
+                reqs.append(
+                    OpenCliRequest(
+                        surface="xiaohongshu",
+                        command=search_cmd,
+                        args=(q, "--limit", str(context.limit), "-f", "json"),
+                        timeout_seconds=60,
+                    )
                 )
-            )
-        for url in context.urls:
-            reqs.append(
-                OpenCliRequest(
-                    surface="xiaohongshu",
-                    command="note",
-                    args=(url, "-f", "json"),
-                    timeout_seconds=60,
+        if note_cmd:
+            for url in context.urls:
+                reqs.append(
+                    OpenCliRequest(
+                        surface="xiaohongshu",
+                        command=note_cmd,
+                        args=(url, "-f", "json"),
+                        timeout_seconds=60,
+                    )
                 )
-            )
         return reqs
 
     def normalize(self, result: OpenCliResult) -> list[RawArtifact]:

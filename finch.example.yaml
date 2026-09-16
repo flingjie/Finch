@@ -23,6 +23,25 @@ opencli:
   max_parallel_browser: 1
   allow_write_commands: false
 
+# Per-source discovery queries for `connect daily --refresh` / `sources sync --all`.
+# Do NOT reuse one topic query for GitHub (users are logins, not themes).
+sources:
+  twitter:
+    queries: []  # empty → fall back to twitter.queries[].text / interests
+    urls: []
+  reddit:
+    queries: []
+    urls: []
+  github:
+    users: []  # GitHub logins only, e.g. [jackwener, iFurySt]
+  v2ex:
+    queries: []
+  weixin:
+    urls: []  # article links only
+  xiaohongshu:
+    queries: []
+    urls: []
+
 twitter:
   daily_limit: 100
   per_query_limit: 20

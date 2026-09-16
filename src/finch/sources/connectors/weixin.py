@@ -16,6 +16,7 @@ from finch.sources.models import (
     Source,
     SourceStatus,
 )
+from finch.sources.plan_util import empty_capabilities, resolve_command
 
 
 class WeixinConnector:
@@ -29,24 +30,39 @@ class WeixinConnector:
             return SourceStatus.READY
         return SourceStatus.UNAVAILABLE
 
-    def plan(self, context: DiscoveryContext) -> list[OpenCliRequest]:
+    def plan(
+        self,
+        context: DiscoveryContext,
+        capabilities: OpenCliCapabilities | None = None,
+    ) -> list[OpenCliRequest]:
         """仅对已知文章 URL 生成下载/阅读请求。"""
+        caps = capabilities or empty_capabilities()
         reqs: list[OpenCliRequest] = []
         for url in context.urls:
             if "weixin" in url or "mp.weixin.qq.com" in url:
+                cmd = resolve_command(caps, "weixin", ["download", "read", "article"])
+                if not cmd and not caps.surfaces:
+                    cmd = "download"
+                if not cmd:
+                    continue
                 reqs.append(
                     OpenCliRequest(
                         surface="weixin",
-                        command="download",
+                        command=cmd,
                         args=(url, "-f", "json"),
                         timeout_seconds=60,
                     )
                 )
             else:
+                cmd = resolve_command(caps, "web", ["read", "fetch"])
+                if not cmd and not caps.surfaces:
+                    cmd = "read"
+                if not cmd:
+                    continue
                 reqs.append(
                     OpenCliRequest(
                         surface="web",
-                        command="read",
+                        command=cmd,
                         args=(url, "-f", "json"),
                         timeout_seconds=60,
                     )

@@ -108,7 +108,13 @@ class GhClient:
             ["gh", "api", "-H", "Accept: application/vnd.github+json", f"users/{login}"]
         )
         assert isinstance(data, dict)
-        return {"login": data["login"], "html_url": data.get("html_url") or ""}
+        return {
+            "login": data["login"],
+            "html_url": data.get("html_url") or "",
+            "id": data.get("id"),
+            "name": data.get("name") or "",
+            "bio": data.get("bio") or "",
+        }
 
     def list_public_repos(self, login: str, limit: int = 20) -> list[PublicRepo]:
         cap = max(1, min(limit, 100))
@@ -218,3 +224,60 @@ class GhClient:
         )
         assert isinstance(data, dict)
         return parse_pull_request(data)
+
+    def list_user_issues(
+        self, login: str, *, limit: int = 10
+    ) -> list[dict]:
+        """Issues authored by ``login`` (public search API)."""
+        cap = max(1, min(limit, 30))
+        q = f"author:{login} type:issue"
+        data = self._gh_json(
+            [
+                "gh",
+                "api",
+                "-H",
+                "Accept: application/vnd.github+json",
+                f"search/issues?q={q}&sort=updated&order=desc&per_page={cap}",
+            ],
+            timeout=60.0,
+        )
+        assert isinstance(data, dict)
+        items = data.get("items") or []
+        return [i for i in items if isinstance(i, dict)][:cap]
+
+    def list_user_pull_requests(
+        self, login: str, *, limit: int = 10
+    ) -> list[dict]:
+        """PRs authored by ``login``."""
+        cap = max(1, min(limit, 30))
+        q = f"author:{login} type:pr"
+        data = self._gh_json(
+            [
+                "gh",
+                "api",
+                "-H",
+                "Accept: application/vnd.github+json",
+                f"search/issues?q={q}&sort=updated&order=desc&per_page={cap}",
+            ],
+            timeout=60.0,
+        )
+        assert isinstance(data, dict)
+        items = data.get("items") or []
+        return [i for i in items if isinstance(i, dict)][:cap]
+
+    def list_repo_releases(
+        self, name_with_owner: str, *, limit: int = 5
+    ) -> list[dict]:
+        cap = max(1, min(limit, 20))
+        data = self._gh_json(
+            [
+                "gh",
+                "api",
+                "-H",
+                "Accept: application/vnd.github+json",
+                f"repos/{name_with_owner}/releases?per_page={cap}",
+            ],
+            timeout=45.0,
+        )
+        assert isinstance(data, list)
+        return [r for r in data if isinstance(r, dict)][:cap]

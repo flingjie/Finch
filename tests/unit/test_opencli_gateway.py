@@ -142,6 +142,44 @@ class TestGateway:
         assert result.kind == ResultKind.AUTH_REQUIRED
         assert result.stderr_summary
 
+    def test_profile_injected_into_argv(self):
+        captured: list[list[str]] = []
+
+        def fake_run(argv, timeout):
+            captured.append(list(argv))
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": "[]",
+                "stderr": "",
+            }
+
+        gw = OpenCliGateway(run_fn=fake_run, profile="work")
+        gw.run(
+            OpenCliRequest(surface="twitter", command="search", args=("q", "-f", "json"))
+        )
+        assert captured
+        assert "--profile" in captured[0]
+        assert captured[0][captured[0].index("--profile") + 1] == "work"
+
+    def test_profile_not_duplicated(self):
+        captured: list[list[str]] = []
+
+        def fake_run(argv, timeout):
+            captured.append(list(argv))
+            return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+        gw = OpenCliGateway(run_fn=fake_run, profile="work")
+        gw.run(
+            OpenCliRequest(
+                surface="twitter",
+                command="search",
+                args=("q", "--profile", "other", "-f", "json"),
+            )
+        )
+        assert captured[0].count("--profile") == 1
+        assert "other" in captured[0]
+
 
 class TestCapabilities:
     def test_parse_list(self):

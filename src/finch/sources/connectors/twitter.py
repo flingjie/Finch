@@ -16,6 +16,7 @@ from finch.sources.models import (
     Source,
     SourceStatus,
 )
+from finch.sources.plan_util import empty_capabilities, resolve_command
 
 
 class TwitterConnector:
@@ -31,26 +32,35 @@ class TwitterConnector:
             return SourceStatus.READY
         return SourceStatus.DEGRADED
 
-    def plan(self, context: DiscoveryContext) -> list[OpenCliRequest]:
+    def plan(
+        self,
+        context: DiscoveryContext,
+        capabilities: OpenCliCapabilities | None = None,
+    ) -> list[OpenCliRequest]:
+        caps = capabilities or empty_capabilities()
         reqs: list[OpenCliRequest] = []
-        for q in context.queries:
-            reqs.append(
-                OpenCliRequest(
-                    surface="twitter",
-                    command="search",
-                    args=(q, "--limit", str(context.limit), "-f", "json"),
-                    timeout_seconds=60,
+        search_cmd = resolve_command(caps, "twitter", ["search"])
+        thread_cmd = resolve_command(caps, "twitter", ["thread", "read"])
+        if search_cmd:
+            for q in context.queries:
+                reqs.append(
+                    OpenCliRequest(
+                        surface="twitter",
+                        command=search_cmd,
+                        args=(q, "--limit", str(context.limit), "-f", "json"),
+                        timeout_seconds=60,
+                    )
                 )
-            )
-        for url in context.urls:
-            reqs.append(
-                OpenCliRequest(
-                    surface="twitter",
-                    command="thread",
-                    args=(url, "--limit", str(context.limit), "-f", "json"),
-                    timeout_seconds=60,
+        if thread_cmd:
+            for url in context.urls:
+                reqs.append(
+                    OpenCliRequest(
+                        surface="twitter",
+                        command=thread_cmd,
+                        args=(url, "--limit", str(context.limit), "-f", "json"),
+                        timeout_seconds=60,
+                    )
                 )
-            )
         return reqs
 
     def normalize(self, result: OpenCliResult) -> list[RawArtifact]:

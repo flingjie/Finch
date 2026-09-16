@@ -1,4 +1,4 @@
-"""Discovery orchestrator：按源串行浏览器采集，落盘 raw → normalize → upsert。"""
+"""Discovery orchestrator：按源串行浏览器采集，落盘 raw → normalize → upsert → project。"""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from finch.sources.connectors.weixin import WeixinConnector
 from finch.sources.connectors.xiaohongshu import XiaohongshuConnector
 from finch.sources.models import RawArtifact, ResultKind, Source, SourceStatus
 from finch.sources.opencli_gateway import OpenCliGateway
+from finch.sources.projector import ArtifactProjector, ProjectResult
 from finch.sources.store import ArtifactRepository, CursorStore, RawStore, RunRecorder
 from finch.storage.workspace import Workspace
 
@@ -39,6 +40,7 @@ class SyncResult:
     raw_count: int = 0
     normalized_count: int = 0
     created_count: int = 0
+    projected_count: int = 0
     kind: ResultKind | None = None
     detail: str = ""
     artifacts: list[RawArtifact] = field(default_factory=list)
@@ -53,6 +55,7 @@ class DiscoveryOrchestrator:
         *,
         gateway: OpenCliGateway | None = None,
         connectors: dict[Source, SourceConnector] | None = None,
+        projector: ArtifactProjector | None = None,
     ) -> None:
         self.ws = workspace
         self.gateway = gateway or OpenCliGateway()
@@ -61,6 +64,7 @@ class DiscoveryOrchestrator:
         self.artifacts = ArtifactRepository(workspace)
         self.cursors = CursorStore(workspace)
         self.runs = RunRecorder(workspace)
+        self.projector = projector or ArtifactProjector(workspace)
 
     def sync_source(
         self,
@@ -89,10 +93,11 @@ class DiscoveryOrchestrator:
         last_kind: ResultKind | None = None
         detail = ""
 
-        # GitHub: special path via GhClient
+        # GitHub: special path via GhClient (creator depth: user/repos/commits/…)
         if source == Source.GITHUB and isinstance(connector, GitHubConnector):
             for q in ctx.queries or ["octocat"]:
-                result = connector.fetch_user(q)
+                fetch = getattr(connector, "fetch_creator", None) or connector.fetch_user
+                result = fetch(q)
                 last_kind = result.kind
                 raw_ref = self.raw_store.write_raw(
                     run_dir, q, result.rows or {"empty": True}
@@ -105,9 +110,11 @@ class DiscoveryOrchestrator:
                     if was_new:
                         created += 1
                     normalized.append(art)
+            proj = self._project(normalized)
             payload = self._run_payload(
                 run_id, source, caps.snapshot_id, raw_count, len(normalized), created, last_kind
             )
+            payload["projected_count"] = proj.projected_peers
             self.runs.save(run_id, payload)
             return SyncResult(
                 source=source,
@@ -116,14 +123,14 @@ class DiscoveryOrchestrator:
                 raw_count=raw_count,
                 normalized_count=len(normalized),
                 created_count=created,
+                projected_count=proj.projected_peers,
                 kind=last_kind,
                 artifacts=normalized,
             )
 
         # Weixin URL-import without opencli when only urls + empty capability
         if source == Source.WEIXIN and ctx.urls and isinstance(connector, WeixinConnector):
-            # Prefer adapter plan when available; else URL import stubs for tests
-            plans = connector.plan(ctx)
+            plans = connector.plan(ctx, caps)
             if not plans:
                 for url in ctx.urls:
                     art = connector.normalize_url_import(url, title="", text="")
@@ -137,7 +144,16 @@ class DiscoveryOrchestrator:
                         created += 1
                     normalized.append(art)
 
-        requests = connector.plan(ctx)
+        requests = connector.plan(ctx, caps)
+        if (
+            not requests
+            and not normalized
+            and (ctx.queries or ctx.urls)
+            and status == SourceStatus.READY
+        ):
+            detail = "no matching commands in capability snapshot"
+            status = SourceStatus.DEGRADED
+
         for req in requests:
             # github surface is not in opencli policy — skip gateway for non-opencli
             if req.surface == "github":
@@ -172,9 +188,11 @@ class DiscoveryOrchestrator:
         if ctx.cursor:
             self.cursors.set(source, ctx.cursor)
 
+        proj = self._project(normalized)
         payload = self._run_payload(
             run_id, source, caps.snapshot_id, raw_count, len(normalized), created, last_kind
         )
+        payload["projected_count"] = proj.projected_peers
         if detail:
             payload["detail"] = detail
         self.runs.save(run_id, payload)
@@ -192,10 +210,19 @@ class DiscoveryOrchestrator:
             raw_count=raw_count,
             normalized_count=len(normalized),
             created_count=created,
+            projected_count=proj.projected_peers,
             kind=last_kind,
             detail=detail,
             artifacts=normalized,
         )
+
+    def _project(self, artifacts: list[RawArtifact]) -> ProjectResult:
+        if not artifacts:
+            return ProjectResult()
+        try:
+            return self.projector.project(artifacts)
+        except Exception:  # noqa: BLE001
+            return ProjectResult()
 
     def sync_all(
         self,

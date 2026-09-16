@@ -255,11 +255,18 @@ def _daily_result() -> EngagementRunResult:
     )
 
 
+def _daily_full():
+    from finch.discovery.daily import DailyDiscoveryResult
+
+    eng = _daily_result()
+    return DailyDiscoveryResult(run_id=eng.run_id, engagement=eng, shortlist=[], connections=[])
+
+
 def test_connect_daily_persists_peers_and_renders_sections(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "run_discovery_engagement_flow", lambda *a, **k: _daily_result())
+    monkeypatch.setattr(cli, "_run_daily_full", lambda settings: _daily_full())
 
     r = CliRunner().invoke(app, ["connect", "daily", "--refresh"])
     assert r.exit_code == 0, r.output
@@ -339,7 +346,7 @@ def test_connect_prepare_requires_selection(monkeypatch, tmp_path):
 def test_connect_daily_json(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "run_discovery_engagement_flow", lambda *a, **k: _daily_result())
+    monkeypatch.setattr(cli, "_run_daily_full", lambda settings: _daily_full())
 
     r = CliRunner().invoke(app, ["connect", "daily", "--refresh", "--json"])
     assert r.exit_code == 0, r.output
@@ -360,7 +367,8 @@ def test_connect_today_is_pure_read(monkeypatch, tmp_path):
     def boom(*a, **k):
         raise AssertionError("today must not call discovery")
 
-    monkeypatch.setattr(cli, "run_discovery_engagement_flow", boom)
+    monkeypatch.setattr(cli, "_run_discovery", boom)
+    monkeypatch.setattr(cli, "_run_daily_full", boom)
     r = CliRunner().invoke(app, ["connect", "today", "--json"])
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
@@ -395,7 +403,7 @@ def test_connect_more_no_network(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(
         cli,
-        "run_discovery_engagement_flow",
+        "_run_discovery",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("no discovery")),
     )
     r = CliRunner().invoke(
@@ -421,7 +429,7 @@ def test_connect_daily_preserves_accumulated_peer_fields(monkeypatch, tmp_path):
     )
     PeerRepository(ws).upsert(existing)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "run_discovery_engagement_flow", lambda *a, **k: _daily_result())
+    monkeypatch.setattr(cli, "_run_daily_full", lambda settings: _daily_full())
 
     r = CliRunner().invoke(app, ["connect", "daily", "--refresh"])
     assert r.exit_code == 0, r.output

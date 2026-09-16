@@ -31,7 +31,7 @@ from .conversations.service import (
     commitment_id_for,
 )
 from .drafts.service import DraftCreateResult, DraftService
-from .engagement.flow import EngagementRunResult, run_discovery_engagement_flow
+from .engagement.flow import EngagementRunResult
 from .engagement.metrics import (
     compute_relationship_metrics,
     explain_recommendation_adjustments,
@@ -731,31 +731,46 @@ def sources_sync(
     url: list[str] = typer.Option([], "--url", help="URL 导入（公众号/笔记等）"),
     limit: int = typer.Option(20, "--limit", help="每查询条数上限"),
 ) -> None:
-    """只读同步：raw 落盘 → RawArtifact 标准化（单源失败不阻塞）。"""
-    from finch.sources.connectors import DiscoveryContext
+    """只读同步：raw 落盘 → RawArtifact → Peer/Person 投影（单源失败不阻塞）。"""
     from finch.sources.models import Source
+    from finch.sources.opencli_gateway import OpenCliGateway
     from finch.sources.orchestrator import DiscoveryOrchestrator
+    from finch.sources.query_plan import build_context_by_source
 
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
-    orch = DiscoveryOrchestrator(ws)
-    ctx = DiscoveryContext(queries=list(query), urls=list(url), limit=limit)
+    gateway = OpenCliGateway(profile=settings.opencli.profile)
+    orch = DiscoveryOrchestrator(ws, gateway=gateway)
 
-    if all_sources or source is None:
-        results = orch.sync_all(context_by_source={s: ctx for s in Source})
-    else:
+    src: Source | None = None
+    if source is not None and not all_sources:
         try:
             src = Source(source)
         except ValueError as exc:
             typer.echo(f"unknown source: {source}")
             raise typer.Exit(code=1) from exc
-        results = [orch.sync_source(src, ctx)]
+
+    contexts = build_context_by_source(
+        settings,
+        cli_queries=list(query),
+        cli_urls=list(url),
+        source=src,
+        limit=limit,
+        all_sources=all_sources or source is None,
+    )
+
+    if all_sources or source is None:
+        results = orch.sync_all(context_by_source=contexts)
+    else:
+        assert src is not None
+        results = [orch.sync_source(src, contexts.get(src))]
 
     for r in results:
         typer.echo(
             f"{r.source.value}: {r.status.value} "
-            f"raw={r.raw_count} norm={r.normalized_count} new={r.created_count}"
+            f"raw={r.raw_count} norm={r.normalized_count} new={r.created_count} "
+            f"projected={r.projected_count}"
             + (f" ({r.detail})" if r.detail else "")
         )
 
@@ -1753,15 +1768,21 @@ def review_weekly(
 
 
 def _run_discovery(settings: Settings) -> EngagementRunResult:
-    """执行一次只读发现流程（搜索 → 粗筛 → 语义评估 → 机会选择）。"""
+    """执行统一每日发现（sources → people → shortlist → opportunities）。"""
+    from finch.discovery.daily import run_daily_discovery
+
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
-    return run_discovery_engagement_flow(
-        settings,
-        OpenCliClient(),
-        runner,
-        reddit_opencli=RedditOpenCliClient(),
-        run_id=f"daily_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}",
-    )
+    daily = run_daily_discovery(settings, runner=runner)
+    assert daily.engagement is not None
+    return daily.engagement
+
+
+def _run_daily_full(settings: Settings):
+    """Full daily result including shortlist + connection opportunities."""
+    from finch.discovery.daily import run_daily_discovery
+
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    return run_daily_discovery(settings, runner=runner)
 
 
 def _persist_discovery(
@@ -2183,7 +2204,7 @@ def connect_daily(
     limit: int = typer.Option(10, "--limit", help="展示机会数"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """连接主循环入口：默认等同 today；``--refresh`` 时先有界刷新。"""
+    """连接主循环入口：People First 三槽位 + 浏览机会；``--refresh`` 时统一跨平台采集。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -2191,8 +2212,11 @@ def connect_daily(
     need_refresh = refresh or not _snapshot_fresh(
         snapshot, settings.engagement.snapshot_ttl_hours
     )
+    daily = None
     if need_refresh:
-        result = _run_discovery(settings)
+        daily = _run_daily_full(settings)
+        result = daily.engagement
+        assert result is not None
         if result.status == "failed" and snapshot is not None:
             pass  # keep previous
         else:
@@ -2204,10 +2228,41 @@ def connect_daily(
             ws, snapshot.id, [o.id for o in focus["opportunities"]["items"]]
         )
 
+    # People-first shortlist block (from this refresh or recompute read-only)
+    shortlist_lines: list[str] = []
+    connections_payload: list[dict] = []
+    if daily is not None and daily.shortlist:
+        for i, item in enumerate(daily.shortlist, 1):
+            c = item.candidate
+            shortlist_lines.append(
+                f"{i}. [{item.slot.value}] {c.peer.display_name or c.peer.id} "
+                f"({c.platform}) score={c.score.total:.2f}"
+            )
+            shortlist_lines.append(f"   evidence: {', '.join(c.artifact_ids[:3])}")
+        for conn in daily.connections:
+            connections_payload.append(conn.model_dump(mode="json"))
+            shortlist_lines.append(
+                f"   → {conn.decision.value}: {conn.their_problem or conn.why_not}"
+            )
+    elif not need_refresh:
+        shortlist_lines.append("(run with --refresh for people shortlist + connections)")
+
     if as_json:
         typer.echo(json.dumps({
             "snapshot_id": snapshot.id if snapshot else None,
             "refreshed": need_refresh,
+            "shortlist": [
+                {
+                    "slot": i.slot.value,
+                    "peer_id": i.candidate.peer.id,
+                    "person_id": i.candidate.person_id,
+                    "score": i.candidate.score.total,
+                    "platform": i.candidate.platform,
+                    "artifact_ids": i.candidate.artifact_ids,
+                }
+                for i in (daily.shortlist if daily else [])
+            ],
+            "connections": connections_payload,
             "conversations_needing_follow_up": [
                 t.model_dump(mode="json") for t in focus["conversations"]["items"]
             ],
@@ -2226,6 +2281,10 @@ def connect_daily(
     if snapshot is None:
         typer.echo("no discovery snapshot; run: uv run finch connect refresh")
         return
+    if shortlist_lines:
+        typer.echo("## 今日三槽位（People First）")
+        typer.echo("\n".join(shortlist_lines))
+        typer.echo("")
     typer.echo(_render_daily(focus))
 
 
@@ -2819,6 +2878,7 @@ def people_shortlist(
     """以人为核心的每日 shortlist（最多 3 槽；宁缺毋滥）。"""
     from finch.peers.evidence_repo import CreatorEvidenceRepository
     from finch.peers.person_service import PersonRepository, PersonService
+    from finch.peers.presentation import PersonPresentationRepository
     from finch.peers.scoring import score_person
     from finch.peers.shortlist import ShortlistCandidate, select_daily_shortlist
 
@@ -2828,9 +2888,14 @@ def people_shortlist(
     peers = PeerRepository(ws).list_all()
     person_svc = PersonService(PersonRepository(ws))
     evidence_repo = CreatorEvidenceRepository(ws)
+    presentations = PersonPresentationRepository(ws)
+    recent_platforms = presentations.recent_platforms(within_days=14)
     candidates: list[ShortlistCandidate] = []
     for peer in peers:
         person = person_svc.ensure_from_peer(peer)
+        if peer.person_id != person.person_id:
+            peer = peer.model_copy(update={"person_id": person.person_id})
+            PeerRepository(ws).upsert(peer)
         evs = evidence_repo.list_for_person(person.person_id)
         score = score_person(evs)
         platform = (
@@ -2842,6 +2907,12 @@ def people_shortlist(
             artifact_ids = list(
                 dict.fromkeys([*artifact_ids, *peer.source_refs, *peer.practice_evidence_refs])
             )
+        last_shown = presentations.last_shown_at(person.person_id)
+        has_new = bool(
+            person.last_evidence_at
+            and last_shown
+            and person.last_evidence_at > last_shown
+        )
         candidates.append(
             ShortlistCandidate(
                 peer=peer,
@@ -2850,9 +2921,22 @@ def people_shortlist(
                 artifact_ids=artifact_ids[:8],
                 why=peer.why_relevant,
                 platform=platform,
+                last_shown_at=last_shown,
+                has_new_work=has_new,
             )
         )
-    items = select_daily_shortlist(candidates) if today else []
+    items = (
+        select_daily_shortlist(candidates, recent_platforms=recent_platforms)
+        if today
+        else []
+    )
+    for item in items:
+        presentations.record_shown(
+            person_id=item.candidate.person_id,
+            peer_id=item.candidate.peer.id,
+            platform=item.candidate.platform,
+            slot=item.slot.value,
+        )
     if as_json:
         payload = [
             {
@@ -2950,6 +3034,38 @@ def connections_record(
     updated = apply_stage_upgrade(peer, review)
     peer_repo.upsert(updated)
     typer.echo(f"recorded {record.id}; stage → {updated.relationship_stage.value}")
+
+
+@collisions_app.command("generate")
+def collisions_generate(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """从当前 shortlist / 证据生成一张 CollisionCard（每周深度一张）。"""
+    from finch.collisions.service import CollisionService
+    from finch.discovery.daily import build_shortlist_candidates
+    from finch.peers.shortlist import select_daily_shortlist
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    candidates, recent = build_shortlist_candidates(ws)
+    items = select_daily_shortlist(candidates, recent_platforms=recent)
+    result = CollisionService(ws, runner=runner).generate_from_shortlist(
+        items,
+        your_domains=list(settings.interests.long_term_interests),
+    )
+    if result.saved is None:
+        typer.echo(result.skipped_reason or "; ".join(result.failures) or "no collision")
+        raise typer.Exit(code=1)
+    card = result.saved
+    if as_json:
+        typer.echo(json.dumps(card.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"saved {card.collision_id}")
+    typer.echo(f"  {card.their_domain} × {card.your_domain}")
+    typer.echo(f"  question: {card.shared_question}")
+    typer.echo(f"  hypothesis: {card.falsifiable_hypothesis}")
 
 
 @collisions_app.command("weekly")

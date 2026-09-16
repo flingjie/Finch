@@ -76,6 +76,22 @@ class ArtifactRepository:
         )
         return artifact, True
 
+    def list_all(self) -> list[RawArtifact]:
+        out: list[RawArtifact] = []
+        for path in sorted(self._dir.glob("*.yaml")):
+            art = self.ws.read_yaml(path, RawArtifact)
+            if art is not None:
+                out.append(art)
+        return out
+
+    def list_by_ids(self, artifact_ids: list[str]) -> list[RawArtifact]:
+        out: list[RawArtifact] = []
+        for aid in artifact_ids:
+            art = self.get(aid)
+            if art is not None:
+                out.append(art)
+        return out
+
 
 class CursorStore:
     """``var/sources/cursors/{source}.yaml``。"""

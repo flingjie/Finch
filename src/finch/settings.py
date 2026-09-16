@@ -105,6 +105,46 @@ class OpenCliSettings(BaseModel):
     allow_write_commands: bool = False
 
 
+class SourceTwitterPlan(BaseModel):
+    queries: list[str] = Field(default_factory=list)
+    urls: list[str] = Field(default_factory=list)
+
+
+class SourceRedditPlan(BaseModel):
+    queries: list[str] = Field(default_factory=list)
+    urls: list[str] = Field(default_factory=list)
+
+
+class SourceGithubPlan(BaseModel):
+    """GitHub 查询是登录名，不是主题词。"""
+
+    users: list[str] = Field(default_factory=list)
+
+
+class SourceV2exPlan(BaseModel):
+    queries: list[str] = Field(default_factory=list)
+
+
+class SourceWeixinPlan(BaseModel):
+    urls: list[str] = Field(default_factory=list)
+
+
+class SourceXiaohongshuPlan(BaseModel):
+    queries: list[str] = Field(default_factory=list)
+    urls: list[str] = Field(default_factory=list)
+
+
+class SourcesSettings(BaseModel):
+    """跨平台采集的分源查询（``connect daily`` / ``sources sync --all``）。"""
+
+    twitter: SourceTwitterPlan = Field(default_factory=SourceTwitterPlan)
+    reddit: SourceRedditPlan = Field(default_factory=SourceRedditPlan)
+    github: SourceGithubPlan = Field(default_factory=SourceGithubPlan)
+    v2ex: SourceV2exPlan = Field(default_factory=SourceV2exPlan)
+    weixin: SourceWeixinPlan = Field(default_factory=SourceWeixinPlan)
+    xiaohongshu: SourceXiaohongshuPlan = Field(default_factory=SourceXiaohongshuPlan)
+
+
 class ScoringWeights(BaseModel):
     """互动评分五维权重（执行计划 5 默认评分权重表）。
 
@@ -234,6 +274,7 @@ class Settings(BaseModel):
     repository_discovery: RepositoryDiscovery = Field(default_factory=RepositoryDiscovery)
     twitter: TwitterSettings = Field(default_factory=TwitterSettings)
     opencli: OpenCliSettings = Field(default_factory=OpenCliSettings)
+    sources: SourcesSettings = Field(default_factory=SourcesSettings)
     quality_gates: QualityGates = Field(default_factory=QualityGates)
     paths: Paths = Field(default_factory=Paths)
     engagement: EngagementSettings = Field(default_factory=EngagementSettings)

@@ -146,6 +146,5 @@ class OpenCliGateway:
         else:
             argv = ["opencli", request.surface, request.command, *request.args]
         if self.profile and "--profile" not in argv:
-            # Profile is optional; only inject when configured and not already present.
-            pass
+            argv = [*argv, "--profile", self.profile]
         return argv

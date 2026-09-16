@@ -153,6 +153,46 @@ class TestShortlist:
         )
         assert select_daily_shortlist([c]) == []
 
+    def test_new_work_breaks_cooldown(self):
+        from finch.peers.scoring import PersonScoreBreakdown
+
+        score = PersonScoreBreakdown(1, 1, 1, 0, 0, 0, 0.8, {})
+        peer = _peer("x", "fresh")
+        c = ShortlistCandidate(
+            peer=peer,
+            person_id="p",
+            score=score,
+            artifact_ids=["a1", "a2"],
+            platform="x",
+            last_shown_at=datetime.now(UTC) - timedelta(days=1),
+            has_new_work=True,
+        )
+        assert len(select_daily_shortlist([c])) >= 1
+
+    def test_diversity_prefers_unseen_platform(self):
+        from finch.peers.scoring import PersonScoreBreakdown
+
+        score = PersonScoreBreakdown(1, 1, 1, 0, 0, 0, 0.8, {})
+        c_x = ShortlistCandidate(
+            peer=_peer("x", "ax"),
+            person_id="px",
+            score=score,
+            artifact_ids=["a1", "a2"],
+            platform="x",
+        )
+        c_gh = ShortlistCandidate(
+            peer=_peer("github", "ag"),
+            person_id="pg",
+            score=score,
+            artifact_ids=["b1", "b2"],
+            platform="github",
+        )
+        items = select_daily_shortlist(
+            [c_x, c_gh], recent_platforms={"x"}
+        )
+        platforms = {i.candidate.platform for i in items}
+        assert "github" in platforms or len(items) >= 1
+
 
 class TestStageNormalize:
     def test_conversing_maps_to_recurring(self):

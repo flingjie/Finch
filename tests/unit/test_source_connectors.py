@@ -93,6 +93,120 @@ class TestNormalize:
         assert arts[0].author_identity.external_id == "u1"
 
 
+class TestGitHubNormalizeDepth:
+    def test_normalize_creator_rows(self):
+        from finch.sources.connectors.github import GitHubConnector
+
+        result = OpenCliResult(
+            rows=[
+                {
+                    "_kind": "user",
+                    "login": "alice",
+                    "id": 1,
+                    "name": "Alice",
+                    "bio": "builder",
+                    "html_url": "https://github.com/alice",
+                },
+                {
+                    "_kind": "repo",
+                    "full_name": "alice/tool",
+                    "html_url": "https://github.com/alice/tool",
+                    "description": "a tool",
+                    "owner_login": "alice",
+                    "owner_id": 1,
+                },
+                {
+                    "_kind": "commit",
+                    "sha": "abcdef1234567890",
+                    "message": "feat: ship",
+                    "html_url": "https://github.com/alice/tool/commit/abcdef",
+                    "author_date": "2026-09-01T00:00:00+00:00",
+                    "repo": "alice/tool",
+                    "login": "alice",
+                    "id": 1,
+                },
+                {
+                    "_kind": "issue",
+                    "id": 99,
+                    "number": 3,
+                    "title": "bug",
+                    "body": "detail",
+                    "html_url": "https://github.com/alice/tool/issues/3",
+                    "login": "alice",
+                    "author_id": 1,
+                },
+                {
+                    "_kind": "release",
+                    "id": 7,
+                    "tag_name": "v1.0",
+                    "name": "v1.0",
+                    "body": "first",
+                    "html_url": "https://github.com/alice/tool/releases/tag/v1.0",
+                    "repo": "alice/tool",
+                    "login": "alice",
+                    "author_id": 1,
+                },
+            ],
+            exit_code=0,
+            kind=ResultKind.SUCCESS,
+        )
+        arts = GitHubConnector().normalize(result)
+        types = {a.source_type for a in arts}
+        assert types >= {"user", "repo", "commit", "issue", "release"}
+        assert len(arts) >= 5
+        assert all(a.author_identity.handle == "alice" for a in arts)
+
+
+class TestCapabilityDrivenPlan:
+    def test_twitter_skips_search_when_command_missing(self):
+        from datetime import UTC, datetime
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.models import OpenCliCapabilities
+
+        caps = OpenCliCapabilities(
+            snapshot_id="c1",
+            captured_at=datetime.now(UTC),
+            surfaces={"twitter": ["profile", "whoami"]},
+        )
+        reqs = TwitterConnector().plan(
+            DiscoveryContext(queries=["q"]), capabilities=caps
+        )
+        assert reqs == []
+
+    def test_twitter_uses_available_search(self):
+        from datetime import UTC, datetime
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.models import OpenCliCapabilities
+
+        caps = OpenCliCapabilities(
+            snapshot_id="c1",
+            captured_at=datetime.now(UTC),
+            surfaces={"twitter": ["search", "thread"]},
+        )
+        reqs = TwitterConnector().plan(
+            DiscoveryContext(queries=["q"]), capabilities=caps
+        )
+        assert len(reqs) == 1
+        assert reqs[0].command == "search"
+
+    def test_v2ex_hot_when_no_queries(self):
+        from datetime import UTC, datetime
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.models import OpenCliCapabilities
+
+        caps = OpenCliCapabilities(
+            snapshot_id="c1",
+            captured_at=datetime.now(UTC),
+            surfaces={"v2ex": ["hot"]},
+        )
+        reqs = V2exConnector().plan(DiscoveryContext(), capabilities=caps)
+        assert len(reqs) == 1
+        assert reqs[0].command == "hot"
+
+
 class TestArtifactIdempotency:
     def test_upsert_dedupes(self, tmp_path: Path):
         ws = Workspace(tmp_path)

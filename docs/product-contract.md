@@ -35,7 +35,7 @@ Finch 是一个**同行连接与个人表达系统**：帮助你发现值得长�
 
 粉丝数、发帖数、草稿数、点赞、曝光都不是核心成功指标，仅作辅助数据。点赞、愿意试用、实际使用、获得价值、付款分别表述，不合成商业总分。`topic-dialogue` 等模拟讨论是练习上下文，不是同行关系进展，不得计入北极星指标，也不得写入 `InteractionRecord`、`ConversationThread` 或关系指标。
 
-每日连接面并存：`finch connect today`（8–12 浏览）与 `finch connections today` / `finch people shortlist --today`（至多 3 槽位 People First）。后者成熟后再切换默认。
+每日连接面：`finch connect daily` 以 People First 三槽位（`connections today` / `people shortlist --today`）为主，同一人物池派生的 8–12 浏览机会为次（`connect more`）。不再并行走独立的 X/Reddit 搜索刷新路径。
 
 ## 对象所有权
 

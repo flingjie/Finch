@@ -16,6 +16,7 @@ from finch.sources.models import (
     Source,
     SourceStatus,
 )
+from finch.sources.plan_util import empty_capabilities, resolve_command
 
 
 class V2exConnector:
@@ -28,21 +29,32 @@ class V2exConnector:
             return SourceStatus.UNAVAILABLE
         return SourceStatus.READY
 
-    def plan(self, context: DiscoveryContext) -> list[OpenCliRequest]:
+    def plan(
+        self,
+        context: DiscoveryContext,
+        capabilities: OpenCliCapabilities | None = None,
+    ) -> list[OpenCliRequest]:
+        caps = capabilities or empty_capabilities()
         if context.queries:
+            search_cmd = resolve_command(caps, "v2ex", ["search"])
+            if not search_cmd:
+                return []
             return [
                 OpenCliRequest(
                     surface="v2ex",
-                    command="search",
+                    command=search_cmd,
                     args=(q, "-f", "json"),
                     timeout_seconds=60,
                 )
                 for q in context.queries
             ]
+        hot_cmd = resolve_command(caps, "v2ex", ["hot", "topics"])
+        if not hot_cmd:
+            return []
         return [
             OpenCliRequest(
                 surface="v2ex",
-                command="hot",
+                command=hot_cmd,
                 args=("-f", "json"),
                 timeout_seconds=60,
             )

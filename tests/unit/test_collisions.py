@@ -56,6 +56,84 @@ class TestCollision:
         assert len(card.artifact_ids) == 2
 
 
+class TestCollisionServiceSave:
+    def test_generate_saves_card(self, tmp_path):
+        from datetime import UTC, datetime
+
+        from pydantic import BaseModel
+
+        from finch.collisions.service import CollisionDraft, CollisionService
+        from finch.collisions.repository import CollisionRepository
+        from finch.peers.models import RelationshipStage
+        from finch.peers.scoring import PersonScoreBreakdown
+        from finch.peers.service import PeerService
+        from finch.peers.shortlist import ShortlistCandidate, ShortlistItem, ShortlistSlot
+        from finch.sources.fingerprint import artifact_id, content_fingerprint
+        from finch.sources.models import AuthorIdentity, RawArtifact, Source
+        from finch.sources.store import ArtifactRepository
+        from finch.storage.workspace import Workspace
+
+        ws = Workspace(tmp_path)
+        ws.ensure()
+        arts = []
+        for sid, text in [("1", "design progressive disclosure"), ("2", "agent interrupt gates")]:
+            url = f"https://x.com/u/status/{sid}"
+            art = RawArtifact(
+                artifact_id=artifact_id("twitter", "post", sid),
+                source=Source.TWITTER,
+                source_type="post",
+                source_id=sid,
+                canonical_url=url,
+                author_identity=AuthorIdentity(
+                    platform="x", external_id="u", handle="u"
+                ),
+                text=text,
+                retrieved_at=datetime.now(UTC),
+                capture_method="adapter",
+                content_fingerprint=content_fingerprint(text, url=url),
+            )
+            ArtifactRepository(ws).upsert(art)
+            arts.append(art)
+        peer = PeerService().from_author(platform="x", author_id="u", username="u")
+        peer = peer.model_copy(
+            update={
+                "source_refs": [a.artifact_id for a in arts],
+                "person_id": "person_u",
+                "relationship_stage": RelationshipStage.DISCOVERED,
+            }
+        )
+        score = PersonScoreBreakdown(0.8, 0.8, 0.5, 0.5, 0.5, 0.5, 0.7, {})
+        item = ShortlistItem(
+            slot=ShortlistSlot.NEW_CREATOR,
+            candidate=ShortlistCandidate(
+                peer=peer,
+                person_id="person_u",
+                score=score,
+                artifact_ids=[a.artifact_id for a in arts],
+                platform="x",
+            ),
+        )
+
+        class FakeRunner:
+            def run(self, prompt: str, output_model: type[BaseModel], *, timeout: float = 600.0):
+                return CollisionDraft(
+                    their_domain="design",
+                    your_domain="agents",
+                    surface_similarity="both involve users",
+                    structural_similarity="interrupt only on high uncertainty",
+                    shared_question="when to ask?",
+                    transferable_mechanism="progressive_disclosure",
+                    falsifiable_hypothesis="risk gates cut noise 30%",
+                    artifact_ids=[a.artifact_id for a in arts],
+                )
+
+        result = CollisionService(ws, runner=FakeRunner()).generate_from_shortlist(
+            [item], your_domains=["agents"]
+        )
+        assert result.saved is not None
+        assert CollisionRepository(ws).get(result.saved.collision_id) is not None
+
+
 class TestExperiment:
     def test_one_week_due(self):
         card = build_collision(
