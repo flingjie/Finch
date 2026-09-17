@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from finch.sources.connectors import DiscoveryContext
 from finch.sources.fingerprint import artifact_id, content_fingerprint
@@ -73,12 +74,14 @@ class XiaohongshuConnector:
         sid = str(
             row.get("id") or row.get("note_id") or row.get("noteId") or ""
         ).strip()
+        url = str(row.get("url") or row.get("share_url") or "")
+        if not sid and url:
+            sid = urlsplit(url).path.rstrip("/").split("/")[-1]
         if not sid:
             return None
         title = str(row.get("title") or row.get("display_title") or "")
         text = str(row.get("desc") or row.get("text") or row.get("content") or "")
         body = f"{title}\n\n{text}".strip()
-        url = str(row.get("url") or row.get("share_url") or "")
         user = row.get("user") if isinstance(row.get("user"), dict) else {}
         assert isinstance(user, dict)
         handle = str(
@@ -87,7 +90,7 @@ class XiaohongshuConnector:
             or user.get("name")
             or ""
         )
-        uid = str(user.get("user_id") or user.get("id") or handle)
+        uid = str(user.get("user_id") or user.get("id") or handle or sid)
         fp = content_fingerprint(body, url=url)
         return RawArtifact(
             artifact_id=artifact_id("xiaohongshu", "note", sid),

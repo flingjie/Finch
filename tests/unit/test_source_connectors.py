@@ -134,6 +134,25 @@ class TestNormalize:
         assert len(arts) == 1
         assert arts[0].author_identity.external_id == "u1"
 
+    def test_xiaohongshu_search_result_row_falls_back_to_url(self):
+        result = OpenCliResult(
+            rows=[
+                {
+                    "title": "AI Agent 复盘",
+                    "url": "https://www.xiaohongshu.com/search_result/abc123?xsec_token=x",
+                    "author": "alice",
+                    "likes": "12",
+                    "published_at": "2026-09-10",
+                }
+            ],
+            exit_code=0,
+            kind=ResultKind.SUCCESS,
+        )
+        arts = XiaohongshuConnector().normalize(result)
+        assert len(arts) == 1
+        assert arts[0].source_id == "abc123"
+        assert arts[0].author_identity.handle == "alice"
+
 
 class TestGitHubNormalizeDepth:
     def test_normalize_creator_rows(self):
