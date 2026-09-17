@@ -139,12 +139,21 @@ class OpenCliGateway:
         )
 
     def _build_argv(self, request: OpenCliRequest) -> list[str]:
+        args = list(request.args)
+        profile = self.profile
+        for idx, arg in enumerate(args):
+            if arg == "--profile" and idx + 1 < len(args):
+                profile = args[idx + 1]
+                args = args[:idx] + args[idx + 2 :]
+                break
+        argv = ["opencli"]
+        if profile:
+            argv.extend(["--profile", profile])
         if request.surface == "meta":
             if request.command == "version":
-                return ["opencli", "--version"]
-            argv = ["opencli", request.command, *request.args]
+                argv.append("--version")
+            else:
+                argv.extend([request.command, *args])
         else:
-            argv = ["opencli", request.surface, request.command, *request.args]
-        if self.profile and "--profile" not in argv:
-            argv = [*argv, "--profile", self.profile]
+            argv.extend([request.surface, request.command, *args])
         return argv

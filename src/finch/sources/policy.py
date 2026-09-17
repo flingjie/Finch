@@ -199,21 +199,25 @@ _GLOBAL_WRITE_VERBS = frozenset(
 
 
 def _prefix_from_argv(argv: list[str]) -> tuple[str, str]:
-    """从 ``['opencli', surface, command, ...]`` 提取 (surface, command)。"""
+    """从 ``['opencli', (global flags), surface, command, ...]`` 提取 (surface, command)。"""
     if len(argv) < 2:
         raise SourceCommandBlocked("Command too short")
-    # opencli doctor / opencli list / opencli --version
     if argv[0] != "opencli":
         raise SourceCommandBlocked(f"Expected opencli binary, got {argv[0]!r}")
-    if len(argv) == 2 or (
-        len(argv) >= 2 and argv[1] in {"doctor", "list", "--version", "help", "-h"}
-    ):
-        cmd = argv[1].lstrip("-")
-        if cmd == "version" or argv[1] == "--version":
+    idx = 1
+    while idx < len(argv) and argv[idx] == "--profile" and idx + 1 < len(argv):
+        idx += 2
+    if idx >= len(argv):
+        raise SourceCommandBlocked("Command too short")
+    token = argv[idx]
+    # opencli doctor / opencli list / opencli --version
+    if idx == len(argv) - 1 or token in {"doctor", "list", "--version", "help", "-h"}:
+        cmd = token.lstrip("-")
+        if cmd == "version" or token == "--version":
             return "meta", "version"
         return "meta", cmd if cmd != "h" else "help"
-    surface = argv[1]
-    command = argv[2] if len(argv) > 2 else ""
+    surface = token
+    command = argv[idx + 1] if idx + 1 < len(argv) else ""
     return surface, command
 
 
