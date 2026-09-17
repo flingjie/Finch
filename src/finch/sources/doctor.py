@@ -37,7 +37,12 @@ _SMOKE: dict[Source, OpenCliRequest | None] = {
         args=("-f", "json"),
         timeout_seconds=45,
     ),
-    Source.WEIXIN: None,  # link-in MVP; doctor only checks capability presence
+    Source.WEIXIN: OpenCliRequest(
+        surface="weixin",
+        command="search",
+        args=("AI Agent", "--limit", "1", "-f", "json"),
+        timeout_seconds=45,
+    ),
     Source.XIAOHONGSHU: OpenCliRequest(
         surface="xiaohongshu",
         command="search",
@@ -143,8 +148,6 @@ def run_doctor(
         if not run_smoke or smoke is None:
             status = SourceStatus.READY if opencli_ok else SourceStatus.DEGRADED
             detail = "capability present; smoke skipped"
-            if src == Source.WEIXIN:
-                detail = "weixin MVP is URL-import; capability check only"
             reports.append(
                 DoctorSourceReport(
                     source=src, status=status, detail=detail, commands_seen=seen

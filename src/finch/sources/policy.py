@@ -65,6 +65,7 @@ _ALLOW: dict[str, frozenset[str]] = {
     ),
     "weixin": frozenset(
         {
+            "weixin search",
             "weixin download",
             "weixin read",
             "weixin article",

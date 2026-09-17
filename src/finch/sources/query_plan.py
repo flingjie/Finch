@@ -12,7 +12,7 @@ def _plan(settings: Settings, src: Source) -> SourceDiscoverySettings:
 
 
 def _payload(settings: Settings, src: Source) -> tuple[list[str], list[str]]:
-    """返回 (queries, urls)；GitHub 用 users 当登录名，weixin 只走 urls。"""
+    """返回 (queries, urls)；GitHub 用 users 当登录名，weixin 同时支持 query 与 url。"""
     if src == Source.TWITTER:
         return list(settings.sources.twitter.queries), list(settings.sources.twitter.urls)
     if src == Source.REDDIT:

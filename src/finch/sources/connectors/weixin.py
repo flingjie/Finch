@@ -1,4 +1,4 @@
-"""微信公众号 Connector — MVP 围绕文章链接导入（无全局站内搜索）。"""
+"""微信公众号 Connector：query 走搜狗微信搜索，url 走已知文章导入。"""
 
 from __future__ import annotations
 

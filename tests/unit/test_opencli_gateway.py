@@ -54,6 +54,9 @@ class TestPolicy:
     def test_allows_twitter_search(self):
         check_allowlist(["opencli", "twitter", "search", "q"])
 
+    def test_allows_weixin_search(self):
+        check_allowlist(["opencli", "weixin", "search", "AI Agent", "-f", "json"])
+
     def test_blocks_twitter_reply(self):
         with pytest.raises(SourceCommandBlocked):
             check_allowlist(["opencli", "twitter", "reply", "1", "hi"])
@@ -190,6 +193,24 @@ class TestCapabilities:
         surfaces = parse_capability_list(data)
         assert surfaces["twitter"] == ["search", "profile"]
         assert surfaces["v2ex"] == ["hot"]
+
+    def test_parse_opencli_single_command_row_uses_name(self):
+        surfaces = parse_capability_list(
+            [{"site": "weixin", "name": "search", "command": "weixin/search"}]
+        )
+        assert surfaces["weixin"] == ["search"]
+
+    def test_fetch_capabilities_profile_before_subcommand(self):
+        from finch.sources.capabilities import fetch_capabilities
+
+        captured: list[list[str]] = []
+
+        def fake_run(argv, timeout):
+            captured.append(list(argv))
+            return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+        fetch_capabilities(run_fn=fake_run, profile="work")
+        assert captured[0][:4] == ["opencli", "--profile", "work", "list"]
 
 
 class TestDoctor:

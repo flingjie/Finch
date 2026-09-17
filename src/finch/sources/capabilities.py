@@ -46,14 +46,16 @@ def parse_capability_list(data: Any) -> dict[str, list[str]]:
         if isinstance(raw_cmds, list):
             for c in raw_cmds:
                 if isinstance(c, str):
-                    cmds.append(c)
+                    cmds.append(c.rsplit("/", 1)[-1])
                 elif isinstance(c, dict):
                     name = c.get("name") or c.get("command") or ""
                     if name:
-                        cmds.append(str(name))
+                        cmds.append(str(name).rsplit("/", 1)[-1])
         # Single-command rows
-        if not cmds and row.get("command"):
-            cmds.append(str(row["command"]))
+        if not cmds:
+            single = row.get("name") or row.get("command") or ""
+            if single:
+                cmds.append(str(single).rsplit("/", 1)[-1])
         existing = surfaces.setdefault(surface, [])
         for c in cmds:
             if c not in existing:
@@ -69,9 +71,10 @@ def fetch_capabilities(
 ) -> OpenCliCapabilities:
     """执行 ``opencli list -f json`` 并返回结构化快照。"""
     runner = run_fn or _run
-    argv = ["opencli", "list", "-f", "json"]
+    argv = ["opencli"]
     if profile:
         argv.extend(["--profile", profile])
+    argv.extend(["list", "-f", "json"])
     raw = runner(argv, timeout)
     now = datetime.now(UTC)
     if not raw.get("ok"):
