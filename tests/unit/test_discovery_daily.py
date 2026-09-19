@@ -150,7 +150,6 @@ def test_run_daily_skips_network_with_seeded_artifacts(tmp_path: Path):
         runner=_FakeRunner(),
         gateway=OpenCliGateway(run_fn=fake_run),
         skip_sync=True,
-        generate_collision=True,
     )
     assert result.engagement is not None
     assert result.engagement.status in {"succeeded", "empty"}
@@ -199,7 +198,6 @@ def test_run_daily_three_slot_cap_and_metrics(tmp_path: Path):
         runner=_FakeRunner(),
         gateway=OpenCliGateway(run_fn=fake_run),
         skip_sync=True,
-        generate_collision=True,
     )
 
     # 观测指标不改变选择：priority 层（旧 shortlist 字段）不超过 priority_count=5。

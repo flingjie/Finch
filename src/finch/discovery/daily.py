@@ -12,13 +12,11 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from finch.codex.runner import CodexRunner
-from finch.collisions.service import CollisionService
 from finch.connections.service import (
     ConnectionDecision,
     ConnectionOpportunity,
     build_connection_opportunity,
 )
-from finch.connections.store import ConnectionOpportunityRepository
 from finch.discovery.candidate_pool import PersonCandidate, build_pool
 from finch.engagement.flow import EngagementRunResult, RankedPeer
 from finch.engagement.models import (
@@ -344,9 +342,8 @@ def run_daily_discovery(
     runner: StructuredInferenceRunner | CodexRunner | None = None,
     gateway: OpenCliGateway | None = None,
     skip_sync: bool = False,
-    generate_collision: bool = True,
 ) -> DailyDiscoveryResult:
-    """跨平台抓取 → 标准化 → 人物与证据投影 → 三槽位 → 连接建议。"""
+    """跨平台抓取 → 标准化 → 人物与证据投影 → 分层推荐 → 快照。"""
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     run_id = f"daily_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
@@ -416,14 +413,6 @@ def run_daily_discovery(
         1 for c in candidates if len(c.artifact_ids) >= 2 and c.score.total > 0
     )
     metrics.recommended_count = recs.total
-    presentations = PersonPresentationRepository(ws)
-    for rec in recs.priority:
-        presentations.record_shown(
-            person_id=rec.person_id,
-            peer_id=rec.candidate.peer.id,
-            platform=rec.candidate.platform,
-            slot="priority",
-        )
     # 兼容旧 shortlist 字段：priority 层转 ShortlistItem（旧展示/碰撞复用）。
     result.shortlist = [
         ShortlistItem(
@@ -441,25 +430,6 @@ def run_daily_discovery(
         )
         for rec in recs.priority
     ]
-
-    # Connection opportunities only for the priority tier (≤ deep_prepare_limit)
-    conn_repo = ConnectionOpportunityRepository(ws)
-    user_refs = list(settings.interests.practice_refs)
-    if runner is not None:
-        from finch.sources.store import ArtifactRepository
-
-        art_repo = ArtifactRepository(ws)
-        for rec in recs.priority:
-            arts = art_repo.list_by_ids(rec.candidate.artifact_ids)
-            conn = assess_connection(
-                runner=runner,
-                candidate=rec.candidate,
-                artifacts=arts,
-                user_evidence_refs=user_refs,
-            )
-            conn_repo.save(conn)
-            result.connections.append(conn)
-            metrics.llm_calls += 1
 
     # Browse opportunities from artifacts (no second X/Reddit search)
     opps = opportunities_from_artifacts(
@@ -526,15 +496,6 @@ def run_daily_discovery(
         recommendation_shortfall=dict(recs.shortfall),
     )
     DiscoverySnapshotRepository(ws).upsert(snapshot)
-
-    if generate_collision and runner is not None and result.shortlist:
-        col = CollisionService(ws, runner=runner).generate_from_shortlist(
-            result.shortlist,
-            your_domains=list(settings.interests.long_term_interests),
-        )
-        if col.saved is not None:
-            result.collision_id = col.saved.collision_id
-        metrics.llm_calls += 1
 
     result.metrics = metrics
     return result

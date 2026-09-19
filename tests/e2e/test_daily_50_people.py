@@ -137,7 +137,6 @@ def test_daily_50_people_e2e(tmp_path: Path):
         runner=_FakeRunner(),
         gateway=OpenCliGateway(run_fn=fake_gateway),
         skip_sync=True,
-        generate_collision=False,
     )
 
     recs = result.recommendations
