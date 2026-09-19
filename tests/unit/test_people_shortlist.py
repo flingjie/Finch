@@ -98,6 +98,35 @@ class TestScoring:
         assert low.total == high.total
         assert high.popularity_context["followers"] == 1_000_000
 
+    def test_duplicate_artifact_not_double_counted(self):
+        # D5：同一 artifact 的重复同类证据不重复加分。
+        base = [
+            CreatorEvidence(
+                evidence_id="e1",
+                person_id="p1",
+                artifact_id="twitter:post:1",
+                kind=CreatorEvidenceKind.CREATION,
+                claim="built a tool",
+                support=["artifact"],
+                first_hand=True,
+                confidence=0.8,
+            )
+        ]
+        dup = [
+            *base,
+            CreatorEvidence(
+                evidence_id="e2",
+                person_id="p1",
+                artifact_id="twitter:post:1",  # same artifact
+                kind=CreatorEvidenceKind.CREATION,
+                claim="built a tool (duplicate extraction)",
+                support=["artifact"],
+                first_hand=True,
+                confidence=0.8,
+            ),
+        ]
+        assert score_person(dup).sustained_creation == score_person(base).sustained_creation
+
 
 class TestShortlist:
     def test_single_artifact_is_eligible(self):

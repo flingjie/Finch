@@ -41,17 +41,24 @@ def score_person(
 ) -> PersonScoreBreakdown:
     """确定性基础分；粉丝/点赞仅进 popularity_context。"""
     kinds = {e.kind for e in evidence}
-    creation_n = sum(1 for e in evidence if e.kind == CreatorEvidenceKind.CREATION)
-    first_hand_n = sum(
-        1 for e in evidence if e.kind == CreatorEvidenceKind.FIRST_HAND_EXPERIENCE and e.first_hand
+    # D5：按不同作品（artifact_id）计数，同篇内容的重复同类证据不重复加分。
+    creation_n = len({e.artifact_id for e in evidence if e.kind == CreatorEvidenceKind.CREATION})
+    first_hand_n = len(
+        {
+            e.artifact_id
+            for e in evidence
+            if e.kind == CreatorEvidenceKind.FIRST_HAND_EXPERIENCE and e.first_hand
+        }
     )
-    share_n = sum(
-        1
-        for e in evidence
-        if e.kind
-        in {
-            CreatorEvidenceKind.KNOWLEDGE_SHARING,
-            CreatorEvidenceKind.CONVERSATION_BEHAVIOR,
+    share_n = len(
+        {
+            e.artifact_id
+            for e in evidence
+            if e.kind
+            in {
+                CreatorEvidenceKind.KNOWLEDGE_SHARING,
+                CreatorEvidenceKind.CONVERSATION_BEHAVIOR,
+            }
         }
     )
     cross = CreatorEvidenceKind.CROSS_DOMAIN_BRIDGE in kinds
