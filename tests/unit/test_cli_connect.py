@@ -356,6 +356,46 @@ def test_connect_daily_json(monkeypatch, tmp_path):
     assert [o["id"] for o in payload["opportunities"]] == ["opp_test_1"]
 
 
+def test_persist_discovery_preserves_recommendations(tmp_path):
+    """F1：_persist_discovery 不得覆盖 run_daily_discovery 已写入的完整 50 人推荐。"""
+    from finch.engagement.models import DiscoverySnapshot, RecommendationEntry
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+
+    # 模拟 run_daily_discovery 已写入带完整推荐的快照。
+    DiscoverySnapshotRepository(ws).upsert(
+        DiscoverySnapshot(
+            id="daily_test",
+            created_at=datetime.now(UTC),
+            context_fingerprint="ctx",
+            ranked_opportunity_ids=["opp_test_1"],
+            recommendations=[
+                RecommendationEntry(
+                    person_id="p1",
+                    peer_id="peer_abc",
+                    display_name="Alice",
+                    tier="priority",
+                    rank=0,
+                    direction="peer",
+                    platform="x",
+                    score=0.5,
+                    artifact_ids=["a0", "a1"],
+                    hit_labels=["graphs"],
+                )
+            ],
+            recommendation_shortfall={"insufficient_eligible": 2},
+        )
+    )
+
+    snap = cli._persist_discovery(ws, _daily_result())
+    assert snap is not None
+    assert [r.person_id for r in snap.recommendations] == ["p1"]
+    assert snap.recommendation_shortfall == {"insufficient_eligible": 2}
+
+
 def test_connect_person_not_found(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)

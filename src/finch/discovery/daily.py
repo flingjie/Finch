@@ -26,6 +26,7 @@ from finch.engagement.models import (
     DiscoverySnapshot,
     ExternalPost,
     Opportunity,
+    RecommendationEntry,
 )
 from finch.engagement.opportunity import scored_post_to_opportunity, select_opportunity_set
 from finch.engagement.relationship import PeerValue
@@ -315,6 +316,28 @@ def assess_connection(
     )
 
 
+def _recommendation_entries(recs: DailyRecommendationSet) -> list[RecommendationEntry]:
+    """把 DailyRecommendationSet 序列化为可持久化的快照条目（F1）。"""
+    out: list[RecommendationEntry] = []
+    for r in recs.all:
+        c = r.candidate
+        out.append(
+            RecommendationEntry(
+                person_id=r.person_id,
+                peer_id=c.peer.id,
+                display_name=c.peer.display_name or c.peer.id,
+                tier=r.tier,
+                rank=r.rank,
+                direction=r.direction,
+                platform=c.platform,
+                score=c.score.total,
+                artifact_ids=list(c.artifact_ids),
+                hit_labels=list(c.hit_labels),
+            )
+        )
+    return out
+
+
 def run_daily_discovery(
     settings: Settings,
     *,
@@ -364,7 +387,11 @@ def run_daily_discovery(
     )
 
     # Creator evidence via Codex (fail-soft per person)
-    evidence_svc = CreatorEvidenceService(ws, runner=runner)
+    evidence_svc = CreatorEvidenceService(
+        ws,
+        runner=runner,
+        max_persons=settings.discovery.daily_people.semantic_assess_limit,
+    )
     if runner is not None:
         ev_started = time.perf_counter()
         ev_result = evidence_svc.assess()
@@ -495,6 +522,8 @@ def run_daily_discovery(
         failures=[],
         ranked_opportunity_ids=[o.id for o in opps],
         ranking_version="people-first-1",
+        recommendations=_recommendation_entries(recs),
+        recommendation_shortfall=dict(recs.shortfall),
     )
     DiscoverySnapshotRepository(ws).upsert(snapshot)
 

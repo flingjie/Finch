@@ -106,3 +106,16 @@ def test_stable_tiebreak_by_person_id():
     recs = select_daily_recommendations([a, b], settings=Settings())
     ordered = [r.person_id for r in recs.all]
     assert ordered == sorted(ordered)
+
+
+def test_recommendation_entries_serialize_tiers():
+    """F1：DailyRecommendationSet 序列化为可持久化的快照条目，字段与顺序完整。"""
+    from finch.discovery.daily import _recommendation_entries
+
+    cands = [_cand(f"p{i:03d}", total=0.9 - i * 0.01) for i in range(5)]
+    recs = select_daily_recommendations(cands, settings=Settings())
+    entries = _recommendation_entries(recs)
+    assert len(entries) == recs.total
+    assert {e.person_id for e in entries} == {r.person_id for r in recs.all}
+    assert all(e.tier in {"priority", "summary", "browse"} for e in entries)
+    assert all(e.peer_id == f"peer_{e.person_id}" for e in entries)

@@ -45,6 +45,7 @@ from .engagement.models import (
     InteractionStatus,
     Opportunity,
     PresentationRecord,
+    RecommendationEntry,
     RecommendationFeedback,
 )
 from .engagement.named import connect_named, parse_named_target
@@ -1857,6 +1858,62 @@ def _render_recommendations(recs) -> list[str]:
     return lines
 
 
+def _entries_payload(entries: list[RecommendationEntry], shortfall: dict[str, int]) -> dict:
+    """把持久化推荐条目还原为与 _recommendations_payload 同构的 JSON dict。"""
+    by_tier: dict[str, list] = {"priority": [], "summary": [], "browse": []}
+    for e in entries:
+        by_tier.setdefault(e.tier, []).append(e.model_dump(mode="json"))
+    result: dict = dict(by_tier)
+    result["shortfall"] = dict(shortfall)
+    return result
+
+
+def _render_recommendation_entries(
+    entries: list[RecommendationEntry], shortfall: dict[str, int]
+) -> list[str]:
+    """文本模式分层渲染持久化推荐条目（与 _render_recommendations 对齐）。"""
+    by_tier: dict[str, list] = {}
+    for e in entries:
+        by_tier.setdefault(e.tier, []).append(e)
+
+    def _name(e):
+        return e.display_name or e.peer_id
+
+    lines: list[str] = []
+    for tier, title in (
+        ("priority", "今日重点"),
+        ("summary", "值得浏览"),
+        ("browse", "扩展发现"),
+    ):
+        rows = by_tier.get(tier, [])
+        if not rows:
+            continue
+        lines.append(f"## {title} ({len(rows)})")
+        for e in rows:
+            if tier == "priority":
+                lines.append(
+                    f"{e.rank + 1}. {_name(e)} ({e.platform}) "
+                    f"score={e.score:.2f} [{e.direction}]"
+                )
+                lines.append(f"   evidence: {', '.join(e.artifact_ids[:3])}")
+                if e.hit_labels:
+                    lines.append(f"   hit: {', '.join(e.hit_labels[:5])}")
+            elif tier == "summary":
+                lines.append(
+                    f"{e.rank + 1}. {_name(e)} ({e.platform}) "
+                    f"score={e.score:.2f} [{e.direction}]"
+                )
+                lines.append(f"   evidence: {', '.join(e.artifact_ids[:2])}")
+            else:
+                lines.append(
+                    f"{e.rank + 1}. {_name(e)} ({e.platform}) score={e.score:.2f}"
+                )
+        lines.append("")
+    if shortfall:
+        lines.append(f"shortfall: {shortfall}")
+    return lines
+
+
 def _persist_discovery(
     ws: Workspace,
     result: EngagementRunResult,
@@ -1878,6 +1935,13 @@ def _persist_discovery(
     if not result.opportunities and result.status == "failed":
         return DiscoverySnapshotRepository(ws).latest()
 
+    # F1：保留 run_daily_discovery 已写入的完整 50 人推荐，避免后一次写入覆盖。
+    latest = DiscoverySnapshotRepository(ws).latest()
+    recommendations = latest.recommendations if latest is not None else []
+    recommendation_shortfall = (
+        latest.recommendation_shortfall if latest is not None else {}
+    )
+
     snap_id = snapshot_id or result.run_id
     snapshot = DiscoverySnapshot(
         id=snap_id,
@@ -1895,6 +1959,8 @@ def _persist_discovery(
         ],
         ranked_opportunity_ids=[o.id for o in result.opportunities],
         ranking_version="1",
+        recommendations=recommendations,
+        recommendation_shortfall=recommendation_shortfall,
     )
     DiscoverySnapshotRepository(ws).upsert(snapshot)
     return snapshot
@@ -2281,7 +2347,9 @@ def connect_daily(
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     snapshot = DiscoverySnapshotRepository(ws).latest()
-    need_refresh = refresh or not _snapshot_fresh(
+    # D1：默认只读；仅在显式 --refresh 时刷新，不因过期隐式抓取。
+    need_refresh = refresh
+    stale = snapshot is not None and not _snapshot_fresh(
         snapshot, settings.engagement.snapshot_ttl_hours
     )
     daily = None
@@ -2306,12 +2374,18 @@ def connect_daily(
         for conn in daily.connections:
             connections_payload.append(conn.model_dump(mode="json"))
 
+    # F1：非刷新读取时从快照重放完整 50 人推荐。
+    rec_entries = snapshot.recommendations if snapshot is not None else []
+    rec_shortfall = snapshot.recommendation_shortfall if snapshot is not None else {}
+
     if as_json:
         typer.echo(json.dumps({
             "snapshot_id": snapshot.id if snapshot else None,
             "refreshed": need_refresh,
-            "recommendations": _recommendations_payload(
-                daily.recommendations if daily else None
+            "recommendations": (
+                _recommendations_payload(daily.recommendations)
+                if (daily is not None and daily.recommendations is not None)
+                else _entries_payload(rec_entries, rec_shortfall)
             ),
             "shortlist": [
                 {
@@ -2341,9 +2415,18 @@ def connect_daily(
         }, ensure_ascii=False, indent=2))
         return
     if snapshot is None:
-        typer.echo("no discovery snapshot; run: uv run finch connect refresh")
+        typer.echo("no discovery snapshot; run: uv run finch connect daily --refresh")
         return
-    rec_lines = _render_recommendations(daily.recommendations if daily else None)
+    if stale:
+        typer.echo(
+            f"(snapshot from {snapshot.created_at:%Y-%m-%d %H:%M} UTC; "
+            f"run with --refresh for fresh results)"
+        )
+    rec_lines = (
+        _render_recommendations(daily.recommendations)
+        if (daily is not None and daily.recommendations is not None)
+        else _render_recommendation_entries(rec_entries, rec_shortfall)
+    )
     if rec_lines:
         typer.echo("\n".join(rec_lines))
     else:

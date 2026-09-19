@@ -156,6 +156,24 @@ class Opportunity(BaseModel):
     related_source_refs: list[str] = Field(default_factory=list)
 
 
+class RecommendationEntry(BaseModel):
+    """快照持久化的一条 50 人分层推荐（F1：非刷新读取可重放）。
+
+    字段与 ``cli._recommendations_payload`` 的展示行一致；顺序由列表与 ``rank`` 保留。
+    """
+
+    person_id: str
+    peer_id: str
+    display_name: str = ""
+    tier: str = ""  # priority | summary | browse
+    rank: int = 0
+    direction: str = ""
+    platform: str = ""
+    score: float = 0.0
+    artifact_ids: list[str] = Field(default_factory=list)
+    hit_labels: list[str] = Field(default_factory=list)
+
+
 class DiscoverySnapshot(BaseModel):
     """一次有界发现刷新的缓存快照（B）。"""
 
@@ -167,6 +185,9 @@ class DiscoverySnapshot(BaseModel):
     ranked_opportunity_ids: list[str] = Field(default_factory=list)
     ranking_version: str = "1"
     selected_opportunity_ids: list[str] = Field(default_factory=list)
+    # 完整 50 人分层推荐 + 数量缺口（F1：刷新后持久化，非刷新读取可重放）
+    recommendations: list[RecommendationEntry] = Field(default_factory=list)
+    recommendation_shortfall: dict[str, int] = Field(default_factory=dict)
 
 
 class PresentationRecord(BaseModel):
