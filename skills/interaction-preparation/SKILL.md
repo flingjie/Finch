@@ -23,7 +23,7 @@ description: >
 - 点名一个人：`finch connect with --x <handle|url>` 或 `--github <handle|url>`
   （可选 `--note` / `--from-idea` / `--draft`）。跳过浏览，直接落 PeerProfile 并准备 1 条提纲。
 - 用户只给裸 handle、没说来源：先问 X 还是 GitHub，再调用本命令。禁止为此翻 `var/peers/` 或跑 `connect today`。
-- 选中机会：`finch connect prepare --opportunity <id>`（可重复；本批有上限）
+- 选中机会：`finch connect prepare --opportunity <id>`（可重复；本批最多 5 = deep_prepare_limit）
 - 手动帖子 + 笔记：`finch connect create --input <url> [--from-idea <id>|--note "..."] [--draft]`
 - 批准 / 拒绝 / 改草稿：`approve` / `reject` / `edit`
 - 用户已发送后登记：`finch connect record <proposal_id> --url <url>`（需先批准）
@@ -34,7 +34,8 @@ description: >
 - `outline` / `value_added` / `source_summary` / `factual_risks`：提纲路径。
 - `draft`：仅按需；试用/复现/观察类可为内部清单而无公开回复。
 - `contribution_type`：experience / question / addition / counterexample / resource。
-- **允许零结果**：无贡献点时输出「暂不回复」及原因，不强行生成空泛回复。
+- **允许零结果**：无具体观察/问题/贡献时输出「暂不回复」及原因，不强行生成空泛回复。
+  **具体观察 + 诚实提问**即可作为有效建议，无需个人经验；只有声称亲历（我用过/测试过）才要求个人证据。
 
 ## 向用户呈现
 

@@ -30,14 +30,18 @@ uv run finch diagnose                    # 探测 gh / opencli 可用性
 # —— 连接主循环 ——
 uv run finch connect refresh             # 有界刷新发现池 + 快照
 uv run finch connect today --limit 10    # 纯读：今日重点 + 需跟进对话
-uv run finch connect daily [--refresh]   # 每日 50 人分层推荐（5 重点 / 15 摘要 / 30 浏览）
+uv run finch connect daily [--refresh] [--view home|browse] [--question "…"]  # 首页 3 重点 + 50 人分层浏览（同一快照）
 uv run finch connect person <person_id>  # 查看某人完整证据与档案（只读）
 uv run finch connect more --snapshot ID --limit 5
-uv run finch connect prepare --opportunity ID   # 深度准备（默认每次最多 10）
+uv run finch connect prepare --opportunity ID   # 深度准备（默认每次最多 5）
 uv run finch connect feedback --file feedback.json
 uv run finch peers list / show <peer_id> # 同行档案与关系上下文
 uv run finch connect approve / reject / edit / record
 uv run finch conversations list --needs-follow-up / show / follow-up / ingest / note / commit / defer / close
+
+# —— 灵感笔记 ——
+uv run finch inspirations save --text "想保留的启发" [--source <ref>] [--origin …]
+uv run finch inspirations list / show <id> / note <id> --text "…" / archive <id>
 
 # —— 表达复利循环 ——
 uv run finch ideas commit / create / list / show / confirm / revise-position / skip
