@@ -414,7 +414,7 @@ def run_daily_discovery(
 
     metrics.people_count = len(candidates)
     metrics.eligible_count = sum(
-        1 for c in candidates if len(c.artifact_ids) >= 2 and c.score.total > 0
+        1 for c in candidates if len(c.artifact_ids) >= 1 and c.score.total > 0
     )
     metrics.recommended_count = recs.total
     # 兼容旧 shortlist 字段：priority 层转 ShortlistItem（旧展示/碰撞复用）。

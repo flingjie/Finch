@@ -56,7 +56,7 @@ def select_daily_shortlist(
     eligible = [
         c
         for c in candidates
-        if len(c.artifact_ids) >= 2 and not cooled(c) and c.score.total > 0
+        if len(c.artifact_ids) >= 1 and not cooled(c) and c.score.total > 0
     ]
     eligible.sort(key=lambda c: c.score.total, reverse=True)
 

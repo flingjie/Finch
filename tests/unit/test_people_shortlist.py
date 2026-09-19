@@ -100,7 +100,7 @@ class TestScoring:
 
 
 class TestShortlist:
-    def test_requires_two_artifacts(self):
+    def test_single_artifact_is_eligible(self):
         peer = _peer("x", "c1")
         from finch.peers.scoring import PersonScoreBreakdown
 
@@ -108,7 +108,10 @@ class TestShortlist:
         c = ShortlistCandidate(
             peer=peer, person_id="p", score=score, artifact_ids=["a1"], platform="x"
         )
-        assert select_daily_shortlist([c]) == []
+        # D4：一件作品即可进入 shortlist（不再要求 ≥2 件）。
+        items = select_daily_shortlist([c])
+        assert len(items) == 1
+        assert items[0].candidate.person_id == "p"
 
     def test_three_slots(self):
         from finch.peers.scoring import PersonScoreBreakdown

@@ -315,7 +315,7 @@ class DailyPeopleSettings(BaseModel):
     deep_prepare_limit: int = 5
     max_per_platform: int = 20
     min_chinese_platforms_total: int = 15
-    min_artifacts_priority: int = 2
+    min_artifacts_priority: int = 1
     cooldown_days: int = 7
 
 

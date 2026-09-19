@@ -157,8 +157,8 @@ class CreatorEvidenceService:
             known = {e.artifact_id for e in existing}
             arts = self.artifacts.list_by_ids(peer.source_refs)
             pending = [a for a in arts if a.artifact_id not in known]
-            # Need ≥2 total artifacts to be shortlist-eligible; assess when any pending
-            if len(arts) < 2 or not pending:
+            # D4：一件未评估作品即可进入评估；无需 ≥2 件门槛。
+            if not pending:
                 continue
             take = (pending + [a for a in arts if a.artifact_id in known])[:_MAX_ARTIFACTS]
             candidates.append((peer, person, take))
