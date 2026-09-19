@@ -151,6 +151,9 @@ app.add_typer(collisions_app, name="collisions")
 experiments_app = typer.Typer(help="一周内小实验")
 app.add_typer(experiments_app, name="experiments")
 
+inspirations_app = typer.Typer(help="轻量灵感笔记")
+app.add_typer(inspirations_app, name="inspirations")
+
 conversations_app = typer.Typer(help="对话线索与跟进")
 app.add_typer(conversations_app, name="conversations")
 
@@ -3349,6 +3352,151 @@ def peers_show(
 def peers_get(peer_id: str = typer.Argument(..., help="peer id")) -> None:
     """Agent 用确定性读取：等同 peers show --json。"""
     peers_show(peer_id, as_json=True)
+
+
+@inspirations_app.command("save")
+def inspirations_save(
+    text: str = typer.Option(..., "--text", help="想保留的启发（用户原话）"),
+    source: Annotated[
+        list[str] | None, typer.Option("--source", help="来源 URL/ID（可重复）")
+    ] = None,
+    origin: str = typer.Option(
+        "user_input",
+        "--origin",
+        help="observation|conversation|practice|simulation|user_input",
+    ),
+    person: Annotated[
+        list[str] | None, typer.Option("--person", help="关联 person_id（可重复）")
+    ] = None,
+    conversation: str | None = typer.Option(
+        None, "--conversation", help="关联 conversation_id"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """保存一条启发（用户明确「记下来」；相同 text 幂等）。"""
+    from finch.inspirations.models import InspirationOrigin
+    from finch.inspirations.service import InspirationService
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    try:
+        origin_value = InspirationOrigin(origin)
+    except ValueError:
+        valid = ", ".join(o.value for o in InspirationOrigin)
+        typer.echo(f"invalid --origin: {origin} (use one of {valid})")
+        raise typer.Exit(code=1) from None
+    insp = InspirationService(ws).save(
+        text=text,
+        origin=origin_value,
+        source_refs=source or [],
+        person_ids=person or [],
+        conversation_id=conversation,
+    )
+    if as_json:
+        typer.echo(json.dumps(insp.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"saved {insp.id}")
+
+
+@inspirations_app.command("list")
+def inspirations_list(
+    all_rows: bool = typer.Option(False, "--all", help="含已归档"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """列出灵感笔记（默认不含已归档）。"""
+    from finch.inspirations.service import InspirationService
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    rows = InspirationService(ws).list(include_archived=all_rows)
+    if as_json:
+        typer.echo(
+            json.dumps([r.model_dump(mode="json") for r in rows], ensure_ascii=False, indent=2)
+        )
+        return
+    if not rows:
+        typer.echo("(no inspirations)")
+        return
+    for r in rows:
+        typer.echo(f"{r.id}\t{r.origin.value}\t{r.text}")
+
+
+@inspirations_app.command("show")
+def inspirations_show(
+    inspiration_id: str = typer.Argument(..., help="inspiration id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """查看一条灵感笔记。"""
+    from finch.inspirations.repository import InspirationRepository
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    insp = InspirationRepository(ws).get(inspiration_id)
+    if insp is None:
+        typer.echo(f"not found: {inspiration_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(json.dumps(insp.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"id: {insp.id}")
+    typer.echo(f"origin: {insp.origin.value}")
+    typer.echo(f"text: {insp.text}")
+    if insp.source_refs:
+        typer.echo("source_refs: " + ", ".join(insp.source_refs))
+    if insp.person_ids:
+        typer.echo("person_ids: " + ", ".join(insp.person_ids))
+    if insp.notes:
+        typer.echo("notes:")
+        for n in insp.notes:
+            typer.echo(f"  - {n.text}")
+    if insp.archived_at:
+        typer.echo(f"archived_at: {insp.archived_at:%Y-%m-%d}")
+
+
+@inspirations_app.command("note")
+def inspirations_note(
+    inspiration_id: str = typer.Argument(..., help="inspiration id"),
+    text: str = typer.Option(..., "--text", help="追加的笔记"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """追加一条笔记（append-only，不覆盖原话）。"""
+    from finch.inspirations.service import InspirationService
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    insp = InspirationService(ws).note(inspiration_id, text=text)
+    if insp is None:
+        typer.echo(f"not found: {inspiration_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(json.dumps(insp.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"noted {inspiration_id} ({len(insp.notes)} notes)")
+
+
+@inspirations_app.command("archive")
+def inspirations_archive(
+    inspiration_id: str = typer.Argument(..., help="inspiration id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """归档一条灵感笔记。"""
+    from finch.inspirations.service import InspirationService
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    insp = InspirationService(ws).archive(inspiration_id)
+    if insp is None:
+        typer.echo(f"not found: {inspiration_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(json.dumps(insp.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"archived {inspiration_id}")
 
 
 @conversations_app.command("list")
