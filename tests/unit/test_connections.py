@@ -39,6 +39,30 @@ class TestConnectionOpportunity:
         assert opp.decision == ConnectionDecision.CONNECT
         assert opp.user_evidence_refs
 
+    def test_connect_observation_question_without_evidence(self):
+        # D3：具体观察 + 提问，无亲历 → 允许 CONNECT。
+        opp = build_connection_opportunity(
+            peer=_peer(),
+            person_id="person_1",
+            their_artifacts=["twitter:post:1"],
+            their_summary="debugging evals",
+            user_evidence_refs=[],
+            user_contribution="注意到你按 run 维度统计失败",
+        )
+        assert opp.decision == ConnectionDecision.CONNECT
+
+    def test_skip_firsthand_claim_without_evidence(self):
+        # D3：声称亲历但无证据 → SKIP。
+        opp = build_connection_opportunity(
+            peer=_peer(),
+            person_id="person_1",
+            their_artifacts=["twitter:post:1"],
+            their_summary="debugging evals",
+            user_evidence_refs=[],
+            user_contribution="我用过你们的工具，遇到了同样的问题",
+        )
+        assert opp.decision == ConnectionDecision.SKIP
+
 
 class TestReplyCraft:
     def test_skip_praise_only(self):
@@ -50,7 +74,12 @@ class TestReplyCraft:
             user_evidence_refs=["e1"],
             user_contribution="real",
         )
-        draft = craft_reply(opp, observation="看到你写 discarded runs", user_experience="太棒了", question="")
+        draft = craft_reply(
+            opp,
+            observation="看到你写 discarded runs",
+            user_experience="太棒了",
+            question="",
+        )
         assert draft.decision == ConnectionDecision.SKIP
 
     def test_structured_draft(self):
@@ -71,6 +100,26 @@ class TestReplyCraft:
         assert draft.decision == ConnectionDecision.CONNECT
         assert "discard" in draft.full_text.lower() or "Discard" in draft.full_text
         assert draft.user_evidence_refs == ["e1"]
+
+    def test_observation_question_draft(self):
+        # D3：观察 + 提问（无亲历）→ CONNECT。
+        opp = build_connection_opportunity(
+            peer=_peer(),
+            person_id="p",
+            their_artifacts=["a1"],
+            their_summary="x",
+            user_evidence_refs=[],
+            user_contribution="注意到你按 run 统计失败",
+        )
+        draft = craft_reply(
+            opp,
+            observation="看到你按 run 维度统计失败",
+            user_experience="",
+            question="这样统计会不会漏掉跨 run 的关联？",
+        )
+        assert draft.decision == ConnectionDecision.CONNECT
+        assert draft.user_experience == ""
+        assert draft.full_text
 
 
 class TestRelationshipReview:
