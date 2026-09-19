@@ -26,10 +26,10 @@ Skill + domain services, not an LLM agent loop and not a graph runtime. Seven co
 
 ```
 skills/
-  peer-discovery/         公开内容 → Opportunity（8–12 轻量）+ PeerProfile（finch connect today/refresh）
+  peer-discovery/         公开内容 → 首页 3 重点 + 50 人浏览（同一快照投影）+ PeerProfile（finch connect daily）
   interaction-preparation/ 选中后深度准备（finch connect prepare --opportunity，默认 ≤3）
   conversation-follow-up/  按真实触发恢复对话（finch conversations follow-up / ingest）
-  idea-discovery/         Commit/PR/测试 + 用户片段 + 已验证对话 → AuthorIdea（finch ideas）
+  idea-discovery/         Commit/PR/测试 + 用户片段 + 已验证对话 → ContentJob（finch ideas）
   idea-to-draft/          已确认观点 → Draft + CriticReport（finch drafts create）
   voice-profile/          个人表达画像，只从用户认可样本更新（finch voice）
   weekly-reflection/      关系/观点/表达复盘（finch weekly；含消息摘录与修订差异）
@@ -44,11 +44,11 @@ skills/
 src/finch/
   peers/         PeerProfile 关系领域（platform + author_id 幂等归一化）
   conversations/ ConversationThread / Commitment / 事件跟进
-  ideas/         IdeaService（AuthorIdea + position_revisions）、CommitService、FragmentService
+  ideas/         IdeaService（ContentJob + position_revisions）、CommitService、FragmentService
   drafts/        DraftService（已确认观点 → Draft + CriticReport，幂等，不自动发布）
   practice/      PracticeService（expression-practice 会话）
   idea/          finch drafts 复用的纯函数：rewrite_idea / idea_checker_suite
-  content/       ContentJob（AuthorIdea 内部状态实现）、writer、critic 检查器、voice profile
+  content/       ContentJob + AuthorPosition（作者立场状态机）、writer、critic 检查器、voice profile
   style/         writing-style-analysis：StyleReport/StyleComparison + SourceResolver
   webfetch/      通用网页正文提取器（只读 adapter，fail-closed）
   inbox/         连接 + 表达循环的只读统一投影与决策（InboxDecisionService，供 review 命令）

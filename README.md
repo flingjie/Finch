@@ -1,6 +1,6 @@
 # Finch
 
-Finch 是一个**同行连接与个人表达系统**。它帮你发现值得长期交流的同行与真实工具使用者，理解对方情境与具体阻碍，准备有价值的互动，延续对话并积累关系上下文，最终从实践与交流中形成自己的观点，写出像自己的内容。
+Finch 是一个**跨行业连接与灵感助理**。它帮你发现不同领域中持续创造、分享一手经验的人，理解值得了解或交流的原因，延续真实对话并积累关系上下文，保存由观察、交流和实践引发的新问题、新视角与方法；公开表达（形成自己的观点、写成像自己的内容）是可选出口。
 
 Finch 记录对话事实、明确承诺与线程内问题/使用反馈笔记；不做跨来源痛点聚类或产品机会评分（那是 builderDNA），也不做产业战略（Quinn）。工具收款权威记录属于具体工具项目。
 
@@ -29,7 +29,7 @@ uv run finch diagnose                    # 探测 gh / opencli 可用性
 
 # —— 连接主循环 ——
 uv run finch connect refresh             # 有界刷新发现池 + 快照
-uv run finch connect today --limit 10    # 纯读：8–12 轻量机会 + 需跟进对话
+uv run finch connect today --limit 10    # 纯读：今日重点 + 需跟进对话
 uv run finch connect daily [--refresh]   # 每日 50 人分层推荐（5 重点 / 15 摘要 / 30 浏览）
 uv run finch connect person <person_id>  # 查看某人完整证据与档案（只读）
 uv run finch connect more --snapshot ID --limit 5
@@ -79,10 +79,10 @@ uv run finch review approve <draft_id>
 
 ```
 skills/
-  peer-discovery/        公开讨论 → Opportunity（8–12 轻量）+ PeerProfile
+  peer-discovery/        公开讨论 → 首页 3 重点 + 50 人浏览（同一快照投影）+ PeerProfile
   interaction-preparation/ 选中后深度准备互动建议（默认 ≤3）
   conversation-follow-up/  按真实触发信号恢复对话并提出下一步
-  idea-discovery/        Commit/用户片段/已验证对话 → AuthorIdea
+  idea-discovery/        Commit/用户片段/已验证对话 → ContentJob
   idea-to-draft/         已确认观点 → Draft + CriticReport
   voice-profile/         个人表达画像（只从用户认可样本更新）
   weekly-reflection/     关系质量/观点形成/表达反馈复盘
