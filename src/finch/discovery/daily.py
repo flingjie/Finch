@@ -34,7 +34,11 @@ from finch.peers.evidence_repo import CreatorEvidenceRepository
 from finch.peers.evidence_service import CreatorEvidenceService
 from finch.peers.person_service import PersonRepository, PersonService
 from finch.peers.presentation import PersonPresentationRepository
-from finch.peers.recommendations import DailyRecommendationSet, select_daily_recommendations
+from finch.peers.recommendations import (
+    DailyRecommendationSet,
+    select_daily_recommendations,
+    select_home_items,
+)
 from finch.peers.scoring import score_person
 from finch.peers.shortlist import ShortlistCandidate, ShortlistItem, ShortlistSlot
 from finch.settings import Settings
@@ -494,6 +498,7 @@ def run_daily_discovery(
         ranking_version="people-first-1",
         recommendations=_recommendation_entries(recs),
         recommendation_shortfall=dict(recs.shortfall),
+        home_person_ids=[r.person_id for r in select_home_items(recs)],
     )
     DiscoverySnapshotRepository(ws).upsert(snapshot)
 

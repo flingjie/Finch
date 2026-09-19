@@ -190,3 +190,27 @@ def select_daily_recommendations(
         result.shortfall["cooldown"] = cooled_count
 
     return result
+
+
+def select_home_items(
+    recs: DailyRecommendationSet,
+    *,
+    home_limit: int = 3,
+    surprise_limit: int = 1,
+) -> list[Recommendation]:
+    """从 priority 层选取首页重点（D7）：意外发现 ≤ surprise_limit，不足不凑数。
+
+    priority 层已按方向 round-robin 多样化；这里按顺序取 home_limit 人，仅约束
+    ``serendipity``（意外发现）数量。返回按原 rank 有序。
+    """
+    picks: list[Recommendation] = []
+    surprise = 0
+    for rec in recs.priority:
+        if len(picks) >= home_limit:
+            break
+        if rec.direction == "serendipity" and surprise >= surprise_limit:
+            continue
+        picks.append(rec)
+        if rec.direction == "serendipity":
+            surprise += 1
+    return picks

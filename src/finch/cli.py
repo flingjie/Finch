@@ -1917,6 +1917,24 @@ def _render_recommendation_entries(
     return lines
 
 
+def _render_home_entries(
+    entries: list[RecommendationEntry], home_ids: list[str]
+) -> list[str]:
+    """首页 3 重点（D7）：从持久化条目按 home_person_ids 顺序渲染。"""
+    by_id = {e.person_id: e for e in entries}
+    home = [by_id[pid] for pid in home_ids if pid in by_id]
+    if not home:
+        return []
+    lines = [f"## 今日重点 ({len(home)})"]
+    for e in home:
+        name = e.display_name or e.peer_id
+        lines.append(f"{e.rank + 1}. {name} ({e.platform}) [{e.direction}]")
+        if e.artifact_ids:
+            lines.append(f"   evidence: {', '.join(e.artifact_ids[:3])}")
+    lines.append("")
+    return lines
+
+
 def _persist_discovery(
     ws: Workspace,
     result: EngagementRunResult,
@@ -1938,12 +1956,13 @@ def _persist_discovery(
     if not result.opportunities and result.status == "failed":
         return DiscoverySnapshotRepository(ws).latest()
 
-    # F1：保留 run_daily_discovery 已写入的完整 50 人推荐，避免后一次写入覆盖。
+    # F1：保留 run_daily_discovery 已写入的完整 50 人推荐与首页投影，避免覆盖。
     latest = DiscoverySnapshotRepository(ws).latest()
     recommendations = latest.recommendations if latest is not None else []
     recommendation_shortfall = (
         latest.recommendation_shortfall if latest is not None else {}
     )
+    home_person_ids = latest.home_person_ids if latest is not None else []
 
     snap_id = snapshot_id or result.run_id
     snapshot = DiscoverySnapshot(
@@ -1964,6 +1983,7 @@ def _persist_discovery(
         ranking_version="1",
         recommendations=recommendations,
         recommendation_shortfall=recommendation_shortfall,
+        home_person_ids=home_person_ids,
     )
     DiscoverySnapshotRepository(ws).upsert(snapshot)
     return snapshot
@@ -2343,9 +2363,10 @@ def connect_today(
 def connect_daily(
     refresh: bool = typer.Option(False, "--refresh", help="先刷新再读取"),
     limit: int = typer.Option(50, "--limit", help="展示机会数"),
+    view: str = typer.Option("home", "--view", help="home|browse"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """连接主循环入口：每日 50 人分层推荐（5 重点 / 15 摘要 / 30 浏览）+ 浏览机会。"""
+    """连接主循环入口：首页 3 重点（默认）+ 50 人分层浏览（--view browse）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -2380,11 +2401,13 @@ def connect_daily(
     # F1：非刷新读取时从快照重放完整 50 人推荐。
     rec_entries = snapshot.recommendations if snapshot is not None else []
     rec_shortfall = snapshot.recommendation_shortfall if snapshot is not None else {}
+    home_ids = snapshot.home_person_ids if snapshot is not None else []
 
     if as_json:
         typer.echo(json.dumps({
             "snapshot_id": snapshot.id if snapshot else None,
             "refreshed": need_refresh,
+            "home_person_ids": home_ids,
             "recommendations": (
                 _recommendations_payload(daily.recommendations)
                 if (daily is not None and daily.recommendations is not None)
@@ -2425,15 +2448,18 @@ def connect_daily(
             f"(snapshot from {snapshot.created_at:%Y-%m-%d %H:%M} UTC; "
             f"run with --refresh for fresh results)"
         )
-    rec_lines = (
-        _render_recommendations(daily.recommendations)
-        if (daily is not None and daily.recommendations is not None)
-        else _render_recommendation_entries(rec_entries, rec_shortfall)
-    )
+    if view == "browse":
+        rec_lines = (
+            _render_recommendations(daily.recommendations)
+            if (daily is not None and daily.recommendations is not None)
+            else _render_recommendation_entries(rec_entries, rec_shortfall)
+        )
+    else:
+        rec_lines = _render_home_entries(rec_entries, home_ids)
     if rec_lines:
         typer.echo("\n".join(rec_lines))
     else:
-        typer.echo("(run with --refresh for daily 50-people recommendations)")
+        typer.echo("(run with --refresh for daily recommendations)")
         typer.echo("")
     typer.echo(_render_daily(focus))
 

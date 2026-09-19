@@ -188,6 +188,8 @@ class DiscoverySnapshot(BaseModel):
     # 完整 50 人分层推荐 + 数量缺口（F1：刷新后持久化，非刷新读取可重放）
     recommendations: list[RecommendationEntry] = Field(default_factory=list)
     recommendation_shortfall: dict[str, int] = Field(default_factory=dict)
+    # 首页 3 个重点发现（D7：与 50 人浏览来自同一快照，按序持久化）
+    home_person_ids: list[str] = Field(default_factory=list)
 
 
 class PresentationRecord(BaseModel):

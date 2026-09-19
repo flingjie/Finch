@@ -119,3 +119,19 @@ def test_recommendation_entries_serialize_tiers():
     assert {e.person_id for e in entries} == {r.person_id for r in recs.all}
     assert all(e.tier in {"priority", "summary", "browse"} for e in entries)
     assert all(e.peer_id == f"peer_{e.person_id}" for e in entries)
+
+
+def test_select_home_items_limits_surprise():
+    """D7：首页重点从 priority 取，意外发现（serendipity）受 surprise_limit 约束。"""
+    from finch.peers.recommendations import select_home_items
+
+    cands = [_cand(f"p{i:03d}", total=0.9 - i * 0.01) for i in range(6)]
+    recs = select_daily_recommendations(cands, settings=Settings())
+    # 无 hit_categories → 方向为 serendipity；surprise_limit=1 只保留 1 个意外发现。
+    home = select_home_items(recs, home_limit=3, surprise_limit=1)
+    assert len(home) == 1
+    assert home[0].direction == "serendipity"
+
+    home2 = select_home_items(recs, home_limit=3, surprise_limit=3)
+    assert len(home2) == 3
+    assert {r.person_id for r in home2} == {r.person_id for r in recs.priority[:3]}
