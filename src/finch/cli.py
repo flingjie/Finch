@@ -2599,7 +2599,11 @@ def connect_prepare(
             "(browse with connect today; do not prepare the whole list)"
         )
         raise typer.Exit(code=1)
-    cap = settings.engagement.max_reply_drafts
+    # F2：选中后的深度准备取 deep_prepare_limit 与 max_reply_drafts 的较小值。
+    cap = min(
+        settings.discovery.daily_people.deep_prepare_limit,
+        settings.engagement.max_reply_drafts,
+    )
     over_cap = len(ids) > cap
     selected = ids[:cap]
     proposals: list[InteractionProposal] = []

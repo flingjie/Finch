@@ -301,7 +301,7 @@ def test_connect_prepare_with_opportunity(monkeypatch, tmp_path):
     assert InteractionRepository(ws).get("x:post_1:draft_reply") is not None
 
 
-def test_connect_prepare_caps_at_ten(monkeypatch, tmp_path):
+def test_connect_prepare_caps_at_deep_prepare_limit(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -331,8 +331,8 @@ def test_connect_prepare_caps_at_ten(monkeypatch, tmp_path):
         args.extend(["--opportunity", oid])
     r = CliRunner().invoke(app, args)
     assert r.exit_code == 1, r.output
-    assert calls["n"] == 10
-    assert "batch limit is 10" in r.output
+    assert calls["n"] == 5
+    assert "batch limit is 5" in r.output
 
 
 def test_connect_prepare_requires_selection(monkeypatch, tmp_path):
