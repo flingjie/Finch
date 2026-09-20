@@ -276,11 +276,30 @@ save 的 --source 可空；修改正文提供既有编辑方式或明确更新�
 ### P0：基线与具体回归样例
 
 - [ ] 记录HEAD，读取AGENTS.md，核对本表路径和接口。（部分：实施中已读 AGENTS.md 并核对路径，未记录实际 HEAD）
-- [ ] 将D1–D10、F1–F2映射到实际函数与已有测试。（未落地为文档映射表；各条对应 commit 见 git log）
+- [x] 将D1–D10、F1–F2映射到实际函数与已有测试。（映射表见下方附录）
 - [ ] 准备来源可追溯的语义样例：单作品实践者、陌生领域提问、未知用途、低证据、重复作品、模拟讨论。（未做）
 - [ ] 更新产品契约，预定功能明确标待实施。（契约已随实现更新，但“待实施项”未单独标注）
 
 验收：无“已实现能力重新造一遍”的任务，无把现有问题模式误判为必填的改动。
+
+### 附：D1–D10、F1–F2 实现映射（函数 + 测试 + commit）
+
+| 编号 | 语义 | 关键实现（文件 → 函数/字段） | 测试 | commit |
+|---|---|---|---|---|
+| D1 | 默认只读 daily | `cli.py` → `connect_daily(refresh=False)` / `_snapshot_fresh` / `_load_today_payload` | `test_cli_connect.py`（daily 只读/纯读） | `f67b8a7` |
+| D2 | 刷新不自动连接/碰撞 | `discovery/daily.py` → `run_daily_discovery`（移除 assess_connection / CollisionService 自动调用） | `test_discovery_daily.py`、`e2e/test_daily_50_people.py` | `6c85696` |
+| D3 | 观察+提问门禁 | `connections/service.py` → `build_connection_opportunity` / `craft_reply`；`discovery/daily.py` → `assess_connection` | `test_connections.py` | `93ad611` |
+| D4 | 单作品入重点 | `peers/evidence_service.py` + `peers/shortlist.py` + `peers/recommendations.py` + `settings.min_artifacts_priority=1` | `test_people_shortlist.py::test_single_artifact_is_eligible` | `0be526b` |
+| D5 | 去重计分 | `peers/scoring.py`（按 distinct artifact 计数，非证据行） | `test_people_shortlist.py::test_duplicate_artifact_not_double_counted` | `d80b098` |
+| D6 | 实践背景多样性 | `peers/recommendations.py` → `select_daily_recommendations`（`_practice_topics` 替换四方向轮转） | `test_daily_people_recommendations.py` | `5ef6e56` |
+| D7 | 首页3人 + browse | `peers/recommendations.py` → `select_home_items`；`cli.py` → `connect_daily --view browse`；`engagement/models.py` → `home_person_ids` | `test_daily_people_recommendations.py` | `53bc16b` |
+| D8 | 灵感笔记 | `inspirations/{models,service,repository}.py` + `cli.py`（inspirations 命令组） | `test_inspirations.py` | `895827f` |
+| D9 | 主题轮换 | `sources/query_plan.py` → `select_exploration_topic`；`settings.py` → `exploration_topics` | `test_source_query_plan.py` | `25487ac` |
+| D10 | 三事件分离 | `peers/presentation.py` → `record_shown`/`record_selected`；`cli.py` → `_record_person_presentations`；`engagement/models.py` → `PresentationRecord.presentation_semantics_version` | `test_presentation.py` | `64e9f00` |
+| F1 | 完整推荐快照持久化 | `engagement/models.py` → `DiscoverySnapshot.recommendations`；`discovery/daily.py` → `_recommendation_entries`；`cli.py` → `_persist_discovery` | `test_cli_connect.py::test_persist_discovery_preserves_recommendations` | `f67b8a7` |
+| F2 | 预算接入 | `discovery/daily.py` → `run_daily_discovery(max_persons=semantic_assess_limit)`；`cli.py` → `connect_prepare(cap=deep_prepare_limit)` | `test_cli_connect.py::test_connect_prepare_caps_at_deep_prepare_limit` | `a2e2a48` |
+
+注：D10 之后另有三个后续提交，属「统一旧入口 + JSON schema_version + 轻量反馈」收敛，非本表 D/F 项：`89b4379`（people shortlist/connections today→关系域）、`1469e05`（connect today→daily 别名）、`2b23ee9`（移除 legacy shortlist 字段 + schema_version）、`960df6d`（轻量反馈 no_time_today）。
 
 ### P1：优先修复执行边界与快照
 
