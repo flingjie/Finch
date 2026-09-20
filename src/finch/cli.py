@@ -2689,14 +2689,37 @@ def connect_prepare(
 
 @connect_app.command("feedback")
 def connect_feedback(
-    path: str = typer.Option(..., "--file", help="feedback.json"),
+    path: str | None = typer.Option(None, "--file", help="feedback.json（批量）"),
+    snapshot: str = typer.Option("", "--snapshot", help="快照 ID（轻量内联）"),
+    opportunity: str = typer.Option("", "--opportunity", help="机会 ID（轻量内联）"),
+    dimension: str = typer.Option("", "--dimension", help="interest|action"),
+    value: str = typer.Option("", "--value", help="兴趣/行动值"),
+    reason: str = typer.Option("", "--reason", help="可选原因"),
 ) -> None:
-    """校验并记录推荐反馈（兴趣 / 行动维度）。"""
+    """校验并记录推荐反馈（兴趣 / 行动维度）。
+
+    轻量内联：--opportunity + --dimension + --value（如 --value no_time_today 表示今天没时间，
+    属瞬态跳过，不映射为长期排斥）；或用 --file 批量。
+    """
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
-    raw = json.loads(Path(path).read_text(encoding="utf-8"))
-    items = raw if isinstance(raw, list) else [raw]
+    if path:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        items = raw if isinstance(raw, list) else [raw]
+    elif opportunity and dimension and value:
+        items = [
+            {
+                "snapshot_id": snapshot,
+                "opportunity_id": opportunity,
+                "dimension": dimension,
+                "value": value,
+                "reason": reason,
+            }
+        ]
+    else:
+        typer.echo("pass --file feedback.json OR --opportunity + --dimension + --value")
+        raise typer.Exit(code=1)
     repo = RecommendationFeedbackRepository(ws)
     saved = 0
     for item in items:
@@ -2718,7 +2741,7 @@ def connect_feedback(
             typer.echo(f"invalid interest value: {feedback.value}")
             raise typer.Exit(code=1)
         if feedback.dimension == "action" and feedback.value not in {
-            "prepare", "save_for_later", "no_opening"
+            "prepare", "save_for_later", "no_opening", "no_time_today"
         }:
             typer.echo(f"invalid action value: {feedback.value}")
             raise typer.Exit(code=1)

@@ -213,6 +213,8 @@ class ActionFeedbackValue(StrEnum):
     PREPARE = "prepare"
     SAVE_FOR_LATER = "save_for_later"
     NO_OPENING = "no_opening"
+    # 轻量反馈：今天没时间/暂时跳过 —— 瞬态信号，不得映射为长期排斥。
+    NO_TIME_TODAY = "no_time_today"
 
 
 class RecommendationFeedback(BaseModel):

@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 
 from finch.collisions.models import (
     ExperimentStatus,
-    MicroExperiment,
     build_collision,
     start_experiment,
 )
@@ -88,7 +87,7 @@ class TestExplainableFeedback:
                 opportunity_id="o",
                 snapshot_id="s",
                 dimension="interest",
-                value="skip",
+                value="unsuitable",
                 created_at=now,
             )
             for i in range(4)

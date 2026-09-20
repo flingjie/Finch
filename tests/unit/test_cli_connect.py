@@ -838,3 +838,38 @@ def test_people_shortlist_all_lists_every_thread(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["people", "shortlist", "--all", "--json"])
     assert r.exit_code == 0, r.output
     assert {t["id"] for t in json.loads(r.output)} == {"t_pending", "t_idle"}
+
+
+# ---- 轻量反馈（P3）：内联记录 + no_time_today 非长期排斥 ----
+
+
+def test_connect_feedback_inline_records_no_time_today(monkeypatch, tmp_path):
+    from finch.storage.repositories import RecommendationFeedbackRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, [
+        "connect", "feedback",
+        "--snapshot", "s1",
+        "--opportunity", "o1",
+        "--dimension", "action",
+        "--value", "no_time_today",
+        "--reason", "今天没时间",
+    ])
+    assert r.exit_code == 0, r.output
+    fbs = RecommendationFeedbackRepository(ws).list_all()
+    assert len(fbs) == 1
+    assert fbs[0].dimension == "action"
+    assert fbs[0].value == "no_time_today"
+
+
+def test_connect_feedback_requires_source(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["connect", "feedback"])
+    assert r.exit_code == 1
+    assert "--file" in r.output or "--opportunity" in r.output
