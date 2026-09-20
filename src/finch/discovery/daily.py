@@ -45,7 +45,7 @@ from finch.settings import Settings
 from finch.sources.models import RawArtifact
 from finch.sources.opencli_gateway import OpenCliGateway
 from finch.sources.orchestrator import DiscoveryOrchestrator, SyncResult
-from finch.sources.query_plan import build_context_by_source
+from finch.sources.query_plan import build_context_by_source, select_exploration_topic
 from finch.storage.repositories import (
     DiscoverySnapshotRepository,
     OpportunityRepository,
@@ -356,7 +356,9 @@ def run_daily_discovery(
 
     gw = gateway or OpenCliGateway(profile=settings.opencli.profile)
     orch = DiscoveryOrchestrator(ws, gateway=gw)
-    contexts = build_context_by_source(settings, all_sources=True, limit=20)
+    contexts = build_context_by_source(
+        settings, all_sources=True, limit=20, topic=select_exploration_topic(settings)
+    )
 
     if not skip_sync:
         result.sync_results = orch.sync_all(context_by_source=contexts)

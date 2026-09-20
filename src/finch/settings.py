@@ -164,6 +164,15 @@ class SourceXiaohongshuPlan(SourceDiscoverySettings):
     urls: list[str] = Field(default_factory=list)
 
 
+class ExplorationTopic(BaseModel):
+    """可编辑主题组（D9）：分源查询 + GitHub 登录名（GitHub 用登录名，不是主题词）。"""
+
+    id: str
+    label: str = ""
+    queries_by_source: dict[str, list[str]] = Field(default_factory=dict)
+    github_users: list[str] = Field(default_factory=list)
+
+
 class SourcesSettings(BaseModel):
     """跨平台采集的分源查询（``connect daily`` / ``sources sync --all``）。"""
 
@@ -173,6 +182,8 @@ class SourcesSettings(BaseModel):
     v2ex: SourceV2exPlan = Field(default_factory=SourceV2exPlan)
     weixin: SourceWeixinPlan = Field(default_factory=SourceWeixinPlan)
     xiaohongshu: SourceXiaohongshuPlan = Field(default_factory=SourceXiaohongshuPlan)
+    # 主题轮换组：每次明确刷新合并一个主题组的查询；纯读不推进。
+    exploration_topics: list[ExplorationTopic] = Field(default_factory=list)
 
 
 class ScoringWeights(BaseModel):

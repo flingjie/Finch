@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from finch.settings import (
+    ExplorationTopic,
     Settings,
     SourceGithubPlan,
     SourcesSettings,
@@ -11,7 +12,7 @@ from finch.settings import (
     SourceWeixinPlan,
 )
 from finch.sources.models import Source
-from finch.sources.query_plan import build_context_by_source
+from finch.sources.query_plan import build_context_by_source, select_exploration_topic
 
 
 def test_cli_override_single_source():
@@ -112,3 +113,44 @@ def test_weixin_queries_map_to_search():
     ctx = build_context_by_source(settings, all_sources=True)
     assert ctx[Source.WEIXIN].queries == ["AI Agent 实践"]
     assert ctx[Source.WEIXIN].mode == "query"
+
+
+def test_select_exploration_topic_rotates_deterministically():
+    from datetime import UTC, datetime
+
+    topics = [
+        ExplorationTopic(id="a", queries_by_source={"twitter": ["q1"]}),
+        ExplorationTopic(id="b", queries_by_source={"twitter": ["q2"]}),
+    ]
+    settings = Settings(sources=SourcesSettings(exploration_topics=topics))
+
+    assert select_exploration_topic(Settings()) is None  # 无主题 → None
+
+    day0 = datetime(2026, 1, 1, tzinfo=UTC)
+    day1 = datetime(2026, 1, 2, tzinfo=UTC)
+    t0 = select_exploration_topic(settings, now=day0)
+    t1 = select_exploration_topic(settings, now=day1)
+    assert t0 is not None and t1 is not None
+    assert t0.id != t1.id  # 跨天轮换
+    assert select_exploration_topic(settings, now=day0).id == t0.id  # 同一天同一组
+
+
+def test_topic_queries_merge_into_sources():
+    topic = ExplorationTopic(
+        id="failure_learning",
+        queries_by_source={"twitter": ["复盘"], "v2ex": ["失败复盘"]},
+        github_users=["octocat"],
+    )
+    settings = Settings(
+        sources=SourcesSettings(
+            twitter=SourceTwitterPlan(queries=["agent"], enabled=True),
+            github=SourceGithubPlan(users=["jackwener"], enabled=True),
+            v2ex=SourceV2exPlan(queries=["工具"], enabled=True),
+        )
+    )
+    ctx = build_context_by_source(settings, all_sources=True, topic=topic)
+    # 用户固定查询优先，主题查询追加去重。
+    assert ctx[Source.TWITTER].queries == ["agent", "复盘"]
+    assert ctx[Source.V2EX].queries == ["工具", "失败复盘"]
+    # GitHub 用 github_users（登录名），不用主题词。
+    assert ctx[Source.GITHUB].queries == ["jackwener", "octocat"]

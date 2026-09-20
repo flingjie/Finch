@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from finch.settings import Settings, SourceDiscoverySettings
+from datetime import UTC, datetime
+
+from finch.settings import ExplorationTopic, Settings, SourceDiscoverySettings
 from finch.sources.connectors import DiscoveryContext
 from finch.sources.models import Source
 
@@ -31,6 +33,20 @@ def _payload(settings: Settings, src: Source) -> tuple[list[str], list[str]]:
     return [], []
 
 
+def select_exploration_topic(
+    settings: Settings, *, now: datetime | None = None
+) -> ExplorationTopic | None:
+    """按天轮换选择一个主题组（D9）。
+
+    确定性（同一天同一组）、幂等（重试复用同组）、纯读安全（不推进状态）。
+    """
+    topics = settings.sources.exploration_topics
+    if not topics:
+        return None
+    clock = now or datetime.now(UTC)
+    return topics[clock.timetuple().tm_yday % len(topics)]
+
+
 def build_context_by_source(
     settings: Settings,
     *,
@@ -39,6 +55,7 @@ def build_context_by_source(
     source: Source | None = None,
     limit: int = 20,
     all_sources: bool = False,
+    topic: ExplorationTopic | None = None,
 ) -> dict[Source, DiscoveryContext]:
     """Build per-source DiscoveryContext.
 
@@ -69,6 +86,12 @@ def build_context_by_source(
         if not plan.enabled or plan.mode == "disabled":
             continue
         q, u = _payload(settings, src)
+        # D9：合并当前主题组的查询（去重；用户固定查询优先，GitHub 用登录名）。
+        if topic is not None:
+            if src == Source.GITHUB:
+                q = list(dict.fromkeys([*q, *topic.github_users]))
+            else:
+                q = list(dict.fromkeys([*q, *topic.queries_by_source.get(src.value, [])]))
         if plan.mode == "query" and not q:
             out[src] = DiscoveryContext(config_error=f"{src.value}: enabled but no queries")
             continue
