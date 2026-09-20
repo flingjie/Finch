@@ -644,3 +644,138 @@ def test_connect_with_x_renders_source_and_saves(monkeypatch, tmp_path):
     assert "X" in r.output or "x.com" in r.output
     assert InteractionRepository(ws).get(candidate.id) is not None
 
+
+
+# ---- D10 展示语义（--json 无曝光副作用；文本前台才记曝光） ----
+
+
+def _seed_daily_snapshot(ws: Workspace, snapshot_id: str = "snap_1") -> None:
+    from finch.engagement.models import DiscoverySnapshot, RecommendationEntry
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    DiscoverySnapshotRepository(ws).upsert(
+        DiscoverySnapshot(
+            id=snapshot_id,
+            created_at=datetime.now(UTC),
+            context_fingerprint="ctx",
+            ranked_opportunity_ids=["opp_test_1"],
+            recommendations=[
+                RecommendationEntry(
+                    person_id="p1",
+                    peer_id="peer_abc",
+                    display_name="Alice",
+                    tier="priority",
+                    rank=0,
+                    direction="peer",
+                    platform="x",
+                    score=0.5,
+                    artifact_ids=["a0"],
+                    hit_labels=["graphs"],
+                )
+            ],
+            recommendation_shortfall={},
+            home_person_ids=["p1"],
+        )
+    )
+    OpportunityRepository(ws).upsert(_opportunity())
+
+
+def test_connect_daily_json_does_not_record_exposure(monkeypatch, tmp_path):
+    from finch.peers.presentation import PersonPresentationRepository
+    from finch.storage.repositories import PresentationRecordRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_daily_snapshot(ws)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["connect", "daily", "--json"])
+    assert r.exit_code == 0, r.output
+    assert PresentationRecordRepository(ws).list_all() == []
+    assert PersonPresentationRepository(ws).list_all() == []
+
+
+def test_connect_daily_text_records_person_exposure_idempotent(monkeypatch, tmp_path):
+    from finch.peers.presentation import PersonPresentationRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_daily_snapshot(ws)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["connect", "daily"])
+    assert r.exit_code == 0, r.output
+    repo = PersonPresentationRepository(ws)
+    presented = [x for x in repo.list_all() if x.event == "presented"]
+    assert {x.person_id for x in presented} == {"p1"}
+
+    # 重复打开同一快照：记录总数不变，冷却不被反复延长。
+    before = len(repo.list_all())
+    CliRunner().invoke(app, ["connect", "daily"])
+    assert len(repo.list_all()) == before
+
+
+def test_connect_today_json_does_not_record_exposure(monkeypatch, tmp_path):
+    from finch.storage.repositories import PresentationRecordRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    result = _daily_result()
+    cli._persist_discovery(ws, result)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["connect", "today", "--json"])
+    assert r.exit_code == 0, r.output
+    assert PresentationRecordRepository(ws).list_all() == []
+
+
+def test_connect_more_json_does_not_record_exposure(monkeypatch, tmp_path):
+    from finch.storage.repositories import PresentationRecordRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    result = _daily_result()
+    extra = _opportunity().model_copy(update={"id": "opp_test_2", "peer_id": "peer_abc"})
+    result = result.model_copy(update={"opportunities": [*result.opportunities, extra]})
+    snap = cli._persist_discovery(ws, result)
+    assert snap is not None
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(
+        app, ["connect", "more", "--snapshot", snap.id, "--limit", "5", "--json"]
+    )
+    assert r.exit_code == 0, r.output
+    assert PresentationRecordRepository(ws).list_all() == []
+
+
+def test_connect_person_records_selected_text_only(monkeypatch, tmp_path):
+    from finch.peers.presentation import PersonPresentationRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    PeerRepository(ws).upsert(
+        PeerProfile(
+            id="peer_abc",
+            platform_identities=[PlatformIdentity(platform="x", author_id="a")],
+            display_name="Alice",
+            person_id="p1",
+        )
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    # --json 机器读取不记录 selected。
+    CliRunner().invoke(app, ["connect", "person", "peer_abc", "--json"])
+    assert PersonPresentationRepository(ws).list_all() == []
+
+    # 文本前台明确查看 → 记录一次 selected（幂等）。
+    r = CliRunner().invoke(app, ["connect", "person", "peer_abc"])
+    assert r.exit_code == 0, r.output
+    selected = [x for x in PersonPresentationRepository(ws).list_all() if x.event == "selected"]
+    assert [x.person_id for x in selected] == ["p1"]
+    CliRunner().invoke(app, ["connect", "person", "peer_abc"])
+    assert len(PersonPresentationRepository(ws).list_all()) == 1

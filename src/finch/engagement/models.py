@@ -199,6 +199,8 @@ class PresentationRecord(BaseModel):
     snapshot_id: str
     opportunity_id: str
     presented_at: datetime
+    # D10：展示语义版本；历史“生成即曝光”数据默认 "1"，新写入 "2"。
+    presentation_semantics_version: str = "1"
 
 
 class InterestFeedbackValue(StrEnum):

@@ -2002,8 +2002,30 @@ def _record_presentations(
             snapshot_id=snapshot_id,
             opportunity_id=oid,
             presented_at=now,
+            presentation_semantics_version="2",
         )
         repo.upsert(rec)
+
+
+def _record_person_presentations(
+    ws: Workspace,
+    snapshot_id: str,
+    entries: list[RecommendationEntry],
+    *,
+    surface: str,
+) -> None:
+    """D10：把实际展示到首页/浏览的人物写入 person 级 presented（驱动冷却）。"""
+    from finch.peers.presentation import PersonPresentationRepository
+
+    repo = PersonPresentationRepository(ws)
+    for e in entries:
+        repo.record_shown(
+            person_id=e.person_id,
+            peer_id=e.peer_id,
+            platform=e.platform,
+            surface=surface,
+            snapshot_id=snapshot_id,
+        )
 
 
 def _snapshot_fresh(snapshot: DiscoverySnapshot | None, ttl_hours: int) -> bool:
@@ -2334,10 +2356,6 @@ def connect_today(
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     focus, snapshot = _load_today_payload(ws, settings, limit=limit)
-    if snapshot is not None:
-        _record_presentations(
-            ws, snapshot.id, [o.id for o in focus["opportunities"]["items"]]
-        )
     if as_json:
         typer.echo(json.dumps({
             "snapshot_id": snapshot.id if snapshot else None,
@@ -2356,6 +2374,10 @@ def connect_today(
     if snapshot is None:
         typer.echo("no discovery snapshot; run: uv run finch connect refresh")
         return
+    # D10：仅文本前台实际输出时记录曝光（--json 机器读取无副作用）。
+    _record_presentations(
+        ws, snapshot.id, [o.id for o in focus["opportunities"]["items"]]
+    )
     typer.echo(_render_daily(focus))
 
 
@@ -2387,10 +2409,6 @@ def connect_daily(
             snapshot = _persist_discovery(ws, result)
 
     focus, snapshot = _load_today_payload(ws, settings, limit=limit)
-    if snapshot is not None:
-        _record_presentations(
-            ws, snapshot.id, [o.id for o in focus["opportunities"]["items"]]
-        )
 
     # Connection opportunities for the priority tier (backward-compat JSON field).
     connections_payload: list[dict] = []
@@ -2454,8 +2472,21 @@ def connect_daily(
             if (daily is not None and daily.recommendations is not None)
             else _render_recommendation_entries(rec_entries, rec_shortfall)
         )
+        shown_entries = rec_entries
     else:
         rec_lines = _render_home_entries(rec_entries, home_ids)
+        by_id = {e.person_id: e for e in rec_entries}
+        shown_entries = [by_id[pid] for pid in home_ids if pid in by_id]
+    # D10：仅文本前台实际输出时记录曝光；首页只记实际展示的人物，浏览记全部展开条目。
+    _record_presentations(
+        ws, snapshot.id, [o.id for o in focus["opportunities"]["items"]]
+    )
+    _record_person_presentations(
+        ws,
+        snapshot.id,
+        shown_entries,
+        surface="browse" if view == "browse" else "home",
+    )
     if rec_lines:
         typer.echo("\n".join(rec_lines))
     else:
@@ -2501,6 +2532,19 @@ def connect_person(
             "evidence": [e.model_dump(mode="json") for e in evs],
         }, ensure_ascii=False, indent=2))
         return
+    # D10：明确查看某人是 selected 事件（显式动作，与被动曝光分开，不影响冷却）。
+    if resolved:
+        from finch.peers.presentation import PersonPresentationRepository
+
+        platform = (
+            peer.platform_identities[0].platform if peer.platform_identities else ""
+        )
+        PersonPresentationRepository(ws).record_selected(
+            person_id=resolved,
+            peer_id=peer.id,
+            platform=platform,
+            surface="person",
+        )
     typer.echo(_render_peer_detail(peer))
     if evs:
         typer.echo("")
@@ -2536,13 +2580,14 @@ def connect_more(
         return
     batch_ids = remaining_ids[:limit]
     opps = OpportunityRepository(ws).list_by_ids(batch_ids)
-    _record_presentations(ws, snapshot_id, [o.id for o in opps])
     if as_json:
         typer.echo(json.dumps({
             "snapshot_id": snapshot_id,
             "opportunities": [o.model_dump(mode="json") for o in opps],
         }, ensure_ascii=False, indent=2))
         return
+    # D10：仅文本前台实际输出时记录曝光（--json 机器读取无副作用）。
+    _record_presentations(ws, snapshot_id, [o.id for o in opps])
     typer.echo(_render_opportunity_cards(opps, limit=limit))
 
 
@@ -3155,13 +3200,6 @@ def people_shortlist(
         if today
         else []
     )
-    for item in items:
-        presentations.record_shown(
-            person_id=item.candidate.person_id,
-            peer_id=item.candidate.peer.id,
-            platform=item.candidate.platform,
-            slot=item.slot.value,
-        )
     if as_json:
         payload = [
             {
@@ -3180,6 +3218,15 @@ def people_shortlist(
     if not items:
         typer.echo("no shortlist candidates (need ≥2 traceable artifacts each)")
         return
+    # D10：仅文本前台实际输出时记录曝光；幂等键避免重复打开延长冷却。
+    for item in items:
+        presentations.record_shown(
+            person_id=item.candidate.person_id,
+            peer_id=item.candidate.peer.id,
+            platform=item.candidate.platform,
+            slot=item.slot.value,
+            surface="shortlist",
+        )
     for i, item in enumerate(items, 1):
         c = item.candidate
         typer.echo(f"{i}. [{item.slot.value}] {c.peer.display_name or c.peer.id}")
