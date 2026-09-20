@@ -49,16 +49,29 @@ class V2exConnector:
             ]
         if context.queries:
             search_cmd = resolve_command(caps, "v2ex", ["search"])
-            if not search_cmd:
+            if search_cmd:
+                return [
+                    OpenCliRequest(
+                        surface="v2ex",
+                        command=search_cmd,
+                        args=(q, "-f", "json"),
+                        timeout_seconds=60,
+                    )
+                    for q in context.queries
+                ]
+            # The current V2EX adapter has no keyword search command. Falling
+            # back to the hot list keeps query-mode sources useful instead of
+            # reporting a false "no matching commands" failure.
+            hot_cmd = resolve_command(caps, "v2ex", ["hot", "topics"])
+            if not hot_cmd:
                 return []
             return [
                 OpenCliRequest(
                     surface="v2ex",
-                    command=search_cmd,
-                    args=(q, "-f", "json"),
+                    command=hot_cmd,
+                    args=("-f", "json"),
                     timeout_seconds=60,
                 )
-                for q in context.queries
             ]
         return []
 

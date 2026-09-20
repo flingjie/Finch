@@ -267,7 +267,7 @@ class TestCapabilityDrivenPlan:
         assert len(reqs) == 1
         assert reqs[0].command == "hot"
 
-    def test_v2ex_query_mode_ignores_hot(self):
+    def test_v2ex_query_mode_falls_back_to_hot_when_search_is_missing(self):
         from finch.sources.connectors import DiscoveryContext
         from finch.sources.models import OpenCliCapabilities
 
@@ -276,8 +276,27 @@ class TestCapabilityDrivenPlan:
             captured_at=datetime.now(UTC),
             surfaces={"v2ex": ["hot"]},
         )
-        # 默认 query 模式且无 queries → 不抓 hot。
-        assert V2exConnector().plan(DiscoveryContext(), capabilities=caps) == []
+        reqs = V2exConnector().plan(
+            DiscoveryContext(queries=["AI Agent"]), capabilities=caps
+        )
+        assert len(reqs) == 1
+        assert reqs[0].command == "hot"
+
+    def test_v2ex_query_mode_prefers_search_when_available(self):
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.models import OpenCliCapabilities
+
+        caps = OpenCliCapabilities(
+            snapshot_id="c1",
+            captured_at=datetime.now(UTC),
+            surfaces={"v2ex": ["search", "hot"]},
+        )
+        reqs = V2exConnector().plan(
+            DiscoveryContext(queries=["AI Agent"]), capabilities=caps
+        )
+        assert len(reqs) == 1
+        assert reqs[0].command == "search"
+        assert reqs[0].args[0] == "AI Agent"
 
     def test_weixin_query_mode_emits_search(self):
         from finch.sources.connectors import DiscoveryContext
