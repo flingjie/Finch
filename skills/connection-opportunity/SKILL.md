@@ -19,5 +19,5 @@ description: >
 
 ## CLI
 
-- `finch connections today` 展示槽位
+- `finch connections today` 展示需回应/兑现的真实承诺（关系域投影，非发现排序）
 - 深度准备仍可走 `finch connect prepare`（并存）

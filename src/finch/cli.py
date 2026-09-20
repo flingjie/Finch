@@ -139,7 +139,7 @@ app.add_typer(connect_app, name="connect")
 peers_app = typer.Typer(help="同行档案与关系上下文")
 app.add_typer(peers_app, name="peers")
 
-people_app = typer.Typer(help="跨平台人物 shortlist（People First）")
+people_app = typer.Typer(help="今日承诺面：需回应/兑现的真实对话线索")
 app.add_typer(people_app, name="people")
 
 connections_app = typer.Typer(help="连接机会与互动记录（用户亲自发布）")
@@ -3142,105 +3142,37 @@ def peers_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
 
 @people_app.command("shortlist")
 def people_shortlist(
-    today: bool = typer.Option(True, "--today/--all", help="今日三槽位 shortlist"),
+    today: bool = typer.Option(
+        True, "--today/--all", help="--today 只列需回应的承诺；--all 列全部线索"
+    ),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """以人为核心的每日 shortlist（最多 3 槽；宁缺毋滥）。"""
-    from finch.peers.evidence_repo import CreatorEvidenceRepository
-    from finch.peers.person_service import PersonRepository, PersonService
-    from finch.peers.presentation import PersonPresentationRepository
-    from finch.peers.scoring import score_person
-    from finch.peers.shortlist import ShortlistCandidate, select_daily_shortlist
-
+    """今日承诺面：需回应/兑现的真实对话线索（关系域投影，非发现推荐、不受冷却限制）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
-    peers = PeerRepository(ws).list_all()
-    person_svc = PersonService(PersonRepository(ws))
-    evidence_repo = CreatorEvidenceRepository(ws)
-    presentations = PersonPresentationRepository(ws)
-    recent_platforms = presentations.recent_platforms(within_days=14)
-    candidates: list[ShortlistCandidate] = []
-    for peer in peers:
-        person = person_svc.ensure_from_peer(peer)
-        if peer.person_id != person.person_id:
-            peer = peer.model_copy(update={"person_id": person.person_id})
-            PeerRepository(ws).upsert(peer)
-        evs = evidence_repo.list_for_person(person.person_id)
-        score = score_person(evs)
-        platform = (
-            peer.platform_identities[0].platform if peer.platform_identities else ""
-        )
-        artifact_ids = [e.artifact_id for e in evs]
-        # Also accept practice_evidence_refs / source_refs as traceable evidence.
-        if len(artifact_ids) < 2:
-            artifact_ids = list(
-                dict.fromkeys([*artifact_ids, *peer.source_refs, *peer.practice_evidence_refs])
-            )
-        last_shown = presentations.last_shown_at(person.person_id)
-        has_new = bool(
-            person.last_evidence_at
-            and last_shown
-            and person.last_evidence_at > last_shown
-        )
-        candidates.append(
-            ShortlistCandidate(
-                peer=peer,
-                person_id=person.person_id,
-                score=score,
-                artifact_ids=artifact_ids[:8],
-                why=peer.why_relevant,
-                platform=platform,
-                last_shown_at=last_shown,
-                has_new_work=has_new,
-            )
-        )
-    items = (
-        select_daily_shortlist(candidates, recent_platforms=recent_platforms)
-        if today
-        else []
-    )
-    if as_json:
-        payload = [
-            {
-                "slot": i.slot.value,
-                "peer_id": i.candidate.peer.id,
-                "person_id": i.candidate.person_id,
-                "score": i.candidate.score.total,
-                "artifact_ids": i.candidate.artifact_ids,
-                "why": i.candidate.why,
-                "platform": i.candidate.platform,
-            }
-            for i in items
+    threads = ConversationThreadRepository(ws).list_all()
+    if today:
+        now = datetime.now(UTC)
+        threads = [
+            t for t in threads if ConversationService().needs_follow_up(t, now=now)
         ]
-        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    if as_json:
+        typer.echo(json.dumps(
+            [t.model_dump(mode="json") for t in threads], ensure_ascii=False, indent=2
+        ))
         return
-    if not items:
-        typer.echo("no shortlist candidates (need ≥2 traceable artifacts each)")
+    if not threads:
+        typer.echo("no commitments needing follow-up" if today else "no conversations")
         return
-    # D10：仅文本前台实际输出时记录曝光；幂等键避免重复打开延长冷却。
-    for item in items:
-        presentations.record_shown(
-            person_id=item.candidate.person_id,
-            peer_id=item.candidate.peer.id,
-            platform=item.candidate.platform,
-            slot=item.slot.value,
-            surface="shortlist",
-        )
-    for i, item in enumerate(items, 1):
-        c = item.candidate
-        typer.echo(f"{i}. [{item.slot.value}] {c.peer.display_name or c.peer.id}")
-        typer.echo(f"   platform={c.platform} score={c.score.total:.2f}")
-        typer.echo(f"   evidence: {', '.join(c.artifact_ids[:3])}")
-        if c.why:
-            typer.echo(f"   why: {c.why}")
+    typer.echo(_render_thread_cards(threads, needs_follow_up=today))
 
 
 @connections_app.command("today")
 def connections_today(
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """今日连接面：委托 people shortlist --today。"""
+    """今日承诺面：需回应/兑现的真实对话线索（委托 people shortlist --today）。"""
     people_shortlist(today=True, as_json=as_json)
 
 

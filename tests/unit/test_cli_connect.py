@@ -779,3 +779,59 @@ def test_connect_person_records_selected_text_only(monkeypatch, tmp_path):
     assert [x.person_id for x in selected] == ["p1"]
     CliRunner().invoke(app, ["connect", "person", "peer_abc"])
     assert len(PersonPresentationRepository(ws).list_all()) == 1
+
+
+# ---- 关系承诺面：people shortlist / connections today 代理到关系域 ----
+
+
+def _seed_commitment_thread(ws: Workspace, thread_id: str, *, pending: bool) -> None:
+    from finch.conversations.models import FollowUpTrigger
+    from finch.storage.repositories import ConversationThreadRepository
+
+    ConversationThreadRepository(ws).upsert(
+        ConversationThread(
+            id=thread_id,
+            peer_id="peer_abc",
+            topic="graphs",
+            pending_triggers=[FollowUpTrigger.OWN_COMMITMENT] if pending else [],
+        )
+    )
+
+
+def test_people_shortlist_today_lists_commitments(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_commitment_thread(ws, "t_pending", pending=True)
+    _seed_commitment_thread(ws, "t_idle", pending=False)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["people", "shortlist", "--json"])
+    assert r.exit_code == 0, r.output
+    assert [t["id"] for t in json.loads(r.output)] == ["t_pending"]
+
+
+def test_connections_today_delegates_to_commitments(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_commitment_thread(ws, "t_pending", pending=True)
+    _seed_commitment_thread(ws, "t_idle", pending=False)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["connections", "today", "--json"])
+    assert r.exit_code == 0, r.output
+    assert [t["id"] for t in json.loads(r.output)] == ["t_pending"]
+
+
+def test_people_shortlist_all_lists_every_thread(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_commitment_thread(ws, "t_pending", pending=True)
+    _seed_commitment_thread(ws, "t_idle", pending=False)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["people", "shortlist", "--all", "--json"])
+    assert r.exit_code == 0, r.output
+    assert {t["id"] for t in json.loads(r.output)} == {"t_pending", "t_idle"}
