@@ -1,6 +1,6 @@
 """每日 50 人分层推荐：确定性组合 5 重点 / 15 摘要 / 30 浏览。
 
-输入候选池（``PersonCandidate``），按四类发现方向做软配额、平台上限、冷却与中文来源下限，
+输入候选池（``PersonCandidate``），按评分排序 + 实践背景多样性组合，配合平台上限与冷却，
 输出 ``priority/summary/browse`` 三层 + shortfall。合格候选不足时不凑数，返回实际数量与原因。
 """
 
@@ -12,9 +12,6 @@ from datetime import UTC, datetime, timedelta
 from finch.discovery.candidate_pool import PersonCandidate
 from finch.peers.models import PeerProfile
 from finch.settings import Settings
-
-# 发现方向（软配额；不足时其他方向补位，shortfall 记录原因）。
-_DIRECTION_ORDER = ("peer", "adjacent", "role", "serendipity")
 
 # 中文平台（用于 min_chinese_platforms_total 下限）。
 _CHINESE_PLATFORMS = frozenset({"v2ex", "weixin", "xiaohongshu"})
@@ -99,6 +96,11 @@ def _direction_for(c: PersonCandidate) -> str:
     return "serendipity"
 
 
+def _practice_topics(c: PersonCandidate) -> frozenset[str]:
+    """实践背景信号：主题/兴趣标签；空 = 未知（不强制多样）。"""
+    return frozenset(c.peer.expertise_topics) | frozenset(c.peer.current_interests)
+
+
 def _cooled(c: PersonCandidate, clock: datetime, cooldown_days: int) -> bool:
     if c.has_new_work:
         return False
@@ -152,23 +154,22 @@ def select_daily_recommendations(
             result.browse.append(rec)
         return True
 
-    # 1) priority：按方向 round-robin 以覆盖四类发现方向（软配额）。
-    by_dir: dict[str, list[PersonCandidate]] = {d: [] for d in _DIRECTION_ORDER}
-    for c in multi:
-        by_dir[_direction_for(c)].append(c)
-    for d in by_dir:
-        by_dir[d].sort(key=lambda c: (-c.score.total, c.person_id))
-    while len(result.priority) < dp.priority_count:
-        progressed = False
-        for d in _DIRECTION_ORDER:
-            if len(result.priority) >= dp.priority_count:
-                break
-            for c in by_dir[d]:
-                if accept(c, "priority"):
-                    progressed = True
-                    break
-        if not progressed:
+    # 1) priority：评分排序 → 去重 → 尽量覆盖不同实践背景（D6）。
+    multi_sorted = sorted(multi, key=lambda c: (-c.score.total, c.person_id))
+    picked_topics: set[str] = set()
+    for c in multi_sorted:
+        if len(result.priority) >= dp.priority_count:
             break
+        topics = _practice_topics(c)
+        if topics and topics & picked_topics:
+            continue
+        if accept(c, "priority"):
+            picked_topics |= topics
+    # 多样性跳过导致未选满时，按评分补位（不丢弃可信人物）。
+    for c in multi_sorted:
+        if len(result.priority) >= dp.priority_count:
+            break
+        accept(c, "priority")
 
     # 2) summary：剩余 multi 按分数填充。
     for c in [c for c in multi if c.person_id not in used]:

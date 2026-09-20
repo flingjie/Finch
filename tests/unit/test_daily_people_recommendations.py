@@ -135,3 +135,34 @@ def test_select_home_items_limits_surprise():
     home2 = select_home_items(recs, home_limit=3, surprise_limit=3)
     assert len(home2) == 3
     assert {r.person_id for r in home2} == {r.person_id for r in recs.priority[:3]}
+
+
+def test_priority_prefers_practice_diversity():
+    """D6：不同实践背景即使分低也优先进入重点。"""
+
+    def cand(person_id: str, topics: list[str], total: float) -> PersonCandidate:
+        peer = PeerProfile(
+            id=f"peer_{person_id}",
+            platform_identities=[
+                PlatformIdentity(platform="x", author_id=f"u_{person_id}")  # type: ignore[arg-type]
+            ],
+            expertise_topics=topics,
+        )
+        return PersonCandidate(
+            person_id=person_id,
+            peer=peer,
+            score=_score(total),
+            artifact_ids=["a0", "a1"],
+            platform="x",
+        )
+
+    cands = [
+        cand("p1", ["agents"], 0.9),
+        cand("p2", ["agents"], 0.89),
+        cand("p3", ["agents"], 0.88),
+        cand("p4", ["museum"], 0.87),
+    ]
+    recs = select_daily_recommendations(cands, settings=Settings())
+    prio_ids = [r.person_id for r in recs.priority]
+    assert "p4" in prio_ids  # 不同实践背景即使分低也进重点
+    assert prio_ids.index("p4") < prio_ids.index("p2")  # 多样性优先于同背景高分
