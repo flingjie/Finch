@@ -22,7 +22,7 @@ description: >
 
 - 点名一个人：`finch connect with --x <handle|url>` 或 `--github <handle|url>`
   （可选 `--note` / `--from-idea` / `--draft`）。跳过浏览，直接落 PeerProfile 并准备 1 条提纲。
-- 用户只给裸 handle、没说来源：先问 X 还是 GitHub，再调用本命令。禁止为此翻 `var/peers/` 或跑 `connect today`。
+- 用户只给裸 handle、没说来源：先问 X 还是 GitHub，再调用本命令。禁止为此翻 `var/peers/` 或跑 `connect daily`/`connect today`。
 - 选中机会：`finch connect prepare --opportunity <id>`（可重复；本批最多 5 = deep_prepare_limit）
 - 手动帖子 + 笔记：`finch connect create --input <url> [--from-idea <id>|--note "..."] [--draft]`
 - 批准 / 拒绝 / 改草稿：`approve` / `reject` / `edit`

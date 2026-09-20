@@ -2351,34 +2351,8 @@ def connect_today(
     limit: int = typer.Option(10, "--limit", help="展示机会数（目标 8–12）"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """纯读取候选与关系投影，不调用网络/LLM。"""
-    settings = load_settings()
-    ws = Workspace(settings.paths.var_dir)
-    ws.ensure()
-    focus, snapshot = _load_today_payload(ws, settings, limit=limit)
-    if as_json:
-        typer.echo(json.dumps({
-            "snapshot_id": snapshot.id if snapshot else None,
-            "context_fingerprint": snapshot.context_fingerprint if snapshot else "",
-            "conversations_needing_follow_up": [
-                t.model_dump(mode="json") for t in focus["conversations"]["items"]
-            ],
-            "opportunities": [
-                o.model_dump(mode="json") for o in focus["opportunities"]["items"]
-            ],
-            "idea_candidates": [
-                j.model_dump(mode="json") for j in focus["ideas"]["items"]
-            ],
-        }, ensure_ascii=False, indent=2))
-        return
-    if snapshot is None:
-        typer.echo("no discovery snapshot; run: uv run finch connect refresh")
-        return
-    # D10：仅文本前台实际输出时记录曝光（--json 机器读取无副作用）。
-    _record_presentations(
-        ws, snapshot.id, [o.id for o in focus["opportunities"]["items"]]
-    )
-    typer.echo(_render_daily(focus))
+    """已由 connect daily 首页取代：委托同一快照投影（纯读，不调用网络/LLM）。"""
+    connect_daily(refresh=False, limit=limit, view="home", as_json=as_json)
 
 
 @connect_app.command("daily")
@@ -2670,7 +2644,7 @@ def connect_prepare(
     if not ids:
         typer.echo(
             "selection required: pass one or more --opportunity <id> "
-            "(browse with connect today; do not prepare the whole list)"
+            "(browse with connect daily; do not prepare the whole list)"
         )
         raise typer.Exit(code=1)
     # F2：选中后的深度准备取 deep_prepare_limit 与 max_reply_drafts 的较小值。
