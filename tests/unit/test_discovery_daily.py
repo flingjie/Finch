@@ -153,8 +153,9 @@ def test_run_daily_skips_network_with_seeded_artifacts(tmp_path: Path):
     )
     assert result.engagement is not None
     assert result.engagement.status in {"succeeded", "empty"}
-    # With evidence from fake runner, shortlist should populate
-    assert len(result.shortlist) >= 1 or result.engagement.posts_found >= 2
+    # With evidence from fake runner, priority tier should populate
+    assert result.recommendations is not None
+    assert len(result.recommendations.priority) >= 1 or result.engagement.posts_found >= 2
 
 
 def test_run_daily_three_slot_cap_and_metrics(tmp_path: Path):
@@ -200,9 +201,9 @@ def test_run_daily_three_slot_cap_and_metrics(tmp_path: Path):
         skip_sync=True,
     )
 
-    # 观测指标不改变选择：priority 层（旧 shortlist 字段）不超过 priority_count=5。
-    assert len(result.shortlist) <= 5
+    # 观测指标不改变选择：priority 层不超过 priority_count=5。
     assert result.recommendations is not None
+    assert len(result.recommendations.priority) <= 5
     assert result.metrics.recommended_count == result.recommendations.total
     assert result.metrics.people_count >= 5
     assert result.metrics.llm_calls >= 1

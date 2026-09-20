@@ -259,7 +259,7 @@ def _daily_full():
     from finch.discovery.daily import DailyDiscoveryResult
 
     eng = _daily_result()
-    return DailyDiscoveryResult(run_id=eng.run_id, engagement=eng, shortlist=[], connections=[])
+    return DailyDiscoveryResult(run_id=eng.run_id, engagement=eng, connections=[])
 
 
 def test_connect_daily_persists_peers_and_renders_sections(monkeypatch, tmp_path):
@@ -351,9 +351,12 @@ def test_connect_daily_json(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["connect", "daily", "--refresh", "--json"])
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
+    assert payload["schema_version"] == 2
     assert payload["snapshot_id"] == "daily_test"
     assert [p["id"] for p in payload["peers"]] == ["peer_abc"]
     assert [o["id"] for o in payload["opportunities"]] == ["opp_test_1"]
+    # 阶段 3：移除旧三槽位 shortlist 兼容字段。
+    assert "shortlist" not in payload
 
 
 def test_persist_discovery_preserves_recommendations(tmp_path):

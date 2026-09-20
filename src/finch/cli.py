@@ -2397,6 +2397,7 @@ def connect_daily(
 
     if as_json:
         typer.echo(json.dumps({
+            "schema_version": 2,
             "snapshot_id": snapshot.id if snapshot else None,
             "refreshed": need_refresh,
             "home_person_ids": home_ids,
@@ -2405,17 +2406,6 @@ def connect_daily(
                 if (daily is not None and daily.recommendations is not None)
                 else _entries_payload(rec_entries, rec_shortfall)
             ),
-            "shortlist": [
-                {
-                    "slot": i.slot.value,
-                    "peer_id": i.candidate.peer.id,
-                    "person_id": i.candidate.person_id,
-                    "score": i.candidate.score.total,
-                    "platform": i.candidate.platform,
-                    "artifact_ids": i.candidate.artifact_ids,
-                }
-                for i in (daily.shortlist if daily else [])
-            ],
             "connections": connections_payload,
             "conversations_needing_follow_up": [
                 t.model_dump(mode="json") for t in focus["conversations"]["items"]

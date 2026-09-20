@@ -40,7 +40,7 @@ from finch.peers.recommendations import (
     select_home_items,
 )
 from finch.peers.scoring import score_person
-from finch.peers.shortlist import ShortlistCandidate, ShortlistItem, ShortlistSlot
+from finch.peers.shortlist import ShortlistCandidate
 from finch.settings import Settings
 from finch.sources.models import RawArtifact
 from finch.sources.opencli_gateway import OpenCliGateway
@@ -77,7 +77,6 @@ class DailyDiscoveryResult:
 
     run_id: str
     sync_results: list[SyncResult] = field(default_factory=list)
-    shortlist: list[ShortlistItem] = field(default_factory=list)
     recommendations: DailyRecommendationSet | None = None
     connections: list[ConnectionOpportunity] = field(default_factory=list)
     opportunities: list[Opportunity] = field(default_factory=list)
@@ -419,23 +418,6 @@ def run_daily_discovery(
         1 for c in candidates if len(c.artifact_ids) >= 1 and c.score.total > 0
     )
     metrics.recommended_count = recs.total
-    # 兼容旧 shortlist 字段：priority 层转 ShortlistItem（旧展示/碰撞复用）。
-    result.shortlist = [
-        ShortlistItem(
-            slot=ShortlistSlot.NEW_CREATOR,
-            candidate=ShortlistCandidate(
-                peer=rec.candidate.peer,
-                person_id=rec.person_id,
-                score=rec.candidate.score,
-                artifact_ids=list(rec.candidate.artifact_ids),
-                why=rec.candidate.peer.why_relevant,
-                platform=rec.candidate.platform,
-                last_shown_at=rec.candidate.last_shown_at,
-                has_new_work=rec.candidate.has_new_work,
-            ),
-        )
-        for rec in recs.priority
-    ]
 
     # Browse opportunities from artifacts (no second X/Reddit search)
     opps = opportunities_from_artifacts(
@@ -447,10 +429,10 @@ def run_daily_discovery(
         opp_repo.upsert(opp)
 
     peers_out: list[RankedPeer] = []
-    for item in result.shortlist:
+    for rec in recs.priority:
         peers_out.append(
             RankedPeer(
-                profile=item.candidate.peer,
+                profile=rec.candidate.peer,
                 value=PeerValue(
                     topic_overlap=0.5,
                     practical_depth=0.5,
@@ -458,13 +440,13 @@ def run_daily_discovery(
                     continuity_potential=0.5,
                     repetition_penalty=0.0,
                     promotion_risk=0.0,
-                    total=item.candidate.score.total,
-                    reasons=["people-first shortlist"],
+                    total=rec.candidate.score.total,
+                    reasons=["people-first priority"],
                 ),
             )
         )
 
-    status = "succeeded" if (result.shortlist or opps) else "empty"
+    status = "succeeded" if (recs.priority or opps) else "empty"
     engagement = EngagementRunResult(
         run_id=run_id,
         posts_found=len(artifacts),
@@ -472,7 +454,7 @@ def run_daily_discovery(
         peers=peers_out,
         failures=[],
         status=status,  # type: ignore[arg-type]
-        summary=f"sources→people shortlist={len(result.shortlist)} opps={len(opps)}",
+        summary=f"sources→people priority={len(recs.priority)} opps={len(opps)}",
         context_fingerprint=run_id,
         source_coverage={
             "sources": {
@@ -484,7 +466,7 @@ def run_daily_discovery(
                 }
                 for r in result.sync_results
             },
-            "shortlist": len(result.shortlist),
+            "priority": len(recs.priority),
             "connections": len(result.connections),
         },
     )
