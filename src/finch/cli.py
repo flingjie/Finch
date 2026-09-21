@@ -38,11 +38,13 @@ from .engagement.metrics import (
     render_relationship_metrics,
 )
 from .engagement.models import (
+    ActionFeedbackValue,
     DiscoverySnapshot,
     InteractionAction,
     InteractionProposal,
     InteractionRecord,
     InteractionStatus,
+    InterestFeedbackValue,
     Opportunity,
     PresentationRecord,
     RecommendationEntry,
@@ -2704,10 +2706,17 @@ def connect_feedback(
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
+    inline_given = bool(opportunity or dimension or value)
+    if path and inline_given:
+        typer.echo("pass either --file OR --opportunity/--dimension/--value, not both")
+        raise typer.Exit(code=1)
     if path:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
         items = raw if isinstance(raw, list) else [raw]
     elif opportunity and dimension and value:
+        if not snapshot:
+            typer.echo("inline feedback requires --snapshot <id>")
+            raise typer.Exit(code=1)
         items = [
             {
                 "snapshot_id": snapshot,
@@ -2721,13 +2730,16 @@ def connect_feedback(
         typer.echo("pass --file feedback.json OR --opportunity + --dimension + --value")
         raise typer.Exit(code=1)
     repo = RecommendationFeedbackRepository(ws)
+    interest_values = {v.value for v in InterestFeedbackValue}
+    action_values = {v.value for v in ActionFeedbackValue}
     saved = 0
     for item in items:
         if "created_at" not in item:
             item = {**item, "created_at": datetime.now(UTC).isoformat()}
         if "id" not in item:
+            # 稳定幂等键：同一 (opportunity, dimension, value) 重复记录覆盖而非追加。
             digest = hashlib.sha256(
-                f"{item.get('opportunity_id')}:{item.get('dimension')}:{item.get('value')}:{item['created_at']}".encode()
+                f"{item.get('opportunity_id')}:{item.get('dimension')}:{item.get('value')}".encode()
             ).hexdigest()[:12]
             item = {**item, "id": f"rfb_{digest}"}
         try:
@@ -2735,14 +2747,10 @@ def connect_feedback(
         except ValidationError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1) from exc
-        if feedback.dimension == "interest" and feedback.value not in {
-            "worth_following", "neutral", "unsuitable"
-        }:
+        if feedback.dimension == "interest" and feedback.value not in interest_values:
             typer.echo(f"invalid interest value: {feedback.value}")
             raise typer.Exit(code=1)
-        if feedback.dimension == "action" and feedback.value not in {
-            "prepare", "save_for_later", "no_opening", "no_time_today"
-        }:
+        if feedback.dimension == "action" and feedback.value not in action_values:
             typer.echo(f"invalid action value: {feedback.value}")
             raise typer.Exit(code=1)
         repo.upsert(feedback)

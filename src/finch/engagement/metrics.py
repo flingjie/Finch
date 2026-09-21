@@ -232,11 +232,15 @@ def active_cross_domain_relationships_30d(
 def explain_recommendation_adjustments(
     feedback: list,
 ) -> list[dict[str, str]]:
-    """根据 accept/skip/reply 反馈生成可解释的权重调整建议（不静默改分）。
+    """根据推荐反馈生成可解释的权重调整建议（不静默改分）。
 
     返回 list[{signal, effect, rationale}]，供周报复盘展示；实际改权需人工确认。
     """
-    from finch.engagement.models import RecommendationFeedback
+    from finch.engagement.models import (
+        ActionFeedbackValue,
+        InterestFeedbackValue,
+        RecommendationFeedback,
+    )
 
     interests: dict[str, int] = {}
     actions: dict[str, int] = {}
@@ -251,8 +255,12 @@ def explain_recommendation_adjustments(
     out: list[dict[str, str]] = []
     # 长期排斥只来自 unsuitable / no_opening；no_time_today（今天没时间）是瞬态信号，
     # 不参与 skip 聚合，避免「没时间」被当成长期排斥。
-    skip_n = interests.get("unsuitable", 0) + actions.get("no_opening", 0)
-    accept_n = interests.get("worth_following", 0) + actions.get("prepare", 0)
+    skip_n = (
+        interests.get(InterestFeedbackValue.UNSUITABLE.value, 0)
+        + actions.get(ActionFeedbackValue.NO_OPENING.value, 0)
+    )
+    accept_n = interests.get(InterestFeedbackValue.WORTH_FOLLOWING.value, 0)
+    prepared = actions.get(ActionFeedbackValue.PREPARE.value, 0)
     if skip_n > accept_n and skip_n >= 3:
         out.append(
             {
@@ -261,13 +269,12 @@ def explain_recommendation_adjustments(
                 "rationale": "用户跳过多于接受，降低低证据推荐",
             }
         )
-    replied = actions.get("prepare", 0)
-    if replied >= 2:
+    if prepared >= 2:
         out.append(
             {
-                "signal": f"replied={replied}",
+                "signal": f"prepared={prepared}",
                 "effect": "boost connection_opportunity weight slightly",
-                "rationale": "用户实际准备过的类型更有连接价值",
+                "rationale": "用户实际准备过互动的类型更有连接价值",
             }
         )
     if not out:

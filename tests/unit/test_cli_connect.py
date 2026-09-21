@@ -873,3 +873,58 @@ def test_connect_feedback_requires_source(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["connect", "feedback"])
     assert r.exit_code == 1
     assert "--file" in r.output or "--opportunity" in r.output
+
+
+def test_connect_feedback_inline_requires_snapshot(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, [
+        "connect", "feedback",
+        "--opportunity", "o1",
+        "--dimension", "action",
+        "--value", "no_opening",
+    ])
+    assert r.exit_code == 1
+    assert "snapshot" in r.output
+
+
+def test_connect_feedback_file_and_inline_conflict(monkeypatch, tmp_path):
+    import json as _json
+
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    f = tmp_path / "fb.json"
+    f.write_text(_json.dumps([]))
+
+    r = CliRunner().invoke(app, [
+        "connect", "feedback",
+        "--file", str(f),
+        "--opportunity", "o1",
+        "--dimension", "action",
+        "--value", "prepare",
+    ])
+    assert r.exit_code == 1
+    assert "not both" in r.output
+
+
+def test_connect_feedback_inline_idempotent(monkeypatch, tmp_path):
+    from finch.storage.repositories import RecommendationFeedbackRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    args = [
+        "connect", "feedback",
+        "--snapshot", "s1",
+        "--opportunity", "o1",
+        "--dimension", "action",
+        "--value", "no_opening",
+    ]
+    CliRunner().invoke(app, args)
+    CliRunner().invoke(app, args)
+
+    # 稳定幂等键：同一次反馈重复提交覆盖而非追加。
+    assert len(RecommendationFeedbackRepository(ws).list_all()) == 1
