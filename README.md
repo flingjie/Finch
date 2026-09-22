@@ -91,6 +91,7 @@ skills/
   voice-profile/         个人表达画像（只从用户认可样本更新）
   weekly-reflection/     关系质量/观点形成/表达反馈复盘
   # —— 独立训练工具（不进入默认流水线）——
+  community-scout/       每周 3 个可进入的社区（社区行动卡，验证中）
   expression-practice/   表达训练
   writing-style-analysis/ 分析他人写作风格（只读，不写画像）
   feynman-practice/      费曼技巧
