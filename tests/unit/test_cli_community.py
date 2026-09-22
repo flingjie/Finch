@@ -77,6 +77,22 @@ def test_cli_save_inspect_feedback_roundtrip(monkeypatch, tmp_path):
     assert rows[0]["feedback"]["result"] == "joined"
 
 
+def test_cli_list_candidate_without_feedback(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    card = _card(tmp_path)
+
+    r = CliRunner().invoke(app, ["community", "save", "--file", card, "--json"])
+    assert r.exit_code == 0, r.output
+    saved = json.loads(r.output)
+
+    r = CliRunner().invoke(app, ["community", "list", "--json"])
+    assert r.exit_code == 0, r.output
+    rows = json.loads(r.output)
+    assert len(rows) == 1
+    assert rows[0]["profile"]["id"] == saved["id"]
+    assert rows[0]["feedback"] is None
+
+
 def test_cli_feedback_rejects_invalid_result(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
     r = CliRunner().invoke(app, ["community", "feedback", "comm_x", "--result", "bogus"])

@@ -3677,7 +3677,7 @@ def community_list(
     if as_json:
         payload = []
         for c in candidates:
-            fb = latest[c.id]
+            fb = latest.get(c.id)
             payload.append(
                 {
                     "profile": c.model_dump(mode="json"),
@@ -3690,7 +3690,7 @@ def community_list(
         typer.echo("(no communities)")
         return
     for c in candidates:
-        fb = latest[c.id]
+        fb = latest.get(c.id)
         state = fb.result.value if fb else "-"
         typer.echo(f"{c.id}\t{c.week}\t{c.fit_score}\t{state}\t{c.name}")
 
