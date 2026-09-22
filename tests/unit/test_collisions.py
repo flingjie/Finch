@@ -62,8 +62,8 @@ class TestCollisionServiceSave:
 
         from pydantic import BaseModel
 
-        from finch.collisions.service import CollisionDraft, CollisionService
         from finch.collisions.repository import CollisionRepository
+        from finch.collisions.service import CollisionDraft, CollisionService
         from finch.peers.models import RelationshipStage
         from finch.peers.scoring import PersonScoreBreakdown
         from finch.peers.service import PeerService

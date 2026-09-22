@@ -130,8 +130,18 @@ def test_assign_next_action_modes():
     assert assign_next_action(SuggestedMode.LEARN, has_practice=False) == ("observe", 5)
     assert assign_next_action(SuggestedMode.DISCUSS, has_practice=False)[0] == "ask"
     assert assign_next_action(SuggestedMode.DISCUSS, has_practice=True)[0] == "reply"
-    assert assign_next_action(SuggestedMode.INVESTIGATE, has_practice=False, time_budget=20)[0] == "try"
-    assert assign_next_action(SuggestedMode.INVESTIGATE, has_practice=False, time_budget=10)[0] == "ask"
+    assert (
+        assign_next_action(
+            SuggestedMode.INVESTIGATE, has_practice=False, time_budget=20
+        )[0]
+        == "try"
+    )
+    assert (
+        assign_next_action(
+            SuggestedMode.INVESTIGATE, has_practice=False, time_budget=10
+        )[0]
+        == "ask"
+    )
 
 
 def test_pending_review_excluded_from_core_set():
