@@ -427,3 +427,38 @@ def test_snapshot_persists_plan_and_coverage(tmp_path, monkeypatch):
     assert snap.plan_summary["lookback_hours"] == 24
     assert snap.plan_summary["config_fingerprint"] == plan.config_fingerprint
 
+
+
+def test_gate_by_window_prefers_fresh_retrieved_at(tmp_path):
+    """无 published_at 的平台：本轮 fresh 时间戳优先于存量首次 retrieved_at。"""
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    as_of = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
+    stored = _art("1", "v2exer", "long enough content about agent reliability")
+    stored = stored.model_copy(
+        update={"published_at": None, "retrieved_at": as_of - timedelta(days=40)}
+    )
+    ArtifactRepository(ws).upsert(stored)
+    fresh = stored.model_copy(update={"retrieved_at": as_of - timedelta(hours=1)})
+
+    def cand() -> ShortlistCandidate:
+        return ShortlistCandidate(
+            peer=PeerProfile(id="peer_v2exer", platform_identities=[]),
+            person_id="v2exer",
+            score=_score(),
+            artifact_ids=[stored.artifact_id],
+        )
+
+    kept, stale = _gate_by_window(
+        [cand()],
+        ws=ws,
+        lookback_hours=24,
+        as_of=as_of,
+        fresh={fresh.artifact_id: fresh},
+    )
+    assert stale == 0
+    assert kept[0].artifact_ids == [stored.artifact_id]
+
+    # 不传 fresh：存量旧 retrieved_at 会被判过期。
+    _, stale2 = _gate_by_window([cand()], ws=ws, lookback_hours=24, as_of=as_of)
+    assert stale2 == 1

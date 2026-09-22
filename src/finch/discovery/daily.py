@@ -246,10 +246,13 @@ def _gate_by_window(
     ws: Workspace,
     lookback_hours: int | None,
     as_of: datetime,
+    fresh: dict[str, RawArtifact] | None = None,
 ) -> tuple[list[ShortlistCandidate], int]:
     """按时间窗裁剪候选证据（P1）：仅保留窗口内 artifact，无窗口内证据者剔除。
 
     - ``lookback_hours=None`` 时不做时间门控（原样返回）。
+    - ``fresh`` 是本轮同步到的 artifact（时间戳最新）；优先用它，避免无 ``published_at``
+      的平台（v2ex/小红书）被存量首次 ``retrieved_at`` 误判为过期。
     - 未在 ``ArtifactRepository`` 命中的引用（如用户自身 ``practice_evidence_refs``）
       不是"发现的证据"，不做时间门控，原样保留。
     - 未来时间戳钳制为 ``as_of``。
@@ -260,6 +263,7 @@ def _gate_by_window(
 
     cutoff = as_of - timedelta(hours=lookback_hours)
     repo = ArtifactRepository(ws)
+    fresh_map = fresh or {}
     kept: list[ShortlistCandidate] = []
     stale = 0
     for c in candidates:
@@ -270,7 +274,7 @@ def _gate_by_window(
         by_id = {a.artifact_id: a for a in repo.list_by_ids(ids)}
         in_window: list[str] = []
         for aid in ids:
-            art = by_id.get(aid)
+            art = fresh_map.get(aid) or by_id.get(aid)
             if art is None:
                 in_window.append(aid)
                 continue
@@ -462,7 +466,11 @@ def run_daily_discovery(
 
     candidates, _ = build_shortlist_candidates(ws)
     candidates, stale_count = _gate_by_window(
-        candidates, ws=ws, lookback_hours=plan.lookback_hours, as_of=now
+        candidates,
+        ws=ws,
+        lookback_hours=plan.lookback_hours,
+        as_of=now,
+        fresh={a.artifact_id: a for a in artifacts},
     )
     if stale_count:
         metrics.filtered["stale"] = stale_count

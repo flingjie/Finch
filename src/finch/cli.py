@@ -669,11 +669,16 @@ def _lookback_hours(value: str | None) -> int | None:
     if value is None:
         return None
     v = value.strip()
-    if v.endswith("h"):
-        return int(v[:-1])
-    if v.endswith("d"):
-        return int(v[:-1]) * 24
-    return int(v)
+    try:
+        if v.endswith("h"):
+            return int(v[:-1])
+        if v.endswith("d"):
+            return int(v[:-1]) * 24
+        return int(v)
+    except ValueError:
+        raise typer.BadParameter(
+            f"invalid --lookback: {value!r} (use like 24h / 30d / 720)"
+        ) from None
 
 
 @app.command()
@@ -1995,6 +2000,9 @@ def _persist_discovery(
         latest.recommendation_shortfall if latest is not None else {}
     )
     home_person_ids = latest.home_person_ids if latest is not None else []
+    plan_id = latest.plan_id if latest is not None else ""
+    plan_summary = latest.plan_summary if latest is not None else {}
+    ranking_version = latest.ranking_version if latest is not None else "1"
 
     snap_id = snapshot_id or result.run_id
     snapshot = DiscoverySnapshot(
@@ -2012,7 +2020,9 @@ def _persist_discovery(
             for f in result.failures
         ],
         ranked_opportunity_ids=[o.id for o in result.opportunities],
-        ranking_version="1",
+        ranking_version=ranking_version,
+        plan_id=plan_id,
+        plan_summary=plan_summary,
         recommendations=recommendations,
         recommendation_shortfall=recommendation_shortfall,
         home_person_ids=home_person_ids,
@@ -3663,7 +3673,7 @@ def community_list(
     candidates = svc.list_candidates()
     if week:
         candidates = [c for c in candidates if c.week == week]
-    latest = {c.id: svc.repo.latest_feedback(c.id) for c in candidates}
+    latest = svc.repo.latest_feedback_by_id()
     if as_json:
         payload = []
         for c in candidates:

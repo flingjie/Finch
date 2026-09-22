@@ -157,11 +157,18 @@ def build_discovery_plan(
     dp = settings.discovery.daily_people
     source_queries: dict[str, list[str]] = {}
     source_limits: dict[str, int] = {}
+    topic = select_exploration_topic(settings)
     for src in Source:
         plan = getattr(settings.sources, src.value, None)
         if plan is None or not plan.enabled or plan.mode == "disabled":
             continue
         q, u = _payload(settings, src)
+        # D9：与 build_context_by_source 一致，合并当前主题组查询（GitHub 用登录名）。
+        if topic is not None:
+            if src == Source.GITHUB:
+                q = list(dict.fromkeys([*q, *topic.github_users]))
+            else:
+                q = list(dict.fromkeys([*q, *topic.queries_by_source.get(src.value, [])]))
         inputs = list(dict.fromkeys([*q, *u]))
         if inputs:
             source_queries[src.value] = inputs

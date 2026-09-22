@@ -225,3 +225,22 @@ def test_build_discovery_plan_limits_defaults():
     assert plan.nominate_limit == 10
     assert plan.candidate_limit == 100  # daily_people.candidate_pool_size
     assert plan.enrich_limit == 20  # 映射自 daily_people.semantic_assess_limit
+
+
+def test_build_discovery_plan_merges_topic_queries():
+    """计划指纹必须反映每日轮换主题，与实际同步的查询一致。"""
+    topic = ExplorationTopic(
+        id="failure_learning",
+        queries_by_source={"twitter": ["复盘"]},
+        github_users=["octocat"],
+    )
+    settings = Settings(
+        sources=SourcesSettings(
+            twitter=SourceTwitterPlan(queries=["agent"], enabled=True),
+            github=SourceGithubPlan(users=["jackwener"], enabled=True),
+            exploration_topics=[topic],
+        )
+    )
+    plan = build_discovery_plan(settings)
+    assert plan.source_queries[Source.TWITTER.value] == ["agent", "复盘"]
+    assert plan.source_queries[Source.GITHUB.value] == ["jackwener", "octocat"]

@@ -71,6 +71,13 @@ class CommunityRepository:
             None,
         )
 
+    def latest_feedback_by_id(self) -> dict[str, CommunityFeedback]:
+        """一次读取 feedback.jsonl，返回 {community_id: 最新一条}。"""
+        out: dict[str, CommunityFeedback] = {}
+        for fb in self.list_feedback():
+            out[fb.community_id] = fb
+        return out
+
     # ---- reports (reports/<week>.md) ----
     def report_path(self, week: str) -> Path:
         return self._dir / "reports" / f"{week}.md"

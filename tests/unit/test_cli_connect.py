@@ -928,3 +928,50 @@ def test_connect_feedback_inline_idempotent(monkeypatch, tmp_path):
 
     # 稳定幂等键：同一次反馈重复提交覆盖而非追加。
     assert len(RecommendationFeedbackRepository(ws).list_all()) == 1
+
+
+def test_persist_discovery_preserves_plan_fields(tmp_path):
+    """_persist_discovery 不得覆盖 run_daily_discovery 已写入的 plan_id/plan_summary。"""
+    from finch.engagement.models import DiscoverySnapshot
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    DiscoverySnapshotRepository(ws).upsert(
+        DiscoverySnapshot(
+            id="daily_test",
+            created_at=datetime.now(UTC),
+            context_fingerprint="cfg123",
+            plan_id="plan_abc",
+            plan_summary={"lookback_hours": 24},
+            ranking_version="people-first-1",
+        )
+    )
+    result = EngagementRunResult(
+        run_id="daily_test",
+        posts_found=0,
+        failures=[],
+        status="succeeded",
+        summary="",
+    )
+    out = cli._persist_discovery(ws, result)
+    assert out is not None
+    assert out.plan_id == "plan_abc"
+    assert out.plan_summary == {"lookback_hours": 24}
+    assert out.ranking_version == "people-first-1"
+
+
+def test_lookback_hours_parses_and_rejects():
+    import typer
+
+    from finch.cli import _lookback_hours
+
+    assert _lookback_hours("24h") == 24
+    assert _lookback_hours("30d") == 720
+    assert _lookback_hours("720") == 720
+    assert _lookback_hours(None) is None
+    try:
+        _lookback_hours("abc")
+        raise AssertionError("expected BadParameter")
+    except typer.BadParameter:
+        pass
