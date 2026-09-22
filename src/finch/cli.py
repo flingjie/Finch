@@ -165,6 +165,9 @@ app.add_typer(practice_app, name="practice")
 style_app = typer.Typer(help="分析一段文本/链接的写作特点")
 app.add_typer(style_app, name="style")
 
+community_app = typer.Typer(help="社区匹配与进入助手（每周 3 个可进入的社区）")
+app.add_typer(community_app, name="community")
+
 
 def _idea_meta_line(job: ContentJob) -> str:
     """一行摘要：稳定、可扫描（tab 分隔；机器解析请用 --json，不用此文本输出）。"""
@@ -3489,6 +3492,197 @@ def inspirations_show(
             typer.echo(f"  - {n.text}")
     if insp.archived_at:
         typer.echo(f"archived_at: {insp.archived_at:%Y-%m-%d}")
+
+
+def _echo_community_card(profile) -> None:
+    typer.echo(f"id: {profile.id}")
+    typer.echo(f"community: {profile.name}")
+    if profile.platforms:
+        typer.echo(f"platforms: {', '.join(profile.platforms)}")
+    typer.echo(f"fit_score: {profile.fit_score}")
+    if profile.why_fit:
+        typer.echo("why_fit:")
+        for line in profile.why_fit:
+            typer.echo(f"  - {line}")
+    if profile.recent_evidence:
+        typer.echo("recent_evidence:")
+        for e in profile.recent_evidence:
+            suffix = f" {e.url}" if e.url else ""
+            typer.echo(f"  - {e.topic} ({e.relevance}){suffix}")
+    if profile.people:
+        typer.echo("people:")
+        for p in profile.people:
+            typer.echo(f"  - {p.name}: {p.reason}")
+    if profile.entry_point:
+        typer.echo(f"entry_point: {profile.entry_point.discussion}")
+        typer.echo(f"  suggested_angle: {profile.entry_point.suggested_angle}")
+    if profile.first_contribution:
+        typer.echo(
+            f"first_contribution: {profile.first_contribution.type} — "
+            f"{profile.first_contribution.proposal}"
+        )
+    if profile.risks:
+        typer.echo("risks:")
+        for r in profile.risks:
+            typer.echo(f"  - {r}")
+
+
+@community_app.command("discover")
+def community_discover(
+    week: str | None = typer.Option(None, "--week", help="ISO 周（默认本周，如 2026-W39）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """快照当前实践上下文到 profile.yaml，并显示本周周报。"""
+    from finch.communities.service import CommunityService
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    svc = CommunityService(ws)
+    context = svc.snapshot_context(settings, ws)
+    svc.repo.write_context(context)
+    target_week = week or context.week
+    report = svc.repo.read_report(target_week)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "week": target_week,
+                    "context": context.model_dump(mode="json"),
+                    "report": report,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    typer.echo(f"week: {target_week}")
+    typer.echo(f"interests: {', '.join(context.interests) or '(none)'}")
+    typer.echo(f"current_questions: {', '.join(context.current_questions) or '(none)'}")
+    if report:
+        typer.echo(f"\n{report}")
+    else:
+        typer.echo(f"\n(no report for {target_week} yet — 按 community-scout Skill 执行发现)")
+
+
+@community_app.command("save")
+def community_save(
+    card_file: str = typer.Option(..., "--file", help="社区行动卡 YAML 路径"),
+    week: str | None = typer.Option(None, "--week", help="ISO 周（默认本周）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """保存一张社区行动卡（顶层 community 对应模型 name；id 由 name 内容寻址）。"""
+    from finch.communities.models import CommunityProfile
+    from finch.communities.service import CommunityService, week_label
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    raw = yaml.safe_load(Path(card_file).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or "community" not in raw:
+        typer.echo("card 缺少顶层 `community` 字段（见 references/community-card-schema.md）")
+        raise typer.Exit(code=1)
+    data = dict(raw)
+    data["name"] = data.pop("community")
+    try:
+        profile = CommunityProfile(**data)
+    except ValidationError as exc:
+        typer.echo(f"card 校验失败: {exc}")
+        raise typer.Exit(code=1) from None
+    if not profile.week:
+        profile = profile.model_copy(update={"week": week or week_label()})
+    saved = CommunityService(ws).save(profile)
+    if as_json:
+        typer.echo(json.dumps(saved.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"saved {saved.id} ({saved.name})")
+
+
+@community_app.command("inspect")
+def community_inspect(
+    community_id: str = typer.Argument(..., help="community id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """查看一张社区行动卡。"""
+    from finch.communities.service import CommunityService
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    profile = CommunityService(ws).inspect(community_id)
+    if profile is None:
+        typer.echo(f"not found: {community_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(json.dumps(profile.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    _echo_community_card(profile)
+
+
+@community_app.command("feedback")
+def community_feedback(
+    community_id: str = typer.Argument(..., help="community id"),
+    result: str = typer.Option(
+        ..., "--result", help="ignored|saved|joined|interacted|repeated|contributed"
+    ),
+    note: str = typer.Option("", "--note", help="可选备注"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """记录一次跟进状态（append-only，不自动改变下次评分）。"""
+    from finch.communities.models import CommunityResult
+    from finch.communities.service import CommunityService
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    try:
+        result_value = CommunityResult(result)
+    except ValueError:
+        valid = ", ".join(r.value for r in CommunityResult)
+        typer.echo(f"invalid --result: {result} (use one of {valid})")
+        raise typer.Exit(code=1) from None
+    feedback = CommunityService(ws).record_feedback(community_id, result_value, note=note)
+    if as_json:
+        typer.echo(json.dumps(feedback.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"recorded {feedback.result.value} for {community_id}")
+
+
+@community_app.command("list")
+def community_list(
+    week: str | None = typer.Option(None, "--week", help="按 ISO 周过滤"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """列出候选社区与最近反馈状态。"""
+    from finch.communities.service import CommunityService
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    svc = CommunityService(ws)
+    candidates = svc.list_candidates()
+    if week:
+        candidates = [c for c in candidates if c.week == week]
+    latest = {c.id: svc.repo.latest_feedback(c.id) for c in candidates}
+    if as_json:
+        payload = []
+        for c in candidates:
+            fb = latest[c.id]
+            payload.append(
+                {
+                    "profile": c.model_dump(mode="json"),
+                    "feedback": fb.model_dump(mode="json") if fb else None,
+                }
+            )
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not candidates:
+        typer.echo("(no communities)")
+        return
+    for c in candidates:
+        fb = latest[c.id]
+        state = fb.result.value if fb else "-"
+        typer.echo(f"{c.id}\t{c.week}\t{c.fit_score}\t{state}\t{c.name}")
 
 
 @inspirations_app.command("note")
