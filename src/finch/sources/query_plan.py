@@ -1,8 +1,16 @@
-"""分源查询计划：``--all`` / daily 用 yaml；单源 CLI 覆盖。"""
+"""分源查询计划：``--all`` / daily 用 yaml；单源 CLI 覆盖。
+
+P1 起引入 ``DiscoveryPlan``：一次刷新唯一的输入契约（稳定 ``plan_id``），
+``plan_id`` 与 ``config_fingerprint`` 均由规范化计划内容计算，不含运行时间。
+"""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime
+
+from pydantic import BaseModel, Field
 
 from finch.settings import ExplorationTopic, Settings, SourceDiscoverySettings
 from finch.sources.connectors import DiscoveryContext
@@ -105,3 +113,101 @@ def build_context_by_source(
             mode=plan.mode,
         )
     return out
+
+
+_DEFAULT_INTENT = "探索相邻实践者"
+_DEFAULT_RANKING_QUESTION = "谁最近做了具体、可信、与我互补的事情？"
+
+
+def _fingerprint(obj: object) -> str:
+    """规范化 JSON 的 sha256 前 16 位（键排序、列表保序但不含运行时间）。"""
+    payload = json.dumps(obj, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+class DiscoveryPlan(BaseModel):
+    """一次刷新唯一的输入契约（P1）：稳定 ``plan_id``，与 ``run_id`` 分离。
+
+    - ``plan_id``：规范化后的真实计划内容哈希，同一计划重试得到同一 ID。
+    - ``config_fingerprint``：只覆盖来源/时间窗/预算/排除项，回答"配置是否变了"。
+    """
+
+    schema_version: str = "1"
+    plan_id: str = ""
+    intent: str = ""
+    ranking_question: str = ""
+    lookback_hours: int = 720
+    freshness_boost_hours: int = 72
+    source_queries: dict[str, list[str]] = Field(default_factory=dict)
+    source_limits: dict[str, int] = Field(default_factory=dict)
+    candidate_limit: int = 50
+    nominate_limit: int = 10
+    enrich_limit: int = 3
+    excluded_content: list[str] = Field(default_factory=list)
+    config_fingerprint: str = ""
+
+
+def build_discovery_plan(
+    settings: Settings,
+    *,
+    lookback_hours: int | None = None,
+    intent: str | None = None,
+) -> DiscoveryPlan:
+    """构造一次刷新唯一的输入契约；CLI 覆盖优先，默认走配置与当前问题。"""
+    dp = settings.discovery.daily_people
+    source_queries: dict[str, list[str]] = {}
+    source_limits: dict[str, int] = {}
+    for src in Source:
+        plan = getattr(settings.sources, src.value, None)
+        if plan is None or not plan.enabled or plan.mode == "disabled":
+            continue
+        q, u = _payload(settings, src)
+        inputs = list(dict.fromkeys([*q, *u]))
+        if inputs:
+            source_queries[src.value] = inputs
+        source_limits[src.value] = plan.fetch_limit
+
+    lookback = lookback_hours if lookback_hours is not None else settings.discovery.lookback_hours
+    intent_text = (intent or "").strip()
+    if not intent_text:
+        intent_text = (
+            next((q for q in settings.interests.current_questions if q.strip()), "")
+            or (
+                settings.interests.long_term_interests[0]
+                if settings.interests.long_term_interests
+                else ""
+            )
+            or _DEFAULT_INTENT
+        )
+
+    plan = DiscoveryPlan(
+        intent=intent_text,
+        ranking_question=_DEFAULT_RANKING_QUESTION,
+        lookback_hours=lookback,
+        freshness_boost_hours=settings.discovery.freshness_boost_hours,
+        source_queries=source_queries,
+        source_limits=source_limits,
+        candidate_limit=dp.candidate_pool_size,
+        nominate_limit=settings.discovery.nominate_limit,
+        enrich_limit=dp.semantic_assess_limit,
+        excluded_content=list(settings.interests.excluded_content),
+    )
+    plan.config_fingerprint = _fingerprint(
+        {
+            "lookback_hours": plan.lookback_hours,
+            "freshness_boost_hours": plan.freshness_boost_hours,
+            "source_queries": plan.source_queries,
+            "source_limits": plan.source_limits,
+            "candidate_limit": plan.candidate_limit,
+            "nominate_limit": plan.nominate_limit,
+            "enrich_limit": plan.enrich_limit,
+            "excluded_content": plan.excluded_content,
+        }
+    )
+    plan.plan_id = f"plan_{_fingerprint({
+        'schema_version': plan.schema_version,
+        'intent': plan.intent,
+        'ranking_question': plan.ranking_question,
+        'config_fingerprint': plan.config_fingerprint,
+    })}"
+    return plan

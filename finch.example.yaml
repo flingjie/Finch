@@ -88,6 +88,9 @@ sources:
 # assessment, and `deep_prepare_limit` people get a full connection analysis —
 # regardless of how large the candidate pool grows.
 discovery:
+  lookback_hours: 720       # 证据窗口：30 天；--lookback 可临时覆盖
+  freshness_boost_hours: 72  # 72 小时内加权
+  nominate_limit: 10         # 确定性提名上限（P3 生效；本轮先作为计划字段）
   daily_people:
     target: 50
     priority_count: 5

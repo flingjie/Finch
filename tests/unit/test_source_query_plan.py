@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from finch.settings import (
     ExplorationTopic,
+    InterestsSettings,
     Settings,
     SourceGithubPlan,
     SourcesSettings,
@@ -12,7 +13,11 @@ from finch.settings import (
     SourceWeixinPlan,
 )
 from finch.sources.models import Source
-from finch.sources.query_plan import build_context_by_source, select_exploration_topic
+from finch.sources.query_plan import (
+    build_context_by_source,
+    build_discovery_plan,
+    select_exploration_topic,
+)
 
 
 def test_cli_override_single_source():
@@ -154,3 +159,69 @@ def test_topic_queries_merge_into_sources():
     assert ctx[Source.V2EX].queries == ["工具", "失败复盘"]
     # GitHub 用 github_users（登录名），不用主题词。
     assert ctx[Source.GITHUB].queries == ["jackwener", "octocat"]
+
+
+def _plan_settings() -> Settings:
+    return Settings(
+        sources=SourcesSettings(
+            twitter=SourceTwitterPlan(queries=["agent reliability"], enabled=True),
+            github=SourceGithubPlan(users=["jackwener"], enabled=True),
+        ),
+        interests=InterestsSettings(
+            current_questions=["agent evals in production"],
+            long_term_interests=["agent reliability"],
+            excluded_content=["AI news"],
+        ),
+    )
+
+
+def test_build_discovery_plan_cli_override():
+    settings = _plan_settings()
+    plan = build_discovery_plan(settings, lookback_hours=24, intent="who ships agent evals?")
+    assert plan.lookback_hours == 24
+    assert plan.intent == "who ships agent evals?"
+    # 默认 lookback 走配置。
+    assert build_discovery_plan(settings).lookback_hours == settings.discovery.lookback_hours
+
+
+def test_build_discovery_plan_intent_from_current_question():
+    plan = build_discovery_plan(_plan_settings())
+    assert plan.intent == "agent evals in production"
+
+
+def test_build_discovery_plan_github_uses_users_not_topics():
+    plan = build_discovery_plan(_plan_settings())
+    assert plan.source_queries[Source.GITHUB.value] == ["jackwener"]
+    assert plan.source_queries[Source.TWITTER.value] == ["agent reliability"]
+
+
+def test_build_discovery_plan_fingerprint_stable_across_retries():
+    settings = _plan_settings()
+    a = build_discovery_plan(settings, lookback_hours=24, intent="q")
+    b = build_discovery_plan(settings, lookback_hours=24, intent="q")
+    assert a.plan_id == b.plan_id
+    assert a.config_fingerprint == b.config_fingerprint
+    assert a.plan_id != b.config_fingerprint  # 两者不可混用
+
+
+def test_build_discovery_plan_fingerprint_changes_on_lookback():
+    settings = _plan_settings()
+    base = build_discovery_plan(settings, intent="q")
+    changed = build_discovery_plan(settings, intent="q", lookback_hours=24)
+    assert changed.config_fingerprint != base.config_fingerprint
+    assert base.plan_id != changed.plan_id
+
+
+def test_build_discovery_plan_fingerprint_changes_on_excluded():
+    settings = _plan_settings()
+    base = build_discovery_plan(settings, intent="q")
+    settings.interests.excluded_content = ["AI news", "funding"]
+    changed = build_discovery_plan(settings, intent="q")
+    assert changed.config_fingerprint != base.config_fingerprint
+
+
+def test_build_discovery_plan_limits_defaults():
+    plan = build_discovery_plan(_plan_settings())
+    assert plan.nominate_limit == 10
+    assert plan.candidate_limit == 100  # daily_people.candidate_pool_size
+    assert plan.enrich_limit == 20  # 映射自 daily_people.semantic_assess_limit

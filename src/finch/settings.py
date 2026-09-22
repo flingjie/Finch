@@ -331,9 +331,16 @@ class DailyPeopleSettings(BaseModel):
 
 
 class DiscoverySettings(BaseModel):
-    """发现轨道配置（每日 50 人）。"""
+    """发现轨道配置（每日 50 人）。
+
+    ``lookback_hours`` / ``freshness_boost_hours`` / ``nominate_limit`` 是连接雷达的
+    顶层窗口与预算（P1）；``daily_people`` 仍是分层推荐预算的兼容容器。
+    """
 
     daily_people: DailyPeopleSettings = Field(default_factory=DailyPeopleSettings)
+    lookback_hours: int = 720
+    freshness_boost_hours: int = 72
+    nominate_limit: int = 10
 
 
 class Settings(BaseModel):
