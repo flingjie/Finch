@@ -185,6 +185,9 @@ class DiscoverySnapshot(BaseModel):
     ranked_opportunity_ids: list[str] = Field(default_factory=list)
     ranking_version: str = "1"
     selected_opportunity_ids: list[str] = Field(default_factory=list)
+    # 本轮查询计划（P1）：plan_id 稳定、plan_summary 记录窗口/来源/排除项摘要。
+    plan_id: str = ""
+    plan_summary: dict[str, object] = Field(default_factory=dict)
     # 完整 50 人分层推荐 + 数量缺口（F1：刷新后持久化，非刷新读取可重放）
     recommendations: list[RecommendationEntry] = Field(default_factory=list)
     recommendation_shortfall: dict[str, int] = Field(default_factory=dict)

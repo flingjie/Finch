@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from finch.sources.models import RawArtifact
 
@@ -17,6 +18,7 @@ INVALID_PLATFORM = "invalid_platform"
 REPOST = "repost"
 EXCLUDED_CONTENT = "excluded_content"
 DUPLICATE = "duplicate"
+TOO_OLD = "too_old"
 
 # 与 engagement/scoring.py 的 _REPOST_PREFIXES 保持一致。
 _REPOST_PREFIXES = ("rt @", "rt@", "repost", "转", "转发")
@@ -64,12 +66,13 @@ def filter_artifacts(
     *,
     excluded_content: list[str] | None = None,
     min_content_length: int = 20,
-    max_age_days: int | None = None,
-    now=None,
+    lookback_hours: int | None = None,
+    as_of: datetime | None = None,
 ) -> tuple[list[RawArtifact], dict[str, int]]:
     """硬过滤 + 指纹去重，返回 ``(kept, reason_counts)``。
 
-    - ``max_age_days`` 为 None 时不按时间过滤（默认关闭）。
+    - ``lookback_hours`` 为 None 时不按时间过滤（默认关闭）。
+    - 未来时间戳（``published > as_of``）被钳制为 ``as_of``：不误伤也不虚增新鲜度。
     - 内容长度/身份/来源/排除词/转发/重复各对应一个确定 reason_code。
     """
     excluded = list(excluded_content or [])
@@ -77,11 +80,11 @@ def filter_artifacts(
     counts: dict[str, int] = {}
     seen_fingerprints: set[str] = set()
 
-    if max_age_days is not None:
-        from datetime import UTC, datetime, timedelta
+    if lookback_hours is not None:
+        from datetime import UTC, timedelta
 
-        clock = now or datetime.now(UTC)
-        cutoff = clock - timedelta(days=max_age_days)
+        clock = as_of or datetime.now(UTC)
+        cutoff = clock - timedelta(hours=lookback_hours)
     else:
         cutoff = None
 
@@ -111,9 +114,11 @@ def filter_artifacts(
             continue
         if cutoff is not None:
             published = art.published_at or art.retrieved_at
-            if published is not None and published < cutoff:
-                _reject("too_old")
-                continue
+            if published is not None:
+                effective = published if published <= clock else clock
+                if effective < cutoff:
+                    _reject(TOO_OLD)
+                    continue
         fp = art.content_fingerprint
         if fp and fp in seen_fingerprints:
             _reject(DUPLICATE)

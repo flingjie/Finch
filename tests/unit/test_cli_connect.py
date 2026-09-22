@@ -266,7 +266,7 @@ def test_connect_daily_persists_peers_and_renders_sections(monkeypatch, tmp_path
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_run_daily_full", lambda settings: _daily_full())
+    monkeypatch.setattr(cli, "_run_daily_full", lambda settings, **kwargs: _daily_full())
 
     r = CliRunner().invoke(app, ["connect", "daily", "--refresh"])
     assert r.exit_code == 0, r.output
@@ -346,7 +346,7 @@ def test_connect_prepare_requires_selection(monkeypatch, tmp_path):
 def test_connect_daily_json(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_run_daily_full", lambda settings: _daily_full())
+    monkeypatch.setattr(cli, "_run_daily_full", lambda settings, **kwargs: _daily_full())
 
     r = CliRunner().invoke(app, ["connect", "daily", "--refresh", "--json"])
     assert r.exit_code == 0, r.output
@@ -480,7 +480,7 @@ def test_connect_daily_preserves_accumulated_peer_fields(monkeypatch, tmp_path):
     )
     PeerRepository(ws).upsert(existing)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "_run_daily_full", lambda settings: _daily_full())
+    monkeypatch.setattr(cli, "_run_daily_full", lambda settings, **kwargs: _daily_full())
 
     r = CliRunner().invoke(app, ["connect", "daily", "--refresh"])
     assert r.exit_code == 0, r.output

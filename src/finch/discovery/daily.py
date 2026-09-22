@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -45,7 +45,12 @@ from finch.settings import Settings
 from finch.sources.models import RawArtifact
 from finch.sources.opencli_gateway import OpenCliGateway
 from finch.sources.orchestrator import DiscoveryOrchestrator, SyncResult
-from finch.sources.query_plan import build_context_by_source, select_exploration_topic
+from finch.sources.query_plan import (
+    build_context_by_source,
+    build_discovery_plan,
+    select_exploration_topic,
+)
+from finch.sources.store import ArtifactRepository
 from finch.storage.repositories import (
     DiscoverySnapshotRepository,
     OpportunityRepository,
@@ -235,6 +240,51 @@ def build_shortlist_candidates(ws: Workspace) -> tuple[list[ShortlistCandidate],
     return candidates, recent
 
 
+def _gate_by_window(
+    candidates: list[ShortlistCandidate],
+    *,
+    ws: Workspace,
+    lookback_hours: int | None,
+    as_of: datetime,
+) -> tuple[list[ShortlistCandidate], int]:
+    """按时间窗裁剪候选证据（P1）：仅保留窗口内 artifact，无窗口内证据者剔除。
+
+    - ``lookback_hours=None`` 时不做时间门控（原样返回）。
+    - 未在 ``ArtifactRepository`` 命中的引用（如用户自身 ``practice_evidence_refs``）
+      不是"发现的证据"，不做时间门控，原样保留。
+    - 未来时间戳钳制为 ``as_of``。
+    """
+    if lookback_hours is None:
+        return candidates, 0
+    from datetime import timedelta
+
+    cutoff = as_of - timedelta(hours=lookback_hours)
+    repo = ArtifactRepository(ws)
+    kept: list[ShortlistCandidate] = []
+    stale = 0
+    for c in candidates:
+        ids = list(c.artifact_ids)
+        if not ids:
+            kept.append(c)
+            continue
+        by_id = {a.artifact_id: a for a in repo.list_by_ids(ids)}
+        in_window: list[str] = []
+        for aid in ids:
+            art = by_id.get(aid)
+            if art is None:
+                in_window.append(aid)
+                continue
+            published = art.published_at or art.retrieved_at
+            effective = published if published <= as_of else as_of
+            if effective >= cutoff:
+                in_window.append(aid)
+        if not in_window:
+            stale += 1
+            continue
+        kept.append(replace(c, artifact_ids=in_window))
+    return kept, stale
+
+
 def assess_connection(
     *,
     runner: StructuredInferenceRunner | CodexRunner,
@@ -345,11 +395,18 @@ def run_daily_discovery(
     runner: StructuredInferenceRunner | CodexRunner | None = None,
     gateway: OpenCliGateway | None = None,
     skip_sync: bool = False,
+    lookback_hours: int | None = None,
+    question: str | None = None,
 ) -> DailyDiscoveryResult:
-    """跨平台抓取 → 标准化 → 人物与证据投影 → 分层推荐 → 快照。"""
+    """跨平台抓取 → 标准化 → 人物与证据投影 → 分层推荐 → 快照。
+
+    时间窗以 ``build_discovery_plan`` 生成的计划为准；过滤结果才是后续阶段的唯一输入。
+    """
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
-    run_id = f"daily_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+    now = datetime.now(UTC)
+    run_id = f"daily_{now.strftime('%Y%m%d%H%M%S')}"
+    plan = build_discovery_plan(settings, lookback_hours=lookback_hours, intent=question)
     result = DailyDiscoveryResult(run_id=run_id)
     metrics = RunMetrics()
 
@@ -362,14 +419,10 @@ def run_daily_discovery(
     if not skip_sync:
         result.sync_results = orch.sync_all(context_by_source=contexts)
 
-    # Collect artifacts from this sync (and fall back to store)
+    # Collect artifacts from this sync only — an empty round stays empty (no history).
     artifacts: list[RawArtifact] = []
     for sr in result.sync_results:
         artifacts.extend(sr.artifacts)
-    if not artifacts:
-        from finch.sources.store import ArtifactRepository
-
-        artifacts = ArtifactRepository(ws).list_all()
 
     # Observability only — never feeds selection/ranking.
     for sr in result.sync_results:
@@ -384,8 +437,11 @@ def run_daily_discovery(
         )
     from finch.discovery.filtering import filter_artifacts
 
-    _, metrics.filtered = filter_artifacts(
-        artifacts, excluded_content=list(settings.interests.excluded_content)
+    filtered, metrics.filtered = filter_artifacts(
+        artifacts,
+        excluded_content=list(plan.excluded_content),
+        lookback_hours=plan.lookback_hours,
+        as_of=now,
     )
 
     # Creator evidence via Codex (fail-soft per person)
@@ -405,6 +461,11 @@ def run_daily_discovery(
             result.detail = "; ".join(ev_result.failures[:3])
 
     candidates, _ = build_shortlist_candidates(ws)
+    candidates, stale_count = _gate_by_window(
+        candidates, ws=ws, lookback_hours=plan.lookback_hours, as_of=now
+    )
+    if stale_count:
+        metrics.filtered["stale"] = stale_count
     pool = build_pool(
         candidates,
         settings=settings,
@@ -419,9 +480,9 @@ def run_daily_discovery(
     )
     metrics.recommended_count = recs.total
 
-    # Browse opportunities from artifacts (no second X/Reddit search)
+    # Browse opportunities from filtered artifacts (no second X/Reddit search)
     opps = opportunities_from_artifacts(
-        artifacts, limit=settings.engagement.max_display_opportunities
+        filtered, limit=settings.engagement.max_display_opportunities
     )
     result.opportunities = opps
     opp_repo = OpportunityRepository(ws)
@@ -447,6 +508,24 @@ def run_daily_discovery(
         )
 
     status = "succeeded" if (recs.priority or opps) else "empty"
+    source_failures = [
+        {
+            "source": r.source.value,
+            "error_type": r.error_type,
+            "detail": r.detail[:300],
+        }
+        for r in result.sync_results
+        if r.error_type
+    ]
+    plan_summary = {
+        "schema_version": plan.schema_version,
+        "intent": plan.intent,
+        "ranking_question": plan.ranking_question,
+        "lookback_hours": plan.lookback_hours,
+        "freshness_boost_hours": plan.freshness_boost_hours,
+        "config_fingerprint": plan.config_fingerprint,
+        "source_queries": plan.source_queries,
+    }
     engagement = EngagementRunResult(
         run_id=run_id,
         posts_found=len(artifacts),
@@ -455,11 +534,14 @@ def run_daily_discovery(
         failures=[],
         status=status,  # type: ignore[arg-type]
         summary=f"sources→people priority={len(recs.priority)} opps={len(opps)}",
-        context_fingerprint=run_id,
+        context_fingerprint=plan.config_fingerprint,
         source_coverage={
             "sources": {
                 r.source.value: {
                     "status": r.status.value,
+                    "kind": r.kind.value if r.kind else "",
+                    "error_type": r.error_type,
+                    "detail": r.detail[:300],
                     "raw": r.raw_count,
                     "norm": r.normalized_count,
                     "projected": r.projected_count,
@@ -468,18 +550,23 @@ def run_daily_discovery(
             },
             "priority": len(recs.priority),
             "connections": len(result.connections),
+            "lookback_hours": plan.lookback_hours,
+            "as_of": now.isoformat(),
+            "source_failures": source_failures,
         },
     )
     result.engagement = engagement
 
     snapshot = DiscoverySnapshot(
         id=run_id,
-        created_at=datetime.now(UTC),
-        context_fingerprint=run_id,
+        created_at=now,
+        context_fingerprint=plan.config_fingerprint,
         source_coverage=engagement.source_coverage,
-        failures=[],
+        failures=source_failures,
         ranked_opportunity_ids=[o.id for o in opps],
         ranking_version="people-first-1",
+        plan_id=plan.plan_id,
+        plan_summary=plan_summary,
         recommendations=_recommendation_entries(recs),
         recommendation_shortfall=dict(recs.shortfall),
         home_person_ids=[r.person_id for r in select_home_items(recs)],

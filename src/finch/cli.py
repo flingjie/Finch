@@ -429,8 +429,9 @@ def _render_proposal_card(proposal: InteractionProposal) -> str:
     outline = (proposal.outline or "").strip()
     draft = (proposal.revised_draft or proposal.draft or "").strip()
     lines = [f"动作: {_action_label(proposal.action)}"]
-    if (proposal.source_summary or "").strip():
-        lines.append(f"对方问题: {proposal.source_summary.strip()}")
+    source_summary = proposal.source_summary or ""
+    if source_summary.strip():
+        lines.append(f"对方问题: {source_summary.strip()}")
     if (proposal.value_added or "").strip():
         lines.append(f"我能补充: {proposal.value_added.strip()}")
     elif (proposal.why_this_person or "").strip():
@@ -658,6 +659,18 @@ def _since_iso(since: str | None) -> str | None:
     if since.endswith("d"):
         return (datetime.now(UTC) - timedelta(days=int(since[:-1]))).isoformat()
     return since
+
+
+def _lookback_hours(value: str | None) -> int | None:
+    """解析 ``--lookback``：`24h` / `30d` / `720`（小时数）→ 小时数。"""
+    if value is None:
+        return None
+    v = value.strip()
+    if v.endswith("h"):
+        return int(v[:-1])
+    if v.endswith("d"):
+        return int(v[:-1]) * 24
+    return int(v)
 
 
 @app.command()
@@ -1773,22 +1786,36 @@ def review_weekly(
         typer.echo(f"  why: {adj['rationale']}")
 
 
-def _run_discovery(settings: Settings) -> EngagementRunResult:
+def _run_discovery(
+    settings: Settings,
+    *,
+    lookback_hours: int | None = None,
+    question: str | None = None,
+) -> EngagementRunResult:
     """执行统一每日发现（sources → people → shortlist → opportunities）。"""
     from finch.discovery.daily import run_daily_discovery
 
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
-    daily = run_daily_discovery(settings, runner=runner)
+    daily = run_daily_discovery(
+        settings, runner=runner, lookback_hours=lookback_hours, question=question
+    )
     assert daily.engagement is not None
     return daily.engagement
 
 
-def _run_daily_full(settings: Settings):
+def _run_daily_full(
+    settings: Settings,
+    *,
+    lookback_hours: int | None = None,
+    question: str | None = None,
+):
     """Full daily result including shortlist + connection opportunities."""
     from finch.discovery.daily import run_daily_discovery
 
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
-    return run_daily_discovery(settings, runner=runner)
+    return run_daily_discovery(
+        settings, runner=runner, lookback_hours=lookback_hours, question=question
+    )
 
 
 def _recommendations_payload(recs) -> dict | None:
@@ -2302,13 +2329,17 @@ def _min_contribution_checklist(
 @connect_app.command("refresh")
 def connect_refresh(
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    lookback: str | None = typer.Option(None, "--lookback", help="时间窗（24h/30d/720h）"),
+    question: str | None = typer.Option(None, "--question", help="本轮问题/意图"),
 ) -> None:
     """有界刷新发现池并持久化快照，返回覆盖情况。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     previous = DiscoverySnapshotRepository(ws).latest()
-    result = _run_discovery(settings)
+    result = _run_discovery(
+        settings, lookback_hours=_lookback_hours(lookback), question=question
+    )
     snapshot: DiscoverySnapshot | None
     if result.status == "failed" and previous is not None:
         snapshot = previous
@@ -2363,6 +2394,8 @@ def connect_daily(
     limit: int = typer.Option(50, "--limit", help="展示机会数"),
     view: str = typer.Option("home", "--view", help="home|browse"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    lookback: str | None = typer.Option(None, "--lookback", help="时间窗（24h/30d/720h）"),
+    question: str | None = typer.Option(None, "--question", help="本轮问题/意图"),
 ) -> None:
     """连接主循环入口：首页 3 重点（默认）+ 50 人分层浏览（--view browse）。"""
     settings = load_settings()
@@ -2376,7 +2409,9 @@ def connect_daily(
     )
     daily = None
     if need_refresh:
-        daily = _run_daily_full(settings)
+        daily = _run_daily_full(
+            settings, lookback_hours=_lookback_hours(lookback), question=question
+        )
         result = daily.engagement
         assert result is not None
         if result.status == "failed" and snapshot is not None:

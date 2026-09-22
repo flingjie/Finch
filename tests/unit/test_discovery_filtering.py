@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from finch.discovery.filtering import (
     DUPLICATE,
@@ -11,6 +11,7 @@ from finch.discovery.filtering import (
     INVALID_PLATFORM,
     NO_AUTHOR,
     REPOST,
+    TOO_OLD,
     filter_artifacts,
     matches_excluded,
 )
@@ -26,6 +27,8 @@ def _art(
     text: str = "some long enough original content about agents",
     source: Source = Source.TWITTER,
     source_type: str = "post",
+    published_at: datetime | None = None,
+    retrieved_at: datetime | None = None,
 ) -> RawArtifact:
     url = f"https://{platform}.example/{author}/{sid}"
     return RawArtifact(
@@ -36,7 +39,8 @@ def _art(
         canonical_url=url,
         author_identity=AuthorIdentity(platform=platform, external_id=author, handle=author),
         text=text,
-        retrieved_at=datetime.now(UTC),
+        published_at=published_at,
+        retrieved_at=retrieved_at or datetime.now(UTC),
         content_fingerprint=content_fingerprint(text, url=url),
     )
 
@@ -109,3 +113,43 @@ def test_excluded_content_covers_marketing_and_funding():
     )
     assert kept == []
     assert counts.get(EXCLUDED_CONTENT, 0) + counts.get(REPOST, 0) >= 3
+
+
+def test_lookback_hours_filters_old():
+    as_of = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
+    old = _art("1", published_at=as_of - timedelta(hours=25))
+    kept, counts = filter_artifacts([old], lookback_hours=24, as_of=as_of)
+    assert kept == []
+    assert counts.get(TOO_OLD) == 1
+
+
+def test_lookback_30d_boundary():
+    as_of = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
+    within = _art("1", published_at=as_of - timedelta(days=29))
+    expired = _art("2", published_at=as_of - timedelta(days=31))
+    kept, counts = filter_artifacts([within, expired], lookback_hours=720, as_of=as_of)
+    assert [a.source_id for a in kept] == ["1"]
+    assert counts.get(TOO_OLD) == 1
+
+
+def test_future_timestamp_clamped_not_rejected():
+    as_of = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
+    future = _art("1", published_at=as_of + timedelta(hours=1))
+    kept, counts = filter_artifacts([future], lookback_hours=24, as_of=as_of)
+    assert len(kept) == 1
+    assert counts.get(TOO_OLD, 0) == 0
+
+
+def test_no_published_at_falls_back_to_retrieved_at():
+    as_of = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
+    art = _art("1", published_at=None, retrieved_at=as_of - timedelta(hours=1))
+    kept, _ = filter_artifacts([art], lookback_hours=24, as_of=as_of)
+    assert len(kept) == 1
+
+
+def test_lookback_none_disables_time_filter():
+    as_of = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
+    old = _art("1", published_at=as_of - timedelta(days=365))
+    kept, counts = filter_artifacts([old], as_of=as_of)
+    assert len(kept) == 1
+    assert TOO_OLD not in counts
