@@ -4,6 +4,7 @@ import json
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import quote
 
 from finch.github.models import (
     CommitDetail,
@@ -230,7 +231,7 @@ class GhClient:
     ) -> list[dict]:
         """Issues authored by ``login`` (public search API)."""
         cap = max(1, min(limit, 30))
-        q = f"author:{login} type:issue"
+        q = quote(f"author:{login} type:issue", safe=":")
         data = self._gh_json(
             [
                 "gh",
@@ -250,7 +251,7 @@ class GhClient:
     ) -> list[dict]:
         """PRs authored by ``login``."""
         cap = max(1, min(limit, 30))
-        q = f"author:{login} type:pr"
+        q = quote(f"author:{login} type:pr", safe=":")
         data = self._gh_json(
             [
                 "gh",
