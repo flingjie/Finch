@@ -32,6 +32,7 @@ from .conversations.service import (
 )
 from .dialogue.models import DialogueNote
 from .dialogue.service import DialogueService, DialogueServiceError
+from .discovery.daily import DailyDiscoveryResult
 from .drafts.service import DraftCreateResult, DraftService
 from .engagement.flow import EngagementRunResult
 from .engagement.metrics import (
@@ -2075,6 +2076,25 @@ def _record_person_presentations(
         )
 
 
+def _connect_daily_refresh_status(
+    *,
+    daily: DailyDiscoveryResult | None,
+    snapshot: DiscoverySnapshot | None,
+    stale: bool,
+) -> str:
+    """JSON 新鲜度词。无快照是 ``missing``；空刷新是 ``empty``，不叫 ``refreshed``。"""
+    if daily is not None:
+        status = daily.engagement.status if daily.engagement is not None else "failed"
+        if status == "failed":
+            return "failed"
+        if status == "empty":
+            return "empty"
+        return "refreshed"
+    if snapshot is None:
+        return "missing"
+    return "stale" if stale else "fresh"
+
+
 def _snapshot_fresh(snapshot: DiscoverySnapshot | None, ttl_hours: int) -> bool:
     if snapshot is None:
         return False
@@ -2422,9 +2442,6 @@ def connect_daily(
     snapshot = DiscoverySnapshotRepository(ws).latest()
     # D1：默认只读；仅在显式 --refresh 时刷新，不因过期隐式抓取。
     need_refresh = refresh
-    stale = snapshot is not None and not _snapshot_fresh(
-        snapshot, settings.engagement.snapshot_ttl_hours
-    )
     daily = None
     if need_refresh:
         daily = _run_daily_full(
@@ -2432,9 +2449,9 @@ def connect_daily(
         )
         result = daily.engagement
         assert result is not None
-        if result.status == "failed" and snapshot is not None:
-            pass  # keep previous
-        else:
+        # 失败或空结果不覆盖上一份可用快照；状态由 refresh_status 说明。
+        keep_previous = snapshot is not None and result.status in {"failed", "empty"}
+        if not keep_previous:
             snapshot = _persist_discovery(ws, result)
 
     focus, snapshot = _load_today_payload(ws, settings, limit=limit)
@@ -2453,10 +2470,9 @@ def connect_daily(
     rec_shortfall = snapshot.recommendation_shortfall if snapshot is not None else {}
     home_ids = snapshot.home_person_ids if snapshot is not None else []
 
-    if daily is not None:
-        refresh_status = "failed" if daily.engagement.status == "failed" else "refreshed"
-    else:
-        refresh_status = "stale" if stale else "fresh"
+    refresh_status = _connect_daily_refresh_status(
+        daily=daily, snapshot=snapshot, stale=stale
+    )
 
     if as_json:
         typer.echo(json.dumps({
@@ -2621,6 +2637,27 @@ def connect_record_presented(
             )
         else:
             typer.echo("snapshot not found or not latest")
+        raise typer.Exit(code=1)
+    known_persons = {e.person_id for e in snapshot.recommendations}
+    known_opportunities = set(snapshot.ranked_opportunity_ids) | set(
+        snapshot.selected_opportunity_ids
+    )
+    unknown_persons = [pid for pid in person_ids if pid not in known_persons]
+    unknown_opportunities = [oid for oid in opportunity_ids if oid not in known_opportunities]
+    if unknown_persons or unknown_opportunities:
+        payload = {
+            "ok": False,
+            "error": "ids not in snapshot",
+            "unknown_persons": unknown_persons,
+            "unknown_opportunities": unknown_opportunities,
+        }
+        if as_json:
+            typer.echo(json.dumps(payload, ensure_ascii=False))
+        else:
+            typer.echo(
+                "ids not in snapshot: "
+                f"persons={unknown_persons} opportunities={unknown_opportunities}"
+            )
         raise typer.Exit(code=1)
     wanted = set(person_ids)
     entries = [e for e in snapshot.recommendations if e.person_id in wanted]
@@ -4509,11 +4546,19 @@ def dialogue_save(
         else:
             typer.echo(f"error: {exc}")
         raise typer.Exit(code=1) from None
-    except (ValidationError, OSError) as exc:
+    except ValidationError:
+        message = "invalid DialogueNote JSON"
         if as_json:
-            typer.echo(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            typer.echo(json.dumps({"ok": False, "error": message}, ensure_ascii=False))
         else:
-            typer.echo(f"error: {exc}")
+            typer.echo(f"error: {message}")
+        raise typer.Exit(code=1) from None
+    except OSError as exc:
+        message = exc.strerror or "unable to read note file"
+        if as_json:
+            typer.echo(json.dumps({"ok": False, "error": message}, ensure_ascii=False))
+        else:
+            typer.echo(f"error: {message}")
         raise typer.Exit(code=1) from None
     if as_json:
         typer.echo(json.dumps(note.model_dump(mode="json"), ensure_ascii=False, indent=2))

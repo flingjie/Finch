@@ -5,7 +5,7 @@ backed by a temp file workspace.
 """
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from typer.testing import CliRunner
 
@@ -363,13 +363,14 @@ def test_connect_daily_json_includes_freshness(monkeypatch, tmp_path):
     from finch import cli
 
     monkeypatch.setattr(cli, "load_settings", lambda: Settings(paths=Paths(var_dir=tmp_path)))
-    # 无快照时 snapshot_created_at 为 None、stale 为 False、refresh_status 为 fresh
+    # 无快照时 snapshot_created_at 为 None、stale 为 False、refresh_status 为 missing
     r = CliRunner().invoke(app, ["connect", "daily", "--json"])
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert payload["snapshot_created_at"] is None
     assert payload["stale"] is False
-    assert payload["refresh_status"] == "fresh"
+    assert payload["refresh_status"] == "missing"
+    assert payload["snapshot_id"] is None
 
 
 def test_persist_discovery_preserves_recommendations(tmp_path):
@@ -988,6 +989,126 @@ def test_lookback_hours_parses_and_rejects():
         raise AssertionError("expected BadParameter")
     except typer.BadParameter:
         pass
+
+
+def test_connect_daily_json_aged_snapshot_is_stale(monkeypatch, tmp_path):
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_daily_snapshot(ws, snapshot_id="snap_old")
+    repo = DiscoverySnapshotRepository(ws)
+    snap = repo.latest()
+    assert snap is not None
+    repo.upsert(snap.model_copy(update={"created_at": datetime.now(UTC) - timedelta(hours=48)}))
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["connect", "daily", "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["stale"] is True
+    assert payload["refresh_status"] == "stale"
+    assert payload["snapshot_id"] == "snap_old"
+    assert payload["snapshot_created_at"] is not None
+
+
+def test_connect_daily_json_empty_refresh_keeps_previous_snapshot(monkeypatch, tmp_path):
+    from finch.discovery.daily import DailyDiscoveryResult
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_daily_snapshot(ws, snapshot_id="snap_old")
+    empty_eng = _daily_result().model_copy(
+        update={
+            "run_id": "daily_empty",
+            "opportunities": [],
+            "peers": [],
+            "posts_found": 0,
+            "status": "empty",
+        }
+    )
+    empty = DailyDiscoveryResult(run_id="daily_empty", engagement=empty_eng, connections=[])
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_run_daily_full", lambda settings, **kwargs: empty)
+
+    r = CliRunner().invoke(app, ["connect", "daily", "--refresh", "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["refresh_status"] == "empty"
+    assert payload["snapshot_id"] == "snap_old"
+
+
+def test_connect_record_presented_records_snapshot_members(monkeypatch, tmp_path):
+    from finch.peers.presentation import PersonPresentationRepository
+    from finch.storage.repositories import PresentationRecordRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_daily_snapshot(ws)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(
+        app,
+        [
+            "connect",
+            "record-presented",
+            "--snapshot-id",
+            "snap_1",
+            "--person-id",
+            "p1",
+            "--opportunity-id",
+            "opp_test_1",
+            "--json",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output) == {"ok": True, "persons": 1, "opportunities": 1}
+    presented = [
+        x for x in PersonPresentationRepository(ws).list_all() if x.event == "presented"
+    ]
+    assert {x.person_id for x in presented} == {"p1"}
+    records = PresentationRecordRepository(ws).list_all()
+    assert [rec.opportunity_id for rec in records] == ["opp_test_1"]
+
+
+def test_connect_record_presented_rejects_unknown_ids_without_writing(monkeypatch, tmp_path):
+    from finch.peers.presentation import PersonPresentationRepository
+    from finch.storage.repositories import PresentationRecordRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_daily_snapshot(ws)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(
+        app,
+        [
+            "connect",
+            "record-presented",
+            "--snapshot-id",
+            "snap_1",
+            "--person-id",
+            "p1",
+            "--person-id",
+            "ghost",
+            "--opportunity-id",
+            "opp_test_1",
+            "--opportunity-id",
+            "ghost_opp",
+            "--json",
+        ],
+    )
+    assert r.exit_code == 1
+    payload = json.loads(r.output)
+    assert payload["ok"] is False
+    assert payload["unknown_persons"] == ["ghost"]
+    assert payload["unknown_opportunities"] == ["ghost_opp"]
+    assert PresentationRecordRepository(ws).list_all() == []
+    assert PersonPresentationRepository(ws).list_all() == []
 
 
 def test_connect_record_presented_rejects_nonlatest_snapshot(monkeypatch, tmp_path):

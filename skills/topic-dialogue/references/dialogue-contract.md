@@ -77,3 +77,7 @@ next_step:
 3. 用户再 `finch ideas confirm` 后才算确认立场。
 
 完成讨论 ≠ 立场已确认；不得把 AI 论点写入用户确认立场（见 `_shared/author-position.md`）。
+
+## CLI
+
+讨论摘要走 `finch dialogue`（`save` / `search` / `show` / `forget`），不要直接写 `dialogue/` YAML。命令见 `../SKILL.md`。`user_confirmed` 必须带用户原话 `confirmation_quote`。

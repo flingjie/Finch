@@ -103,6 +103,24 @@ last_extension: 上轮延伸点
 - 讨论不得写入 `InteractionRecord`、`ConversationThread`、`PeerProfile` 或关系指标。
 - 每轮最多一个问题；无关键分歧可零问题收尾。
 
+## CLI
+
+讨论摘要用 `finch dialogue`，不要直接写 workspace YAML。
+
+```bash
+finch dialogue save --file note.json --expected-revision N --json
+finch dialogue search "<query>" --limit 3 --json
+finch dialogue show <id> --json
+finch dialogue forget <id> --json
+```
+
+- 检索关键词是位置参数，不是 `--query`。
+- `save` 成功输出 DialogueNote JSON；错误是 `{"ok": false, "error": "..."}`。
+- `--expected-revision`：`0` 创建；大于 0 时必须与当前 revision 一致，不符则冲突，先 `show` 再保存。
+- `position_status=user_confirmed` 必须带 `confirmation_quote`（用户原话）。空引用会被拒绝。这不是 ContentJob 的已确认观点；已确认观点走 `finch ideas`。
+- 用户说「别记这段」：跳过保存；已经保存则 `finch dialogue forget <id>`。
+- 讨论不得写入关系记录。
+
 ## 参考
 
 - `references/dialogue-contract.md` — 来源标识、结束检查、结束输出契约、关系隔离

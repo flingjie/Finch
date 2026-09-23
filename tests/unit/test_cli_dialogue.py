@@ -109,6 +109,25 @@ def test_cli_save_conflict_returns_error(monkeypatch, tmp_path):
     assert json.loads(r.output)["ok"] is False
 
 
+def test_cli_save_invalid_json_hides_input(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    secret = "secret-token-do-not-echo"
+    note = tmp_path / "bad.json"
+    note.write_text(
+        json.dumps({"id": "dlg_bad", "leak": secret}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    r = CliRunner().invoke(
+        app,
+        ["dialogue", "save", "--file", str(note), "--json"],
+    )
+    assert r.exit_code == 1
+    payload = json.loads(r.output)
+    assert payload == {"ok": False, "error": "invalid DialogueNote JSON"}
+    assert secret not in r.output
+
+
 def test_cli_show_not_found(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
     r = CliRunner().invoke(app, ["dialogue", "show", "missing", "--json"])

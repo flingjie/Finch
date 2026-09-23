@@ -18,7 +18,7 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (typer sub-apps / commands): `finch connect ...` (refresh / today / daily / more / expand / prepare / feedback / approve / reject / edit / record / create / with), `finch peers ...` (list / show / get), `finch conversations ...` (list / show / get / follow-up / ingest / defer / close), `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch inspirations ...` (save / list / show / note / archive), `finch community ...` (discover / save / inspect / feedback / list), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
+CLI surface (typer sub-apps / commands): `finch connect ...` (refresh / today / daily / more / expand / prepare / feedback / approve / reject / edit / record / record-presented / create / with), `finch peers ...` (list / show / get), `finch conversations ...` (list / show / get / follow-up / ingest / defer / close), `finch dialogue ...` (save / search / show / forget), `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch inspirations ...` (save / list / show / note / archive), `finch community ...` (discover / save / inspect / feedback / list), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
 
 ## Architecture
 
@@ -47,6 +47,7 @@ skills/
 src/finch/
   peers/         PeerProfile 关系领域（platform + author_id 幂等归一化）
   conversations/ ConversationThread / Commitment / 事件跟进
+  dialogue/      DialogueNote 讨论摘要（与 ConversationThread / ContentJob 分开；finch dialogue）
   ideas/         IdeaService（ContentJob + position_revisions）、CommitService、FragmentService
   drafts/        DraftService（已确认观点 → Draft + CriticReport，幂等，不自动发布）
   practice/      PracticeService（expression-practice 会话）
@@ -63,7 +64,7 @@ src/finch/
   engagement/    Opportunity 发现 / scoring / proposals / guard / evidence_upgrade / metrics
   storage/       file workspace: Workspace + repositories (YAML/Markdown/JSONL, atomic write)
   settings.py    finch.yaml + env loading (Pydantic)
-  cli.py         typer app (connect/peers/conversations/ideas/practice/style/drafts/review/weekly/voice/github/twitter/init/diagnose)
+  cli.py         typer app (connect/peers/conversations/dialogue/ideas/practice/style/drafts/review/weekly/voice/github/twitter/init/diagnose)
 ```
 
 Config lives in `finch.yaml` (repositories, repository_discovery, twitter, quality_gates, paths, engagement, interests, llm, extraction). Prompts live in `prompts/`.

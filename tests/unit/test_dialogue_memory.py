@@ -118,6 +118,88 @@ def test_save_create_conflict_when_id_exists(tmp_path):
         )
 
 
+def test_save_rejects_user_confirmed_without_quote(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    svc = DialogueService(ws)
+    note = DialogueNote(
+        id="dlg_a",
+        topic="skill 代码化",
+        topic_key="a",
+        checkpoints=[
+            DialogueCheckpoint(
+                checkpoint_id="cp_1",
+                user_position="先做 Skill",
+                position_status=PositionStatus.USER_CONFIRMED,
+                confirmation_quote="   ",
+            )
+        ],
+    )
+    with pytest.raises(DialogueServiceError, match="confirmation_quote"):
+        svc.save(note, expected_revision=0)
+    assert svc.show("dlg_a") is None
+
+
+def test_save_accepts_user_confirmed_with_quote(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    svc = DialogueService(ws)
+    note = DialogueNote(
+        id="dlg_a",
+        topic="skill 代码化",
+        topic_key="a",
+        checkpoints=[
+            DialogueCheckpoint(
+                checkpoint_id="cp_1",
+                user_position="先做 Skill",
+                position_status=PositionStatus.USER_CONFIRMED,
+                confirmation_quote="我同意先做 Skill",
+            )
+        ],
+    )
+    created = svc.save(note, expected_revision=0)
+    assert created.checkpoints[0].position_status == PositionStatus.USER_CONFIRMED
+
+
+def test_save_dedupes_checkpoint_ids_in_one_create(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    svc = DialogueService(ws)
+    note = DialogueNote(
+        id="dlg_a",
+        topic="skill 代码化",
+        topic_key="a",
+        checkpoints=[
+            _checkpoint("cp_1", position="先做 Skill"),
+            _checkpoint("cp_1", position="后写的重复"),
+        ],
+    )
+    created = svc.save(note, expected_revision=0)
+    assert [c.checkpoint_id for c in created.checkpoints] == ["cp_1"]
+    assert created.checkpoints[0].user_position == "先做 Skill"
+    assert created.revision == 1
+
+
+def test_save_update_dedupes_new_checkpoint_ids(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    svc = DialogueService(ws)
+    svc.save(_note("dlg_a", "a"), expected_revision=0)
+    update = DialogueNote(
+        id="dlg_a",
+        topic="ignored",
+        topic_key="ignored",
+        checkpoints=[
+            _checkpoint("cp_2", position="第一次"),
+            _checkpoint("cp_2", position="重复"),
+        ],
+    )
+    updated = svc.save(update, expected_revision=1)
+    assert [c.checkpoint_id for c in updated.checkpoints] == ["cp_1", "cp_2"]
+    assert updated.checkpoints[1].user_position == "第一次"
+    assert updated.revision == 2
+
+
 def test_search_matches_topic_key_and_limits(tmp_path):
     ws = Workspace(tmp_path)
     ws.ensure()

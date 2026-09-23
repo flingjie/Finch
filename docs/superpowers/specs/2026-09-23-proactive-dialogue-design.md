@@ -165,7 +165,7 @@ P1 新增 `src/finch/dialogue/`，仅存讨论检查点。ConversationThread 继
 
 ```bash
 uv run finch dialogue save --file note.json --expected-revision 0 --json
-uv run finch dialogue search --query "skill 代码化" --limit 3 --json
+uv run finch dialogue search "skill 代码化" --limit 3 --json
 uv run finch dialogue show <id> --json
 uv run finch dialogue forget <id> --json
 ```
@@ -180,7 +180,7 @@ uv run finch dialogue forget <id> --json
 
 ### 6.4 本设计明确的三项决策（原 plan 未定）
 
-1. **身份与检索**：`id` 为首次保存时生成的**不透明标识**；`topic_key` 是稳定的检索键。宿主重找某主题记录时走 `search --query <topic>` → `show <id>` → `save --expected-revision <rev>`。**不采用**从 topic 派生的确定性 `id`：plan 要求「相似观点不自动归并」，而近义 topic 的 slug 碰撞会静默合并两条本应独立的记录。
+1. **身份与检索**：`id` 为首次保存时生成的**不透明标识**；`topic_key` 是稳定的检索键。宿主重找某主题记录时走 `search "<topic>"` → `show <id>` → `save --expected-revision <rev>`。**不采用**从 topic 派生的确定性 `id`：plan 要求「相似观点不自动归并」，而近义 topic 的 slug 碰撞会静默合并两条本应独立的记录。
 2. **保存触发与确认**：在有意义的收束（形成/改变判断，或真正收束）时自动保存，并附一行提示「已记下这条判断摘要，可说『别记』撤销」。既非完全静默，也非每次保存前询问。
 3. **「主动联系过去观点」的读取时机**：仅当讨论映射到可识别的 topic（topic_key 有重叠）时才 `search`，绝不每条消息都查；只读、不联网。指出「矛盾」前必须读原记录并比较成立条件，不得凭同关键词认定自相矛盾。
 
@@ -196,7 +196,7 @@ uv run finch dialogue forget <id> --json
 实施策略：
 
 1. P0 保留现有会影响曝光/选择记录的命令路径，Codex 解释其输出，不原样粘贴日志。其余已确认无相关副作用的入口可用 JSON。
-2. P1 若切换发现入口为 JSON，补齐 `snapshot_created_at / stale / refresh_status` 等必要事实，兼容增加字段，不破坏旧键。
+2. P1 若切换发现入口为 JSON，补齐 `snapshot_created_at / stale / refresh_status` 等必要事实，兼容增加字段，不破坏旧键。`refresh_status`：无快照 `missing`，过期只读 `stale`，未过期只读 `fresh`，刷新成功 `refreshed`，刷新为空 `empty`（有上一份快照时不覆盖），刷新失败 `failed`。
 3. 新增显式呈现记录入口或复用等价领域服务：只提交实际展示的 snapshot/person/opportunity IDs 与 surface；校验属于快照，稳定 presentation key 去重。selected 与 displayed 分开。
 4. 仅在当前答复确实准备展示的项目上记录；宿主没有用户阅读回执时，定义为「已输出到答复」，不得表述为「用户已读」。保留序号到 ID 的快照映射。
 5. 自动化/纯机器 JSON 读取继续无曝光副作用。不能通过「所有 JSON 读取都算曝光」补洞。

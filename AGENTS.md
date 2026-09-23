@@ -29,4 +29,5 @@
 - `src/finch/storage/` 文件 Workspace（YAML/Markdown/JSONL，原子写）
 - `src/finch/github/` `src/finch/twitter/` 只读 adapter
 - `src/finch/conversations/` 对话线索与跟进
+- `src/finch/dialogue/` 讨论摘要（`finch dialogue` save / search / show / forget）
 - `src/finch/ideas/` `src/finch/drafts/` 观点与草稿
