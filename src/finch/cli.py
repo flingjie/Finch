@@ -2599,6 +2599,17 @@ def connect_record_presented(
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
+    if surface not in ("home", "browse"):
+        if as_json:
+            typer.echo(
+                json.dumps(
+                    {"ok": False, "error": "surface must be home|browse"},
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            typer.echo("surface must be home|browse")
+        raise typer.Exit(code=1)
     snapshot = DiscoverySnapshotRepository(ws).latest()
     if snapshot is None or snapshot.id != snapshot_id:
         if as_json:

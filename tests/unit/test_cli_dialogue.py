@@ -107,3 +107,24 @@ def test_cli_save_conflict_returns_error(monkeypatch, tmp_path):
     )
     assert r.exit_code == 1
     assert json.loads(r.output)["ok"] is False
+
+
+def test_cli_show_not_found(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    r = CliRunner().invoke(app, ["dialogue", "show", "missing", "--json"])
+    assert r.exit_code == 1
+    assert json.loads(r.output)["ok"] is False
+
+
+def test_cli_forget_not_found(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    r = CliRunner().invoke(app, ["dialogue", "forget", "missing", "--json"])
+    assert r.exit_code == 1
+    assert json.loads(r.output)["ok"] is False
+
+
+def test_cli_search_empty(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    r = CliRunner().invoke(app, ["dialogue", "search", "no-such-term", "--json"])
+    assert r.exit_code == 0
+    assert json.loads(r.output) == []

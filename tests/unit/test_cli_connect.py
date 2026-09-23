@@ -1000,3 +1000,21 @@ def test_connect_record_presented_rejects_nonlatest_snapshot(monkeypatch, tmp_pa
     )
     assert r.exit_code == 1
     assert json.loads(r.output)["ok"] is False
+
+
+def test_connect_record_presented_rejects_bad_surface(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: Settings(paths=Paths(var_dir=tmp_path)))
+    r = CliRunner().invoke(
+        app,
+        [
+            "connect",
+            "record-presented",
+            "--snapshot-id",
+            "snap_1",
+            "--surface",
+            "bogus",
+            "--json",
+        ],
+    )
+    assert r.exit_code == 1
+    assert "surface" in json.loads(r.output)["error"]

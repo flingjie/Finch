@@ -140,3 +140,28 @@ def test_show_and_forget(tmp_path):
     assert svc.show("missing") is None
     assert svc.forget("dlg_a") is True
     assert svc.forget("dlg_a") is False
+
+
+def test_search_indexes_confirmation_and_hypotheses(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    svc = DialogueService(ws)
+
+    note = DialogueNote(
+        id="dlg_x",
+        topic="判断讨论",
+        topic_key="judgment",
+        checkpoints=[
+            DialogueCheckpoint(
+                checkpoint_id="cp_1",
+                user_position="尚未形成",
+                confirmation_quote="对这个假设很有把握",
+                assistant_hypotheses=["可能是需求变化导致返工"],
+                change_reason="补充了新的经历",
+            )
+        ],
+    )
+    svc.save(note, expected_revision=0)
+
+    assert [n.id for n in svc.search("把握")] == ["dlg_x"]
+    assert [n.id for n in svc.search("返工")] == ["dlg_x"]
