@@ -126,8 +126,8 @@ def test_search_matches_topic_key_and_limits(tmp_path):
     svc.save(_note("dlg_a", "skill-to-code"), expected_revision=0)
     svc.save(_note("dlg_b", "community-entry"), expected_revision=0)
 
-    hits = svc.search("skill", limit=3)
-    assert [n.id for n in hits] == ["dlg_a"]
+    hits = svc.search("community", limit=3)
+    assert [n.id for n in hits] == ["dlg_b"]
 
 
 def test_show_and_forget(tmp_path):

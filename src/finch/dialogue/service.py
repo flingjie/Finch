@@ -76,7 +76,11 @@ class DialogueService:
             return []
         scored: list[tuple[int, datetime, DialogueNote]] = []
         for note in self.repo.list_all():
-            haystack = f"{note.topic_key}".lower()
+            haystack = f"{note.topic} {note.topic_key}".lower()
+            for cp in note.checkpoints:
+                haystack += f" {cp.user_position.lower()}"
+                haystack += f" {' '.join(cp.conditions).lower()}"
+                haystack += f" {' '.join(cp.open_questions).lower()}"
             score = sum(1 for t in tokens if t in haystack)
             if score > 0:
                 scored.append((score, note.created_at, note))
