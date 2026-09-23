@@ -41,6 +41,7 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 ## 向用户呈现
 
 见 `_shared/agent-presentation.md` 与 `references/presentation.md`。
+完成后按 `_shared/dialogue-policy.md` 做一次延伸点检查（无有效点就自然结束），延伸不得抢占交付物。
 
 - **首页**：默认展示 3 个重点（同一快照投影），每张卡回答：此人做过什么、具体细节、证据、可怎样继续。
 - **浏览列表**（`--view browse`）：50 人分层，每张固定五要素：
@@ -69,3 +70,4 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 - `references/audience-profile.md`
 - `_shared/agent-presentation.md`
 - `references/presentation.md`
+- `_shared/dialogue-policy.md` — 任务后延伸点选择、授权边界与收束

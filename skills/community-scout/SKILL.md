@@ -51,6 +51,7 @@ description: >
 ## 向用户呈现
 
 见 `references/presentation.md` 与 `_shared/agent-presentation.md`。
+完成后按 `_shared/dialogue-policy.md` 做一次延伸点检查（无有效点就自然结束），延伸不得抢占交付物。
 
 - 每周输出 **3 张社区行动卡**，少而深，不做信息流；没有合格社区就如实说"本轮无推荐"，不凑数。
 - 每张卡回答七个问题（见 `references/presentation.md`）。
@@ -73,3 +74,4 @@ description: >
 - `references/presentation.md`
 - `_shared/agent-presentation.md`
 - `_shared/evidence-policy.md`
+- `_shared/dialogue-policy.md` — 任务后延伸点选择、授权边界与收束

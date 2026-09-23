@@ -32,7 +32,10 @@ description: >
 
 ## 向用户呈现
 
-见 `_shared/agent-presentation.md` 与 `references/presentation.md`。先给「下周只练」与关系两句，五问折叠；下一步是「开练 / 看同行 / 更新声音」。
+见 `_shared/agent-presentation.md` 与 `references/presentation.md`。
+完成后按 `_shared/dialogue-policy.md` 做一次延伸点检查（无有效点就自然结束），延伸不得抢占交付物。
+
+先给「下周只练」与关系两句，五问折叠；下一步是「开练 / 看同行 / 更新声音」。
 
 ## 边界
 
@@ -45,3 +48,4 @@ description: >
 - `references/reflection-contract.md` — 输出 schema 与五问。
 - `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话（共享原则）。
 - `references/presentation.md` — 本 Skill 的形状与「开练 / 看同行 / 更新声音」映射。
+- `_shared/dialogue-policy.md` — 任务后延伸点选择、授权边界与收束
