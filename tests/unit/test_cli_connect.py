@@ -988,3 +988,15 @@ def test_lookback_hours_parses_and_rejects():
         raise AssertionError("expected BadParameter")
     except typer.BadParameter:
         pass
+
+
+def test_connect_record_presented_rejects_nonlatest_snapshot(monkeypatch, tmp_path):
+    from finch import cli
+
+    monkeypatch.setattr(cli, "load_settings", lambda: Settings(paths=Paths(var_dir=tmp_path)))
+    r = CliRunner().invoke(
+        app,
+        ["connect", "record-presented", "--snapshot-id", "snap_nonexistent", "--json"],
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.output)["ok"] is False

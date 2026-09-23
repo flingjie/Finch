@@ -2579,6 +2579,45 @@ def connect_person(
             typer.echo(f"- [{e.kind.value}] {e.claim} (confidence={e.confidence:.2f})")
 
 
+@connect_app.command("record-presented")
+def connect_record_presented(
+    snapshot_id: str = typer.Option(..., "--snapshot-id", help="快照 id"),
+    surface: str = typer.Option("home", "--surface", help="home|browse"),
+    person_ids: list[str] = typer.Option([], "--person-id", help="实际展示的 person_id（可重复）"),
+    opportunity_ids: list[str] = typer.Option(
+        [], "--opportunity-id", help="实际展示的 opportunity_id（可重复）"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """显式记录「已输出到答复」的 person/opportunity（JSON 驱动流；文本路径已自动记录）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    snapshot = DiscoverySnapshotRepository(ws).latest()
+    if snapshot is None or snapshot.id != snapshot_id:
+        if as_json:
+            typer.echo(
+                json.dumps(
+                    {"ok": False, "error": "snapshot not found or not latest"},
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            typer.echo("snapshot not found or not latest")
+        raise typer.Exit(code=1)
+    wanted = set(person_ids)
+    entries = [e for e in snapshot.recommendations if e.person_id in wanted]
+    _record_person_presentations(ws, snapshot_id, entries, surface=surface)
+    _record_presentations(ws, snapshot_id, opportunity_ids)
+    payload = {"ok": True, "persons": len(entries), "opportunities": len(opportunity_ids)}
+    if as_json:
+        typer.echo(json.dumps(payload, ensure_ascii=False))
+    else:
+        typer.echo(
+            f"recorded {payload['persons']} persons, {payload['opportunities']} opportunities"
+        )
+
+
 @connect_app.command("more")
 def connect_more(
     snapshot_id: str = typer.Option(..., "--snapshot", help="快照 ID"),
