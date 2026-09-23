@@ -3,18 +3,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
-import pytest
 
 from finch.dialogue.models import (
     DialogueCheckpoint,
     DialogueNote,
     PositionStatus,
 )
-from finch.dialogue.repository import DialogueRepository
-from finch.dialogue.service import DialogueService, DialogueServiceError
-from finch.storage.workspace import Workspace
 
 
 def _checkpoint(checkpoint_id: str, *, position: str = "先做 Skill 再代码化") -> DialogueCheckpoint:
