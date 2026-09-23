@@ -32,22 +32,12 @@
 
 ## 结束小结
 
-仅在结束检查触发时使用结构化输出（YAML）。对话中途不要提前甩出完整契约块。
+默认给自然语言总结（当前观点 + 成立条件/剩余缺口 + 一个小验证建议），对话中途不要提前抛出
+完整契约块。结构化 YAML（见 `dialogue-contract.md`）仅在内部整理、或 P1 摘要存储时使用，
+不默认展示给用户。
 
-```yaml
-current_judgment: …
-reasoning:
-  - …
-changed_during_dialogue: …
-open_gap:
-  type: evidence | boundary | concept | none
-  detail: …
-next_step:
-  type: continue | verify | experiment | save_idea | draft | prepare_interaction | stop
-  detail: …
-```
-
-小结后用一两句口语说明可选下一步，例如：「若要保存为观点候选，直接说；若先停在这里也可以。」不要自动调用其他 Skill 的 CLI。
+小结后用一两句口语说明可选下一步，例如：「若要保存为观点候选，直接说；若先停在这里也可以。」
+不要自动调用其他 Skill 的 CLI。
 
 ## 模拟真人时的标注
 
