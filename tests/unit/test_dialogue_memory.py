@@ -9,6 +9,8 @@ from finch.dialogue.models import (
     DialogueNote,
     PositionStatus,
 )
+from finch.dialogue.repository import DialogueRepository
+from finch.storage.workspace import Workspace
 
 
 def _checkpoint(checkpoint_id: str, *, position: str = "先做 Skill 再代码化") -> DialogueCheckpoint:
@@ -34,3 +36,26 @@ def test_note_serializes_to_json_with_enum():
     payload = json.loads(note.model_dump_json())
     assert payload["id"] == "dlg_test"
     assert payload["checkpoints"][0]["position_status"] == "tentative"
+
+
+def test_repository_roundtrip_and_list(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    repo = DialogueRepository(ws)
+
+    repo.save(_note("dlg_a", "a"))
+    repo.save(_note("dlg_b", "b"))
+
+    assert repo.get("dlg_a").topic_key == "a"
+    assert {n.id for n in repo.list_all()} == {"dlg_a", "dlg_b"}
+
+
+def test_repository_delete(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    repo = DialogueRepository(ws)
+
+    repo.save(_note("dlg_a", "a"))
+    assert repo.delete("dlg_a") is True
+    assert repo.get("dlg_a") is None
+    assert repo.delete("dlg_a") is False
