@@ -105,7 +105,7 @@ skills/
   feynman-practice/      费曼技巧
   sticky-message/        检查想法是否清晰易记
   topic-dialogue/        围绕话题讨论，形成或修正判断（不写关系记录）
-  _shared/               idea-contract / evidence-policy / author-position / expression-contract / publication-safety
+  _shared/               idea-contract / evidence-policy / author-position / expression-contract / publication-safety / agent-presentation / dialogue-policy
 ```
 
 ```
