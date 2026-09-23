@@ -27,6 +27,7 @@ description: >
 ## 向用户呈现
 
 见 `_shared/agent-presentation.md` 与 `references/presentation.md`。先给正文与质检结论，再给「采用 / 改 / 跳过」；Critic 明细默认不展开。
+完成后按 `_shared/dialogue-policy.md` 做一次延伸点检查（无有效点就自然结束），延伸不得抢占交付物。
 
 ## 边界
 
@@ -41,9 +42,10 @@ description: >
 ## 参考
 
 - `references/draft-patterns.md` — 边界 / 口吻 / scope / 立场的写作判据。
-- `_shared/author-position.md` — proposed vs confirmed，不改变立场。
+- `_shared/author-position.md` — proposed vs confirm，不改变立场。
 - `_shared/evidence-policy.md` — 证据优先、推断不写成亲历。
 - `_shared/expression-contract.md` — 有限 rewrite、默认不自动 rewrite。
 - `_shared/publication-safety.md` — 不自动发布、分数由代码算。
 - `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话（共享原则）。
 - `references/presentation.md` — 本 Skill 的形状与「采用 / 改 / 跳过」映射。
+- `_shared/dialogue-policy.md` — 任务后延伸点选择、授权边界与收束

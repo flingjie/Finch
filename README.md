@@ -55,6 +55,14 @@ uv run finch github reflect
 uv run finch twitter search / import-bookmarks / diagnose
 ```
 
+## 自然语言用法
+
+- 「只看结果」——完成当前任务，不做延伸讨论。
+- 「继续讨论」——回应 Finch 上轮延伸问题，进入连续讨论。
+- 「查看依据」——要求展示某条结论的来源。
+- 「先不查」——停止待查证动作。
+- 「别记这段」——跳过当前讨论摘要的保存。
+
 ## 从同行到观点
 
 ```bash

@@ -41,6 +41,7 @@ description: >
 ## 向用户呈现
 
 见 `_shared/agent-presentation.md` 与 `references/presentation.md`。默认摘要 + 最多 3 条更新候选，不贴完整 YAML；确认后才写入。
+完成后按 `_shared/dialogue-policy.md` 做一次延伸点检查（无有效点就自然结束），延伸不得抢占交付物。
 
 ## 参考
 
@@ -48,3 +49,4 @@ description: >
 - `references/sample-format.md` — 正反样本格式。
 - `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话（共享原则）。
 - `references/presentation.md` — 本 Skill 的形状与「采纳 / 看完整画像」映射。
+- `_shared/dialogue-policy.md` — 任务后延伸点选择、授权边界与收束

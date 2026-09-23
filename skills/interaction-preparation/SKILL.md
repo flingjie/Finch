@@ -43,6 +43,7 @@ description: >
 
 读完 CLI 后：点名最值得先做的一条 + **提纲**或最小动作预览 → 最多展开 3 条 →
 「批准 1 / 要完整草稿 / 改提纲 1 / 跳过 / 换一批」。内部保留序号 → `proposal_id`。
+完成后按 `_shared/dialogue-policy.md` 做一次延伸点检查（无有效点就自然结束），延伸不得抢占交付物。
 
 区分三种结果（复用 `suggested_mode` / `ContributionType`，不平行造枚举）：
 
@@ -66,3 +67,4 @@ description: >
 - `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话（共享原则）。
 - `references/presentation.md` — 本 Skill 的形状与「批准 / 改草稿 / 跳过」映射。
 - `_shared/evidence-policy.md` — 回复提纲 vs 原创草稿的证据要求。
+- `_shared/dialogue-policy.md` — 任务后延伸点选择、授权边界与收束
