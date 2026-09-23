@@ -42,7 +42,7 @@ description: >
 ## 参考
 
 - `references/draft-patterns.md` — 边界 / 口吻 / scope / 立场的写作判据。
-- `_shared/author-position.md` — proposed vs confirm，不改变立场。
+- `_shared/author-position.md` — proposed vs confirmed，不改变立场。
 - `_shared/evidence-policy.md` — 证据优先、推断不写成亲历。
 - `_shared/expression-contract.md` — 有限 rewrite、默认不自动 rewrite。
 - `_shared/publication-safety.md` — 不自动发布、分数由代码算。
