@@ -30,6 +30,8 @@ from .conversations.service import (
     active_observation_notes,
     commitment_id_for,
 )
+from .dialogue.models import DialogueNote
+from .dialogue.service import DialogueService, DialogueServiceError
 from .drafts.service import DraftCreateResult, DraftService
 from .engagement.flow import EngagementRunResult
 from .engagement.metrics import (
@@ -167,6 +169,9 @@ app.add_typer(style_app, name="style")
 
 community_app = typer.Typer(help="社区匹配与进入助手（每周 3 个可进入的社区）")
 app.add_typer(community_app, name="community")
+
+dialogue_app = typer.Typer(help="讨论摘要记忆（薄持久化，可检索；命令由 Skill 使用）")
+app.add_typer(dialogue_app, name="dialogue")
 
 
 def _idea_meta_line(job: ContentJob) -> str:
@@ -4418,6 +4423,99 @@ def _render_report(report: StyleReport) -> str:
         lines.append("\n可实验：")
         lines += [f"- {e}" for e in report.experiments_for_me]
     return "\n".join(lines)
+
+
+@dialogue_app.command("save")
+def dialogue_save(
+    file: Path = typer.Option(..., "--file", help="note.json（完整 DialogueNote）"),
+    expected_revision: int = typer.Option(
+        0, "--expected-revision", help="0=创建，>0=要求当前 revision 匹配"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """创建或追加一条讨论摘要（薄持久化；幂等 + revision 冲突）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    incoming = DialogueNote.model_validate_json(file.read_text(encoding="utf-8"))
+    try:
+        note = DialogueService(ws).save(incoming, expected_revision=expected_revision)
+    except DialogueServiceError as exc:
+        if as_json:
+            typer.echo(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        else:
+            typer.echo(f"error: {exc}")
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(json.dumps(note.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"saved {note.id} revision={note.revision}")
+
+
+@dialogue_app.command("search")
+def dialogue_search(
+    query: str = typer.Argument(..., help="检索关键词（topic_key / 主题 / 摘要文本）"),
+    limit: int = typer.Option(3, "--limit", help="最多返回条数"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """关键词召回讨论摘要（最多 limit 条，读取不调用网络）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    notes = DialogueService(ws).search(query, limit=limit)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                [n.model_dump(mode="json") for n in notes],
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        for n in notes:
+            latest = n.checkpoints[-1] if n.checkpoints else None
+            status = latest.position_status.value if latest else "unresolved"
+            typer.echo(f"{n.id}\t{n.topic_key}\t{status}")
+
+
+@dialogue_app.command("show")
+def dialogue_show(
+    note_id: str = typer.Argument(..., help="note id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """读取单条讨论摘要。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    note = DialogueService(ws).show(note_id)
+    if note is None:
+        if as_json:
+            typer.echo(json.dumps({"ok": False, "error": "not found"}, ensure_ascii=False))
+        else:
+            typer.echo("not found")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(json.dumps(note.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"{note.topic}\n  topic_key={note.topic_key} revision={note.revision}")
+
+
+@dialogue_app.command("forget")
+def dialogue_forget(
+    note_id: str = typer.Argument(..., help="note id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """删除单条讨论摘要。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    ok = DialogueService(ws).forget(note_id)
+    if as_json:
+        typer.echo(json.dumps({"ok": ok}, ensure_ascii=False))
+    else:
+        typer.echo("deleted" if ok else "not found")
+    if not ok:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
