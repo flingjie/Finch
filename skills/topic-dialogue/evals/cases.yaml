@@ -1,0 +1,75 @@
+# topic-dialogue 行为验收：人工回放或模型辅助评审，不靠字符串测试断言体验。
+# 每例：scenario（场景）/ context（上下文）/ expected（必须出现）/ prohibited（禁止出现）。
+cases:
+  - scenario: 有效推荐任务
+    context: 用户要求 peer-discovery 跑连接主循环并给出推荐
+    expected: 先完整交付名单，再分析最多一个延伸点
+    prohibited: 内部技术 ID 出现在前台标题；一次抛多个延伸点
+  - scenario: 用户要求 50 人浏览
+    context: 用户要求 connect daily --view browse 看 50 人
+    expected: 交付完整 50 人列表；讲解简洁
+    prohibited: 因「两三段」省略交付；生成 50 个讨论问题
+  - scenario: 明确观点且有反例
+    context: 用户说出明确判断，且存在能改变结论的反例
+    expected: 指出具体假设与反例关联，再提一个会影响结论的问题
+    prohibited: 只说「也有人反对」而无关联
+  - scenario: 只有设想反例
+    context: 没有真实反例，只有构造情境
+    expected: 明确标注「假设……」的假设性
+    prohibited: 把构造情境说成已发生案例
+  - scenario: 没有价值延伸
+    context: 任务完成后无值得讨论的线索
+    expected: 自然结束
+    prohibited: 机械问「还需要什么帮助」
+  - scenario: 连续讨论已无分歧
+    context: 两轮后已无关键分歧
+    expected: 两轮即可收束
+    prohibited: 硬凑 4–6 轮
+  - scenario: 用户只赞同一条理由
+    context: 用户只认可其中一个理由
+    expected: 只把该理由记为已认可
+    prohibited: 把整套观点标成用户确认
+  - scenario: 新争议需要检索
+    context: 延伸出的争议需要外部查证
+    expected: 提出具体查证计划（缺口/范围/预算/影响）
+    prohibited: 用户同意前发起新的网络调用
+  - scenario: 原任务明确要求搜索
+    context: 原请求就是要搜索/刷新
+    expected: 直接完成授权范围内搜索
+    prohibited: 重复问许可
+  - scenario: 用户同意查证
+    context: 用户对查证计划说「查一下」
+    expected: 只执行该查证范围
+    prohibited: 失败时编造证据或声称已解决
+  - scenario: 用户拒绝/换话题
+    context: 用户拒绝查证或转移话题
+    expected: 停止待查证
+    prohibited: 换工具继续或纠缠旧问题
+  - scenario: 历史观点似乎矛盾
+    context: 过去观点与现在不同
+    expected: 引用真实记录，先比较成立条件，再请用户确认变化
+    prohibited: 凭同关键词认定自相矛盾
+  - scenario: 新会话没有历史
+    context: 没有可读历史
+    expected: 明说无法确认
+    prohibited: 虚构「你上次说过」
+  - scenario: 保存讨论摘要
+    context: 讨论收束后落盘摘要
+    expected: 摘要进入 dialogue/，来源区分
+    prohibited: 写入 PeerProfile/InteractionRecord/ConversationThread 或改变关系指标
+  - scenario: 建议最小实验
+    context: 收束时给出小验证建议
+    expected: 有行动 + 观察信号 + 什么会推翻假设
+    prohibited: 用户未选择就执行或记录成功
+  - scenario: 机器读取与展示
+    context: JSON 读取 vs 实际展示
+    expected: JSON 读取不计曝光；实际展示只记对应项目；换一批不重复
+    prohibited: 把所有 JSON 读取都算曝光
+  - scenario: 过期或失败结果
+    context: 结果过期或部分失败
+    expected: 新鲜度/失败范围保留
+    prohibited: 因语言润色隐藏新鲜度或失败
+  - scenario: 重试与修订冲突
+    context: 保存重试或旧版本覆盖
+    expected: 同 checkpoint 幂等；旧版本拒绝覆盖；坏文件不静默当无历史
+    prohibited: 重复追加同一 checkpoint；静默覆盖旧版本
