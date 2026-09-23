@@ -359,6 +359,19 @@ def test_connect_daily_json(monkeypatch, tmp_path):
     assert "shortlist" not in payload
 
 
+def test_connect_daily_json_includes_freshness(monkeypatch, tmp_path):
+    from finch import cli
+
+    monkeypatch.setattr(cli, "load_settings", lambda: Settings(paths=Paths(var_dir=tmp_path)))
+    # 无快照时 snapshot_created_at 为 None、stale 为 False、refresh_status 为 fresh
+    r = CliRunner().invoke(app, ["connect", "daily", "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert "snapshot_created_at" in payload
+    assert "stale" in payload
+    assert "refresh_status" in payload
+
+
 def test_persist_discovery_preserves_recommendations(tmp_path):
     """F1：_persist_discovery 不得覆盖 run_daily_discovery 已写入的完整 50 人推荐。"""
     from finch.engagement.models import DiscoverySnapshot, RecommendationEntry

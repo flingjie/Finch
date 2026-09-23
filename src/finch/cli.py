@@ -2453,6 +2453,13 @@ def connect_daily(
     if as_json:
         typer.echo(json.dumps({
             "schema_version": 2,
+            "snapshot_created_at": (
+                snapshot.created_at.isoformat() if snapshot else None
+            ),
+            "stale": stale,
+            "refresh_status": (
+                "refreshed" if need_refresh else ("stale" if stale else "fresh")
+            ),
             "snapshot_id": snapshot.id if snapshot else None,
             "refreshed": need_refresh,
             "home_person_ids": home_ids,
