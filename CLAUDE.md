@@ -41,6 +41,8 @@ skills/
   sticky-message/         检查想法是否清晰易记
   topic-dialogue/         围绕话题讨论，形成或修正判断（不写关系记录）
   _shared/                idea-contract / evidence-policy / author-position / expression-contract / publication-safety
+  # 交互行为：业务 Skill 完成任务后按 `skills/_shared/dialogue-policy.md` 主动延伸一个讨论点；
+  topic-dialogue 是独立可唤起、且可从任务结果衔接的连续讨论入口（不进入默认流水线）。
 
 src/finch/
   peers/         PeerProfile 关系领域（platform + author_id 幂等归一化）

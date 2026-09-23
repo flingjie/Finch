@@ -97,4 +97,4 @@ Finch 是一个**跨行业连接与灵感助理**：帮你发现不同领域中�
 
 **核心闭环 Skill**（默认进入主循环）：`peer-discovery`、`interaction-preparation`、`conversation-follow-up`、`idea-discovery`、`idea-to-draft`、`voice-profile`、`weekly-reflection`。不新增 monetization / problem-discovery 核心 Skill。
 
-**独立训练工具**（不进入默认流水线）：`expression-practice`、`writing-style-analysis`、`feynman-practice`、`sticky-message`、`topic-dialogue`。其中 `writing-style-analysis` 只读，分析他人风格不得自动写入 `VoiceProfile`。`topic-dialogue` 帮助用户通过讨论形成或修正判断（「我怎么看、为什么、边界在哪里」）；模拟讨论不得写入关系记录，只有用户明确确认的判断才能进入观点/内容链路。
+**独立训练工具**（不进入默认流水线）：`expression-practice`、`writing-style-analysis`、`feynman-practice`、`sticky-message`、`topic-dialogue`。其中 `writing-style-analysis` 只读，分析他人风格不得自动写入 `VoiceProfile`。`topic-dialogue` 帮助用户通过讨论形成或修正判断（「我怎么看、为什么、边界在哪里」）；模拟讨论不得写入关系记录，只有用户明确确认的判断才能进入观点/内容链路。主动邀请讨论（任务后延伸、连续讨论）是当前会话内的行为约定，不自动执行任何领域流程（不自动外发、不自动确认立场、不写关系事实）。
