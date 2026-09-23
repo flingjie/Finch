@@ -2438,6 +2438,9 @@ def connect_daily(
             snapshot = _persist_discovery(ws, result)
 
     focus, snapshot = _load_today_payload(ws, settings, limit=limit)
+    stale = snapshot is not None and not _snapshot_fresh(
+        snapshot, settings.engagement.snapshot_ttl_hours
+    )
 
     # Connection opportunities for the priority tier (backward-compat JSON field).
     connections_payload: list[dict] = []
@@ -2450,6 +2453,11 @@ def connect_daily(
     rec_shortfall = snapshot.recommendation_shortfall if snapshot is not None else {}
     home_ids = snapshot.home_person_ids if snapshot is not None else []
 
+    if daily is not None:
+        refresh_status = "failed" if daily.engagement.status == "failed" else "refreshed"
+    else:
+        refresh_status = "stale" if stale else "fresh"
+
     if as_json:
         typer.echo(json.dumps({
             "schema_version": 2,
@@ -2457,9 +2465,7 @@ def connect_daily(
                 snapshot.created_at.isoformat() if snapshot else None
             ),
             "stale": stale,
-            "refresh_status": (
-                "refreshed" if need_refresh else ("stale" if stale else "fresh")
-            ),
+            "refresh_status": refresh_status,
             "snapshot_id": snapshot.id if snapshot else None,
             "refreshed": need_refresh,
             "home_person_ids": home_ids,
@@ -4483,10 +4489,16 @@ def dialogue_save(
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
-    incoming = DialogueNote.model_validate_json(file.read_text(encoding="utf-8"))
     try:
+        incoming = DialogueNote.model_validate_json(file.read_text(encoding="utf-8"))
         note = DialogueService(ws).save(incoming, expected_revision=expected_revision)
     except DialogueServiceError as exc:
+        if as_json:
+            typer.echo(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        else:
+            typer.echo(f"error: {exc}")
+        raise typer.Exit(code=1) from None
+    except (ValidationError, OSError) as exc:
         if as_json:
             typer.echo(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
         else:

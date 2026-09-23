@@ -367,9 +367,9 @@ def test_connect_daily_json_includes_freshness(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["connect", "daily", "--json"])
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
-    assert "snapshot_created_at" in payload
-    assert "stale" in payload
-    assert "refresh_status" in payload
+    assert payload["snapshot_created_at"] is None
+    assert payload["stale"] is False
+    assert payload["refresh_status"] == "fresh"
 
 
 def test_persist_discovery_preserves_recommendations(tmp_path):
