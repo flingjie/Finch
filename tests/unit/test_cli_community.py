@@ -177,3 +177,39 @@ def test_cli_feedback_ref_and_reason(monkeypatch, tmp_path):
     assert out["interaction_ref"] == "https://x/1"
     assert out["ref_kind"] == "public_url"  # --ref 无 --ref-kind 时默认 public_url
     assert out["reason_kind"] == "deep_but_later"
+
+
+def test_cli_list_surfaces_feedback_across_canonical_url_dedup(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    card_a = tmp_path / "a.yaml"
+    card_a.write_text(
+        "community: Temporal Community\ncanonical_url: https://temporal.io/community\n",
+        encoding="utf-8",
+    )
+    card_b = tmp_path / "b.yaml"
+    card_b.write_text(
+        "community: Temporal\ncanonical_url: https://temporal.io/community\n",
+        encoding="utf-8",
+    )
+    a = json.loads(
+        CliRunner().invoke(app, ["community", "save", "--file", str(card_a), "--json"]).output
+    )
+    CliRunner().invoke(app, ["community", "save", "--file", str(card_b)])
+    CliRunner().invoke(app, ["community", "feedback", a["id"], "--result", "interacted"])
+    r = CliRunner().invoke(app, ["community", "list", "--json"])
+    assert r.exit_code == 0, r.output
+    rows = json.loads(r.output)
+    assert len(rows) == 1
+    assert rows[0]["feedback"]["result"] == "interacted"
+
+
+def test_cli_list_week_filters_before_dedup(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    card = _card(tmp_path)
+    CliRunner().invoke(app, ["community", "save", "--file", card, "--week", "2026-W01"])
+    CliRunner().invoke(app, ["community", "save", "--file", card, "--week", "2026-W02"])
+    r = CliRunner().invoke(app, ["community", "list", "--week", "2026-W01", "--json"])
+    assert r.exit_code == 0, r.output
+    rows = json.loads(r.output)
+    assert len(rows) == 1
+    assert rows[0]["profile"]["week"] == "2026-W01"

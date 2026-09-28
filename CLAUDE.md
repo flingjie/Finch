@@ -18,7 +18,7 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (typer sub-apps / commands): `finch connect ...` (refresh / today / daily / more / expand / prepare / feedback / approve / reject / edit / record / record-presented / create / with), `finch peers ...` (list / show / get), `finch conversations ...` (list / show / get / follow-up / ingest / defer / close), `finch dialogue ...` (save / search / show / forget), `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch inspirations ...` (save / list / show / note / archive), `finch community ...` (discover / save / inspect / feedback / list), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
+CLI surface (typer sub-apps / commands): `finch connect ...` (refresh / today / daily / more / expand / prepare / feedback / approve / reject / edit / record / record-presented / create / with), `finch peers ...` (list / show / get), `finch conversations ...` (list / show / get / follow-up / ingest / defer / close), `finch dialogue ...` (save / search / show / forget), `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch inspirations ...` (save / list / show / note / archive), `finch community ...` (context / save / inspect / feedback / list), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
 
 ## Architecture
 
@@ -34,7 +34,7 @@ skills/
   voice-profile/          个人表达画像，只从用户认可样本更新（finch voice）
   weekly-reflection/      关系/观点/表达复盘（finch weekly；含消息摘录与修订差异）
   # —— 独立训练工具（不进入默认流水线）——
-  community-scout/        每周 3 个可进入的社区，社区行动卡（finch community，验证中）
+  community-scout/        围绕问题发现并持续参与社区：三入口 + 观察/可参与分层 + 回访（finch community，验证中）
   expression-practice/    表达训练（finch practice）
   writing-style-analysis/ 分析他人写作风格，只读不写画像（finch style analyze）
   feynman-practice/       费曼技巧（检查理解）

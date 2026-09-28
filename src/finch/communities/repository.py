@@ -50,12 +50,22 @@ class CommunityRepository:
             None,
         )
 
-    def list_latest_profiles(self) -> list[CommunityProfile]:
-        """每个 identity_key 一条最新投影（保持首次出现顺序，取最后追加的值）。"""
+    def list_latest_profiles(self, week: str | None = None) -> list[CommunityProfile]:
+        """每个 identity_key 一条最新投影；给定 week 时先按周过滤再 dedup。"""
         out: dict[str, CommunityProfile] = {}
         for c in self.list_candidates():
+            if week is not None and c.week != week:
+                continue
             out[identity_key(c)] = c
         return list(out.values())
+
+    def latest_feedback_by_identity(self) -> dict[str, CommunityFeedback]:
+        """{identity_key: 最新反馈}，跨 name 漂移（同 canonical_url）也能关联到最新投影。"""
+        id_to_key = {c.id: identity_key(c) for c in self.list_candidates()}
+        out: dict[str, CommunityFeedback] = {}
+        for fb in self.list_feedback():
+            out[id_to_key.get(fb.community_id, fb.community_id)] = fb
+        return out
 
     # ---- feedback (feedback.jsonl, append-only) ----
     def append_feedback(self, feedback: CommunityFeedback) -> None:

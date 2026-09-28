@@ -82,5 +82,6 @@ risks:
 | `interaction_ref` | 真实互动链接；空=未提供 |
 | `ref_kind` | `public_url`/`user_stated`；无 `interaction_ref` 时为空 |
 
-已发生状态（`interacted/repeated/contributed`）无 `interaction_ref` 时为自述（`user_stated`），未公开核验。
-"准备/打算"不得记成 `interacted`。
+`ref_kind` 为空 = 未提供来源类型。对已发生状态（`interacted/repeated/contributed`），
+无 `interaction_ref` 时按自述（`user_stated`）解读、未公开核验；给 `--ref` 而未显式给
+`--ref-kind` 时记为 `public_url`。"准备/打算"不得记成 `interacted`。

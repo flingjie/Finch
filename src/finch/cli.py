@@ -3722,7 +3722,7 @@ def community_inspect(
     community_id: str = typer.Argument(..., help="community id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """查看一张社区行动卡（含最新反馈与完整反馈历史）。"""
+    """查看一张社区行动卡（`--json` 附带最新反馈与完整反馈历史）。"""
     from finch.communities.service import CommunityService
 
     settings = load_settings()
@@ -3799,20 +3799,24 @@ def community_list(
     show_all: bool = typer.Option(False, "--all", help="输出原始历史（默认每个社区一条最新投影）"),
 ) -> None:
     """列出候选社区与最近反馈状态（默认去重，每个稳定社区一条）。"""
+    from finch.communities.models import identity_key
     from finch.communities.service import CommunityService
 
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     svc = CommunityService(ws)
-    candidates = svc.repo.list_candidates() if show_all else svc.repo.list_latest_profiles()
-    if week:
-        candidates = [c for c in candidates if c.week == week]
-    latest = svc.repo.latest_feedback_by_id()
+    if show_all:
+        candidates = svc.repo.list_candidates()
+        if week:
+            candidates = [c for c in candidates if c.week == week]
+    else:
+        candidates = svc.repo.list_latest_profiles(week)
+    latest = svc.repo.latest_feedback_by_identity()
     if as_json:
         payload = []
         for c in candidates:
-            fb = latest.get(c.id)
+            fb = latest.get(identity_key(c))
             payload.append(
                 {
                     "profile": c.model_dump(mode="json"),
@@ -3825,7 +3829,7 @@ def community_list(
         typer.echo("(no communities)")
         return
     for c in candidates:
-        fb = latest.get(c.id)
+        fb = latest.get(identity_key(c))
         state = fb.result.value if fb else "-"
         typer.echo(f"{c.id}\t{c.week}\t{c.fit_score}\t{state}\t{c.name}")
 

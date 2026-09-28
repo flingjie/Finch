@@ -122,4 +122,4 @@ def community_id_for(name: str) -> str:
 
 def identity_key(profile: CommunityProfile) -> str:
     """跨周去重键：有规范 URL 用 URL，否则回退 name-hash id（不凭名称合并不同社区）。"""
-    return profile.canonical_url or profile.id
+    return profile.canonical_url or profile.id or community_id_for(profile.name)

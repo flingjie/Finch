@@ -117,7 +117,7 @@ def test_feedback_new_fields_default():
 
 def test_identity_key_uses_canonical_url_or_id():
     by_name = CommunityProfile(name="Temporal Community")
-    assert identity_key(by_name) == by_name.id
+    assert identity_key(by_name) == community_id_for(by_name.name)
     with_url = CommunityProfile(
         name="Temporal", canonical_url="https://temporal.io/community"
     )
@@ -174,3 +174,21 @@ def test_record_feedback_stores_new_fields(tmp_path):
     assert fb.interaction_ref == "https://x/1"
     assert fb.ref_kind == "public_url"
     assert fb.reason_kind == "deep_but_later"
+
+
+def test_latest_feedback_by_identity_crosses_name_drift(tmp_path):
+    svc = CommunityService(Workspace(tmp_path))
+    a = svc.save(
+        CommunityProfile(name="Temporal Community", canonical_url="https://temporal.io/community")
+    )
+    svc.save(CommunityProfile(name="Temporal", canonical_url="https://temporal.io/community"))
+    svc.record_feedback(a.id, CommunityResult.JOINED)
+    by_identity = svc.repo.latest_feedback_by_identity()
+    assert by_identity["https://temporal.io/community"].result == CommunityResult.JOINED
+
+
+def test_list_latest_profiles_week_filters_before_dedup(tmp_path):
+    svc = CommunityService(Workspace(tmp_path))
+    svc.save(CommunityProfile(name="Temporal", week="2026-W01"))
+    svc.save(CommunityProfile(name="Temporal", week="2026-W02"))
+    assert [p.week for p in svc.repo.list_latest_profiles("2026-W01")] == ["2026-W01"]

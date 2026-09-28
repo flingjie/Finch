@@ -51,7 +51,7 @@ description: >
 
 - 快照上下文：`finch community context [--json]`
 - 保存一张社区卡：`finch community save --file <card.yaml> [--week 2026-W39]`
-- 查看单张卡（含反馈历史）：`finch community inspect <community_id> [--json]`
+- 查看单张卡：`finch community inspect <community_id> [--json]`（`--json` 含反馈历史）
 - 记录跟进：`finch community feedback <community_id> --result <...> [--ref <链接>] [--reason-kind <...>] [--note <...>]`
 - 列出候选与状态（默认去重）：`finch community list [--week ...] [--all] [--json]`
 
