@@ -5,9 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from finch.communities.models import (
+    CommunityFeedback,
     CommunityProfile,
     CommunityResult,
+    EntryPoint,
+    RecommendationState,
     community_id_for,
+    identity_key,
 )
 from finch.communities.service import CommunityService, week_label
 from finch.settings import Settings
@@ -74,3 +78,45 @@ def test_snapshot_context_roundtrips(tmp_path):
     assert back is not None
     assert back.week == ctx.week
     assert back.interests == list(settings.interests.long_term_interests)
+
+
+def test_old_profile_loads_with_defaults():
+    data = {"id": "comm_x", "name": "Temporal Community", "fit_score": 80}
+    p = CommunityProfile.model_validate(data)
+    assert p.canonical_url == ""
+    assert p.recommendation_state is None
+    assert p.intent == "" and p.question == "" and p.practice_refs == []
+    assert p.source_checked_at is None
+
+
+def test_new_profile_fields_roundtrip():
+    p = CommunityProfile(
+        name="Temporal",
+        canonical_url="https://temporal.io/community",
+        recommendation_state=RecommendationState.ACTIONABLE,
+        intent="question",
+        question="failure replay",
+        practice_refs=["FDE-Gym"],
+        source_checked_at=datetime(2026, 9, 28, tzinfo=UTC),
+        entry_point=EntryPoint(
+            discussion="d", suggested_angle="a", url="https://x/1", status="open"
+        ),
+    )
+    back = CommunityProfile.model_validate(p.model_dump(mode="json"))
+    assert back.recommendation_state == RecommendationState.ACTIONABLE
+    assert back.entry_point.url == "https://x/1"
+    assert back.entry_point.status == "open"
+
+
+def test_feedback_new_fields_default():
+    fb = CommunityFeedback(community_id="comm_x", result=CommunityResult.INTERACTED)
+    assert fb.reason_kind == "" and fb.interaction_ref == "" and fb.ref_kind == ""
+
+
+def test_identity_key_uses_canonical_url_or_id():
+    by_name = CommunityProfile(name="Temporal Community")
+    assert identity_key(by_name) == by_name.id
+    with_url = CommunityProfile(
+        name="Temporal", canonical_url="https://temporal.io/community"
+    )
+    assert identity_key(with_url) == "https://temporal.io/community"

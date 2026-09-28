@@ -25,6 +25,13 @@ class CommunityResult(StrEnum):
     CONTRIBUTED = "contributed"
 
 
+class RecommendationState(StrEnum):
+    """Finch 建议的社区状态（与用户实际动作 CommunityResult 正交）。"""
+
+    OBSERVE = "observe"
+    ACTIONABLE = "actionable"
+
+
 class CommunityEvidence(BaseModel):
     """一条近期公开活动证据（硬门槛 3：推荐结论必须能引用公开证据）。"""
 
@@ -45,6 +52,8 @@ class EntryPoint(BaseModel):
 
     discussion: str
     suggested_angle: str
+    url: str = ""
+    status: str = ""  # open / closed / unknown / 空
 
 
 class FirstContribution(BaseModel):
@@ -69,6 +78,12 @@ class CommunityProfile(BaseModel):
     people: list[CommunityPerson] = Field(default_factory=list)
     entry_point: EntryPoint | None = None
     first_contribution: FirstContribution | None = None
+    canonical_url: str = ""
+    recommendation_state: RecommendationState | None = None
+    intent: str = ""
+    question: str = ""
+    practice_refs: list[str] = Field(default_factory=list)
+    source_checked_at: datetime | None = None
     risks: list[str] = Field(default_factory=list)
     evidence_urls: list[str] = Field(default_factory=list)
     week: str = ""
@@ -81,6 +96,9 @@ class CommunityFeedback(BaseModel):
     community_id: str
     result: CommunityResult
     note: str = ""
+    reason_kind: str = ""  # no_time / too_general / language_barrier / deep_but_later …
+    interaction_ref: str = ""  # 真实互动链接；空=未提供
+    ref_kind: str = ""  # public_url / user_stated
     at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -100,3 +118,8 @@ def community_id_for(name: str) -> str:
     """内容寻址 id：相同 name → 相同 id（幂等）；相似但不同 name 不合并。"""
     digest = hashlib.sha256(name.strip().encode("utf-8")).hexdigest()
     return f"comm_{digest[:12]}"
+
+
+def identity_key(profile: CommunityProfile) -> str:
+    """跨周去重键：有规范 URL 用 URL，否则回退 name-hash id（不凭名称合并不同社区）。"""
+    return profile.canonical_url or profile.id
