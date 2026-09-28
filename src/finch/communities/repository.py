@@ -10,6 +10,7 @@ from finch.communities.models import (
     CommunityContext,
     CommunityFeedback,
     CommunityProfile,
+    identity_key,
 )
 from finch.storage.workspace import Workspace
 
@@ -49,6 +50,13 @@ class CommunityRepository:
             None,
         )
 
+    def list_latest_profiles(self) -> list[CommunityProfile]:
+        """每个 identity_key 一条最新投影（保持首次出现顺序，取最后追加的值）。"""
+        out: dict[str, CommunityProfile] = {}
+        for c in self.list_candidates():
+            out[identity_key(c)] = c
+        return list(out.values())
+
     # ---- feedback (feedback.jsonl, append-only) ----
     def append_feedback(self, feedback: CommunityFeedback) -> None:
         self.ws.append_jsonl(
@@ -77,6 +85,10 @@ class CommunityRepository:
         for fb in self.list_feedback():
             out[fb.community_id] = fb
         return out
+
+    def feedback_for(self, community_id: str) -> list[CommunityFeedback]:
+        """某个社区的全部反馈（append 顺序），供回访读取。"""
+        return [f for f in self.list_feedback() if f.community_id == community_id]
 
     # ---- reports (reports/<week>.md) ----
     def report_path(self, week: str) -> Path:

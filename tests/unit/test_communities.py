@@ -120,3 +120,34 @@ def test_identity_key_uses_canonical_url_or_id():
         name="Temporal", canonical_url="https://temporal.io/community"
     )
     assert identity_key(with_url) == "https://temporal.io/community"
+
+
+def test_list_latest_profiles_dedups_by_id(tmp_path):
+    svc = CommunityService(Workspace(tmp_path))
+    svc.save(_profile())
+    svc.save(_profile())  # 同 name → 同 id，追加第二条
+    assert len(svc.repo.list_latest_profiles()) == 1
+
+
+def test_list_latest_profiles_dedups_by_canonical_url_across_names(tmp_path):
+    svc = CommunityService(Workspace(tmp_path))
+    a = svc.save(
+        CommunityProfile(
+            name="Temporal Community", canonical_url="https://temporal.io/community"
+        )
+    )
+    b = svc.save(
+        CommunityProfile(name="Temporal", canonical_url="https://temporal.io/community")
+    )
+    assert a.id != b.id  # 不同 name → 不同 id
+    latest = svc.repo.list_latest_profiles()
+    assert len(latest) == 1  # 但同 URL 去重
+    assert latest[0].name == "Temporal"  # 取最后追加的一条
+
+
+def test_feedback_for_returns_history(tmp_path):
+    svc = CommunityService(Workspace(tmp_path))
+    saved = svc.save(_profile())
+    svc.record_feedback(saved.id, CommunityResult.JOINED)
+    svc.record_feedback(saved.id, CommunityResult.INTERACTED)
+    assert len(svc.repo.feedback_for(saved.id)) == 2
