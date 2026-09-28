@@ -3750,11 +3750,18 @@ def community_feedback(
         ..., "--result", help="ignored|saved|joined|interacted|repeated|contributed"
     ),
     note: str = typer.Option("", "--note", help="可选备注"),
+    reason_kind: str = typer.Option(
+        "", "--reason-kind", help="原因短标签（no_time/too_general/…）"
+    ),
+    interaction_ref: str = typer.Option("", "--ref", help="用户报告的真实互动链接"),
+    ref_kind: str = typer.Option(
+        "", "--ref-kind", help="public_url|user_stated（默认 public_url）"
+    ),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """记录一次跟进状态（append-only，不自动改变下次评分）。"""
+    """记录一次跟进状态（append-only；校验社区存在，不自动改变下次评分）。"""
     from finch.communities.models import CommunityResult
-    from finch.communities.service import CommunityService
+    from finch.communities.service import CommunityNotFoundError, CommunityService
 
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
@@ -3765,7 +3772,20 @@ def community_feedback(
         valid = ", ".join(r.value for r in CommunityResult)
         typer.echo(f"invalid --result: {result} (use one of {valid})")
         raise typer.Exit(code=1) from None
-    feedback = CommunityService(ws).record_feedback(community_id, result_value, note=note)
+    if interaction_ref and not ref_kind:
+        ref_kind = "public_url"
+    try:
+        feedback = CommunityService(ws).record_feedback(
+            community_id,
+            result_value,
+            note=note,
+            reason_kind=reason_kind,
+            interaction_ref=interaction_ref,
+            ref_kind=ref_kind,
+        )
+    except CommunityNotFoundError:
+        typer.echo(f"not found: {community_id}")
+        raise typer.Exit(code=1) from None
     if as_json:
         typer.echo(json.dumps(feedback.model_dump(mode="json"), ensure_ascii=False, indent=2))
     else:

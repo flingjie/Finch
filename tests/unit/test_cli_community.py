@@ -151,3 +151,29 @@ def test_cli_list_dedups_by_default(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["community", "list", "--all", "--json"])
     assert r.exit_code == 0, r.output
     assert len(json.loads(r.output)) == 2
+
+
+def test_cli_feedback_unknown_community(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    r = CliRunner().invoke(app, ["community", "feedback", "comm_missing", "--result", "joined"])
+    assert r.exit_code == 1
+    assert "not found" in r.output
+
+
+def test_cli_feedback_ref_and_reason(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    saved = json.loads(
+        CliRunner().invoke(app, ["community", "save", "--file", _card(tmp_path), "--json"]).output
+    )
+    r = CliRunner().invoke(
+        app,
+        [
+            "community", "feedback", saved["id"], "--result", "interacted",
+            "--ref", "https://x/1", "--reason-kind", "deep_but_later", "--json",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.output)
+    assert out["interaction_ref"] == "https://x/1"
+    assert out["ref_kind"] == "public_url"  # --ref 无 --ref-kind 时默认 public_url
+    assert out["reason_kind"] == "deep_but_later"
