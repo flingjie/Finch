@@ -3615,6 +3615,10 @@ def _echo_community_card(profile) -> None:
     if profile.platforms:
         typer.echo(f"platforms: {', '.join(profile.platforms)}")
     typer.echo(f"fit_score: {profile.fit_score}")
+    if profile.canonical_url:
+        typer.echo(f"canonical_url: {profile.canonical_url}")
+    if profile.recommendation_state:
+        typer.echo(f"recommendation_state: {profile.recommendation_state.value}")
     if profile.why_fit:
         typer.echo("why_fit:")
         for line in profile.why_fit:
@@ -3718,18 +3722,23 @@ def community_inspect(
     community_id: str = typer.Argument(..., help="community id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """查看一张社区行动卡。"""
+    """查看一张社区行动卡（含最新反馈与完整反馈历史）。"""
     from finch.communities.service import CommunityService
 
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
-    profile = CommunityService(ws).inspect(community_id)
+    svc = CommunityService(ws)
+    profile = svc.inspect(community_id)
     if profile is None:
         typer.echo(f"not found: {community_id}")
         raise typer.Exit(code=1)
     if as_json:
-        typer.echo(json.dumps(profile.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        payload = {
+            "profile": profile.model_dump(mode="json"),
+            "feedback": [f.model_dump(mode="json") for f in svc.feedback_for(community_id)],
+        }
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
     _echo_community_card(profile)
 

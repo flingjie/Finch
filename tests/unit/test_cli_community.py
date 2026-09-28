@@ -61,7 +61,9 @@ def test_cli_save_inspect_feedback_roundtrip(monkeypatch, tmp_path):
 
     r = CliRunner().invoke(app, ["community", "inspect", saved["id"], "--json"])
     assert r.exit_code == 0, r.output
-    assert json.loads(r.output)["entry_point"]["discussion"] == "一个活跃的具体讨论"
+    payload = json.loads(r.output)
+    assert payload["profile"]["entry_point"]["discussion"] == "一个活跃的具体讨论"
+    assert payload["feedback"] == []
 
     r = CliRunner().invoke(
         app, ["community", "feedback", saved["id"], "--result", "joined", "--json"]
@@ -75,6 +77,19 @@ def test_cli_save_inspect_feedback_roundtrip(monkeypatch, tmp_path):
     assert len(rows) == 1
     assert rows[0]["profile"]["id"] == saved["id"]
     assert rows[0]["feedback"]["result"] == "joined"
+
+
+def test_cli_inspect_includes_feedback_history(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    card = _card(tmp_path)
+    saved = json.loads(
+        CliRunner().invoke(app, ["community", "save", "--file", card, "--json"]).output
+    )
+    CliRunner().invoke(app, ["community", "feedback", saved["id"], "--result", "joined"])
+    r = CliRunner().invoke(app, ["community", "inspect", saved["id"], "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert [f["result"] for f in payload["feedback"]] == ["joined"]
 
 
 def test_cli_list_candidate_without_feedback(monkeypatch, tmp_path):
