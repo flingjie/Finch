@@ -168,7 +168,7 @@ app.add_typer(practice_app, name="practice")
 style_app = typer.Typer(help="分析一段文本/链接的写作特点")
 app.add_typer(style_app, name="style")
 
-community_app = typer.Typer(help="社区匹配与进入助手（每周 3 个可进入的社区）")
+community_app = typer.Typer(help="社区匹配与进入助手（发现、观察、回访可进入的社区）")
 app.add_typer(community_app, name="community")
 
 dialogue_app = typer.Typer(help="讨论摘要记忆（薄持久化，可检索；命令由 Skill 使用）")
@@ -3642,12 +3642,12 @@ def _echo_community_card(profile) -> None:
             typer.echo(f"  - {r}")
 
 
-@community_app.command("discover")
-def community_discover(
+@community_app.command("context")
+def community_context(
     week: str | None = typer.Option(None, "--week", help="ISO 周（默认本周，如 2026-W39）"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """快照当前实践上下文到 profile.yaml，并显示本周周报。"""
+    """快照当前实践上下文到 profile.yaml（不进行公开搜索；搜索由 community-scout Skill 执行）。"""
     from finch.communities.service import CommunityService
 
     settings = load_settings()
@@ -3657,7 +3657,7 @@ def community_discover(
     context = svc.snapshot_context(settings, ws)
     svc.repo.write_context(context)
     target_week = week or context.week
-    report = svc.repo.read_report(target_week)
+    report = svc.repo.read_report(target_week)  # 仅当已有报告时附带展示，不声称本次产生
     if as_json:
         typer.echo(
             json.dumps(

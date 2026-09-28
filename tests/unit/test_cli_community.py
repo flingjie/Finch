@@ -109,11 +109,17 @@ def test_cli_save_rejects_missing_community_field(monkeypatch, tmp_path):
     assert "community" in r.output
 
 
-def test_cli_discover_snapshots_context(monkeypatch, tmp_path):
+def test_cli_context_snapshots_context(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
-    r = CliRunner().invoke(app, ["community", "discover", "--json"])
+    r = CliRunner().invoke(app, ["community", "context", "--json"])
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert "-W" in payload["week"]
     assert "interests" in payload["context"]
     assert payload["report"] is None
+
+
+def test_cli_discover_command_removed(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    r = CliRunner().invoke(app, ["community", "discover"])
+    assert r.exit_code != 0
