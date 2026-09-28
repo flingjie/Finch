@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from finch.communities.models import (
     CommunityFeedback,
     CommunityProfile,
@@ -13,7 +15,7 @@ from finch.communities.models import (
     community_id_for,
     identity_key,
 )
-from finch.communities.service import CommunityService, week_label
+from finch.communities.service import CommunityNotFoundError, CommunityService, week_label
 from finch.settings import Settings
 from finch.storage.workspace import Workspace
 
@@ -151,3 +153,24 @@ def test_feedback_for_returns_history(tmp_path):
     svc.record_feedback(saved.id, CommunityResult.JOINED)
     svc.record_feedback(saved.id, CommunityResult.INTERACTED)
     assert len(svc.repo.feedback_for(saved.id)) == 2
+
+
+def test_record_feedback_unknown_community_raises(tmp_path):
+    svc = CommunityService(Workspace(tmp_path))
+    with pytest.raises(CommunityNotFoundError):
+        svc.record_feedback("comm_missing", CommunityResult.JOINED)
+
+
+def test_record_feedback_stores_new_fields(tmp_path):
+    svc = CommunityService(Workspace(tmp_path))
+    saved = svc.save(_profile())
+    fb = svc.record_feedback(
+        saved.id,
+        CommunityResult.INTERACTED,
+        interaction_ref="https://x/1",
+        ref_kind="public_url",
+        reason_kind="deep_but_later",
+    )
+    assert fb.interaction_ref == "https://x/1"
+    assert fb.ref_kind == "public_url"
+    assert fb.reason_kind == "deep_but_later"

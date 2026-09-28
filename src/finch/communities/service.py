@@ -22,6 +22,10 @@ from finch.storage.repositories import ContentJobRepository, PeerRepository
 from finch.storage.workspace import Workspace
 
 
+class CommunityNotFoundError(Exception):
+    """对不存在的社区 id 记录反馈时的校验失败。"""
+
+
 def week_label(now: datetime | None = None) -> str:
     """ISO 周标签：``2026-W39``（用于周报命名与候选归属）。"""
     clock = now or datetime.now(UTC)
@@ -72,8 +76,20 @@ class CommunityService:
         result: CommunityResult,
         *,
         note: str = "",
+        reason_kind: str = "",
+        interaction_ref: str = "",
+        ref_kind: str = "",
     ) -> CommunityFeedback:
-        feedback = CommunityFeedback(community_id=community_id, result=result, note=note)
+        if self.inspect(community_id) is None:
+            raise CommunityNotFoundError(community_id)
+        feedback = CommunityFeedback(
+            community_id=community_id,
+            result=result,
+            note=note,
+            reason_kind=reason_kind,
+            interaction_ref=interaction_ref,
+            ref_kind=ref_kind,
+        )
         self.repo.append_feedback(feedback)
         return feedback
 
@@ -82,3 +98,7 @@ class CommunityService:
 
     def list_feedback(self) -> list[CommunityFeedback]:
         return self.repo.list_feedback()
+
+    def feedback_for(self, community_id: str) -> list[CommunityFeedback]:
+        """某个社区的全部反馈（供 Skill 回访读取）。"""
+        return self.repo.feedback_for(community_id)
