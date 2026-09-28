@@ -123,3 +123,16 @@ def test_cli_discover_command_removed(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
     r = CliRunner().invoke(app, ["community", "discover"])
     assert r.exit_code != 0
+
+
+def test_cli_list_dedups_by_default(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    card = _card(tmp_path)
+    assert CliRunner().invoke(app, ["community", "save", "--file", card]).exit_code == 0
+    assert CliRunner().invoke(app, ["community", "save", "--file", card]).exit_code == 0
+    r = CliRunner().invoke(app, ["community", "list", "--json"])
+    assert r.exit_code == 0, r.output
+    assert len(json.loads(r.output)) == 1
+    r = CliRunner().invoke(app, ["community", "list", "--all", "--json"])
+    assert r.exit_code == 0, r.output
+    assert len(json.loads(r.output)) == 2

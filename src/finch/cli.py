@@ -3767,15 +3767,16 @@ def community_feedback(
 def community_list(
     week: str | None = typer.Option(None, "--week", help="按 ISO 周过滤"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    show_all: bool = typer.Option(False, "--all", help="输出原始历史（默认每个社区一条最新投影）"),
 ) -> None:
-    """列出候选社区与最近反馈状态。"""
+    """列出候选社区与最近反馈状态（默认去重，每个稳定社区一条）。"""
     from finch.communities.service import CommunityService
 
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     svc = CommunityService(ws)
-    candidates = svc.list_candidates()
+    candidates = svc.repo.list_candidates() if show_all else svc.repo.list_latest_profiles()
     if week:
         candidates = [c for c in candidates if c.week == week]
     latest = svc.repo.latest_feedback_by_id()
