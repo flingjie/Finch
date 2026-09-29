@@ -54,6 +54,9 @@ description: >
 - 查看单张卡：`finch community inspect <community_id> [--json]`（`--json` 含反馈历史）
 - 记录跟进：`finch community feedback <community_id> --result <...> [--ref <链接>] [--reason-kind <...>] [--note <...>]`
 - 列出候选与状态（默认去重）：`finch community list [--week ...] [--all] [--json]`
+- 跑一趟发现（有界 loop + 决策记录）：`finch community run --intent weekly|question|revisit [--goal …]`
+- 列出历史 run：`finch community runs [--json]`
+- 复盘一次 run 的 per-step 决策：`finch community run-trace <run_id> [--json]`
 
 数据采集只读入口（发现阶段用，不是新命令）：
 
@@ -64,8 +67,9 @@ description: >
 
 ## 搜索预算（试运行参数）
 
-周探索最多 20 个跨源候选 → 筛 6 个读近期证据 → 深入最多 3 个、展示最多 3 个；问题模式优先 1 + 备选 1；
-选中深读最多 5 条相关公开讨论。分源失败返回部分结果与缺口，不因一处超时伪造全网结论。
+搜索预算现在可配：`finch.yaml` 的 `community_scout`（max_candidates / inspect_batch / max_cards /
+max_reinspect_rounds / suppress_window_weeks / search_urls）。周探索默认 20 → 6 → 3；
+问题模式优先 1 + 备选 1。分源失败返回部分结果与缺口，不因一处超时伪造全网结论。
 对规范 URL 与作品指纹去重；重试计入预算。
 
 ## 向用户呈现
@@ -83,7 +87,8 @@ description: >
 - 外部帖/公开讨论 ≠ 个人证据（见 `_shared/evidence-policy.md`）。
 - 无可核验公开证据不能作肯定推荐；不把"社区主页可访问"当成"近期讨论可访问"。
 - 社区里的"人"不是本 Skill 的产出 → 交给 `peer-discovery`；社区里的"问题" → 交给 `idea-discovery`。
-- 跟进结果只记录，不自动改变下次评分（反馈→评分闭环留待验证后）。
+- 跟进结果确定性回灌下一次推荐：`derive_feedback_facts` 只做硬门禁（ignored 在 suppress_window 内排除、
+  no_time 永不过滤、已互动进入「继续」框架）与软排序摘要；不自动训练权重。
 
 ## 参考
 

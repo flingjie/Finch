@@ -35,3 +35,9 @@
 | 和成员第二次交流 | `finch community feedback <id> --result repeated --ref <链接>` |
 | 提交了代码/案例/工具 | `finch community feedback <id> --result contributed --ref <链接>` |
 | 没时间 | `finch community feedback <id> --result saved --reason-kind no_time` |
+
+## run 产物
+
+`finch community run` 落地决策记录（`runs.jsonl` + `steps.jsonl`）。复盘用 `finch community run-trace
+<run_id>` 看每个动作（search/inspect/propose/finish）的 decision 与 outcome，区分「抓取范围太窄」
+「判断标准有偏」「切入话题差」。
