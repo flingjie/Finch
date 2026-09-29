@@ -67,6 +67,17 @@ class ExtractionSettings(BaseModel):
     max_group_prompt_bytes: int = Field(default=25000, ge=1)
 
 
+class CommunityScoutSettings(BaseModel):
+    """community-scout 薄 loop 预算（把 SKILL 散文里的「试运行参数」提升为可配）。"""
+
+    max_candidates: int = Field(default=20, ge=1)
+    inspect_batch: int = Field(default=6, ge=1)
+    max_cards: int = Field(default=3, ge=1)
+    max_reinspect_rounds: int = Field(default=1, ge=0)
+    suppress_window_weeks: int = Field(default=4, ge=0)
+    search_urls: list[str] = Field(default_factory=list)
+
+
 class QualityGates(BaseModel):
     """内容质量门禁：Critic 通过阈值 + 有限重写轮数。
 
@@ -350,6 +361,7 @@ class Settings(BaseModel):
     opencli: OpenCliSettings = Field(default_factory=OpenCliSettings)
     sources: SourcesSettings = Field(default_factory=SourcesSettings)
     quality_gates: QualityGates = Field(default_factory=QualityGates)
+    community_scout: CommunityScoutSettings = Field(default_factory=CommunityScoutSettings)
     paths: Paths = Field(default_factory=Paths)
     engagement: EngagementSettings = Field(default_factory=EngagementSettings)
     interests: InterestsSettings = Field(default_factory=InterestsSettings)

@@ -7,11 +7,18 @@ from datetime import UTC, datetime
 import pytest
 
 from finch.communities.models import (
+    CommunityCandidate,
     CommunityFeedback,
     CommunityProfile,
     CommunityResult,
+    CommunityRun,
     EntryPoint,
+    FeedbackFacts,
     RecommendationState,
+    RunIntent,
+    RunStep,
+    ScoutAction,
+    ScoutObservation,
     community_id_for,
     identity_key,
 )
@@ -192,3 +199,70 @@ def test_list_latest_profiles_week_filters_before_dedup(tmp_path):
     svc.save(CommunityProfile(name="Temporal", week="2026-W01"))
     svc.save(CommunityProfile(name="Temporal", week="2026-W02"))
     assert [p.week for p in svc.repo.list_latest_profiles("2026-W01")] == ["2026-W01"]
+
+
+def test_run_step_roundtrip():
+    step = RunStep(
+        run_id="r1",
+        action=ScoutAction.SEARCH,
+        observation=ScoutObservation(
+            candidates=[CommunityCandidate(name="Temporal", canonical_url="https://temporal.io")]
+        ),
+        decision="kept 1 after excluding 0",
+        outcome="candidates_found=1",
+        at=datetime(2026, 9, 29, tzinfo=UTC),
+        llm_calls=0,
+    )
+    back = RunStep.model_validate(step.model_dump(mode="json"))
+    assert back.action == ScoutAction.SEARCH
+    assert back.observation.candidates[0].name == "Temporal"
+    assert back.llm_calls == 0
+
+
+def test_community_run_roundtrip():
+    run = CommunityRun(
+        run_id="r1",
+        intent=RunIntent.WEEKLY,
+        goal="找 agent reliability 社区",
+        week="2026-W40",
+        status="done",
+        candidates_found=5,
+        cards_proposed=2,
+        budget_used=5,
+        started_at=datetime(2026, 9, 29, tzinfo=UTC),
+        finished_at=datetime(2026, 9, 29, tzinfo=UTC),
+    )
+    assert CommunityRun.model_validate(run.model_dump(mode="json")) == run
+
+
+def test_feedback_facts_defaults():
+    f = FeedbackFacts()
+    assert f.excluded == {}
+    assert f.continue_framing == []
+    assert f.summaries == {}
+
+
+def test_runs_and_steps_roundtrip(tmp_path):
+    from finch.communities.repository import CommunityRepository
+
+    repo = CommunityRepository(Workspace(tmp_path))
+    run = CommunityRun(
+        run_id="r1", intent=RunIntent.WEEKLY, goal="g", week="2026-W40", status="done"
+    )
+    repo.append_run(run)
+    assert repo.get_run("r1") == run
+    assert [r.run_id for r in repo.list_runs()] == ["r1"]
+
+    step = RunStep(run_id="r1", action=ScoutAction.SEARCH, decision="d")
+    repo.append_step(step)
+    repo.append_step(RunStep(run_id="r1", action=ScoutAction.FINISH, decision="f"))
+    assert [s.action for s in repo.list_steps("r1")] == [
+        ScoutAction.SEARCH,
+        ScoutAction.FINISH,
+    ]
+
+
+def test_get_run_missing(tmp_path):
+    from finch.communities.repository import CommunityRepository
+
+    assert CommunityRepository(Workspace(tmp_path)).get_run("nope") is None

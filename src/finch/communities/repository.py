@@ -10,6 +10,8 @@ from finch.communities.models import (
     CommunityContext,
     CommunityFeedback,
     CommunityProfile,
+    CommunityRun,
+    RunStep,
     identity_key,
 )
 from finch.storage.workspace import Workspace
@@ -114,3 +116,35 @@ class CommunityRepository:
         if not path.exists():
             return None
         return path.read_text(encoding="utf-8")
+
+    # ---- runs / steps (append-only JSONL) ----
+    def append_run(self, run: CommunityRun) -> None:
+        self.ws.append_jsonl(self._dir / "runs.jsonl", run.model_dump(mode="json"))
+
+    def list_runs(self) -> list[CommunityRun]:
+        """每个 run_id 一条最新投影（append 日志：running → done/failed 只取末态）。"""
+        out: dict[str, CommunityRun] = {}
+        for row in self.ws.read_jsonl(self._dir / "runs.jsonl"):
+            try:
+                run = CommunityRun.model_validate(row)
+            except ValidationError:
+                continue
+            out[run.run_id] = run
+        return list(out.values())
+
+    def get_run(self, run_id: str) -> CommunityRun | None:
+        return next((r for r in reversed(self.list_runs()) if r.run_id == run_id), None)
+
+    def append_step(self, step: RunStep) -> None:
+        self.ws.append_jsonl(self._dir / "steps.jsonl", step.model_dump(mode="json"))
+
+    def list_steps(self, run_id: str) -> list[RunStep]:
+        out: list[RunStep] = []
+        for row in self.ws.read_jsonl(self._dir / "steps.jsonl"):
+            try:
+                s = RunStep.model_validate(row)
+            except ValidationError:
+                continue
+            if s.run_id == run_id:
+                out.append(s)
+        return out

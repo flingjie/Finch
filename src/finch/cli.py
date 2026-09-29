@@ -3911,6 +3911,84 @@ def community_list(
         typer.echo(f"{c.id}\t{c.week}\t{c.fit_score}\t{state}\t{c.name}")
 
 
+@community_app.command("run")
+def community_run(
+    intent: str = typer.Option("weekly", "--intent", help="weekly|question|revisit（当前三者行为一致，见 community-scout SKILL）"),
+    goal: str = typer.Option("", "--goal", help="本次探索目标（问题模式/回访时必填）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """跑一趟社区发现（有界 loop：search→inspect→propose→finish），写决策记录。"""
+    from finch.communities.models import RunIntent
+    from finch.communities.repository import CommunityRepository
+    from finch.communities.scout import CommunityLoop, WebFetcherSearchSource
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    try:
+        run_intent = RunIntent(intent)
+    except ValueError:
+        typer.echo(f"invalid --intent: {intent} (weekly|question|revisit)")
+        raise typer.Exit(code=1) from None
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    repo = CommunityRepository(ws)
+    loop = CommunityLoop(
+        runner,
+        WebFetcherSearchSource(settings.community_scout.search_urls),
+        repo,
+        budget=settings.community_scout,
+    )
+    run = loop.run(run_intent, goal)
+    if as_json:
+        typer.echo(json.dumps(run.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"{run.run_id}\t{run.status}\tcards={run.cards_proposed}\tcandidates={run.candidates_found}")
+
+
+@community_app.command("runs")
+def community_runs(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """列出历史 run（倒序）。"""
+    from finch.communities.repository import CommunityRepository
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runs = list(reversed(CommunityRepository(ws).list_runs()))
+    if as_json:
+        typer.echo(
+            json.dumps(
+                [r.model_dump(mode="json") for r in runs], ensure_ascii=False, indent=2
+            )
+        )
+        return
+    for r in runs:
+        typer.echo(f"{r.run_id}\t{r.intent.value}\t{r.status}\t{r.cards_proposed}")
+
+
+@community_app.command("run-trace")
+def community_run_trace(
+    run_id: str = typer.Argument(..., help="run id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """复盘一次 run 的 per-step 决策记录。"""
+    from finch.communities.repository import CommunityRepository
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = CommunityRepository(ws)
+    steps = repo.list_steps(run_id)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                [s.model_dump(mode="json") for s in steps], ensure_ascii=False, indent=2
+            )
+        )
+        return
+    for s in steps:
+        typer.echo(f"{s.action.value}\t{s.decision}\t{s.outcome}")
+
+
 @inspirations_app.command("note")
 def inspirations_note(
     inspiration_id: str = typer.Argument(..., help="inspiration id"),
