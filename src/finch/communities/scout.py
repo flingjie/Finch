@@ -231,148 +231,153 @@ class CommunityLoop:
         )
         self.repo.append_run(run)
 
-        facts = derive_feedback_facts(
-            self.repo.latest_feedback_by_identity(),
-            now=clock,
-            suppress_window=timedelta(weeks=self.budget.suppress_window_weeks),
-        )
+        try:
+            facts = derive_feedback_facts(
+                self.repo.latest_feedback_by_identity(),
+                now=clock,
+                suppress_window=timedelta(weeks=self.budget.suppress_window_weeks),
+            )
 
-        # search
-        raw = self.search_source.search(intent, goal, self.budget.max_candidates)
-        kept = [c for c in raw if candidate_identity(c) not in facts.excluded]
-        self._step(
-            run_id,
-            ScoutAction.SEARCH,
-            ScoutObservation(
-                candidates=kept,
-                gap_note=f"excluded {len(raw) - len(kept)} by hard gate",
-            ),
-            decision=f"kept {len(kept)} after hard gate",
-            outcome=f"candidates_found={len(kept)}",
-            llm_calls=0,
-        )
-        run = run.model_copy(update={"candidates_found": len(kept)})
-
-        # inspect（有界：最多 max_reinspect_rounds 次「再 inspect 下一批」）
-        verified: list[CommunityProfile] = []
-        inspected = 0
-        reinspect_rounds = 0
-        if not kept:
-            # 硬门禁排除了全部候选：仍写一条 INSPECT，保持 trace 四步齐全。
+            # search
+            raw = self.search_source.search(intent, goal, self.budget.max_candidates)
+            kept = [c for c in raw if candidate_identity(c) not in facts.excluded]
             self._step(
                 run_id,
-                ScoutAction.INSPECT,
-                ScoutObservation(gap_note="hard gate excluded all candidates"),
-                decision="nothing to inspect",
-                outcome="inspected=0",
+                ScoutAction.SEARCH,
+                ScoutObservation(
+                    candidates=kept,
+                    gap_note=f"excluded {len(raw) - len(kept)} by hard gate",
+                ),
+                decision=f"kept {len(kept)} after hard gate",
+                outcome=f"candidates_found={len(kept)}",
                 llm_calls=0,
             )
-        while inspected < len(kept) and reinspect_rounds <= self.budget.max_reinspect_rounds:
-            batch = kept[inspected : inspected + self.budget.inspect_batch]
-            batch_names = {c.name.strip().lower() for c in batch}
-            batch_name_by_lower = {c.name.strip().lower(): c.name for c in batch}
-            summary_lines = "\n".join(
-                f"{k}: {v}" for k, v in facts.summaries.items()
-            ) or "(none)"
-            out = cast(InspectOutput, self.runner.run(
-                _INSPECT_PROMPT.format(
-                    goal=goal,
-                    summaries=summary_lines,
-                    candidates=_render_candidates(batch),
-                ),
-                InspectOutput,
-            ))
-            batch_verified: list[CommunityProfile] = []
-            batch_rejected: list[dict] = []
-            for ic in out.candidates:
-                key = ic.name.strip().lower()
-                if key not in batch_names:
-                    batch_rejected.append(
-                        {"name": ic.name, "reason": "未匹配输入候选（丢弃）"}
-                    )
-                    continue
-                if ic.reject_reason:
-                    batch_rejected.append(
-                        {"name": batch_name_by_lower[key], "reason": ic.reject_reason}
-                    )
-                    continue
-                batch_verified.append(
-                    CommunityProfile(
-                        name=ic.name,
-                        canonical_url=ic.canonical_url,
-                        recommendation_state=ic.recommendation_state,
-                        why_fit=ic.why_fit,
-                        recent_evidence=ic.recent_evidence,
-                        entry_point=ic.entry_point,
-                        evidence_urls=ic.evidence_urls,
-                    )
+            run = run.model_copy(update={"candidates_found": len(kept)})
+
+            # inspect（有界：最多 max_reinspect_rounds 次「再 inspect 下一批」）
+            verified: list[CommunityProfile] = []
+            inspected = 0
+            reinspect_rounds = 0
+            if not kept:
+                # 硬门禁排除了全部候选：仍写一条 INSPECT，保持 trace 四步齐全。
+                self._step(
+                    run_id,
+                    ScoutAction.INSPECT,
+                    ScoutObservation(gap_note="hard gate excluded all candidates"),
+                    decision="nothing to inspect",
+                    outcome="inspected=0",
+                    llm_calls=0,
                 )
-            verified.extend(batch_verified)
-            inspected += len(batch)
+            while inspected < len(kept) and reinspect_rounds <= self.budget.max_reinspect_rounds:
+                batch = kept[inspected : inspected + self.budget.inspect_batch]
+                batch_names = {c.name.strip().lower() for c in batch}
+                batch_name_by_lower = {c.name.strip().lower(): c.name for c in batch}
+                summary_lines = "\n".join(
+                    f"{k}: {v}" for k, v in facts.summaries.items()
+                ) or "(none)"
+                out = cast(InspectOutput, self.runner.run(
+                    _INSPECT_PROMPT.format(
+                        goal=goal,
+                        summaries=summary_lines,
+                        candidates=_render_candidates(batch),
+                    ),
+                    InspectOutput,
+                ))
+                batch_verified: list[CommunityProfile] = []
+                batch_rejected: list[dict] = []
+                for ic in out.candidates:
+                    key = ic.name.strip().lower()
+                    if key not in batch_names:
+                        batch_rejected.append(
+                            {"name": ic.name, "reason": "未匹配输入候选（丢弃）"}
+                        )
+                        continue
+                    if ic.reject_reason:
+                        batch_rejected.append(
+                            {"name": batch_name_by_lower[key], "reason": ic.reject_reason}
+                        )
+                        continue
+                    batch_verified.append(
+                        CommunityProfile(
+                            name=ic.name,
+                            canonical_url=ic.canonical_url,
+                            recommendation_state=ic.recommendation_state,
+                            why_fit=ic.why_fit,
+                            recent_evidence=ic.recent_evidence,
+                            entry_point=ic.entry_point,
+                            evidence_urls=ic.evidence_urls,
+                        )
+                    )
+                verified.extend(batch_verified)
+                inspected += len(batch)
+                self._step(
+                    run_id,
+                    ScoutAction.INSPECT,
+                    ScoutObservation(verified=list(batch_verified), rejected=batch_rejected),
+                    decision=(
+                        f"verified {len(batch_verified)} / rejected "
+                        f"{len(batch) - len(batch_verified)}"
+                    ),
+                    outcome=f"inspected={inspected}",
+                    llm_calls=1,
+                )
+                if batch_verified:
+                    break  # 有通过核验的候选，不再 re-inspect
+                reinspect_rounds += 1
+
+            # propose
+            cards: list[CommunityProfile] = []
+            if verified:
+                propose_out = cast(ProposeOutput, self.runner.run(
+                    _PROPOSE_PROMPT.format(
+                        max_cards=self.budget.max_cards,
+                        continue_framing=", ".join(facts.continue_framing) or "(none)",
+                        verified=_render_verified(verified),
+                    ),
+                    ProposeOutput,
+                ))
+                cards = [
+                    card
+                    for card in propose_out.cards[: self.budget.max_cards]
+                    if _matches_verified(card, verified)
+                ]
             self._step(
                 run_id,
-                ScoutAction.INSPECT,
-                ScoutObservation(verified=list(batch_verified), rejected=batch_rejected),
-                decision=(
-                    f"verified {len(batch_verified)} / rejected "
-                    f"{len(batch) - len(batch_verified)}"
-                ),
-                outcome=f"inspected={inspected}",
-                llm_calls=1,
+                ScoutAction.PROPOSE,
+                ScoutObservation(cards=list(cards)),
+                decision=f"proposed {len(cards)} cards",
+                outcome=f"cards_proposed={len(cards)}",
+                llm_calls=1 if cards else 0,
             )
-            if batch_verified:
-                break  # 有通过核验的候选，不再 re-inspect
-            reinspect_rounds += 1
 
-        # propose
-        cards: list[CommunityProfile] = []
-        if verified:
-            propose_out = cast(ProposeOutput, self.runner.run(
-                _PROPOSE_PROMPT.format(
-                    max_cards=self.budget.max_cards,
-                    continue_framing=", ".join(facts.continue_framing) or "(none)",
-                    verified=_render_verified(verified),
-                ),
-                ProposeOutput,
-            ))
-            cards = [
-                card
-                for card in propose_out.cards[: self.budget.max_cards]
-                if _matches_verified(card, verified)
-            ]
-        self._step(
-            run_id,
-            ScoutAction.PROPOSE,
-            ScoutObservation(cards=list(cards)),
-            decision=f"proposed {len(cards)} cards",
-            outcome=f"cards_proposed={len(cards)}",
-            llm_calls=1 if cards else 0,
-        )
-
-        # finish
-        for card in cards:
-            card = card.model_copy(update={"week": run.week})
-            if not card.id:
-                card = card.model_copy(update={"id": community_id_for(card.name)})
-            self.repo.append_candidate(card)
-        finished = run.model_copy(
-            update={
-                "status": "done",
-                "cards_proposed": len(cards),
-                "budget_used": inspected,
-                "finished_at": datetime.now(UTC),
-            }
-        )
-        self.repo.append_run(finished)
-        self._step(
-            run_id,
-            ScoutAction.FINISH,
-            ScoutObservation(),
-            decision=f"saved {len(cards)} cards",
-            outcome=f"status={finished.status}",
-            llm_calls=0,
-        )
-        return finished
+            # finish
+            for card in cards:
+                card = card.model_copy(update={"week": run.week})
+                if not card.id:
+                    card = card.model_copy(update={"id": community_id_for(card.name)})
+                self.repo.append_candidate(card)
+            finished = run.model_copy(
+                update={
+                    "status": "done",
+                    "cards_proposed": len(cards),
+                    "budget_used": inspected,
+                    "finished_at": datetime.now(UTC),
+                }
+            )
+            self.repo.append_run(finished)
+            self._step(
+                run_id,
+                ScoutAction.FINISH,
+                ScoutObservation(),
+                decision=f"saved {len(cards)} cards",
+                outcome=f"status={finished.status}",
+                llm_calls=0,
+            )
+            return finished
+        except Exception:
+            failed = run.model_copy(update={"status": "failed", "finished_at": clock})
+            self.repo.append_run(failed)
+            raise
 
     def _step(self, run_id, action, observation, *, decision, outcome, llm_calls):
         self.repo.append_step(

@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from finch.communities.models import (
     CommunityCandidate,
     CommunityFeedback,
@@ -163,6 +165,23 @@ def test_loop_runs_fixed_action_order(tmp_path):
     ]
     assert run.status == "done"
     assert run.cards_proposed == 1
+
+
+def test_loop_records_failed_run_when_runner_raises(tmp_path):
+    class ExplodingRunner(FakeRunner):
+        def run(self, prompt, output_model, **kw):
+            raise RuntimeError("boom")
+
+    loop, repo = _loop(
+        tmp_path,
+        [CommunityCandidate(name="Temporal", canonical_url="https://temporal.io/community")],
+    )
+    loop.runner = ExplodingRunner()
+    with pytest.raises(RuntimeError):
+        loop.run(RunIntent.WEEKLY, "找社区")
+    runs = repo.list_runs()
+    assert runs[-1].status == "failed"
+    assert runs[-1].finished_at is not None
 
 
 def test_loop_excludes_ignored_candidate(tmp_path):
