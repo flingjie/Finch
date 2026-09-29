@@ -186,6 +186,29 @@ def test_loop_excludes_ignored_candidate(tmp_path):
     assert "Temporal" in names
 
 
+def test_loop_writes_inspect_when_hard_gate_excludes_all(tmp_path):
+    loop, repo = _loop(
+        tmp_path,
+        [CommunityCandidate(name="Ignored Community", canonical_url="https://ig.io")],
+    )
+    repo.append_feedback(
+        CommunityFeedback(community_id="https://ig.io", result=CommunityResult.IGNORED)
+    )
+    run = loop.run(RunIntent.WEEKLY, "找社区")
+    actions = [s.action for s in repo.list_steps(run.run_id)]
+    assert actions == [
+        ScoutAction.SEARCH,
+        ScoutAction.INSPECT,
+        ScoutAction.PROPOSE,
+        ScoutAction.FINISH,
+    ]
+    inspect_step = [s for s in repo.list_steps(run.run_id) if s.action == ScoutAction.INSPECT][0]
+    assert inspect_step.decision == "nothing to inspect"
+    assert inspect_step.llm_calls == 0
+    assert run.cards_proposed == 0
+    assert run.status == "done"
+
+
 def test_loop_reinspects_once_when_all_rejected(tmp_path):
     from finch.communities.scout import InspectedCandidate, InspectOutput
 

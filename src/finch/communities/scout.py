@@ -257,6 +257,16 @@ class CommunityLoop:
         verified: list[CommunityProfile] = []
         inspected = 0
         reinspect_rounds = 0
+        if not kept:
+            # 硬门禁排除了全部候选：仍写一条 INSPECT，保持 trace 四步齐全。
+            self._step(
+                run_id,
+                ScoutAction.INSPECT,
+                ScoutObservation(gap_note="hard gate excluded all candidates"),
+                decision="nothing to inspect",
+                outcome="inspected=0",
+                llm_calls=0,
+            )
         while inspected < len(kept) and reinspect_rounds <= self.budget.max_reinspect_rounds:
             batch = kept[inspected : inspected + self.budget.inspect_batch]
             batch_names = {c.name.strip().lower() for c in batch}
