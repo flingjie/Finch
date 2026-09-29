@@ -64,13 +64,42 @@ class _FakeExtractor:
         self.runner = runner
 
 
+class _FakeDiverger:
+    def __init__(self, runner):
+        self.runner = runner
+
+    def explore(self, bundle):
+        from finch.ideas.models import IdeaAngle, IdeaExploration, IdeaGenerator
+        angle = IdeaAngle(
+            index=1, core_point="make the orchestrator a deterministic graph",
+            reader_situation="orchestrator was hard to rerun",
+            reader_takeaway="failures can now be replayed",
+            takeaway_kind="method", evidence_support="observed_this_run",
+            counterexample_or_limit="", source_refs=list(bundle.source_refs),
+        )
+        return IdeaExploration(
+            id="expl_abc12345", origin="practice", source_kind="commit",
+            evidence_status="observed", facts=list(bundle.facts),
+            source_refs=list(bundle.source_refs), boundaries=bundle.boundaries,
+            angles=[angle], rejected_angles=[], recommended_index=1,
+            recommendation_reason="可验证", selections=[],
+            generator=IdeaGenerator(skill="idea-discovery", version="2.0.0"),
+        )
+
+
 class _FakeCommitService:
     def __init__(self, reader, extractor):
         self.reader = reader
         self.extractor = extractor
 
-    def to_ideas(self, commits, *, repo, repo_is_private=False):
-        return [_candidate()]
+    def to_facts(self, commits, *, repo, repo_is_private=False):
+        from finch.ideas.models import FactBundle, IdeaBoundaries
+        return [FactBundle(
+            facts=["make the orchestrator a deterministic graph"],
+            source_refs=[SourceRef(type="commit", ref=COMMIT_URL, summary="feat")],
+            boundaries=IdeaBoundaries(), evidence_status="observed",
+            origin="practice", source_kind="commit",
+        )]
 
 
 def _patch_cli(monkeypatch, settings, record):
@@ -79,6 +108,7 @@ def _patch_cli(monkeypatch, settings, record):
     monkeypatch.setattr(cli, "CommitReader", _FakeCommitReader)
     monkeypatch.setattr(cli, "Extractor", _FakeExtractor)
     monkeypatch.setattr(cli, "CommitService", _FakeCommitService)
+    monkeypatch.setattr(cli, "IdeaDiverger", _FakeDiverger)
 
     def _load_commit_details(repo, gh, *, local_dirs, since=None, workers=6):
         record.append((repo, since))
@@ -87,61 +117,45 @@ def _patch_cli(monkeypatch, settings, record):
     monkeypatch.setattr(cli, "load_commit_details", _load_commit_details)
 
 
-def test_ideas_commit_non_json_output(monkeypatch, tmp_path):
+def test_ideas_commit_new_flow(monkeypatch, tmp_path):
     settings = _settings(tmp_path, ["acme/proj"])
     _patch_cli(monkeypatch, settings, [])
-
     r = CliRunner().invoke(app, ["ideas", "commit"])
     assert r.exit_code == 0, r.output
-    assert "可写观点: make the orchestrator a deterministic graph" in r.output
-    assert "为什么值得写: failures can now be replayed" in r.output
-    assert "适合形式: 短帖" in r.output
-    assert "核心主张:" not in r.output
-    assert "读者问题:" not in r.output
-    assert "全部 proposed" not in r.output
-    assert "立场:" not in r.output
-    assert "推荐体裁:" not in r.output
-    assert "来源:" not in r.output
-    assert "id\tstatus" not in r.output
-    assert "其余：" not in r.output
-    assert "<id>" not in r.output
-    assert "下一步:" not in r.output
-    idea_id = ContentJobRepository(Workspace(settings.paths.var_dir)).list_jobs()[0].id
-    assert f"uv run finch ideas confirm {idea_id}" in r.output
-    assert f"uv run finch ideas skip {idea_id} --reason ..." in r.output
+    assert "我看出 1 个可能观点" in r.output
+    assert "make the orchestrator a deterministic graph" in r.output
+    assert "uv run finch ideas choose expl_abc12345" in r.output
+    jobs = ContentJobRepository(Workspace(settings.paths.var_dir)).list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].core_message == "make the orchestrator a deterministic graph"
 
 
-def test_ideas_commit_caps_cards_and_points_to_list(monkeypatch, tmp_path):
-    import re
-
+def test_ideas_commit_many_bundles_each_yields_exploration(monkeypatch, tmp_path):
     class _ManyCommitService:
         def __init__(self, reader, extractor):
             self.reader = reader
             self.extractor = extractor
 
-        def to_ideas(self, commits, *, repo, repo_is_private=False):
-            return [_candidate(f"point {i}") for i in range(8)]
+        def to_facts(self, commits, *, repo, repo_is_private=False):
+            from finch.ideas.models import FactBundle, IdeaBoundaries
+            return [FactBundle(
+                facts=[f"point {i}"],
+                source_refs=[SourceRef(type="commit", ref=COMMIT_URL, summary="feat")],
+                boundaries=IdeaBoundaries(), evidence_status="observed",
+                origin="practice", source_kind="commit",
+            ) for i in range(8)]
 
     settings = _settings(tmp_path, ["acme/proj"])
     _patch_cli(monkeypatch, settings, [])
     monkeypatch.setattr(cli, "CommitService", _ManyCommitService)
 
-    r = CliRunner().invoke(app, ["ideas", "commit"])
+    r = CliRunner().invoke(app, ["ideas", "commit", "--json"])
     assert r.exit_code == 0, r.output
-    assert r.output.count("可写观点:") == 6
-    assert "全部 proposed" not in r.output
-    assert "point 0" in r.output
-    assert "point 5" in r.output
-    assert "point 6" not in r.output
-    assert "共 8 个候选，以上 6 个。" in r.output
-    assert "uv run finch ideas list" in r.output
-    assert "<id>" not in r.output
-    assert "下一步:" not in r.output
-    confirms = re.findall(r"uv run finch ideas confirm (idea_\w+)", r.output)
-    assert len(confirms) == 6
-    assert len(set(confirms)) == 6
-    assert f"uv run finch ideas skip {confirms[0]} --reason ..." in r.output
-    assert r.output.count("uv run finch ideas skip") == 1
+    payload = json.loads(r.output)
+    assert isinstance(payload, list)
+    assert len(payload) == 8
+    assert all(p["exploration_id"] == "expl_abc12345" for p in payload)
+    assert all(p["job_id"] is not None for p in payload)
 
 
 def test_ideas_commit_persists_and_outputs_json(monkeypatch, tmp_path):
@@ -154,20 +168,16 @@ def test_ideas_commit_persists_and_outputs_json(monkeypatch, tmp_path):
     payload = json.loads(r.output)
     assert isinstance(payload, list)
     assert len(payload) == 1
-    assert payload[0]["id"].startswith("idea_")
-    assert payload[0]["origin"] == "practice"
-    assert payload[0]["core_point"] == CORE_POINT
-    assert payload[0]["reader_problem"] == "orchestrator was hard to rerun"
-    assert payload[0]["why_now"] == "failures can now be replayed"
-    assert payload[0]["recommended_format"] == "short_post"
-    assert payload[0]["status"] == "proposed"
-    assert payload[0]["generation_key"]
+    assert payload[0]["exploration_id"] == "expl_abc12345"
+    assert payload[0]["recommended_index"] == 1
+    assert payload[0]["job_id"].startswith("idea_")
 
     jobs = ContentJobRepository(ws).list_jobs()
     assert len(jobs) == 1
     assert jobs[0].origin == "practice"
     assert jobs[0].status.value == "proposed"
     assert jobs[0].core_message == CORE_POINT
+    assert payload[0]["job_id"] == jobs[0].id
 
 
 def test_ideas_commit_defaults_repo_from_settings(monkeypatch, tmp_path):

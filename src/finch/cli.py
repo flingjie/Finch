@@ -62,7 +62,9 @@ from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient
 from .github.local_repo import resolve_commit_repo
 from .ideas.commit_service import CommitService
+from .ideas.divergence import IdeaDiverger
 from .ideas.fragment_service import FragmentService
+from .ideas.models import Selection
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
 from .inbox.service import InboxDecisionService, list_items
@@ -95,6 +97,7 @@ from .storage.repositories import (
     EvidenceRepository,
     FeedbackRepository,
     FeedbackSnapshotRepository,
+    IdeaExplorationRepository,
     InteractionRecordRepository,
     InteractionRepository,
     OpportunityRepository,
@@ -250,6 +253,37 @@ def _render_idea_cards(jobs: list[ContentJob], *, limit: int = _IDEA_CARD_LIMIT)
     if first.status == ContentJobStatus.PROPOSED:
         parts.append(f"uv run finch ideas skip {first.id} --reason ...")
     return "\n\n".join(parts)
+
+
+def _render_exploration(exploration, job: "ContentJob | None") -> str:
+    """发散结果的呈现：推荐角度 + 其余角度 + 淘汰角度 + 改选命令。"""
+    if not exploration.angles:
+        lines = ["（无角度值得写；淘汰: "
+                 + "; ".join(f"[{r.index}] {r.core_point}（{r.reason}）"
+                             for r in exploration.rejected_angles) + "）"]
+        return "\n".join(lines)
+    rec = exploration.recommended_index
+    lines = [f"我看出 {len(exploration.angles)} 个可能观点，推荐第 {rec}："]
+    for a in exploration.angles:
+        marker = "〔推荐〕" if a.index == rec else f"  {a.index}."
+        lines.append(f"{marker} {a.core_point}")
+        lines.append(f"      情境: {a.reader_situation}")
+        lines.append(f"      所得({a.takeaway_kind}): {a.reader_takeaway}")
+        lines.append(f"      证据: {a.evidence_support}")
+        if a.counterexample_or_limit:
+            lines.append(f"      边界: {a.counterexample_or_limit}")
+    if exploration.recommendation_reason:
+        lines.append(f"推荐理由: {exploration.recommendation_reason}")
+    if exploration.rejected_angles:
+        lines.append("淘汰: " + "; ".join(
+            f"[{r.index}] {r.core_point}（{r.reason}）" for r in exploration.rejected_angles
+        ))
+    if job is not None:
+        lines.append("")
+        lines.append(f"已建候选: {job.id} ({job.status.value})")
+        lines.append(f"uv run finch ideas confirm {job.id}")
+        lines.append(f"改选: uv run finch ideas choose {exploration.id} <index>")
+    return "\n".join(lines)
 
 
 _CONNECT_CARD_LIMIT = 6
@@ -861,26 +895,42 @@ def ideas_commit(
         settings=settings.extraction,
         cache_path=settings.paths.cache_dir / "extraction_cache.json",
     )
-    ideas = CommitService(reader, extractor).to_ideas(details, repo=repo)
+    bundles = CommitService(reader, extractor).to_facts(details, repo=repo)
+    diverge = IdeaDiverger(
+        cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    )
     idea_service = IdeaService(ContentJobRepository(ws))
-    jobs = [idea_service.create_candidate(idea) for idea in ideas]
+    exploration_repo = IdeaExplorationRepository(ws)
+    results: list[tuple[object, ContentJob | None]] = []
+    for bundle in bundles:
+        exploration = diverge.explore(bundle)
+        job: ContentJob | None = None
+        if exploration.recommended_index is not None:
+            angle = next(
+                a for a in exploration.angles if a.index == exploration.recommended_index
+            )
+            job = idea_service.create_from_angle(
+                angle, bundle=bundle, generator=exploration.generator
+            )
+            exploration.selections.append(
+                Selection(index=angle.index, job_id=job.id, at=datetime.now(UTC))
+            )
+        exploration_repo.upsert(exploration)
+        results.append((exploration, job))
     if as_json:
         payload = [
             {
-                "id": job.id,
-                "origin": job.origin,
-                "core_point": job.core_message,
-                "reader_problem": job.reader_problem,
-                "why_now": job.why_now,
-                "recommended_format": job.recommended_format.value,
-                "status": job.status.value,
-                "generation_key": job.generation_key,
+                "exploration_id": e.id,
+                "recommended_index": e.recommended_index,
+                "job_id": (job.id if job is not None else None),
             }
-            for job in jobs
+            for e, job in results
         ]
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        typer.echo(_render_idea_cards(jobs))
+        typer.echo("\n\n".join(
+            _render_exploration(e, job) for e, job in results
+        ))
 
 
 @ideas_app.command("create")

@@ -1,4 +1,4 @@
-"""CommitService：把 GitHub Commit 提炼为 IdeaCandidate（Skill 架构 Step 2 Task 1）。
+"""CommitService：把 GitHub Commit 提炼为 FactBundle（发散前置）。
 
 复用现有适配器（不重写，只迁移调用）：
 - ``CommitReader.filter_noise`` 过滤机械/无操作 commit；
@@ -6,40 +6,29 @@
 - ``build_cards`` 生成 ``EvidenceCard``；
 - ``scan_cards`` 安全扫描（私密仓库内容 / 密钥 / 不存在 commit）。
 
-每个「有明确工程决策」的 EngineeringEvent 产出**一个** ``IdeaCandidate``；
-机械变化、私密仓库内容、无法提炼明确决策的事件一律跳过（不产出）。
+每个「有可追溯材料」的 EngineeringEvent 产出**一束** ``FactBundle``；
+机械变化、私密仓库内容、无任何可追溯材料的事件一律跳过（不产出）。
+``IdeaDiverger.explore`` / ``IdeaService.create_from_angle`` 负责后续发散与落库。
 
 字段映射（确定性，无 LLM 重述）：
-- ``core_point`` ← ``decision.statement``；``reader_problem`` ← ``problem.statement``；
-  ``why_worth_saying`` ← ``result.statement``。
-- ``author_position``：``claim`` ← ``result.statement``（可验证的主张）、
-  ``decision`` ← ``decision.statement``（主张的决策）、
-  ``tradeoff`` ← ``problem.statement``（被放弃的旧问题状态）。
+- ``facts`` ← problem/decision/result 的非空语句（保序）；
+- ``source_refs`` ← 每个事件 commit 一条 ``SourceRef(type="commit", ...)``；
 - ``boundaries``：按置信度分桶，VERIFIED/SUPPORTED/USER_CONFIRMED → ``known``、
   INFERRED → ``inferred``、UNKNOWN → ``unknown``。
 
 本模块是纯领域逻辑：不访问 DB、不调用 LLM、不做重试。
-``IdeaService.create_candidate`` 负责后续幂等落库为 ``ContentJob``。
 """
 
-import hashlib
-
-from finch.content.jobs import AuthorPosition
-from finch.content.models import RecommendedFormat
 from finch.evidence.extractor import Extractor, build_cards
 from finch.evidence.models import ClaimConfidence, EngineeringEvent
 from finch.evidence.safety import scan_cards
 from finch.github.commit_reader import CommitReader
 from finch.github.models import CommitDetail
 from finch.ideas.models import (
+    FactBundle,
     IdeaBoundaries,
-    IdeaCandidate,
-    IdeaGenerator,
     SourceRef,
 )
-
-_GENERATOR_SKILL = "idea-discovery"
-_GENERATOR_VERSION = "1.0.0"
 
 # ClaimConfidence → IdeaBoundaries 桶。USER_CONFIRMED 与 VERIFIED/SUPPORTED 同属
 # 可断言（assertable），归入 known；extractor 已把它降级为 SUPPORTED，此处仅作兜底。
@@ -52,12 +41,13 @@ _CONFIDENCE_TO_BOUNDARY = {
 }
 
 
-def _has_clear_decision(event: EngineeringEvent) -> bool:
-    """decision 语句非空且置信度非 UNKNOWN 才视为有可提炼的明确决策。"""
-    statement = (event.decision.statement or "").strip()
-    if not statement:
-        return False
-    return event.decision.confidence is not ClaimConfidence.UNKNOWN
+def _has_traceable_material(event: EngineeringEvent) -> bool:
+    """problem/decision/result 任一语句非空且置信度非 UNKNOWN 即视为可追溯材料。"""
+    for claim in (event.problem, event.decision, event.result):
+        statement = (claim.statement or "").strip()
+        if statement and claim.confidence is not ClaimConfidence.UNKNOWN:
+            return True
+    return False
 
 
 def _boundaries_from_event(event: EngineeringEvent) -> IdeaBoundaries:
@@ -87,11 +77,11 @@ def _known_commit_urls(commits: list[CommitDetail], repo: str) -> set[str]:
     return urls
 
 
-def _event_to_idea(
+def _event_to_facts(
     event: EngineeringEvent,
     commits: list[CommitDetail],
-) -> IdeaCandidate | None:
-    """单个事件 → 单个 IdeaCandidate；无来源 commit 时返回 None（不可追溯）。"""
+) -> FactBundle | None:
+    """单个事件 → 一束可追溯事实；无来源 commit 时返回 None（不可追溯）。"""
     sha_to_commit = {c.sha: c for c in commits}
     source_refs: list[SourceRef] = []
     for sha in event.commits:
@@ -104,42 +94,36 @@ def _event_to_idea(
         source_refs.append(SourceRef(type="commit", ref=url, summary=summary))
     if not source_refs:
         return None
-
-    core_point = event.decision.statement
-    return IdeaCandidate(
-        # 与 IdeaService 的 ContentJob.id 方案一致：sha256(core_point)[:8]。
-        id=f"idea_{hashlib.sha256(core_point.encode('utf-8')).hexdigest()[:8]}",
-        origin="practice",
-        core_point=core_point,
-        reader_problem=event.problem.statement,
-        why_worth_saying=event.result.statement,
-        author_position=AuthorPosition(
-            claim=event.result.statement,
-            decision=event.decision.statement,
-            tradeoff=event.problem.statement,
-        ),
+    facts: list[str] = []
+    for claim in (event.problem, event.decision, event.result):
+        statement = (claim.statement or "").strip()
+        if statement:
+            facts.append(statement)
+    return FactBundle(
+        facts=facts,
         source_refs=source_refs,
         boundaries=_boundaries_from_event(event),
-        recommended_format=RecommendedFormat.SHORT_POST,
-        generator=IdeaGenerator(skill=_GENERATOR_SKILL, version=_GENERATOR_VERSION),
+        evidence_status="observed",
+        origin="practice",
+        source_kind="commit",
     )
 
 
 class CommitService:
-    """把一组 Commit 提炼为 IdeaCandidate 列表（纯领域逻辑）。"""
+    """把一组 Commit 提炼为 FactBundle 列表（纯领域逻辑）。"""
 
     def __init__(self, reader: CommitReader, extractor: Extractor) -> None:
         self.reader = reader
         self.extractor = extractor
 
-    def to_ideas(
+    def to_facts(
         self,
         commits: list[CommitDetail],
         *,
         repo: str,
         repo_is_private: bool = False,
-    ) -> list[IdeaCandidate]:
-        """commits → IdeaCandidate；机械/私密/无可提炼观点 → 空结果。"""
+    ) -> list[FactBundle]:
+        """commits → FactBundle；机械/私密/无可追溯材料 → 空结果。"""
         filtered = self.reader.filter_noise(commits)
         if not filtered:
             return []
@@ -160,13 +144,13 @@ class CommitService:
             card.event_id for card in cards if card.id in blocked_card_ids
         }
 
-        ideas: list[IdeaCandidate] = []
+        bundles: list[FactBundle] = []
         for event in events:
             if event.id in blocked_event_ids:
                 continue
-            if not _has_clear_decision(event):
+            if not _has_traceable_material(event):
                 continue
-            idea = _event_to_idea(event, filtered)
-            if idea is not None:
-                ideas.append(idea)
-        return ideas
+            bundle = _event_to_facts(event, filtered)
+            if bundle is not None:
+                bundles.append(bundle)
+        return bundles
