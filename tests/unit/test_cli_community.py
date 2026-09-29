@@ -213,3 +213,10 @@ def test_cli_list_week_filters_before_dedup(monkeypatch, tmp_path):
     rows = json.loads(r.output)
     assert len(rows) == 1
     assert rows[0]["profile"]["week"] == "2026-W01"
+
+
+def test_community_runs_empty(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings(tmp_path))
+    r = CliRunner().invoke(app, ["community", "runs", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output) == []
