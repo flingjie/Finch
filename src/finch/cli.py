@@ -64,7 +64,7 @@ from .github.local_repo import resolve_commit_repo
 from .ideas.commit_service import CommitService
 from .ideas.divergence import IdeaDiverger
 from .ideas.fragment_service import FragmentService
-from .ideas.models import FactBundle, Selection
+from .ideas.models import FactBundle, IdeaExploration, Selection
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
 from .inbox.service import InboxDecisionService, list_items
@@ -901,7 +901,7 @@ def ideas_commit(
     )
     idea_service = IdeaService(ContentJobRepository(ws))
     exploration_repo = IdeaExplorationRepository(ws)
-    results: list[tuple[object, ContentJob | None]] = []
+    results: list[tuple[IdeaExploration, ContentJob | None]] = []
     for bundle in bundles:
         exploration = diverge.explore(bundle)
         job: ContentJob | None = None
