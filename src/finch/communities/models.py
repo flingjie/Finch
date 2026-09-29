@@ -123,3 +123,75 @@ def community_id_for(name: str) -> str:
 def identity_key(profile: CommunityProfile) -> str:
     """跨周去重键：有规范 URL 用 URL，否则回退 name-hash id（不凭名称合并不同社区）。"""
     return profile.canonical_url or profile.id or community_id_for(profile.name)
+
+
+class RunIntent(StrEnum):
+    """community-scout 三种入口（对齐 SKILL）。"""
+
+    WEEKLY = "weekly"
+    QUESTION = "question"
+    REVISIT = "revisit"
+
+
+class ScoutAction(StrEnum):
+    """薄 loop 的动作集（固定序；Python 决定下一步，LLM 不选动作）。"""
+
+    SEARCH = "search"
+    INSPECT = "inspect"
+    PROPOSE = "propose"
+    FINISH = "finish"
+
+
+class CommunityCandidate(BaseModel):
+    """search 动作产出的一个候选社区（尚未经 inspect 核验）。"""
+
+    name: str
+    canonical_url: str = ""
+    source_note: str = ""
+    evidence_text: str = ""
+
+
+class ScoutObservation(BaseModel):
+    """一个动作的结构化观察（按 action 不同只填相关字段）。"""
+
+    candidates: list[CommunityCandidate] = Field(default_factory=list)
+    verified: list[CommunityProfile] = Field(default_factory=list)
+    rejected: list[dict] = Field(default_factory=list)  # {name, reason}
+    cards: list[CommunityProfile] = Field(default_factory=list)
+    gap_note: str = ""
+
+
+class RunStep(BaseModel):
+    """决策记录一行：goal/action/observation/decision/outcome + 耗时/调用次数。"""
+
+    run_id: str
+    action: ScoutAction
+    observation: ScoutObservation = Field(default_factory=ScoutObservation)
+    decision: str = ""
+    outcome: str = ""
+    at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    elapsed_ms: int = 0
+    llm_calls: int = 0
+
+
+class CommunityRun(BaseModel):
+    """一次 run 头：intent/goal/状态/预算消耗/卡数。"""
+
+    run_id: str
+    intent: RunIntent
+    goal: str
+    week: str
+    status: str  # running | done | failed | stopped
+    candidates_found: int = 0
+    cards_proposed: int = 0
+    budget_used: int = 0
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    finished_at: datetime | None = None
+
+
+class FeedbackFacts(BaseModel):
+    """从 feedback 派生的确定性事实（硬门禁 + 软排序摘要）。"""
+
+    excluded: dict[str, str] = Field(default_factory=dict)  # identity_key -> 原因
+    continue_framing: list[str] = Field(default_factory=list)  # 回访须「继续」框架的 identity
+    summaries: dict[str, str] = Field(default_factory=dict)  # identity_key -> 摘要
