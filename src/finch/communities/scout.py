@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -227,7 +228,12 @@ class CommunityLoop:
         digest = hashlib.sha256(goal.encode()).hexdigest()[:6]
         run_id = f"run_{clock.strftime('%Y%m%d%H%M%S')}_{digest}"
         run = CommunityRun(
-            run_id=run_id, intent=intent, goal=goal, week=week_label(clock), status="running"
+            run_id=run_id,
+            intent=intent,
+            goal=goal,
+            week=week_label(clock),
+            status="running",
+            started_at=clock,
         )
         self.repo.append_run(run)
 
@@ -239,8 +245,10 @@ class CommunityLoop:
             )
 
             # search
+            search_start = time.perf_counter()
             raw = self.search_source.search(intent, goal, self.budget.max_candidates)
             kept = [c for c in raw if candidate_identity(c) not in facts.excluded]
+            search_elapsed = int((time.perf_counter() - search_start) * 1000)
             self._step(
                 run_id,
                 ScoutAction.SEARCH,
@@ -251,6 +259,7 @@ class CommunityLoop:
                 decision=f"kept {len(kept)} after hard gate",
                 outcome=f"candidates_found={len(kept)}",
                 llm_calls=0,
+                elapsed_ms=search_elapsed,
             )
             run = run.model_copy(update={"candidates_found": len(kept)})
 
@@ -275,6 +284,7 @@ class CommunityLoop:
                 summary_lines = "\n".join(
                     f"{k}: {v}" for k, v in facts.summaries.items()
                 ) or "(none)"
+                inspect_start = time.perf_counter()
                 out = cast(InspectOutput, self.runner.run(
                     _INSPECT_PROMPT.format(
                         goal=goal,
@@ -308,6 +318,7 @@ class CommunityLoop:
                             evidence_urls=ic.evidence_urls,
                         )
                     )
+                inspect_elapsed = int((time.perf_counter() - inspect_start) * 1000)
                 verified.extend(batch_verified)
                 inspected += len(batch)
                 self._step(
@@ -320,6 +331,7 @@ class CommunityLoop:
                     ),
                     outcome=f"inspected={inspected}",
                     llm_calls=1,
+                    elapsed_ms=inspect_elapsed,
                 )
                 if batch_verified:
                     break  # 有通过核验的候选，不再 re-inspect
@@ -327,7 +339,9 @@ class CommunityLoop:
 
             # propose
             cards: list[CommunityProfile] = []
+            propose_elapsed = 0
             if verified:
+                propose_start = time.perf_counter()
                 propose_out = cast(ProposeOutput, self.runner.run(
                     _PROPOSE_PROMPT.format(
                         max_cards=self.budget.max_cards,
@@ -336,6 +350,7 @@ class CommunityLoop:
                     ),
                     ProposeOutput,
                 ))
+                propose_elapsed = int((time.perf_counter() - propose_start) * 1000)
                 cards = [
                     card
                     for card in propose_out.cards[: self.budget.max_cards]
@@ -347,21 +362,24 @@ class CommunityLoop:
                 ScoutObservation(cards=list(cards)),
                 decision=f"proposed {len(cards)} cards",
                 outcome=f"cards_proposed={len(cards)}",
-                llm_calls=1 if cards else 0,
+                llm_calls=int(bool(verified)),
+                elapsed_ms=propose_elapsed,
             )
 
             # finish
+            finish_start = time.perf_counter()
             for card in cards:
                 card = card.model_copy(update={"week": run.week})
                 if not card.id:
                     card = card.model_copy(update={"id": community_id_for(card.name)})
                 self.repo.append_candidate(card)
+            finish_elapsed = int((time.perf_counter() - finish_start) * 1000)
             finished = run.model_copy(
                 update={
                     "status": "done",
                     "cards_proposed": len(cards),
                     "budget_used": inspected,
-                    "finished_at": datetime.now(UTC),
+                    "finished_at": clock,
                 }
             )
             self.repo.append_run(finished)
@@ -372,6 +390,7 @@ class CommunityLoop:
                 decision=f"saved {len(cards)} cards",
                 outcome=f"status={finished.status}",
                 llm_calls=0,
+                elapsed_ms=finish_elapsed,
             )
             return finished
         except Exception:
@@ -379,7 +398,7 @@ class CommunityLoop:
             self.repo.append_run(failed)
             raise
 
-    def _step(self, run_id, action, observation, *, decision, outcome, llm_calls):
+    def _step(self, run_id, action, observation, *, decision, outcome, llm_calls, elapsed_ms=0):
         self.repo.append_step(
             RunStep(
                 run_id=run_id,
@@ -388,5 +407,6 @@ class CommunityLoop:
                 decision=decision,
                 outcome=outcome,
                 llm_calls=llm_calls,
+                elapsed_ms=elapsed_ms,
             )
         )

@@ -196,6 +196,48 @@ def test_list_runs_dedups_after_run(tmp_path):
     assert runs[0].status == "done"
 
 
+def test_propose_llm_calls_counts_call_not_cards(tmp_path):
+    from finch.communities.scout import ProposeOutput
+
+    class EmptyProposeRunner(FakeRunner):
+        def run(self, prompt, output_model, **kw):
+            self.calls += 1
+            if output_model.__name__ == "ProposeOutput":
+                return ProposeOutput(cards=[])
+            return super().run(prompt, output_model, **kw)
+
+    loop, repo = _loop(
+        tmp_path,
+        [CommunityCandidate(name="Temporal", canonical_url="https://temporal.io/community")],
+    )
+    loop.runner = EmptyProposeRunner()
+    run = loop.run(RunIntent.WEEKLY, "找社区")
+    propose_step = [s for s in repo.list_steps(run.run_id) if s.action == ScoutAction.PROPOSE][0]
+    assert propose_step.llm_calls == 1  # propose LLM 被调用，即使返回 0 张卡
+
+
+def test_run_uses_injected_clock_for_timestamps(tmp_path):
+    fixed = datetime(2026, 9, 29, 12, 0, 0, tzinfo=UTC)
+    loop, repo = _loop(
+        tmp_path,
+        [CommunityCandidate(name="Temporal", canonical_url="https://temporal.io/community")],
+    )
+    run = loop.run(RunIntent.WEEKLY, "找社区", now=fixed)
+    assert run.started_at == fixed
+    assert run.finished_at == fixed
+
+
+def test_run_steps_carry_elapsed_ms(tmp_path):
+    loop, repo = _loop(
+        tmp_path,
+        [CommunityCandidate(name="Temporal", canonical_url="https://temporal.io/community")],
+    )
+    run = loop.run(RunIntent.WEEKLY, "找社区")
+    steps = repo.list_steps(run.run_id)
+    assert steps
+    assert all(s.elapsed_ms >= 0 for s in steps)
+
+
 def test_loop_excludes_ignored_candidate(tmp_path):
     from finch.communities.models import CommunityFeedback, CommunityResult
 
