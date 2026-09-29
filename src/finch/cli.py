@@ -203,8 +203,6 @@ def _render_idea_list(jobs: list[ContentJob]) -> str:
     return "\n".join(lines)
 
 
-_IDEA_CARD_LIMIT = 6
-
 _FORMAT_LABELS = {
     "reply": "回复",
     "quote": "引用",
@@ -235,24 +233,6 @@ def _render_idea_card(job: ContentJob) -> str:
     elif job.status == ContentJobStatus.CONFIRMED:
         lines.append(f"uv run finch drafts create {job.id}")
     return "\n".join(lines)
-
-
-def _render_idea_cards(jobs: list[ContentJob], *, limit: int = _IDEA_CARD_LIMIT) -> str:
-    """本次结果的决策卡列表；超出 limit 时指向 `ideas list`。"""
-    if not jobs:
-        return "no idea candidates"
-    shown = jobs[:limit]
-    parts: list[str] = [
-        "\n\n".join(_render_idea_card(job) for job in shown)
-    ]
-    if len(jobs) > limit:
-        parts.append(
-            f"共 {len(jobs)} 个候选，以上 {len(shown)} 个。其余：uv run finch ideas list"
-        )
-    first = shown[0]
-    if first.status == ContentJobStatus.PROPOSED:
-        parts.append(f"uv run finch ideas skip {first.id} --reason ...")
-    return "\n\n".join(parts)
 
 
 def _render_exploration(exploration, job: "ContentJob | None") -> str:
