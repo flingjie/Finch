@@ -64,7 +64,7 @@ from .github.local_repo import resolve_commit_repo
 from .ideas.commit_service import CommitService
 from .ideas.divergence import IdeaDiverger
 from .ideas.fragment_service import FragmentService
-from .ideas.models import Selection
+from .ideas.models import FactBundle, Selection
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
 from .inbox.service import InboxDecisionService, list_items
@@ -1001,6 +1001,50 @@ def ideas_signals(as_json: bool = typer.Option(False, "--json", help="输出 JSO
         ))
     else:
         typer.echo(_render_idea_detail(job))
+
+
+@ideas_app.command("choose")
+def ideas_choose(
+    exploration_id: str = typer.Argument(..., help="exploration id（finch ideas commit 输出）"),
+    angle_index: int = typer.Argument(..., help="要选择的角度序号（1-based）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """从一次发散中选择（或改选）一个角度，为其创建 ContentJob。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    exploration_repo = IdeaExplorationRepository(ws)
+    exploration = exploration_repo.get(exploration_id)
+    if exploration is None:
+        typer.echo(f"exploration not found: {exploration_id}")
+        raise typer.Exit(code=1)
+    angle = next((a for a in exploration.angles if a.index == angle_index), None)
+    if angle is None:
+        typer.echo(f"angle {angle_index} not in exploration {exploration_id}")
+        raise typer.Exit(code=1)
+    bundle = FactBundle(
+        facts=list(exploration.facts),
+        source_refs=list(exploration.source_refs),
+        boundaries=exploration.boundaries,
+        evidence_status=exploration.evidence_status or "observed",
+        origin=exploration.origin,
+        source_kind=exploration.source_kind or "commit",
+    )
+    job = IdeaService(ContentJobRepository(ws)).create_from_angle(
+        angle, bundle=bundle, generator=exploration.generator
+    )
+    exploration.selections.append(
+        Selection(index=angle.index, job_id=job.id, at=datetime.now(UTC))
+    )
+    exploration_repo.upsert(exploration)
+    if as_json:
+        typer.echo(json.dumps(
+            {"exploration_id": exploration.id, "job_id": job.id, "status": job.status.value},
+            ensure_ascii=False, indent=2,
+        ))
+    else:
+        typer.echo(f"已选择角度 {angle.index}: {job.id} ({job.status.value})")
+        typer.echo(f"uv run finch ideas confirm {job.id}")
 
 
 @ideas_app.command("list")

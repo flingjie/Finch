@@ -610,3 +610,71 @@ def test_ideas_signals_persists_candidate(monkeypatch, tmp_path):
     jobs = ContentJobRepository(ws).list_jobs()
     assert len(jobs) == 1
     assert jobs[0].origin == "synthesis"
+
+
+# ---- finch ideas choose ----
+
+def _seed_exploration(ws) -> None:
+    from finch.ideas.models import (
+        FactBundle,
+        IdeaAngle,
+        IdeaBoundaries,
+        IdeaExploration,
+        IdeaGenerator,
+    )
+    from finch.storage.repositories import IdeaExplorationRepository
+
+    bundle = FactBundle(
+        facts=["make the orchestrator a deterministic graph"],
+        source_refs=[SourceRef(type="commit", ref=COMMIT_URL, summary="feat")],
+        boundaries=IdeaBoundaries(), evidence_status="observed",
+        origin="practice", source_kind="commit",
+    )
+    angle1 = IdeaAngle(
+        index=1, core_point="make the orchestrator a deterministic graph",
+        reader_situation="s", reader_takeaway="t", takeaway_kind="method",
+        evidence_support="observed_this_run", counterexample_or_limit="",
+        source_refs=list(bundle.source_refs),
+    )
+    angle2 = angle1.model_copy(update={"index": 2, "core_point": "batch small extracts"})
+    IdeaExplorationRepository(Workspace(ws.paths.var_dir)).upsert(IdeaExploration(
+        id="expl_abc12345", origin="practice", source_kind="commit",
+        evidence_status="observed", facts=list(bundle.facts),
+        source_refs=list(bundle.source_refs), boundaries=IdeaBoundaries(),
+        angles=[angle1, angle2], rejected_angles=[], recommended_index=1,
+        recommendation_reason="可验证", selections=[],
+        generator=IdeaGenerator(skill="idea-discovery", version="2.0.0"),
+    ))
+
+
+def test_ideas_choose_creates_second_job(monkeypatch, tmp_path):
+    from finch.storage.repositories import IdeaExplorationRepository
+    settings = _paths_settings(tmp_path)
+    _patch_settings(monkeypatch, settings)
+    _seed_exploration(settings)
+    r = CliRunner().invoke(app, ["ideas", "choose", "expl_abc12345", "2", "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["job_id"].startswith("idea_")
+    jobs = ContentJobRepository(Workspace(settings.paths.var_dir)).list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].core_message == "batch small extracts"
+    exp = IdeaExplorationRepository(Workspace(settings.paths.var_dir)).get("expl_abc12345")
+    assert exp.selections[-1].index == 2
+
+
+def test_ideas_choose_missing_exploration_exits(monkeypatch, tmp_path):
+    settings = _paths_settings(tmp_path)
+    _patch_settings(monkeypatch, settings)
+    r = CliRunner().invoke(app, ["ideas", "choose", "expl_nope", "1", "--json"])
+    assert r.exit_code == 1
+    assert "not found" in r.output
+
+
+def test_ideas_choose_bad_index_exits(monkeypatch, tmp_path):
+    settings = _paths_settings(tmp_path)
+    _patch_settings(monkeypatch, settings)
+    _seed_exploration(settings)
+    r = CliRunner().invoke(app, ["ideas", "choose", "expl_abc12345", "9", "--json"])
+    assert r.exit_code == 1
+    assert "not in exploration" in r.output
