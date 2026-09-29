@@ -11,7 +11,7 @@
 import hashlib
 from typing import cast
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from finch.ideas.models import (
     EvidenceSupport,
@@ -100,6 +100,14 @@ class DivergeOutput(BaseModel):
     """发散 LLM 结构化输出：2–4 个候选角度（index 由 Python 按顺序重排）。"""
 
     angles: list[DivergeAngle]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _wrap_bare_array(cls, data: object) -> object:
+        """兼容 LLM 直接返回角度数组（而非 ``{"angles": [...]}``）的情况。"""
+        if isinstance(data, list):
+            return {"angles": data}
+        return data
 
 
 class ConvergeOutput(BaseModel):

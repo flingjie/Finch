@@ -128,3 +128,15 @@ def test_explore_same_input_same_id():
     a = IdeaDiverger(FakeRunner(d, out)).explore(_bundle())
     b = IdeaDiverger(FakeRunner(d, out)).explore(_bundle())
     assert a.id == b.id
+
+
+def test_diverge_output_accepts_bare_array():
+    data = [_angle()]
+    parsed = DivergeOutput.model_validate(data)
+    assert len(parsed.angles) == 1
+    assert parsed.angles[0].core_point == "小型重复提取应考虑批处理"
+
+
+def test_diverge_output_accepts_wrapped_shape():
+    parsed = DivergeOutput.model_validate({"angles": [_angle()]})
+    assert len(parsed.angles) == 1
