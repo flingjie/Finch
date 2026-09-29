@@ -29,6 +29,7 @@ from finch.engagement.models import (
     RecommendationFeedback,
 )
 from finch.evidence.models import EvidenceCard
+from finch.ideas.models import IdeaExploration
 from finch.inbox.models import DecisionRecord
 from finch.learn.models import Feedback
 from finch.peers.models import PeerProfile
@@ -170,6 +171,22 @@ class ContentJobRepository:
                 if job is not None:
                     jobs.append(job)
         return jobs, failures
+
+
+class IdeaExplorationRepository:
+    """发散探索结果仓储：``<var>/explorations/<id>.yaml``（同 ContentJob 的文件布局）。"""
+
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
+
+    def upsert(self, exploration: IdeaExploration) -> None:
+        _write(self.ws, "explorations", exploration.id, exploration)
+
+    def get(self, exploration_id: str) -> IdeaExploration | None:
+        return _read(self.ws, "explorations", exploration_id, IdeaExploration)
+
+    def list_all(self) -> list[IdeaExploration]:
+        return _list_all(self.ws, "explorations", IdeaExploration)
 
 
 class DraftVersionRepository:
