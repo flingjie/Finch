@@ -238,9 +238,12 @@ def _render_idea_card(job: ContentJob) -> str:
 def _render_exploration(exploration, job: "ContentJob | None") -> str:
     """发散结果的呈现：推荐角度 + 其余角度 + 淘汰角度 + 改选命令。"""
     if not exploration.angles:
-        lines = ["（无角度值得写；淘汰: "
-                 + "; ".join(f"[{r.index}] {r.core_point}（{r.reason}）"
-                             for r in exploration.rejected_angles) + "）"]
+        if exploration.rejected_angles:
+            lines = ["（无角度值得写；淘汰: "
+                     + "; ".join(f"[{r.index}] {r.core_point}（{r.reason}）"
+                                 for r in exploration.rejected_angles) + "）"]
+        else:
+            lines = ["（无角度值得写）"]
         return "\n".join(lines)
     rec = exploration.recommended_index
     lines = [f"我看出 {len(exploration.angles)} 个可能观点，推荐第 {rec}："]
