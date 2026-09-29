@@ -11,6 +11,7 @@
 - ``boundaries.known/inferred/unknown`` 传递到 Draft 校验。
 """
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -41,11 +42,73 @@ class IdeaBoundaries(BaseModel):
     unknown: list[str] = Field(default_factory=list)
 
 
+TakeawayKind = Literal["diagnosis", "decision_criteria", "method", "pitfall"]
+EvidenceSupport = Literal["observed_this_run", "inferred_cause", "unverified_general"]
+
+
 class IdeaGenerator(BaseModel):
     """生成器元数据：哪个 Skill 与版本产出了该候选。"""
 
     skill: str
     version: str
+
+
+class IdeaAngle(BaseModel):
+    """发散后通过核验的一个候选角度（选中后映射为 IdeaCandidate）。"""
+
+    index: int
+    core_point: str
+    reader_situation: str
+    reader_takeaway: str
+    takeaway_kind: TakeawayKind
+    evidence_support: EvidenceSupport
+    counterexample_or_limit: str
+    source_refs: list[SourceRef]
+
+
+class RejectedAngle(BaseModel):
+    """被淘汰的角度及其理由（核验或收敛阶段）。"""
+
+    index: int
+    core_point: str
+    reason: str
+
+
+class Selection(BaseModel):
+    """一次选择（自动推荐或改选），可追溯。"""
+
+    index: int
+    job_id: str
+    at: datetime
+
+
+class IdeaExploration(BaseModel):
+    """一次发散的中间结果：多角度 + 淘汰理由 + 选择历史（持久化，便于改选）。"""
+
+    id: str
+    origin: IdeaOrigin
+    source_kind: SourceKind | None = None
+    evidence_status: EvidenceStatus | None = None
+    facts: list[str] = Field(default_factory=list)
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    boundaries: IdeaBoundaries = Field(default_factory=IdeaBoundaries)
+    angles: list[IdeaAngle] = Field(default_factory=list)
+    rejected_angles: list[RejectedAngle] = Field(default_factory=list)
+    recommended_index: int | None = None
+    recommendation_reason: str = ""
+    selections: list[Selection] = Field(default_factory=list)
+    generator: IdeaGenerator
+
+
+class FactBundle(BaseModel):
+    """进入发散前的一束可追溯事实（commit 路径产出；后续 fragment 来源复用）。"""
+
+    facts: list[str]
+    source_refs: list[SourceRef]
+    boundaries: IdeaBoundaries
+    evidence_status: EvidenceStatus
+    origin: IdeaOrigin
+    source_kind: SourceKind
 
 
 class IdeaCandidate(BaseModel):
@@ -70,3 +133,8 @@ class IdeaCandidate(BaseModel):
     interpretation: str = ""
     evidence_status: EvidenceStatus | None = None
     limitations: str = ""
+    reader_situation: str = ""
+    reader_takeaway: str = ""
+    takeaway_kind: TakeawayKind | None = None
+    evidence_support: EvidenceSupport | None = None
+    counterexample_or_limit: str = ""
