@@ -213,6 +213,34 @@ def test_loop_reinspects_once_when_all_rejected(tmp_path):
     assert len(inspects) == 2  # 本批全淘汰 → 再 inspect 下一批一次
 
 
+def test_observe_candidate_does_not_reinspect(tmp_path):
+    from finch.communities.scout import InspectedCandidate, InspectOutput
+
+    class ObserveRunner(FakeRunner):
+        def run(self, prompt, output_model, **kw):
+            self.calls += 1
+            if output_model.__name__ == "InspectOutput":
+                return InspectOutput(
+                    candidates=[
+                        InspectedCandidate(
+                            name="A",
+                            recommendation_state=RecommendationState.OBSERVE,
+                        )
+                    ]
+                )
+            return super().run(prompt, output_model, **kw)
+
+    loop, repo = _loop(
+        tmp_path,
+        [CommunityCandidate(name="A"), CommunityCandidate(name="B")],
+        inspect_batch=1,
+    )
+    loop.runner = ObserveRunner()
+    run = loop.run(RunIntent.WEEKLY, "找社区")
+    inspects = [s for s in repo.list_steps(run.run_id) if s.action == ScoutAction.INSPECT]
+    assert len(inspects) == 1  # observe（非 actionable）也算「有产出」→ 不 re-inspect
+
+
 class _FakeFetcher:
     def fetch(self, url):
         return f"fetched: {url}"
