@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime, timedelta
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +28,9 @@ from finch.communities.repository import CommunityRepository
 from finch.communities.service import week_label
 from finch.llm.base import StructuredInferenceRunner
 from finch.settings import CommunityScoutSettings
+
+if TYPE_CHECKING:
+    from finch.webfetch.fetcher import WebFetcher
 
 _ENGAGED = {
     CommunityResult.JOINED,
@@ -77,6 +80,38 @@ class CommunitySearchSource(Protocol):
     """search 动作依赖的窄接口：给定意图与目标，返回有界候选列表（只读）。"""
 
     def search(self, intent: RunIntent, goal: str, limit: int) -> list[CommunityCandidate]: ...
+
+
+class WebFetcherSearchSource:
+    """最小真实 search 源：对配置的 search_urls 逐个 WebFetcher 抓取，产出候选。
+
+    只做检索（raw fetch），判断交给 inspect 的 LLM。多源社区发现（twitter/reddit/v2ex/GitHub
+    Discussions）延后：现有 sources 层投影到 peers 而非 communities。
+    """
+
+    def __init__(self, search_urls: list[str], fetcher: WebFetcher | None = None) -> None:
+        self.search_urls = search_urls
+        self._fetcher = fetcher
+
+    def search(self, intent: RunIntent, goal: str, limit: int) -> list[CommunityCandidate]:
+        from finch.webfetch.fetcher import WebFetcher
+
+        fetcher = self._fetcher or WebFetcher()
+        out: list[CommunityCandidate] = []
+        for url in self.search_urls[:limit]:
+            try:
+                text = fetcher.fetch(url)
+            except Exception:  # noqa: BLE001 — 单源失败不阻塞，如实留缺口
+                continue
+            out.append(
+                CommunityCandidate(
+                    name=url.rstrip("/").split("/")[-1] or url,
+                    canonical_url=url,
+                    source_note="webfetch",
+                    evidence_text=text,
+                )
+            )
+        return out
 
 
 _INSPECT_PROMPT = """\

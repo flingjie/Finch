@@ -10,7 +10,12 @@ from finch.communities.models import (
     ScoutAction,
 )
 from finch.communities.repository import CommunityRepository
-from finch.communities.scout import CommunityLoop, candidate_identity, derive_feedback_facts
+from finch.communities.scout import (
+    CommunityLoop,
+    WebFetcherSearchSource,
+    candidate_identity,
+    derive_feedback_facts,
+)
 from finch.settings import CommunityScoutSettings
 from finch.storage.workspace import Workspace
 
@@ -200,3 +205,21 @@ def test_loop_reinspects_once_when_all_rejected(tmp_path):
     run = loop.run(RunIntent.WEEKLY, "找社区")
     inspects = [s for s in repo.list_steps(run.run_id) if s.action == ScoutAction.INSPECT]
     assert len(inspects) == 2  # 本批全淘汰 → 再 inspect 下一批一次
+
+
+class _FakeFetcher:
+    def fetch(self, url):
+        return f"fetched: {url}"
+
+
+def test_web_fetcher_source_yields_candidates():
+    src = WebFetcherSearchSource(
+        ["https://temporal.io/community", "https://example.org/forum"],
+        fetcher=_FakeFetcher(),
+    )
+    out = src.search(RunIntent.WEEKLY, "找社区", limit=10)
+    assert [c.canonical_url for c in out] == [
+        "https://temporal.io/community",
+        "https://example.org/forum",
+    ]
+    assert out[0].evidence_text == "fetched: https://temporal.io/community"
