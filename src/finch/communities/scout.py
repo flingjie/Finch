@@ -192,6 +192,16 @@ def _render_verified(profiles: list[CommunityProfile]) -> str:
     return "\n".join(lines)
 
 
+def _matches_verified(card: CommunityProfile, verified: list[CommunityProfile]) -> bool:
+    """propose 卡必须对应一个已验证候选（按 name，或两者非空时按 canonical_url）。"""
+    for v in verified:
+        if card.name.strip().lower() == v.name.strip().lower():
+            return True
+        if card.canonical_url and v.canonical_url and card.canonical_url == v.canonical_url:
+            return True
+    return False
+
+
 class CommunityLoop:
     """有界确定性 loop：search → inspect → propose → finish。
 
@@ -245,11 +255,12 @@ class CommunityLoop:
 
         # inspect（有界：最多 max_reinspect_rounds 次「再 inspect 下一批」）
         verified: list[CommunityProfile] = []
-        rejected: list[dict] = []
         inspected = 0
         reinspect_rounds = 0
         while inspected < len(kept) and reinspect_rounds <= self.budget.max_reinspect_rounds:
             batch = kept[inspected : inspected + self.budget.inspect_batch]
+            batch_names = {c.name.strip().lower() for c in batch}
+            batch_name_by_lower = {c.name.strip().lower(): c.name for c in batch}
             summary_lines = "\n".join(
                 f"{k}: {v}" for k, v in facts.summaries.items()
             ) or "(none)"
@@ -262,29 +273,36 @@ class CommunityLoop:
                 InspectOutput,
             ))
             batch_verified: list[CommunityProfile] = []
+            batch_rejected: list[dict] = []
             for ic in out.candidates:
-                if ic.reject_reason:
-                    rejected.append({"name": ic.name, "reason": ic.reject_reason})
-                else:
-                    batch_verified.append(
-                        CommunityProfile(
-                            name=ic.name,
-                            canonical_url=ic.canonical_url,
-                            recommendation_state=ic.recommendation_state,
-                            why_fit=ic.why_fit,
-                            recent_evidence=ic.recent_evidence,
-                            entry_point=ic.entry_point,
-                            evidence_urls=ic.evidence_urls,
-                        )
+                key = ic.name.strip().lower()
+                if key not in batch_names:
+                    batch_rejected.append(
+                        {"name": ic.name, "reason": "未匹配输入候选（丢弃）"}
                     )
+                    continue
+                if ic.reject_reason:
+                    batch_rejected.append(
+                        {"name": batch_name_by_lower[key], "reason": ic.reject_reason}
+                    )
+                    continue
+                batch_verified.append(
+                    CommunityProfile(
+                        name=ic.name,
+                        canonical_url=ic.canonical_url,
+                        recommendation_state=ic.recommendation_state,
+                        why_fit=ic.why_fit,
+                        recent_evidence=ic.recent_evidence,
+                        entry_point=ic.entry_point,
+                        evidence_urls=ic.evidence_urls,
+                    )
+                )
             verified.extend(batch_verified)
             inspected += len(batch)
             self._step(
                 run_id,
                 ScoutAction.INSPECT,
-                ScoutObservation(verified=list(batch_verified), rejected=[
-                    r for r in rejected if r["name"] in {c.name for c in batch}
-                ]),
+                ScoutObservation(verified=list(batch_verified), rejected=batch_rejected),
                 decision=(
                     f"verified {len(batch_verified)} / rejected "
                     f"{len(batch) - len(batch_verified)}"
@@ -307,7 +325,11 @@ class CommunityLoop:
                 ),
                 ProposeOutput,
             ))
-            cards = propose_out.cards[: self.budget.max_cards]
+            cards = [
+                card
+                for card in propose_out.cards[: self.budget.max_cards]
+                if _matches_verified(card, verified)
+            ]
         self._step(
             run_id,
             ScoutAction.PROPOSE,

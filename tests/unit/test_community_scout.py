@@ -194,7 +194,7 @@ def test_loop_reinspects_once_when_all_rejected(tmp_path):
             self.calls += 1
             if output_model.__name__ == "InspectOutput" and self.calls == 1:
                 return InspectOutput(
-                    candidates=[InspectedCandidate(name="X", reject_reason="无公开证据")]
+                    candidates=[InspectedCandidate(name="A", reject_reason="无公开证据")]
                 )
             return super().run(prompt, output_model, **kw)
 
@@ -239,6 +239,66 @@ def test_observe_candidate_does_not_reinspect(tmp_path):
     run = loop.run(RunIntent.WEEKLY, "找社区")
     inspects = [s for s in repo.list_steps(run.run_id) if s.action == ScoutAction.INSPECT]
     assert len(inspects) == 1  # observe（非 actionable）也算「有产出」→ 不 re-inspect
+
+
+def test_inspect_candidate_not_in_batch_is_rejected(tmp_path):
+    from finch.communities.scout import InspectedCandidate, InspectOutput
+
+    class HallucinatedInspectRunner(FakeRunner):
+        def run(self, prompt, output_model, **kw):
+            self.calls += 1
+            if output_model.__name__ == "InspectOutput":
+                return InspectOutput(
+                    candidates=[
+                        InspectedCandidate(
+                            name="Hallucinated",
+                            canonical_url="https://fake.io",
+                            recommendation_state=RecommendationState.ACTIONABLE,
+                        )
+                    ]
+                )
+            return super().run(prompt, output_model, **kw)
+
+    loop, repo = _loop(
+        tmp_path,
+        [CommunityCandidate(name="Temporal", canonical_url="https://temporal.io/community")],
+    )
+    loop.runner = HallucinatedInspectRunner()
+    run = loop.run(RunIntent.WEEKLY, "找社区")
+    inspect_step = [s for s in repo.list_steps(run.run_id) if s.action == ScoutAction.INSPECT][0]
+    assert inspect_step.observation.verified == []
+    assert inspect_step.observation.rejected == [
+        {"name": "Hallucinated", "reason": "未匹配输入候选（丢弃）"}
+    ]
+    assert run.cards_proposed == 0
+
+
+def test_propose_card_not_in_verified_is_dropped(tmp_path):
+    from finch.communities.scout import ProposeOutput
+
+    class HallucinatedProposeRunner(FakeRunner):
+        def run(self, prompt, output_model, **kw):
+            self.calls += 1
+            if output_model.__name__ == "ProposeOutput":
+                return ProposeOutput(
+                    cards=[
+                        CommunityProfile(
+                            name="Hallucinated", canonical_url="https://fake.io"
+                        )
+                    ]
+                )
+            return super().run(prompt, output_model, **kw)
+
+    loop, repo = _loop(
+        tmp_path,
+        [CommunityCandidate(name="Temporal", canonical_url="https://temporal.io/community")],
+    )
+    loop.runner = HallucinatedProposeRunner()
+    run = loop.run(RunIntent.WEEKLY, "找社区")
+    propose_step = [s for s in repo.list_steps(run.run_id) if s.action == ScoutAction.PROPOSE][0]
+    assert propose_step.observation.cards == []
+    assert run.cards_proposed == 0
+    assert repo.list_candidates() == []
 
 
 class _FakeFetcher:
