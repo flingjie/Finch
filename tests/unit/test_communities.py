@@ -240,3 +240,29 @@ def test_feedback_facts_defaults():
     assert f.excluded == {}
     assert f.continue_framing == []
     assert f.summaries == {}
+
+
+def test_runs_and_steps_roundtrip(tmp_path):
+    from finch.communities.repository import CommunityRepository
+
+    repo = CommunityRepository(Workspace(tmp_path))
+    run = CommunityRun(
+        run_id="r1", intent=RunIntent.WEEKLY, goal="g", week="2026-W40", status="done"
+    )
+    repo.append_run(run)
+    assert repo.get_run("r1") == run
+    assert [r.run_id for r in repo.list_runs()] == ["r1"]
+
+    step = RunStep(run_id="r1", action=ScoutAction.SEARCH, decision="d")
+    repo.append_step(step)
+    repo.append_step(RunStep(run_id="r1", action=ScoutAction.FINISH, decision="f"))
+    assert [s.action for s in repo.list_steps("r1")] == [
+        ScoutAction.SEARCH,
+        ScoutAction.FINISH,
+    ]
+
+
+def test_get_run_missing(tmp_path):
+    from finch.communities.repository import CommunityRepository
+
+    assert CommunityRepository(Workspace(tmp_path)).get_run("nope") is None
