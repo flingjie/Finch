@@ -9,9 +9,9 @@ description: >
 
 # idea-discovery
 
-把个人证据、零散思考或真实交流提炼成一个值得继续发展的 Idea。三种来源共用一份判断：
-有「读者值得知道的真实决策/问题」就产出**一个** `IdeaCandidate`；机械变化、新闻、纯情绪、
-无明确结论的噪音 → 空。
+把个人证据、零散思考或真实交流发散成多个可讨论的角度，再收敛到**一个**有证据、
+能供别人使用、可迁移的 `IdeaCandidate`。commit 来源先经 `IdeaDiverger` 发散；
+fragment / conversation / signals 仍单候选。机械变化、新闻、纯情绪 → 空。
 
 本 Skill 只调用 Finch CLI（`finch ideas commit` / `finch ideas create`），不复制业务逻辑、
 不直接改数据库、不猜测状态。
@@ -20,6 +20,7 @@ description: >
 
 - **commit 来源**：`finch ideas commit [--since 7d]`。默认当前 checkout 的 origin、近 7 天；
   只有用户点名别的仓库才传 `--repo`。见 `references/commit-signals.md`。
+  发散后按 `references/presentation.md` 呈现 2–4 个角度与推荐，改选用 `finch ideas choose`。
 - **fragment 来源**：`finch ideas create --text "..."`，见 `references/fragment-signals.md`。
   无 commit 也可；产出会带 `source_kind` / `facts` / `interpretation` / `evidence_status`
   （`observed` / `externally_reported` / `unverified`）。外部文章描述实验 →

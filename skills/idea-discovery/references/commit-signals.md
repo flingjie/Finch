@@ -11,6 +11,9 @@
 三问都有明确答案（decision 非空且置信度非 UNKNOWN）→ 可提炼**一个** Idea。
 任何一问空洞（"refactor"、"clean up"、"fix"）→ 不可提炼，空列表。
 
+> **发散时不再要求三问都有明确答案；problem / decision / result 任一有可追溯内容即可进入发散，
+> 发散再分别寻找反常现象、失败与修正、设计取舍、可复用方法、未解决问题。**
+
 ## 机械变化（直接跳过）
 
 - 只改 lockfile（`package-lock.json` / `uv.lock` / `Cargo.lock` / `poetry.lock` …）。

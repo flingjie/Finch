@@ -13,6 +13,7 @@ cases:
               deletions: 4
     expected_output:
       ideas: 1
+      # 新链路：1 个 bundle → 发散 1 角度 → 1 job（commit 来源经 IdeaDiverger，单候选时仍退化为 1）
       core_point: 单一中心主张（确定性图/orchestrator 相关决策）
     assertions:
       - name: 单候选
