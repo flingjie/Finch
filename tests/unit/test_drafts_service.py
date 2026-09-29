@@ -6,7 +6,7 @@ from finch.content.checkers.decision import _DecisionOutput
 from finch.content.checkers.portability import _PortabilityOutput
 from finch.content.checkers.safety import _SafetyOutput
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
-from finch.content.models import Draft, DraftKind, RecommendedFormat
+from finch.content.models import Draft, DraftBodyOutput, DraftKind, RecommendedFormat
 from finch.drafts.service import (
     DraftCreateResult,
     DraftService,
@@ -87,6 +87,8 @@ class FakeRunner:
                 body=self.body,
                 claims=[],
             )
+        if output_model is DraftBodyOutput:
+            return DraftBodyOutput(body=self.body)
         if output_model is _DecisionOutput:
             return _DecisionOutput(
                 expresses_decision=True, expresses_tradeoff=True, missing=[]
