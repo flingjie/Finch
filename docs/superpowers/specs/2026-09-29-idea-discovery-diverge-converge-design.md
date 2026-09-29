@@ -81,8 +81,10 @@
 | `id` | `str` | `expl_<sha256[:8]>`，由规范化来源 + 事实指纹决定，幂等 |
 | `origin` | `IdeaOrigin` | practice（commit 路径） |
 | `source_kind` | `SourceKind \| None` | commit |
+| `evidence_status` | `EvidenceStatus \| None` | 归属（谁的经验），与 `evidence_support` 分开 |
 | `facts` | `list[str]` | 可追溯事实卡（来自 EngineeringEvent） |
 | `source_refs` | `list[SourceRef]` | 全部来源 |
+| `boundaries` | `IdeaBoundaries` | 证据边界（已知/推断/未知） |
 | `angles` | `list[IdeaAngle]` | 通过核验的角度（0–4） |
 | `rejected_angles` | `list[RejectedAngle]` | 淘汰角度及理由 |
 | `recommended_index` | `int \| None` | 收敛推荐；无角度时为 None |
@@ -117,7 +119,7 @@
 
 ## 7. `IdeaService` + 选择溯源
 
-- 新增 `create_from_angle(angle: IdeaAngle, *, origin, source_refs, source_kind, evidence_status, facts, boundaries) -> ContentJob`：把角度映射为 `IdeaCandidate` 后复用现有 `create_candidate`（幂等、状态机不变）。
+- 新增 `create_from_angle(angle: IdeaAngle, *, bundle: FactBundle, generator: IdeaGenerator) -> ContentJob`：把角度映射为 `IdeaCandidate` 后复用现有 `create_candidate`（幂等、状态机不变）。
 
 | candidate 字段 | 来源 |
 |---|---|
