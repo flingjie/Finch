@@ -1056,7 +1056,6 @@ Expected: FAIL（`AttributeError: 'CommitService' object has no attribute 'to_fa
 from finch.ideas.models import (
     FactBundle,
     IdeaBoundaries,
-    IdeaGenerator,
     SourceRef,
 )
 ```
@@ -1149,8 +1148,7 @@ from .storage.repositories import IdeaExplorationRepository
     )
     idea_service = IdeaService(ContentJobRepository(ws))
     exploration_repo = IdeaExplorationRepository(ws)
-    jobs: list[ContentJob] = []
-    explorations: list[object] = []
+    results: list[tuple[object, ContentJob | None]] = []
     for bundle in bundles:
         exploration = diverge.explore(bundle)
         job: ContentJob | None = None
@@ -1164,23 +1162,21 @@ from .storage.repositories import IdeaExplorationRepository
             exploration.selections.append(
                 Selection(index=angle.index, job_id=job.id, at=datetime.now(UTC))
             )
-            jobs.append(job)
         exploration_repo.upsert(exploration)
-        explorations.append(exploration)
+        results.append((exploration, job))
     if as_json:
         payload = [
             {
                 "exploration_id": e.id,
                 "recommended_index": e.recommended_index,
-                "job_id": (e.selections[-1].job_id if e.selections else None),
+                "job_id": (job.id if job is not None else None),
             }
-            for e in explorations
+            for e, job in results
         ]
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         typer.echo("\n\n".join(
-            _render_exploration(e, jobs[i] if i < len(jobs) else None)
-            for i, e in enumerate(explorations)
+            _render_exploration(e, job) for e, job in results
         ))
 ```
 
