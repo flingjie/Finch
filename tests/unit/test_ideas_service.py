@@ -5,6 +5,8 @@ import pytest
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from finch.content.models import RecommendedFormat
 from finch.ideas.models import (
+    FactBundle,
+    IdeaAngle,
     IdeaBoundaries,
     IdeaCandidate,
     IdeaGenerator,
@@ -269,3 +271,64 @@ def test_skip_illegal_from_drafted():
     job = svc.mark_drafted(svc.confirm_position(svc.create_candidate(_candidate()).id).id)
     with pytest.raises(ValueError):
         svc.skip(job.id, "late")
+
+
+# ---- create_from_angle ----
+
+
+def _bundle() -> FactBundle:
+    return FactBundle(
+        facts=["graph 支持重放"],
+        source_refs=[SourceRef(type="commit", ref="abc123", summary="引入 graph 运行时")],
+        boundaries=IdeaBoundaries(known=["graph 支持重放"], inferred=[], unknown=[]),
+        evidence_status="observed",
+        origin="practice",
+        source_kind="commit",
+    )
+
+
+def _angle(**overrides) -> IdeaAngle:
+    data = dict(
+        index=1,
+        core_point="Graph 的价值是恢复与重放",
+        reader_situation="很多人只把 Graph 当可视化",
+        reader_takeaway="用可恢复性评价 Graph",
+        takeaway_kind="decision_criteria",
+        evidence_support="observed_this_run",
+        counterexample_or_limit="需要持久化状态",
+        source_refs=[SourceRef(type="commit", ref="abc123", summary="引入 graph 运行时")],
+    )
+    data.update(overrides)
+    return IdeaAngle(**data)
+
+
+def test_create_from_angle_maps_fields():
+    svc, _ = _service()
+    job = svc.create_from_angle(
+        _angle(), bundle=_bundle(), generator=IdeaGenerator(skill="idea-discovery", version="2.0.0")
+    )
+    assert job.status == ContentJobStatus.PROPOSED
+    assert job.core_message == "Graph 的价值是恢复与重放"
+    assert job.reader_problem == "很多人只把 Graph 当可视化"
+    assert job.why_now == "用可恢复性评价 Graph"
+    assert job.author_position is not None
+    assert job.author_position.claim == "Graph 的价值是恢复与重放"
+    assert job.author_position.decision == "用可恢复性评价 Graph"
+    assert job.author_position.tradeoff == "需要持久化状态"
+    assert job.facts == ["graph 支持重放"]
+    assert job.evidence_status == "observed"
+    assert job.generator_name == "idea-discovery"
+    assert job.generator_version == "2.0.0"
+
+
+def test_create_from_angle_second_angle_makes_second_job():
+    svc, repo = _service()
+    first = svc.create_from_angle(
+        _angle(), bundle=_bundle(), generator=IdeaGenerator(skill="idea-discovery", version="2.0.0")
+    )
+    second = svc.create_from_angle(
+        _angle(core_point="另一个角度"), bundle=_bundle(),
+        generator=IdeaGenerator(skill="idea-discovery", version="2.0.0"),
+    )
+    assert first.id != second.id
+    assert len(repo._by_id) == 2

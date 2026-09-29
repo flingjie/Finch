@@ -21,7 +21,14 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
 )
-from finch.ideas.models import IdeaCandidate
+from finch.content.models import RecommendedFormat
+from finch.ideas.models import (
+    FactBundle,
+    IdeaAngle,
+    IdeaBoundaries,
+    IdeaCandidate,
+    IdeaGenerator,
+)
 from finch.storage.repositories import ContentJobRepository
 
 # 稳定分隔符：ASCII unit separator，字段值几乎不可能包含该控制字符。
@@ -101,6 +108,59 @@ class IdeaService:
         )
         self.jobs.upsert_job(job)
         return job
+
+    def create_from_angle(
+        self,
+        angle: IdeaAngle,
+        *,
+        bundle: FactBundle,
+        generator: IdeaGenerator,
+    ) -> ContentJob:
+        """把一个发散角度映射为 IdeaCandidate 并幂等落库（复用 create_candidate）。"""
+        candidate = IdeaCandidate(
+            id=f"idea_{hashlib.sha256(angle.core_point.encode('utf-8')).hexdigest()[:8]}",
+            origin=bundle.origin,
+            core_point=angle.core_point,
+            observation="\n".join(bundle.facts),
+            reader_problem=angle.reader_situation,
+            why_worth_saying=angle.reader_takeaway,
+            intent="stance",
+            author_position=AuthorPosition(
+                claim=angle.core_point,
+                decision=angle.reader_takeaway,
+                tradeoff=angle.counterexample_or_limit,
+            ),
+            source_refs=list(bundle.source_refs),
+            boundaries=self._boundaries_for(angle, bundle),
+            recommended_format=RecommendedFormat.SHORT_POST,
+            generator=generator,
+            source_kind=bundle.source_kind,
+            facts=list(bundle.facts),
+            interpretation=angle.core_point,
+            evidence_status=bundle.evidence_status,
+            limitations=angle.counterexample_or_limit,
+            reader_situation=angle.reader_situation,
+            reader_takeaway=angle.reader_takeaway,
+            takeaway_kind=angle.takeaway_kind,
+            evidence_support=angle.evidence_support,
+            counterexample_or_limit=angle.counterexample_or_limit,
+        )
+        return self.create_candidate(candidate)
+
+    def _boundaries_for(self, angle: IdeaAngle, bundle: FactBundle) -> IdeaBoundaries:
+        """事实按 bundle 已有置信度归类；角度主张按 evidence_support 归类。"""
+        known = list(bundle.boundaries.known)
+        inferred = list(bundle.boundaries.inferred)
+        unknown = list(bundle.boundaries.unknown)
+        claim_bucket = {
+            "observed_this_run": "known",
+            "inferred_cause": "inferred",
+            "unverified_general": "unknown",
+        }[angle.evidence_support]
+        bucket = {"known": known, "inferred": inferred, "unknown": unknown}[claim_bucket]
+        if angle.core_point not in bucket:
+            bucket.append(angle.core_point)
+        return IdeaBoundaries(known=known, inferred=inferred, unknown=unknown)
 
     def confirm_position(self, idea_id: str) -> ContentJob:
         """PROPOSED → CONFIRMED。"""
