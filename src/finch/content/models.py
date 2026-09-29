@@ -52,3 +52,9 @@ class Draft(BaseModel):
     position_statement: str = ""
     critic_report_id: str | None = None
     run_id: str = ""                  # 当次 run（回溯到来源）
+
+
+class DraftBodyOutput(BaseModel):
+    """writer 首稿的内部输出：只回传正文（idea 草稿 claims 恒为空）。"""
+
+    body: str

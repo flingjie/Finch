@@ -9,7 +9,7 @@ from typing import cast
 from finch.codex.runner import CodexRunner
 from finch.content.checkers.base import CheckResult
 from finch.content.jobs import ContentJob
-from finch.content.models import Draft, draft_kind_for
+from finch.content.models import Draft, DraftBodyOutput, draft_kind_for
 from finch.evidence.models import EvidenceCard, sanitize_model_confidence
 
 _FROM_JOB_PROMPT_PATH = Path("prompts/draft-from-job.md")
@@ -113,18 +113,18 @@ def write_original_from_job(runner: CodexRunner, job: ContentJob) -> Draft:
     prompt = _FROM_JOB_PROMPT_PATH.read_text().format(
         job_context=_render_job_context(job),
     )
-    draft = _sanitize_draft_claims(cast(Draft, runner.run(prompt, Draft)))
-    return draft.model_copy(
-        update={
-            "kind": draft_kind_for(job.recommended_format),
-            "candidate_id": None,
-            "language": "zh",
-            "claims": [],
-            "content_job_id": job.id,
-            "position_statement": (
-                job.author_position.decision if job.author_position else ""
-            ),
-        }
+    out = cast(DraftBodyOutput, runner.run(prompt, DraftBodyOutput))
+    return Draft(
+        id="",
+        kind=draft_kind_for(job.recommended_format),
+        candidate_id=None,
+        language="zh",
+        body=out.body,
+        claims=[],
+        content_job_id=job.id,
+        position_statement=(
+            job.author_position.decision if job.author_position else ""
+        ),
     )
 
 
