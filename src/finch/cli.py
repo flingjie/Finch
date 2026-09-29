@@ -3913,7 +3913,11 @@ def community_list(
 
 @community_app.command("run")
 def community_run(
-    intent: str = typer.Option("weekly", "--intent", help="weekly|question|revisit（当前三者行为一致，见 community-scout SKILL）"),
+    intent: str = typer.Option(
+        "weekly",
+        "--intent",
+        help="weekly|question|revisit（当前三者行为一致，见 community-scout SKILL）",
+    ),
     goal: str = typer.Option("", "--goal", help="本次探索目标（问题模式/回访时必填）"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
