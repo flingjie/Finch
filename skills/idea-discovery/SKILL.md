@@ -37,7 +37,7 @@ fragment / conversation / signals 仍单候选。机械变化、新闻、纯情�
 见 `_shared/agent-presentation.md` 与 `references/presentation.md`。
 完成后按 `_shared/dialogue-policy.md` 做一次延伸点检查（无有效点就自然结束），延伸不得抢占交付物。
 
-读完 `finch ideas commit` / `create` / `signals` 后，按 `references/presentation.md` 的形状回复：结论 → 最多 3 条卡 →「写 1 / 展开 2 / 比较 / 换一批」。内部保留序号 → `idea_id`。
+读完 `finch ideas commit` / `create` / `signals` 后，按 `references/presentation.md` 的形状回复：commit 路径发散出 N 个可能观点并推荐第 X，改选用 `finch ideas choose`；fragment / conversation / signals 仍单候选。内部保留序号 → `idea_id`。
 
 ## 产出契约（IdeaCandidate）
 
