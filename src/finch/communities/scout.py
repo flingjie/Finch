@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Protocol
 
 from finch.communities.models import (
+    CommunityCandidate,
     CommunityFeedback,
     CommunityResult,
     FeedbackFacts,
+    RunIntent,
+    community_id_for,
 )
 
 _ENGAGED = {
@@ -47,3 +51,14 @@ def derive_feedback_facts(
         ).strip()
         facts.summaries[identity] = summary
     return facts
+
+
+def candidate_identity(c: CommunityCandidate) -> str:
+    """候选的跨周去重键：有规范 URL 用 URL，否则回退 name-hash id（与 identity_key 一致）。"""
+    return c.canonical_url or community_id_for(c.name)
+
+
+class CommunitySearchSource(Protocol):
+    """search 动作依赖的窄接口：给定意图与目标，返回有界候选列表（只读）。"""
+
+    def search(self, intent: RunIntent, goal: str, limit: int) -> list[CommunityCandidate]: ...

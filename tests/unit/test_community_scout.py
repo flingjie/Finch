@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
-from finch.communities.models import CommunityFeedback, CommunityResult
-from finch.communities.scout import derive_feedback_facts
+from finch.communities.models import CommunityCandidate, CommunityFeedback, CommunityResult
+from finch.communities.scout import candidate_identity, derive_feedback_facts
 
 
 def _fb(result: CommunityResult, *, days_ago: int = 0, reason: str = "", note: str = ""):
@@ -51,3 +51,15 @@ def test_summaries_carry_reason_and_note():
     )
     assert "deep_but_later" in facts.summaries["k"]
     assert "先观察" in facts.summaries["k"]
+
+
+def test_candidate_identity_prefers_canonical_url():
+    assert (
+        candidate_identity(CommunityCandidate(name="Temporal", canonical_url="https://t.io"))
+        == "https://t.io"
+    )
+
+
+def test_candidate_identity_falls_back_to_name_hash():
+    c = CommunityCandidate(name="Temporal")
+    assert candidate_identity(c) == candidate_identity(CommunityCandidate(name="Temporal"))
