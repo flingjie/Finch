@@ -37,6 +37,12 @@ def test_ignored_within_window_is_excluded():
     assert facts.excluded["k"] == "ignored 1w ago"
 
 
+def test_ignored_same_day_is_zero_weeks():
+    now = datetime(2026, 9, 29, tzinfo=UTC)
+    facts = derive_feedback_facts({"k": _fb(CommunityResult.IGNORED, days_ago=0)}, now=now)
+    assert facts.excluded["k"] == "ignored 0w ago"
+
+
 def test_ignored_beyond_window_not_excluded():
     now = datetime(2026, 9, 29, tzinfo=UTC)
     facts = derive_feedback_facts(

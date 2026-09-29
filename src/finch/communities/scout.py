@@ -60,7 +60,7 @@ def derive_feedback_facts(
         if fb.result == CommunityResult.IGNORED:
             age = clock - fb.at
             if age < suppress_window:
-                weeks = max(1, int(age.days / 7))
+                weeks = int(age.days / 7)
                 facts.excluded[identity] = f"ignored {weeks}w ago"
         if fb.result in _ENGAGED:
             facts.continue_framing.append(identity)
