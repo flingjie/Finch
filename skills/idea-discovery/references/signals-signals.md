@@ -23,6 +23,6 @@ conversation 共用同一份「读者值得知道」的判断。
 
 ## 边界
 
-- 外部信号 ≠ 个人证据：`author_position.status` 一律 `proposed`，不得写成亲历。
+- 外部信号 ≠ 个人证据：`ContentJob.status` 一律 `proposed`，不得写成亲历。
 - 不生成草稿（→ `idea-to-draft` / `expression-practice`）。
 - 只读，不自动发布。

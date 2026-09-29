@@ -13,6 +13,14 @@
 - **scoping-only 允许**：缩小适用范围 / 绝对结论改条件结论是允许的表达调整，不改变立场方向；
   推翻或反向改写 decision/tradeoff 仍须重新走确认流程。
 
+## change_mind_if 是用户自填的可选字段
+
+- `AuthorPosition.change_mind_if`（「什么情况下我会改变主意」）是**可选**字段，默认 `None`。
+- 自动生成路径（commit / fragment / conversation / signals）**一律不填**——它是用户自己的认识论承诺，
+  自动流程不替用户编造「我会在什么条件下改主意」。
+- 用户可通过 `finch ideas revise-position <id> --file pos.yaml` 写入（YAML 里加 `change_mind_if:` 键）；
+  writer 与草稿指纹都会读取它，改它会触发草稿重生成。
+
 ## revise 只改表达，不改立场
 
 - `revise_position` 更新立场内容但**不改变状态**（`proposed` 仍 `proposed`，`confirmed` 仍 `confirmed`）。

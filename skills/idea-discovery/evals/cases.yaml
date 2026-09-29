@@ -19,7 +19,7 @@ cases:
       - name: 单候选
         description: 产出恰好一个 IdeaCandidate
       - name: 立场 proposed
-        description: author_position.status == proposed
+        description: ContentJob.status == proposed
       - name: 可追溯来源
         description: source_refs 至少一条 commit 类型引用
 
@@ -65,7 +65,7 @@ cases:
               status: modified
     expected_output:
       ideas: 1
-      author_position_status: proposed
+      content_job_status: proposed
     assertions:
       - name: 立场 proposed
         description: 自动生成立场永远是 proposed，不是 confirmed

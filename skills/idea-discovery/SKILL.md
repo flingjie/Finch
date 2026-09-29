@@ -46,7 +46,7 @@ fragment / conversation / signals 仍单候选。机械变化、新闻、纯情�
 - `core_point` 单一中心主张；`observation` 是实际观察到的；`intent` 为 `stance`（有立场）
   或 `exploration`（无完整结论也允许输出）。
 - `facts` 与 `interpretation` 分列；`evidence_status` 决定能否声称亲历。
-- `source_refs` 可追溯；`author_position.status` 一律 `proposed`。
+- `source_refs` 可追溯；`ContentJob.status` 一律 `proposed`。
 - `boundaries.known/inferred/unknown` 传递到 Draft 校验。
 - 对方自述「更快了」不得改写为精确节省百分比；无付款证据不得写「用户愿意付费已验证」。
 
