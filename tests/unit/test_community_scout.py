@@ -184,6 +184,18 @@ def test_loop_records_failed_run_when_runner_raises(tmp_path):
     assert runs[-1].finished_at is not None
 
 
+def test_list_runs_dedups_after_run(tmp_path):
+    loop, repo = _loop(
+        tmp_path,
+        [CommunityCandidate(name="Temporal", canonical_url="https://temporal.io/community")],
+    )
+    run = loop.run(RunIntent.WEEKLY, "找社区")
+    runs = repo.list_runs()
+    assert len(runs) == 1
+    assert runs[0].run_id == run.run_id
+    assert runs[0].status == "done"
+
+
 def test_loop_excludes_ignored_candidate(tmp_path):
     from finch.communities.models import CommunityFeedback, CommunityResult
 
