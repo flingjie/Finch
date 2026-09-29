@@ -154,9 +154,8 @@ class IdeaDiverger:
                     ConvergeOutput,
                 ),
             )
-            if (
-                converge.recommended_index is not None
-                and 1 <= converge.recommended_index <= len(angles)
+            if converge.recommended_index is not None and any(
+                a.index == converge.recommended_index for a in angles
             ):
                 recommended_index = converge.recommended_index
                 reason = converge.reason or ""

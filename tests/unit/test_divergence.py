@@ -109,6 +109,19 @@ def test_converge_rejects_all_when_no_index():
     assert e.rejected_angles[0].reason == "无可迁移价值"
 
 
+def test_converge_validates_recommended_index_against_angle_index():
+    # 角度 1 无来源 → 淘汰；角度 2 存活（原 index 保留为 2，出现间隙）。
+    d = _diverge(
+        _angle(source_ref_indices=[]),
+        _angle(core_point="并发任务慢先拆推理时间", source_ref_indices=[0]),
+    )
+    svc = IdeaDiverger(FakeRunner(d, ConvergeOutput(recommended_index=2, reason="r")))
+    e = svc.explore(_bundle())
+    assert e.recommended_index == 2
+    assert len(e.angles) == 1
+    assert e.angles[0].index == 2
+
+
 def test_explore_same_input_same_id():
     d = _diverge(_angle())
     out = ConvergeOutput(recommended_index=1, reason="r")
