@@ -44,16 +44,15 @@ Finch 是一个**跨行业连接与灵感助理**：帮你发现不同领域中�
 | `PeerProfile` | 关系领域 | 记录「这个人是谁、为什么值得继续交流」。外部作者按 `platform + author_id` 幂等归一化。可含 `current_work`、实践证据引用与证据状态（sourced / author_stated / pending_review）。可选 `person_id` 链接跨平台 Person。**不是 lead。** |
 | `Person` | 关系领域 | 跨平台自然人；身份合并需互链或多项弱证据，禁止仅凭同名自动合并。 |
 | `CreatorEvidence` | 关系领域 | 创作者证据卡（≠ 用户 GitHub EvidenceCard 表达管线）；必须引用 `artifact_id`。 |
-| `Opportunity`（新聚合） | 关系领域 | 带生命周期状态机（proposed/selected/ready/parked/closed）的**交流机会**：`entry_kind`（困难/成果/分歧/共同探索/跨领域）+ `why_me`/`why_continue` + 最小贡献 `proposal` + `decision`；快照 + `events.jsonl`，乐观并发。`finch connect daily` 首页 0–1 条首选。旧 `engagement.Opportunity`（无状态浏览卡）仍在 `--view browse` 使用，待迁移。**不是商业机会。** |
-| `InteractionProposal` | 关系领域 | 用户选中后深度准备的待批准建议，不是已发生的互动。默认每次最多 10 位选中机会；可含最小贡献（试用/复现/观察）而无公开回复草稿。含 `contribution_type` / `why_this_person` / `why_now` / `expected_conversation_opening`。 |
-| `InteractionRecord` | 关系领域 | 单独记录真正发生过的互动事实（可无 proposal_id）。不能用 Proposal 状态替代。 |
+| `Opportunity`（新聚合） | 关系领域 | 带生命周期状态机（proposed/selected/ready/parked/closed）的**交流机会**：`entry_kind`（困难/成果/分歧/共同探索/跨领域）+ `why_me`/`why_continue` + 最小贡献 `proposal` + `decision`；快照 + `events.jsonl`，乐观并发 + `request_id` 幂等。`finch connect daily` 首页 0–1 条首选。**不是商业机会。** |
+| `InteractionRecord` | 关系领域 | 单独记录真正发生过的互动事实；`proposal_id` 可空、可 `opportunity_id` 回溯到机会。不能用机会状态替代。 |
 | `ConversationThread` | 关系领域 | 同一同行、同一主题的多次互动串联；问题/workaround/使用反馈以线程笔记形式挂在线索上（必填 `source_ref`）；跟进由新回复/承诺到期/新证据/相关更新触发，时间陈旧 alone 不触发对外联系。重要关系周期回顾默认关闭、用户主动开启。 |
 | `ContentJob` | 表达领域 | 只表达用户自己的立场（`AuthorPosition` + `position_revisions` append-only；草稿 ≠ 观点已证实）。来源：个人实践、已发生的对话、用户输入。 |
 | `VoiceProfile` | 表达领域 | 只从用户亲写文本、明确批准样本、用户修改后的最终版本更新；不因发现或试用反馈自动调整。 |
 
 **三条铁律：**
 
-1. **候选 ≠ 事实**：Proposal（建议）、InteractionRecord（已发生互动）、结果反馈是三个不同事实，不得互相替代。礼貌兴趣 ≠ 已开始试用 ≠ 付款。
+1. **候选 ≠ 事实**：机会的 `proposal`（最小贡献建议）、`InteractionRecord`（已发生互动）、结果反馈是三个不同事实，不得互相替代。礼貌兴趣 ≠ 已开始试用 ≠ 付款。
 2. **外部 ≠ 个人经验**：搜索到的外部帖子（`ExternalPost`）和他人对话永远不能伪装成用户亲历；只有经验证的 `ConversationEvidence` 才可通过 `promote_to_personal` 提升。对方反馈不是作者本人取得效果的证明。
 3. **批准 ≠ 已发布**：所有公开回复、引用、私信、原创内容默认需要人工批准。批准只创建发布意图或批准记录，不等于已经发出。
 
