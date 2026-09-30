@@ -107,6 +107,22 @@ class _FakeRunner:
                 user_evidence_refs=["practice:1"],
                 their_artifact_ids=["twitter:post:1", "twitter:post:2"],
             )
+        from finch.opportunities.assess import OpportunityDraft
+
+        if output_model is OpportunityDraft:
+            from finch.opportunities.models import ContributionForm, EntryKind
+
+            return OpportunityDraft(
+                topic="flaky evals",
+                entry_kind=EntryKind.DIFFICULTY,
+                why_me="与回归测试探索相关",
+                why_continue="作者保存了 trace",
+                contribution="做一张最小回放方法卡",
+                form=ContributionForm.METHOD_CARD,
+                expected_output="一张方法卡",
+                scope="一个失败案例",
+                recommend=True,
+            )
         # CollisionDraft
         from finch.collisions.service import CollisionDraft
 

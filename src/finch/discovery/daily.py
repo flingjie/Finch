@@ -30,6 +30,10 @@ from finch.engagement.opportunity import scored_post_to_opportunity, select_oppo
 from finch.engagement.relationship import PeerValue
 from finch.engagement.scoring import ScoredPost
 from finch.llm.base import StructuredInferenceRunner
+from finch.opportunities.discover import discover_preferred_opportunity
+from finch.opportunities.models import Opportunity as OppAggregate
+from finch.opportunities.repository import OpportunityRepository as OppAggregateRepository
+from finch.opportunities.service import OpportunityService
 from finch.peers.evidence_repo import CreatorEvidenceRepository
 from finch.peers.evidence_service import CreatorEvidenceService
 from finch.peers.person_service import PersonRepository, PersonService
@@ -85,6 +89,7 @@ class DailyDiscoveryResult:
     recommendations: DailyRecommendationSet | None = None
     connections: list[ConnectionOpportunity] = field(default_factory=list)
     opportunities: list[Opportunity] = field(default_factory=list)
+    preferred_opportunity: OppAggregate | None = None
     engagement: EngagementRunResult | None = None
     collision_id: str = ""
     detail: str = ""
@@ -496,6 +501,24 @@ def run_daily_discovery(
     opp_repo = OpportunityRepository(ws)
     for opp in opps:
         opp_repo.upsert(opp)
+
+    # 首选机会（新聚合）：对 priority 首位做一次 LLM 机会判断并落库；失败/无贡献点自然为空。
+    result.preferred_opportunity = None
+    if runner is not None and recs.priority:
+        top = recs.priority[0].candidate
+        arts = ArtifactRepository(ws).list_by_ids(top.artifact_ids)
+        result.preferred_opportunity = discover_preferred_opportunity(
+            runner=runner,
+            peer_id=top.peer.id,
+            display_name=top.peer.display_name,
+            platform=top.platform,
+            current_work=top.peer.current_work,
+            why_relevant=top.peer.why_relevant,
+            person_ref=top.person_id,
+            artifacts=arts,
+            service=OpportunityService(OppAggregateRepository(ws)),
+            user_context=question or plan.ranking_question or "",
+        )
 
     peers_out: list[RankedPeer] = []
     for rec in recs.priority:

@@ -75,16 +75,24 @@ class OpportunityService:
             evidence_refs=evidence_refs or [],
             open_questions=open_questions or [],
         )
+        return self.create_from(opp)
+
+    def create_from(self, opportunity: Opportunity) -> Opportunity:
+        """用预构建的 Opportunity 落库（写 proposed 事件 + 快照）。"""
         self.repo.append_event(
             OpportunityEvent(
-                event_id=f"{opportunity_id}:r1",
-                opportunity_id=opportunity_id,
+                event_id=f"{opportunity.id}:r1",
+                opportunity_id=opportunity.id,
                 event_type="proposed",
                 expected_revision=0,
             )
         )
-        self.repo.save(opp)
-        return opp
+        self.repo.save(opportunity)
+        return opportunity
+
+    def get(self, opportunity_id: str) -> Opportunity | None:
+        """读快照；不存在返回 None。"""
+        return self.repo.get(opportunity_id)
 
     def select(
         self,
