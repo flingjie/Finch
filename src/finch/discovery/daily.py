@@ -10,15 +10,10 @@ from finch.codex.runner import CodexRunner
 from finch.discovery.candidate_pool import build_pool
 from finch.engagement.flow import EngagementRunResult, RankedPeer
 from finch.engagement.models import (
-    ConversationScore,
     DiscoverySnapshot,
-    ExternalPost,
-    Opportunity,
     RecommendationEntry,
 )
-from finch.engagement.opportunity import scored_post_to_opportunity, select_opportunity_set
 from finch.engagement.relationship import PeerValue
-from finch.engagement.scoring import ScoredPost
 from finch.llm.base import StructuredInferenceRunner
 from finch.opportunities.discover import discover_preferred_opportunity
 from finch.opportunities.models import Opportunity as OppAggregate
@@ -64,7 +59,6 @@ class DailyDiscoveryResult:
     run_id: str
     sync_results: list[SyncResult] = field(default_factory=list)
     recommendations: DailyRecommendationSet | None = None
-    opportunities: list[Opportunity] = field(default_factory=list)
     preferred_opportunity: OppAggregate | None = None
     engagement: EngagementRunResult | None = None
     collision_id: str = ""
@@ -98,79 +92,6 @@ class RunMetrics:
     llm_elapsed_seconds: float = 0.0
     filtered: dict[str, int] = field(default_factory=dict)
     sources: dict[str, SourceRunMetric] = field(default_factory=dict)
-
-
-def artifact_to_external_post(art: RawArtifact) -> ExternalPost | None:
-    platform = (art.author_identity.platform or "").strip()
-    if platform not in _VALID_PLATFORMS:
-        return None
-    author_id = (art.author_identity.external_id or art.author_identity.handle or "").strip()
-    if not author_id:
-        return None
-    content = "\n".join(p for p in [art.title or "", art.text] if p).strip()
-    if len(content) < 20:
-        return None
-    metrics: dict[str, int | float] = {}
-    for k, v in (art.metrics or {}).items():
-        if isinstance(v, (int, float)):
-            metrics[k] = v
-    return ExternalPost(
-        id=art.source_id or art.artifact_id,
-        platform=platform,  # type: ignore[arg-type]
-        url=art.canonical_url or "",
-        author_id=author_id,
-        author_name=art.author_identity.handle or author_id,
-        content=content,
-        published_at=art.published_at or art.retrieved_at,
-        metrics=metrics,
-        matched_topics=[],
-    )
-
-
-def _deterministic_score(art: RawArtifact) -> ConversationScore:
-    """No LLM total: lightweight heuristic for browse cards from sources."""
-    text = art.text or ""
-    practical = 0.7 if art.source_type in {"commit", "repo", "release", "pull_request"} else 0.45
-    discuss = 0.55 if "?" in text or "怎么" in text or "如何" in text else 0.4
-    dims = {
-        "relevance": 0.55,
-        "novelty": 0.45,
-        "discussability": discuss,
-        "practical_evidence": practical,
-        "relationship_value": 0.25,
-    }
-    total = (
-        dims["relevance"] * 0.25
-        + dims["novelty"] * 0.25
-        + dims["discussability"] * 0.20
-        + dims["practical_evidence"] * 0.20
-        + dims["relationship_value"] * 0.10
-    )
-    return ConversationScore(
-        **dims,
-        total=round(min(1.0, total), 4),
-        reasons=["projected from RawArtifact"],
-    )
-
-
-def opportunities_from_artifacts(
-    artifacts: list[RawArtifact],
-    *,
-    limit: int = 10,
-) -> list[Opportunity]:
-    scored: list[ScoredPost] = []
-    for art in artifacts:
-        post = artifact_to_external_post(art)
-        if post is None:
-            continue
-        scored.append(ScoredPost(post=post, score=_deterministic_score(art)))
-    opps = [
-        scored_post_to_opportunity(s, discovered_via="sources_sync")
-        for s in scored
-    ]
-    return select_opportunity_set(opps, limit=limit)
-
-
 def _truncate(text: str, n: int = _TEXT_LIMIT) -> str:
     text = (text or "").strip()
     if len(text) <= n:

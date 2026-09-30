@@ -9,8 +9,6 @@ from pydantic import BaseModel
 
 from finch.discovery.daily import (
     _gate_by_window,
-    artifact_to_external_post,
-    opportunities_from_artifacts,
     run_daily_discovery,
 )
 from finch.peers.evidence_service import (
@@ -124,25 +122,6 @@ class _FakeRunner:
             falsifiable_hypothesis="gates cut flaky retries 20%",
             artifact_ids=["twitter:post:1", "twitter:post:2"],
         )
-
-
-def test_artifact_to_external_post():
-    post = artifact_to_external_post(
-        _art("1", "alice", "this is a long enough post about agent reliability tools")
-    )
-    assert post is not None
-    assert post.platform == "x"
-    assert post.author_id == "alice"
-
-
-def test_opportunities_from_artifacts():
-    arts = [
-        _art("1", "alice", "long enough content about agent harness failures and retries"),
-        _art("2", "bob", "another long enough post about eval trajectories in production"),
-    ]
-    opps = opportunities_from_artifacts(arts, limit=5)
-    assert len(opps) >= 1
-    assert all(o.discovered_via == "sources_sync" for o in opps)
 
 
 def test_run_daily_skips_network_with_seeded_artifacts(tmp_path: Path):
@@ -317,7 +296,6 @@ def test_run_daily_empty_round_no_history_fallback(tmp_path):
         lookback_hours=24,
     )
     assert result.engagement is not None
-    assert result.opportunities == []
     assert result.engagement.status == "empty"
 
 
