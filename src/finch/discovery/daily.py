@@ -601,6 +601,9 @@ def run_daily_discovery(
         recommendations=_recommendation_entries(recs),
         recommendation_shortfall=dict(recs.shortfall),
         home_person_ids=[r.person_id for r in select_home_items(recs)],
+        preferred_opportunity_id=(
+            result.preferred_opportunity.id if result.preferred_opportunity else ""
+        ),
     )
     DiscoverySnapshotRepository(ws).upsert(snapshot)
 

@@ -193,6 +193,8 @@ class DiscoverySnapshot(BaseModel):
     recommendation_shortfall: dict[str, int] = Field(default_factory=dict)
     # 首页 3 个重点发现（D7：与 50 人浏览来自同一快照，按序持久化）
     home_person_ids: list[str] = Field(default_factory=list)
+    # 首选机会（新聚合）id：首页 0-1 条首选；空表示本轮无值得优先投入的机会。
+    preferred_opportunity_id: str = ""
 
 
 class PresentationRecord(BaseModel):

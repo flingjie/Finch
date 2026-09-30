@@ -76,6 +76,8 @@ from .learn.reflection import (
 )
 from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
+from .opportunities.models import Opportunity as PreferredOpportunity
+from .opportunities.repository import OpportunityRepository as PreferredOpportunityRepository
 from .peers.models import PeerProfile
 from .peers.service import PeerService, profile_url_for
 from .practice.service import PracticeService
@@ -2104,6 +2106,29 @@ def _render_home_entries(
     return lines
 
 
+def _render_preferred_opportunity(opp: PreferredOpportunity) -> list[str]:
+    """渲染首选机会（0-1）为可读文本（规范 §6.1 六问）。"""
+    lines = ["## 首选机会"]
+    lines.append(f"话题：{opp.topic or '（未给出）'}")
+    if opp.entry_kind is not None:
+        lines.append(f"入口：{opp.entry_kind.value}")
+    if opp.why_me:
+        lines.append(f"为什么值得参与：{opp.why_me}")
+    if opp.why_continue:
+        lines.append(f"对方为什么可能接话：{opp.why_continue}")
+    if opp.proposal is not None:
+        lines.append(f"最小贡献：{opp.proposal.contribution}")
+        lines.append(f"形式：{opp.proposal.form.value}")
+        if opp.proposal.expected_output:
+            lines.append(f"可见结果：{opp.proposal.expected_output}")
+        if opp.proposal.scope:
+            lines.append(f"范围：{opp.proposal.scope}")
+    if opp.open_questions:
+        lines.append(f"待确认：{'；'.join(opp.open_questions)}")
+    lines.append("")
+    return lines
+
+
 def _persist_discovery(
     ws: Workspace,
     result: EngagementRunResult,
@@ -2132,6 +2157,9 @@ def _persist_discovery(
         latest.recommendation_shortfall if latest is not None else {}
     )
     home_person_ids = latest.home_person_ids if latest is not None else []
+    preferred_opportunity_id = (
+        latest.preferred_opportunity_id if latest is not None else ""
+    )
     plan_id = latest.plan_id if latest is not None else ""
     plan_summary = latest.plan_summary if latest is not None else {}
     ranking_version = latest.ranking_version if latest is not None else "1"
@@ -2158,6 +2186,7 @@ def _persist_discovery(
         recommendations=recommendations,
         recommendation_shortfall=recommendation_shortfall,
         home_person_ids=home_person_ids,
+        preferred_opportunity_id=preferred_opportunity_id,
     )
     DiscoverySnapshotRepository(ws).upsert(snapshot)
     return snapshot
@@ -2596,6 +2625,14 @@ def connect_daily(
     rec_shortfall = snapshot.recommendation_shortfall if snapshot is not None else {}
     home_ids = snapshot.home_person_ids if snapshot is not None else []
 
+    preferred: PreferredOpportunity | None = None
+    if daily is not None:
+        preferred = daily.preferred_opportunity
+    elif snapshot is not None and snapshot.preferred_opportunity_id:
+        preferred = PreferredOpportunityRepository(ws).get(
+            snapshot.preferred_opportunity_id
+        )
+
     refresh_status = _connect_daily_refresh_status(
         daily=daily, snapshot=snapshot, stale=stale
     )
@@ -2648,9 +2685,14 @@ def connect_daily(
         )
         shown_entries = rec_entries
     else:
-        rec_lines = _render_home_entries(rec_entries, home_ids)
-        by_id = {e.person_id: e for e in rec_entries}
-        shown_entries = [by_id[pid] for pid in home_ids if pid in by_id]
+        if preferred is not None:
+            rec_lines = _render_preferred_opportunity(preferred)
+        else:
+            rec_lines = [
+                "今天没有值得优先投入的讨论（--view browse 可浏览 50 人列表）。",
+                "",
+            ]
+        shown_entries = []
     # D10：仅文本前台实际输出时记录曝光；首页只记实际展示的人物，浏览记全部展开条目。
     _record_presentations(
         ws, snapshot.id, [o.id for o in focus["opportunities"]["items"]]

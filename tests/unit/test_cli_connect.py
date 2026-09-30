@@ -713,7 +713,7 @@ def test_connect_daily_json_does_not_record_exposure(monkeypatch, tmp_path):
     assert PersonPresentationRepository(ws).list_all() == []
 
 
-def test_connect_daily_text_records_person_exposure_idempotent(monkeypatch, tmp_path):
+def test_connect_daily_home_shows_no_preferred_opportunity_message(monkeypatch, tmp_path):
     from finch.peers.presentation import PersonPresentationRepository
 
     settings = _settings(tmp_path)
@@ -724,14 +724,60 @@ def test_connect_daily_text_records_person_exposure_idempotent(monkeypatch, tmp_
 
     r = CliRunner().invoke(app, ["connect", "daily"])
     assert r.exit_code == 0, r.output
-    repo = PersonPresentationRepository(ws)
-    presented = [x for x in repo.list_all() if x.event == "presented"]
-    assert {x.person_id for x in presented} == {"p1"}
+    # 无首选机会时首页给出明确提示，不再展示 3 重点人物。
+    assert "今天没有值得优先投入的讨论" in r.output
+    # 首页不再展示人物，因此不记录 person exposure（人物曝光只发生在浏览视图）。
+    assert PersonPresentationRepository(ws).list_all() == []
 
-    # 重复打开同一快照：记录总数不变，冷却不被反复延长。
-    before = len(repo.list_all())
-    CliRunner().invoke(app, ["connect", "daily"])
-    assert len(repo.list_all()) == before
+
+def test_connect_daily_home_renders_preferred_opportunity(monkeypatch, tmp_path):
+    from finch.engagement.models import DiscoverySnapshot
+    from finch.opportunities.models import (
+        ContributionForm,
+        EntryKind,
+        Proposal,
+    )
+    from finch.opportunities.models import (
+        Opportunity as OppAggregate,
+    )
+    from finch.opportunities.repository import OpportunityRepository as OppRepo
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    OppRepo(ws).save(
+        OppAggregate(
+            id="opp_person_1",
+            person_ref="person_1",
+            topic="失败回放",
+            entry_kind=EntryKind.DIFFICULTY,
+            why_me="与回归测试探索直接相关",
+            why_continue="作者已保存 trace",
+            proposal=Proposal(
+                contribution="做一张最小回放方法卡",
+                form=ContributionForm.METHOD_CARD,
+                expected_output="一张方法卡",
+                scope="一个失败案例",
+            ),
+        )
+    )
+    DiscoverySnapshotRepository(ws).upsert(
+        DiscoverySnapshot(
+            id="snap_1",
+            created_at=datetime.now(UTC),
+            context_fingerprint="ctx",
+            preferred_opportunity_id="opp_person_1",
+        )
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["connect", "daily"])
+    assert r.exit_code == 0, r.output
+    assert "首选机会" in r.output
+    assert "失败回放" in r.output
+    assert "为什么值得参与" in r.output
+    assert "最小贡献" in r.output
 
 
 def test_connect_today_json_does_not_record_exposure(monkeypatch, tmp_path):
