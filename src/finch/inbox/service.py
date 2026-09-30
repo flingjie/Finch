@@ -14,7 +14,6 @@ from finch.content.critic import critique
 from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.content.models import Draft
 from finch.content.writer import rewrite_with_instruction
-from finch.engagement.models import InteractionAction, InteractionProposal
 from finch.evidence.models import ClaimConfidence, EvidenceCard
 from finch.inbox.models import DecisionAction, DecisionRecord, InboxItem, InboxTrack
 from finch.storage.repositories import (
@@ -22,7 +21,6 @@ from finch.storage.repositories import (
     DecisionRecordRepository,
     DraftRepository,
     EvidenceRepository,
-    InteractionRepository,
     PublicationIntentRepository,
 )
 
@@ -93,30 +91,7 @@ def build_original_item(
     )
 
 
-def build_engagement_item(candidate: InteractionProposal) -> InboxItem:
-    """把 InteractionProposal 投影成 InboxItem（engagement 轨道）。"""
-    content_type: Literal["reply", "quote"] = (
-        "quote" if candidate.action == InteractionAction.DRAFT_QUOTE else "reply"
-    )
-    body = candidate.revised_draft or candidate.draft or ""
-    return InboxItem(
-        id=candidate.id,
-        track=InboxTrack.ENGAGEMENT,
-        content_type=content_type,
-        provenance="external",
-        source_refs=[candidate.post.url],
-        why_now="；".join(candidate.score.reasons),
-        score=candidate.score.total,
-        draft_id=None,
-        draft=body,
-        position=None,
-        must_ask=bool(candidate.factual_risks),
-        ask_reasons=list(candidate.factual_risks),
-        risks=list(candidate.factual_risks),
-    )
-
-
-_TRACK_RANK = {InboxTrack.ORIGINAL: 0, InboxTrack.ENGAGEMENT: 1}
+_TRACK_RANK = {InboxTrack.ORIGINAL: 0}
 
 
 def _sort_key(item: InboxItem) -> tuple:
@@ -143,12 +118,7 @@ def _diff(before: str, after: str) -> str:
 
 
 class InboxDecisionService:
-    """把一次「采用/跳过/修订」落到唯一权威记录（DecisionRecord）或互动候选状态。
-
-    original 走 DecisionRecord + PublicationIntent；engagement 走
-    InteractionProposal.status。先查 ContentJob，再查 InteractionProposal
-    （冲突 id 以 ContentJob 为准）。
-    """
+    """把一次「采用/跳过/修订」落到唯一权威记录（DecisionRecord）与 PublicationIntent。"""
 
     def __init__(
         self,
@@ -157,33 +127,17 @@ class InboxDecisionService:
         drafts: DraftRepository,
         decisions: DecisionRecordRepository,
         publication_intents: PublicationIntentRepository,
-        interactions: InteractionRepository,
     ) -> None:
         self.jobs = jobs
         self.drafts = drafts
         self.decisions = decisions
         self.publication_intents = publication_intents
-        self.interactions = interactions
 
-    def accept(self, item_id: str) -> DecisionRecord | InteractionProposal:
-        job = self.jobs.get_job(item_id)
-        if job is not None:
-            return self._accept_original(item_id)
-        candidate = self.interactions.get(item_id)
-        if candidate is not None:
-            self.interactions.approve(item_id)
-            return self.interactions.get(item_id)  # type: ignore[return-value]
-        raise KeyError(item_id)
+    def accept(self, item_id: str) -> DecisionRecord:
+        return self._accept_original(item_id)
 
-    def skip(self, item_id: str, reason: str) -> DecisionRecord | InteractionProposal:
-        job = self.jobs.get_job(item_id)
-        if job is not None:
-            return self._skip_original(item_id, reason)
-        candidate = self.interactions.get(item_id)
-        if candidate is not None:
-            self.interactions.reject(item_id, reason)
-            return self.interactions.get(item_id)  # type: ignore[return-value]
-        raise KeyError(item_id)
+    def skip(self, item_id: str, reason: str) -> DecisionRecord:
+        return self._skip_original(item_id, reason)
 
     def revise(
         self,
@@ -193,15 +147,9 @@ class InboxDecisionService:
         runner: CodexRunner,
         cards_by_id: dict,
     ) -> dict:
-        job = self.jobs.get_job(item_id)
-        if job is not None:
-            return self._revise_original(
-                item_id, instruction, runner=runner, cards_by_id=cards_by_id
-            )
-        candidate = self.interactions.get(item_id)
-        if candidate is not None:
-            raise ValueError(f"engagement revise not supported yet: {item_id}")
-        raise KeyError(item_id)
+        return self._revise_original(
+            item_id, instruction, runner=runner, cards_by_id=cards_by_id
+        )
 
     def _accept_original(self, job_id: str) -> DecisionRecord:
         job = self.jobs.get_job(job_id)
@@ -306,10 +254,9 @@ def list_items(
     jobs: ContentJobRepository,
     drafts: DraftRepository,
     decisions: DecisionRecordRepository,
-    interactions: InteractionRepository,
     cards: EvidenceRepository,
 ) -> list[InboxItem]:
-    """组装收件箱：返回全部待决策项（原创 + 互动），按 select_next 的排序排好。"""
+    """组装收件箱：返回全部待决策原创项，按 select_next 的排序排好。"""
     decided_job_ids = {
         r.job_id
         for r in decisions.list()
@@ -330,7 +277,4 @@ def list_items(
                 must_ask=must_ask, ask_reasons=ask_reasons, risks=[],
             )
         )
-    for candidate in interactions.list_pending():
-        if candidate.draft or candidate.revised_draft:
-            items.append(build_engagement_item(candidate))
     return sorted(items, key=_sort_key)

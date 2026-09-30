@@ -1717,7 +1717,6 @@ def _decision_service(ws: Workspace) -> InboxDecisionService:
         drafts=DraftRepository(ws),
         decisions=DecisionRecordRepository(ws),
         publication_intents=PublicationIntentRepository(ws),
-        interactions=InteractionRepository(ws),
     )
 
 
@@ -1745,7 +1744,6 @@ def review_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON"
         jobs=ContentJobRepository(ws),
         drafts=DraftRepository(ws),
         decisions=DecisionRecordRepository(ws),
-        interactions=InteractionRepository(ws),
         cards=EvidenceRepository(ws),
     )
     original = [i for i in items if i.track == InboxTrack.ORIGINAL]
@@ -2337,7 +2335,6 @@ def _load_today_payload(
         )
     focus = build_today_focus(
         peers=ranked_peers,
-        contributions=InteractionRepository(ws).list_pending()[:3],
         threads=needs_follow_up,
         ideas=idea_candidates,
         opportunities=opps,
@@ -2679,9 +2676,6 @@ def connect_daily(
             "peers": [rp.profile.model_dump(mode="json") for rp in focus["peers"]["items"]],
             "opportunities": [
                 o.model_dump(mode="json") for o in focus["opportunities"]["items"]
-            ],
-            "contributions": [
-                c.model_dump(mode="json") for c in focus["contributions"]["items"]
             ],
             "idea_candidates": [
                 j.model_dump(mode="json") for j in focus["ideas"]["items"]

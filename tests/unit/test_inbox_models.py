@@ -27,10 +27,10 @@ def test_inbox_item_round_trips():
 
 def test_inbox_item_defaults():
     item = InboxItem(
-        id="cand_1",
-        track=InboxTrack.ENGAGEMENT,
-        content_type="reply",
-        provenance="external",
+        id="job_1",
+        track=InboxTrack.ORIGINAL,
+        content_type="original",
+        provenance="personal",
         source_refs=[],
         why_now="",
         score=0.0,

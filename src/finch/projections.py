@@ -7,7 +7,7 @@ from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.conversations.models import ConversationThread
 from finch.conversations.service import ConversationService
 from finch.engagement.flow import RankedPeer
-from finch.engagement.models import InteractionProposal, InteractionStatus, Opportunity
+from finch.engagement.models import Opportunity
 from finch.inbox.models import InboxTrack
 from finch.inbox.service import list_items
 from finch.storage.repositories import (
@@ -16,7 +16,6 @@ from finch.storage.repositories import (
     DecisionRecordRepository,
     DraftRepository,
     EvidenceRepository,
-    InteractionRepository,
     PeerRepository,
 )
 from finch.storage.workspace import Workspace
@@ -38,21 +37,12 @@ def build_daily_context(ws: Workspace) -> dict:
             for j in jobs
             if j.status == ContentJobStatus.PROPOSED
         ],
-        "pending_proposals": [
-            c.model_dump(mode="json") for c in InteractionRepository(ws).list_pending()
-        ],
     }
 
 
 def build_pending_actions(ws: Workspace) -> dict:
     jobs_repo = ContentJobRepository(ws)
-    interactions = InteractionRepository(ws)
     return {
-        "approved_unexecuted_proposals": [
-            c.model_dump(mode="json")
-            for c in interactions.list_all()
-            if c.status == InteractionStatus.APPROVED
-        ],
         "ideas_awaiting_confirmation": [
             j.model_dump(mode="json")
             for j in jobs_repo.list_jobs()
@@ -64,7 +54,6 @@ def build_pending_actions(ws: Workspace) -> dict:
                 jobs=jobs_repo,
                 drafts=DraftRepository(ws),
                 decisions=DecisionRecordRepository(ws),
-                interactions=interactions,
                 cards=EvidenceRepository(ws),
             )
             if i.track == InboxTrack.ORIGINAL
@@ -93,15 +82,10 @@ class FocusSection[T](TypedDict):
 
 
 class TodayFocus(TypedDict):
-    """今日聚焦投影（确定性，无 LLM）。
-
-    ``conversations`` 独立于发现名额；``opportunities`` 为 8–12 轻量机会卡；
-    ``peers`` / ``contributions`` 保留兼容旧调用方。
-    """
+    """今日聚焦投影（确定性，无 LLM）。"""
 
     conversations: FocusSection[ConversationThread]
     peers: FocusSection[RankedPeer]
-    contributions: FocusSection[InteractionProposal]
     opportunities: FocusSection[Opportunity]
     ideas: FocusSection[ContentJob]
 
@@ -109,7 +93,6 @@ class TodayFocus(TypedDict):
 def build_today_focus(
     *,
     peers: list[RankedPeer],
-    contributions: list[InteractionProposal],
     threads: list[ConversationThread],
     ideas: list[ContentJob],
     opportunities: list[Opportunity] | None = None,
@@ -120,7 +103,6 @@ def build_today_focus(
     now = now or datetime.now(UTC)
     conv_sorted = sorted(threads, key=lambda t: _thread_overdue_key(t, now))
     peer_sorted = sorted(peers, key=lambda rp: (-rp.value.total, rp.profile.id))
-    contrib_sorted = sorted(contributions, key=lambda c: (-c.score.total, c.id))
     opp_list = opportunities if opportunities is not None else []
     if not opp_list:
         # Rebuild from repo is caller's job; empty means none.
@@ -131,7 +113,6 @@ def build_today_focus(
     return {
         "conversations": {"items": conv_sorted[:2], "total": len(conv_sorted)},
         "peers": {"items": peer_sorted[:opportunity_limit], "total": len(peer_sorted)},
-        "contributions": {"items": contrib_sorted[:3], "total": len(contrib_sorted)},
         "opportunities": {
             "items": opp_sorted[:opportunity_limit],
             "total": len(opp_sorted),
