@@ -2614,12 +2614,6 @@ def connect_daily(
         snapshot, settings.engagement.snapshot_ttl_hours
     )
 
-    # Connection opportunities for the priority tier (backward-compat JSON field).
-    connections_payload: list[dict] = []
-    if daily is not None:
-        for conn in daily.connections:
-            connections_payload.append(conn.model_dump(mode="json"))
-
     # F1：非刷新读取时从快照重放完整 50 人推荐。
     rec_entries = snapshot.recommendations if snapshot is not None else []
     rec_shortfall = snapshot.recommendation_shortfall if snapshot is not None else {}
@@ -2653,7 +2647,6 @@ def connect_daily(
                 if (daily is not None and daily.recommendations is not None)
                 else _entries_payload(rec_entries, rec_shortfall)
             ),
-            "connections": connections_payload,
             "conversations_needing_follow_up": [
                 t.model_dump(mode="json") for t in focus["conversations"]["items"]
             ],

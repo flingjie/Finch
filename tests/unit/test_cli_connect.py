@@ -259,7 +259,7 @@ def _daily_full():
     from finch.discovery.daily import DailyDiscoveryResult
 
     eng = _daily_result()
-    return DailyDiscoveryResult(run_id=eng.run_id, engagement=eng, connections=[])
+    return DailyDiscoveryResult(run_id=eng.run_id, engagement=eng)
 
 
 def test_connect_daily_persists_peers_and_renders_sections(monkeypatch, tmp_path):
@@ -1075,7 +1075,7 @@ def test_connect_daily_json_empty_refresh_keeps_previous_snapshot(monkeypatch, t
             "status": "empty",
         }
     )
-    empty = DailyDiscoveryResult(run_id="daily_empty", engagement=empty_eng, connections=[])
+    empty = DailyDiscoveryResult(run_id="daily_empty", engagement=empty_eng)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "_run_daily_full", lambda settings, **kwargs: empty)
 

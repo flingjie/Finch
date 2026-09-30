@@ -8,7 +8,6 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from finch.discovery.daily import (
-    ConnectionOpportunityDraft,
     _gate_by_window,
     artifact_to_external_post,
     opportunities_from_artifacts,
@@ -96,17 +95,6 @@ class _FakeRunner:
                     CreatorEvidenceBatchPerson(person_id=p["person_id"], items=items)
                 )
             return CreatorEvidenceBatchOutput(persons=persons)
-        if output_model is ConnectionOpportunityDraft:
-            from finch.connections.service import ConnectionDecision
-
-            return ConnectionOpportunityDraft(
-                their_problem="flaky evals",
-                user_contribution="we use trajectory diffs",
-                why_now="recent post",
-                decision=ConnectionDecision.CONNECT,
-                user_evidence_refs=["practice:1"],
-                their_artifact_ids=["twitter:post:1", "twitter:post:2"],
-            )
         from finch.opportunities.assess import OpportunityDraft
 
         if output_model is OpportunityDraft:

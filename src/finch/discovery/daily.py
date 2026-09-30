@@ -2,22 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from pathlib import Path
-from uuid import uuid4
-
-from pydantic import BaseModel, Field
 
 from finch.codex.runner import CodexRunner
-from finch.connections.service import (
-    ConnectionDecision,
-    ConnectionOpportunity,
-    build_connection_opportunity,
-)
-from finch.discovery.candidate_pool import PersonCandidate, build_pool
+from finch.discovery.candidate_pool import build_pool
 from finch.engagement.flow import EngagementRunResult, RankedPeer
 from finch.engagement.models import (
     ConversationScore,
@@ -62,22 +52,10 @@ from finch.storage.repositories import (
 )
 from finch.storage.workspace import Workspace
 
-_CONN_PROMPT = Path("prompts/connection-opportunity.md")
 _TEXT_LIMIT = 600
 _VALID_PLATFORMS = frozenset(
     {"x", "reddit", "github", "v2ex", "weixin", "xiaohongshu"}
 )
-
-
-class ConnectionOpportunityDraft(BaseModel):
-    their_problem: str = ""
-    user_contribution: str = ""
-    why_now: str = ""
-    why_not: str = ""
-    min_action: str = ""
-    decision: ConnectionDecision = ConnectionDecision.CONNECT
-    user_evidence_refs: list[str] = Field(default_factory=list)
-    their_artifact_ids: list[str] = Field(default_factory=list)
 
 
 @dataclass
@@ -87,7 +65,6 @@ class DailyDiscoveryResult:
     run_id: str
     sync_results: list[SyncResult] = field(default_factory=list)
     recommendations: DailyRecommendationSet | None = None
-    connections: list[ConnectionOpportunity] = field(default_factory=list)
     opportunities: list[Opportunity] = field(default_factory=list)
     preferred_opportunity: OppAggregate | None = None
     engagement: EngagementRunResult | None = None
@@ -294,88 +271,6 @@ def _gate_by_window(
     return kept, stale
 
 
-def assess_connection(
-    *,
-    runner: StructuredInferenceRunner | CodexRunner,
-    candidate: PersonCandidate,
-    artifacts: list[RawArtifact],
-    user_evidence_refs: list[str],
-    user_contribution_hint: str = "",
-) -> ConnectionOpportunity:
-    allowed = {a.artifact_id for a in artifacts}
-    prompt = _CONN_PROMPT.read_text().format(
-        peer_id=candidate.peer.id,
-        person_id=candidate.person_id,
-        display_name=candidate.peer.display_name,
-        platform=candidate.platform,
-        current_work=candidate.peer.current_work,
-        why_relevant=candidate.peer.why_relevant,
-        their_artifacts=json.dumps(
-            [
-                {
-                    "artifact_id": a.artifact_id,
-                    "title": a.title or "",
-                    "text": _truncate(a.text),
-                    "url": a.canonical_url,
-                }
-                for a in artifacts
-            ],
-            ensure_ascii=False,
-            indent=2,
-        ),
-        user_evidence_refs=json.dumps(user_evidence_refs, ensure_ascii=False),
-        user_contribution_hint=user_contribution_hint or "(none)",
-    )
-    try:
-        draft = runner.run(prompt, ConnectionOpportunityDraft)
-        assert isinstance(draft, ConnectionOpportunityDraft)
-    except Exception:
-        return build_connection_opportunity(
-            peer=candidate.peer,
-            person_id=candidate.person_id,
-            their_artifacts=list(allowed)[:8],
-            their_summary=candidate.peer.current_work or candidate.peer.why_relevant,
-            user_evidence_refs=user_evidence_refs,
-            user_contribution=user_contribution_hint,
-        )
-
-    their_ids = [a for a in draft.their_artifact_ids if a in allowed] or list(allowed)[:4]
-    user_refs = [r for r in draft.user_evidence_refs if r in set(user_evidence_refs)] or list(
-        user_evidence_refs
-    )
-    skip = (
-        draft.decision == ConnectionDecision.SKIP
-        or not user_refs
-        or not draft.user_contribution.strip()
-    )
-    if skip:
-        return ConnectionOpportunity(
-            opportunity_id=f"conn_{uuid4().hex[:12]}",
-            person_id=candidate.person_id,
-            peer_id=candidate.peer.id,
-            their_problem=draft.their_problem,
-            user_contribution="",
-            why_now="",
-            why_not=draft.why_not or "没有可追溯的用户真实经验可贡献",
-            decision=ConnectionDecision.SKIP,
-            their_artifact_ids=their_ids,
-        )
-    return ConnectionOpportunity(
-        opportunity_id=f"conn_{uuid4().hex[:12]}",
-        person_id=candidate.person_id,
-        peer_id=candidate.peer.id,
-        their_problem=draft.their_problem,
-        user_contribution=draft.user_contribution.strip(),
-        why_now=draft.why_now,
-        why_not=draft.why_not,
-        min_action=draft.min_action
-        or "公开回复并补充自己的真实经验",
-        decision=draft.decision,
-        user_evidence_refs=user_refs,
-        their_artifact_ids=their_ids,
-    )
-
-
 def _recommendation_entries(recs: DailyRecommendationSet) -> list[RecommendationEntry]:
     """把 DailyRecommendationSet 序列化为可持久化的快照条目（F1）。"""
     out: list[RecommendationEntry] = []
@@ -580,7 +475,6 @@ def run_daily_discovery(
                 for r in result.sync_results
             },
             "priority": len(recs.priority),
-            "connections": len(result.connections),
             "lookback_hours": plan.lookback_hours,
             "as_of": now.isoformat(),
             "source_failures": source_failures,
