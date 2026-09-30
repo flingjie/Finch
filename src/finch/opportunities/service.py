@@ -1,0 +1,199 @@
+"""机会聚合服务：创建 + 状态机转换 + 乐观并发（规范 §11.1/§11.3）。
+
+状态转换表来自规范 §11.1 状态图；每次转换先追加事件（带 ``expected_revision`` 锚点）
+再更新快照，``revision`` 递增。乐观并发：调用方提供 ``expected_revision``，与快照
+不一致即抛 ``OpportunityConflictError``（显式冲突）。
+"""
+
+from datetime import UTC, datetime
+
+from finch.opportunities.models import (
+    EntryKind,
+    EvidenceRef,
+    Opportunity,
+    OpportunityEvent,
+    OpportunityStatus,
+    Proposal,
+)
+from finch.opportunities.repository import OpportunityRepository
+
+
+class OpportunityConflictError(Exception):
+    """乐观并发冲突：快照 revision 与调用方 expected_revision 不一致。"""
+
+
+# 规范 §11.1 状态图：源状态 → 合法目标状态集合。
+_TRANSITIONS: dict[OpportunityStatus, set[OpportunityStatus]] = {
+    OpportunityStatus.PROPOSED: {
+        OpportunityStatus.SELECTED,
+        OpportunityStatus.PARKED,
+        OpportunityStatus.CLOSED,
+    },
+    OpportunityStatus.SELECTED: {
+        OpportunityStatus.READY,
+        OpportunityStatus.PARKED,
+    },
+    OpportunityStatus.READY: {
+        OpportunityStatus.SELECTED,
+        OpportunityStatus.CLOSED,
+    },
+    OpportunityStatus.PARKED: {OpportunityStatus.PROPOSED},
+    OpportunityStatus.CLOSED: {OpportunityStatus.PROPOSED},
+}
+
+
+class OpportunityService:
+    """机会聚合领域服务：只依赖注入的 ``OpportunityRepository``，不调 LLM、不自动重试。"""
+
+    def __init__(self, repo: OpportunityRepository) -> None:
+        self.repo = repo
+
+    def create(
+        self,
+        *,
+        opportunity_id: str,
+        person_ref: str | None = None,
+        thread_ref: str | None = None,
+        topic: str = "",
+        entry_kind: EntryKind | None = None,
+        why_me: str = "",
+        why_continue: str = "",
+        proposal: Proposal | None = None,
+        evidence_refs: list[EvidenceRef] | None = None,
+        open_questions: list[str] | None = None,
+    ) -> Opportunity:
+        """创建 PROPOSED 机会（revision=1），写 proposed 事件 + 快照。"""
+        opp = Opportunity(
+            id=opportunity_id,
+            person_ref=person_ref,
+            thread_ref=thread_ref,
+            topic=topic,
+            entry_kind=entry_kind,
+            why_me=why_me,
+            why_continue=why_continue,
+            proposal=proposal,
+            evidence_refs=evidence_refs or [],
+            open_questions=open_questions or [],
+        )
+        self.repo.append_event(
+            OpportunityEvent(
+                event_id=f"{opportunity_id}:r1",
+                opportunity_id=opportunity_id,
+                event_type="proposed",
+                expected_revision=0,
+            )
+        )
+        self.repo.save(opp)
+        return opp
+
+    def select(
+        self,
+        opportunity_id: str,
+        *,
+        expected_revision: int | None = None,
+        decision: str | None = None,
+    ) -> Opportunity:
+        """用户选定方向（proposed → selected；ready → selected 表示调整贡献）。"""
+        return self._transition(
+            opportunity_id,
+            OpportunityStatus.SELECTED,
+            expected_revision=expected_revision,
+            decision=decision,
+        )
+
+    def park(
+        self,
+        opportunity_id: str,
+        *,
+        expected_revision: int | None = None,
+        decision: str | None = None,
+    ) -> Opportunity:
+        """暂存（proposed / selected → parked）。"""
+        return self._transition(
+            opportunity_id,
+            OpportunityStatus.PARKED,
+            expected_revision=expected_revision,
+            decision=decision,
+        )
+
+    def close(
+        self,
+        opportunity_id: str,
+        *,
+        expected_revision: int | None = None,
+        decision: str | None = None,
+    ) -> Opportunity:
+        """本次结束（proposed / ready → closed）。"""
+        return self._transition(
+            opportunity_id,
+            OpportunityStatus.CLOSED,
+            expected_revision=expected_revision,
+            decision=decision,
+        )
+
+    def mark_ready(
+        self,
+        opportunity_id: str,
+        *,
+        expected_revision: int | None = None,
+    ) -> Opportunity:
+        """成果可审阅（selected → ready）。"""
+        return self._transition(
+            opportunity_id,
+            OpportunityStatus.READY,
+            expected_revision=expected_revision,
+        )
+
+    def reopen(
+        self,
+        opportunity_id: str,
+        *,
+        expected_revision: int | None = None,
+    ) -> Opportunity:
+        """重新开启（parked / closed → proposed）。"""
+        return self._transition(
+            opportunity_id,
+            OpportunityStatus.PROPOSED,
+            expected_revision=expected_revision,
+        )
+
+    def _transition(
+        self,
+        opportunity_id: str,
+        to_status: OpportunityStatus,
+        *,
+        expected_revision: int | None = None,
+        decision: str | None = None,
+    ) -> Opportunity:
+        opp = self.repo.get(opportunity_id)
+        if opp is None:
+            raise KeyError(opportunity_id)
+        if to_status not in _TRANSITIONS[opp.status]:
+            raise ValueError(
+                f"illegal transition: {opp.status.value} -> {to_status.value} "
+                f"for opportunity {opportunity_id}"
+            )
+        if expected_revision is not None and expected_revision != opp.revision:
+            raise OpportunityConflictError(
+                f"revision conflict: expected {expected_revision}, "
+                f"current {opp.revision}"
+            )
+        new_opp = opp.model_copy(
+            update={
+                "status": to_status,
+                "decision": decision if decision is not None else opp.decision,
+                "revision": opp.revision + 1,
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        self.repo.append_event(
+            OpportunityEvent(
+                event_id=f"{opportunity_id}:r{new_opp.revision}",
+                opportunity_id=opportunity_id,
+                event_type=to_status.value,
+                expected_revision=opp.revision,
+                decision=decision,
+            )
+        )
+        self.repo.save(new_opp)
+        return new_opp
