@@ -54,3 +54,13 @@ def test_interaction_record_follow_up_at_defaults_none():
         source_url="https://x.com/a/1", occurred_at=datetime(2026, 9, 1),
     )
     assert rec.follow_up_at is None
+
+
+def test_interaction_record_links_to_opportunity():
+    rec = InteractionRecord(
+        id="rec_1", peer_id="peer_abc", platform="x",
+        source_url="https://x.com/a/1", occurred_at=datetime(2026, 9, 1),
+    )
+    assert rec.opportunity_id is None
+    linked = rec.model_copy(update={"opportunity_id": "opp_person_1"})
+    assert linked.opportunity_id == "opp_person_1"

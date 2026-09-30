@@ -106,6 +106,7 @@ class InteractionRecord(BaseModel):
 
     id: str
     proposal_id: str | None = None
+    opportunity_id: str | None = None
     peer_id: str
     platform: str
     source_url: str
