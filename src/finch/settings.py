@@ -86,7 +86,7 @@ class QualityGates(BaseModel):
     """
 
     min_quality_score: float = 0.75
-    max_rewrite_rounds: int = 1
+    max_rewrite_rounds: int = 2
     llm_critique_mode: Literal["on_fail_or_gate", "always"] = "on_fail_or_gate"
 
 

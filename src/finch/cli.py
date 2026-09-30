@@ -2607,6 +2607,7 @@ def connections_record(
     body: str = typer.Option("", "--body", help="已发送正文摘要"),
     platform: str = typer.Option("x", "--platform", help="平台"),
     direction: str = typer.Option("outbound", "--direction", help="outbound|inbound"),
+    opportunity: str = typer.Option("", "--opportunity", help="关联的首选机会 ID（可选）"),
 ) -> None:
     """用户亲自发布后登记互动（MVP 不验证远端是否真正发布）。"""
     from finch.connections.service import apply_stage_upgrade, review_relationship
@@ -2649,6 +2650,7 @@ def connections_record(
         direction=cast(Literal["outbound", "inbound", "unknown"], direction),
         verification_status=VerificationStatus.USER_ATTESTED,
         provenance="connections.record",
+        opportunity_id=opportunity or None,
     )
     InteractionRecordRepository(ws).upsert(record)
 
