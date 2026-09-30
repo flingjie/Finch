@@ -236,9 +236,12 @@ class OpportunityService:
         opp = self.repo.get(opportunity_id)
         if opp is None:
             raise KeyError(opportunity_id)
-        # request_id 幂等：同一请求已应用 → 返回当前快照，不重复应用、不报非法转换。
-        if request_id is not None and self._request_applied(opportunity_id, request_id):
-            return opp
+        # request_id 幂等：同一请求已应用且快照已推进 → 返回当前快照。
+        if request_id is not None:
+            applied = self._applied_event(opportunity_id, request_id)
+            if applied is not None and opp.revision > applied.expected_revision:
+                return opp
+            # 快照仍停在事件前（append_event 与 save 之间崩溃）→ 落下来重放修复快照。
         if to_status not in _TRANSITIONS[opp.status]:
             raise ValueError(
                 f"illegal transition: {opp.status.value} -> {to_status.value} "
@@ -270,8 +273,11 @@ class OpportunityService:
         self.repo.save(new_opp)
         return new_opp
 
-    def _request_applied(self, opportunity_id: str, request_id: str) -> bool:
-        """事件日志中是否已存在该 request_id（幂等去重）。"""
-        return any(
-            e.request_id == request_id for e in self.repo.list_events(opportunity_id)
-        )
+    def _applied_event(
+        self, opportunity_id: str, request_id: str
+    ) -> OpportunityEvent | None:
+        """事件日志中该 request_id 对应的已应用事件（幂等去重锚点）。"""
+        for e in self.repo.list_events(opportunity_id):
+            if e.request_id == request_id:
+                return e
+        return None

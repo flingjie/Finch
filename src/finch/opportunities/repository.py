@@ -26,9 +26,11 @@ class OpportunityRepository:
         )
 
     def append_event(self, event: OpportunityEvent) -> None:
-        self.ws.append_jsonl(
-            self._dir(event.opportunity_id) / "events.jsonl", event.model_dump(mode="json")
-        )
+        path = self._dir(event.opportunity_id) / "events.jsonl"
+        # 幂等：同一 event_id 已落盘则跳过（修复重放不会产生重复事件）。
+        if any(e.get("event_id") == event.event_id for e in self.ws.read_jsonl(path)):
+            return
+        self.ws.append_jsonl(path, event.model_dump(mode="json"))
 
     def list_events(self, opportunity_id: str) -> list[OpportunityEvent]:
         rows = self.ws.read_jsonl(self._dir(opportunity_id) / "events.jsonl")

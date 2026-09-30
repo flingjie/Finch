@@ -13,6 +13,7 @@ from finch.opportunities.models import (
     EntryKind,
     ExecutionStatus,
     MaterialOrigin,
+    OpportunityEvent,
     OpportunityStatus,
     Proposal,
 )
@@ -211,6 +212,27 @@ def test_distinct_request_ids_apply_distinct_transitions(ws):
     assert opp.revision == 3
     events = OpportunityRepository(ws).list_events("opp_abc")
     assert [e.request_id for e in events] == [None, "req_select", "req_ready"]
+
+
+def test_request_id_replays_stale_snapshot_after_crash(ws):
+    """崩溃窗口：事件已落盘但快照未推进 → 重放同一 request_id 应修复快照而非静默返回旧快照。"""
+    service = OpportunityService(OpportunityRepository(ws))
+    service.create(opportunity_id="opp_abc", topic="t")
+    # 模拟 append_event 与 save 之间崩溃：select 事件已落盘，快照仍停在 proposed(rev1)。
+    service.repo.append_event(
+        OpportunityEvent(
+            event_id="opp_abc:r2",
+            opportunity_id="opp_abc",
+            event_type="selected",
+            expected_revision=1,
+            request_id="req_1",
+        )
+    )
+    opp = service.select("opp_abc", request_id="req_1")
+    assert opp.status == OpportunityStatus.SELECTED
+    assert opp.revision == 2
+    events = OpportunityRepository(ws).list_events("opp_abc")
+    assert [e.event_type for e in events].count("selected") == 1  # 无重复事件
 
 
 # ---- Artifact（规范 §10.3：成果对象，material_origin / execution_status）----

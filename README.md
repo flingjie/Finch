@@ -85,7 +85,7 @@ uv run finch drafts create <id>
 uv run finch review approve <draft_id>
 ```
 
-观点状态机：`PROPOSED → CONFIRMED → DRAFTED`，或 `PROPOSED/CONFIRMED → SKIPPED`。修订历史 append-only；草稿生成 ≠ 观点已证实。
+观点状态机：`PROPOSED → CONFIRMED`，或 `PROPOSED/CONFIRMED → SKIPPED`。修订历史 append-only；草稿生成走「待审」（`review`）语义，不改 job 状态，且 ≠ 观点已证实。
 
 ## Skill 架构
 
