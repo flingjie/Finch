@@ -1,7 +1,23 @@
-"""Tests for write_contribution (选定机会后按需制作贡献：LLM 产出正文)."""
+"""Tests for write_contribution and prepare_contribution (选定机会后按需制作贡献)."""
 
-from finch.opportunities.models import ContributionForm, EntryKind, Opportunity, Proposal
-from finch.opportunities.prepare import ContributionBodyOutput, write_contribution
+from finch.opportunities.models import (
+    ArtifactKind,
+    ContributionForm,
+    EntryKind,
+    MaterialOrigin,
+    Opportunity,
+    OpportunityStatus,
+    Proposal,
+)
+from finch.opportunities.prepare import (
+    ContributionBodyOutput,
+    artifact_kind_for,
+    prepare_contribution,
+    write_contribution,
+)
+from finch.opportunities.repository import ArtifactRepository, OpportunityRepository
+from finch.opportunities.service import OpportunityService
+from finch.storage.workspace import Workspace
 
 
 class FakeRunner:
@@ -48,3 +64,51 @@ def test_write_contribution_renders_opportunity_context():
     assert "做一张 trace→最小回放方法卡" in p
     assert "method_card" in p
     assert "含输入/步骤/输出/限制的方法卡" in p
+
+
+def test_artifact_kind_for_maps_forms():
+    assert artifact_kind_for(ContributionForm.METHOD_CARD) == ArtifactKind.METHOD_CARD
+    assert artifact_kind_for(ContributionForm.DEMO) == ArtifactKind.DEMO
+    assert artifact_kind_for(ContributionForm.CASE) == ArtifactKind.CASE
+    assert artifact_kind_for(ContributionForm.REPLY_DRAFT) == ArtifactKind.REPLY_DRAFT
+    assert artifact_kind_for(ContributionForm.CLARIFYING_QUESTION) == ArtifactKind.REPLY_DRAFT
+
+
+def _service(tmp_path) -> tuple[OpportunityService, OpportunityRepository, ArtifactRepository]:
+    ws = Workspace(tmp_path)
+    repo = OpportunityRepository(ws)
+    art_repo = ArtifactRepository(ws)
+    return OpportunityService(repo, artifacts=art_repo), repo, art_repo
+
+
+def test_prepare_contribution_marks_ready_and_records_artifact(tmp_path):
+    service, repo, art_repo = _service(tmp_path)
+    service.create(
+        opportunity_id="opp_1",
+        topic="t",
+        proposal=Proposal(
+            contribution="c",
+            form=ContributionForm.METHOD_CARD,
+            expected_output="o",
+            scope="s",
+        ),
+    )
+    service.select("opp_1")
+
+    body = "适用处境：…\n输入：…\n步骤：…\n输出：…\n限制：…"
+    opp = prepare_contribution(
+        opportunity=service.get("opp_1"), runner=FakeRunner(body), service=service
+    )
+
+    assert opp.status == OpportunityStatus.READY
+    assert "art_opp_1_method_card" in opp.artifact_refs
+    assert art_repo.read_content("opp_1", "art_opp_1_method_card") == body
+    assert [e.event_type for e in repo.list_events("opp_1")] == [
+        "proposed",
+        "selected",
+        "artifact_added",
+        "ready",
+    ]
+    saved = art_repo.get("opp_1", "art_opp_1_method_card")
+    assert saved is not None
+    assert saved.material_origin == MaterialOrigin.SYNTHETIC

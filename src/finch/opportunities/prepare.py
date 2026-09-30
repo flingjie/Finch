@@ -12,15 +12,36 @@ from typing import cast
 from pydantic import BaseModel
 
 from finch.llm.base import StructuredInferenceRunner
-from finch.opportunities.models import Opportunity
+from finch.opportunities.models import (
+    Artifact,
+    ArtifactKind,
+    ContributionForm,
+    ExecutionStatus,
+    MaterialOrigin,
+    Opportunity,
+)
+from finch.opportunities.service import OpportunityService
 
 _PROMPT = Path("prompts/prepare-contribution.md")
+
+_FORM_TO_KIND: dict[ContributionForm, ArtifactKind] = {
+    ContributionForm.REPLY_DRAFT: ArtifactKind.REPLY_DRAFT,
+    ContributionForm.METHOD_CARD: ArtifactKind.METHOD_CARD,
+    ContributionForm.DEMO: ArtifactKind.DEMO,
+    ContributionForm.CASE: ArtifactKind.CASE,
+    ContributionForm.CLARIFYING_QUESTION: ArtifactKind.REPLY_DRAFT,
+}
 
 
 class ContributionBodyOutput(BaseModel):
     """贡献正文输出：只回传 body。"""
 
     body: str
+
+
+def artifact_kind_for(form: ContributionForm) -> ArtifactKind:
+    """把贡献形式映射为成果种类（澄清问题归入 reply_draft）。"""
+    return _FORM_TO_KIND[form]
 
 
 def write_contribution(
@@ -40,3 +61,32 @@ def write_contribution(
     )
     out = cast(ContributionBodyOutput, runner.run(prompt, ContributionBodyOutput))
     return out.body
+
+
+def prepare_contribution(
+    *,
+    opportunity: Opportunity,
+    runner: StructuredInferenceRunner,
+    service: OpportunityService,
+) -> Opportunity:
+    """选定机会后按需制作：生成正文 → 写文件 → 登记 Artifact → mark_ready。
+
+    正文是可审阅表达方案，默认 material_origin=SYNTHETIC、execution_status=NOT_RUN；
+    演示是否真正运行由用户后续提供事实更新，代码不得把未运行标为已运行。
+    """
+    if service.artifacts is None:
+        raise ValueError("prepare_contribution requires an ArtifactRepository")
+    body = write_contribution(runner, opportunity)
+    p = opportunity.proposal
+    form = p.form if p else ContributionForm.METHOD_CARD
+    artifact_id = f"art_{opportunity.id}_{form.value}"
+    service.artifacts.write_content(opportunity.id, artifact_id, body)
+    artifact = Artifact(
+        id=artifact_id,
+        kind=artifact_kind_for(form),
+        path=f"artifacts/{artifact_id}.md",
+        material_origin=MaterialOrigin.SYNTHETIC,
+        execution_status=ExecutionStatus.NOT_RUN,
+    )
+    service.add_artifact(opportunity.id, artifact)
+    return service.mark_ready(opportunity.id)

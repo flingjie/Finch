@@ -80,3 +80,14 @@ class ArtifactRepository:
             if obj is not None:
                 out.append(obj)
         return out
+
+    def write_content(self, opportunity_id: str, artifact_id: str, body: str) -> None:
+        """把成果正文写为 Markdown 文件（与元数据 yaml 同目录，``artifact.path`` 引用它）。"""
+        path = self._dir(opportunity_id) / f"{self.ws.safe_filename(artifact_id)}.md"
+        self.ws.atomic_write(path, body)
+
+    def read_content(self, opportunity_id: str, artifact_id: str) -> str | None:
+        path = self._dir(opportunity_id) / f"{self.ws.safe_filename(artifact_id)}.md"
+        if not path.exists():
+            return None
+        return path.read_text(encoding="utf-8")
