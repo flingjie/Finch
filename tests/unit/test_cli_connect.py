@@ -19,7 +19,6 @@ from finch.engagement.models import (
     ExternalPost,
     InteractionAction,
     InteractionProposal,
-    InteractionStatus,
     Opportunity,
     SuggestedMode,
 )
@@ -28,7 +27,6 @@ from finch.peers.models import PeerProfile, PlatformIdentity, RelationshipStage
 from finch.settings import Paths, Settings
 from finch.storage.repositories import (
     ConversationThreadRepository,
-    InteractionRecordRepository,
     InteractionRepository,
     OpportunityRepository,
     PeerRepository,
@@ -78,103 +76,6 @@ def _candidate(candidate_id: str = "x:post_1:draft_reply") -> InteractionProposa
 
 def _seed_candidate(ws: Workspace, candidate_id="x:post_1:draft_reply"):
     InteractionRepository(ws).upsert(_candidate(candidate_id), run_id="run_1")
-
-
-# ---- finch connect approve / reject / edit ----
-
-def test_connect_approve_flips_status(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    ws = Workspace(settings.paths.var_dir)
-    _seed_candidate(ws)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["connect", "approve", "x:post_1:draft_reply"])
-    assert r.exit_code == 0, r.output
-    assert InteractionRepository(ws).get("x:post_1:draft_reply").status == (
-        InteractionStatus.APPROVED
-    )
-
-
-def test_connect_reject_records_reason(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    ws = Workspace(settings.paths.var_dir)
-    _seed_candidate(ws)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(
-        app, ["connect", "reject", "x:post_1:draft_reply", "--reason", "not_relevant"]
-    )
-    assert r.exit_code == 0, r.output
-    candidate = InteractionRepository(ws).get("x:post_1:draft_reply")
-    assert candidate.status == InteractionStatus.REJECTED
-    assert candidate.reject_reason == "not_relevant"
-
-
-def test_connect_edit_saves_revised_draft_without_approving(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    ws = Workspace(settings.paths.var_dir)
-    _seed_candidate(ws)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    revised_file = tmp_path / "revised.md"
-    revised_file.write_text("the human-edited reply")
-
-    r = CliRunner().invoke(
-        app, ["connect", "edit", "x:post_1:draft_reply", "--file", str(revised_file)]
-    )
-    assert r.exit_code == 0, r.output
-    candidate = InteractionRepository(ws).get("x:post_1:draft_reply")
-    assert candidate.revised_draft == "the human-edited reply"
-    assert candidate.status == InteractionStatus.PROPOSED
-
-
-# ---- finch connect record ----
-
-def test_connect_record_requires_approval_and_is_idempotent(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    ws = Workspace(settings.paths.var_dir)
-    _seed_candidate(ws)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    # 未批准：无法进入执行态。
-    r = CliRunner().invoke(
-        app, ["connect", "record", "x:post_1:draft_reply", "--url", "https://x.com/1"]
-    )
-    assert r.exit_code == 1
-    assert "not approved" in r.output
-
-    InteractionRepository(ws).approve("x:post_1:draft_reply")
-    r = CliRunner().invoke(
-        app, ["connect", "record", "x:post_1:draft_reply", "--url", "https://x.com/1"]
-    )
-    assert r.exit_code == 0, r.output
-    recs = InteractionRecordRepository(ws).list_by_proposal("x:post_1:draft_reply")
-    assert len(recs) == 1
-    assert recs[0].peer_id == "peer_abc"
-    assert recs[0].published_body == "a draft reply"
-
-    # 记录互动同时串进 (peer, topic) 的 ConversationThread。
-    threads = ConversationThreadRepository(ws).list_all()
-    assert len(threads) == 1
-    assert threads[0].peer_id == "peer_abc"
-    assert threads[0].topic == "graphs"
-    assert threads[0].interaction_ids == ["rec_x:post_1:draft_reply"]
-
-    # 同一 proposal 重复记录：幂等，不重复计两次。
-    r = CliRunner().invoke(
-        app, ["connect", "record", "x:post_1:draft_reply", "--url", "https://x.com/1"]
-    )
-    assert r.exit_code == 0, r.output
-    assert len(InteractionRecordRepository(ws).list_by_proposal("x:post_1:draft_reply")) == 1
-    assert len(ConversationThreadRepository(ws).list_all()[0].interaction_ids) == 1
-
-
-def test_connect_record_unknown_proposal_exits(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(app, ["connect", "record", "nope", "--url", "https://x.com/1"])
-    assert r.exit_code == 1
-    assert "not found" in r.output
 
 
 # ---- finch connect create ----

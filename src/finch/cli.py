@@ -45,7 +45,6 @@ from .engagement.models import (
     DiscoverySnapshot,
     InteractionAction,
     InteractionProposal,
-    InteractionRecord,
     InteractionStatus,
     InterestFeedbackValue,
     Opportunity,
@@ -3321,120 +3320,6 @@ def connect_with(
     typer.echo(source)
     if result.proposal is not None:
         typer.echo(_render_proposal_card(result.proposal))
-
-
-@connect_app.command("approve")
-def connect_approve(proposal_id: str = typer.Argument(..., help="proposal id")) -> None:
-    """批准提案（PROPOSED→APPROVED，幂等；批准只创建发布意图，不等于已发布）。"""
-    from finch.engagement.proposals import ready_gate_blocks
-
-    settings = load_settings()
-    ws = Workspace(settings.paths.var_dir)
-    ws.ensure()
-    repo = InteractionRepository(ws)
-    proposal = repo.get(proposal_id)
-    if proposal is None:
-        typer.echo(f"proposal not found: {proposal_id}")
-        raise typer.Exit(code=1)
-    body = proposal.revised_draft or proposal.draft or proposal.outline or ""
-    job = None
-    for ref in proposal.contribution_basis_refs:
-        job = ContentJobRepository(ws).get_job(ref)
-        if job is not None:
-            break
-    blocks = ready_gate_blocks(body=body, job=job)
-    if blocks:
-        typer.echo(f"cannot approve: {', '.join(blocks)}")
-        raise typer.Exit(code=1)
-    try:
-        repo.approve(proposal_id)
-    except KeyError:
-        typer.echo(f"proposal not found: {proposal_id}")
-        raise typer.Exit(code=1) from None
-    typer.echo(f"approved {proposal_id}")
-
-
-@connect_app.command("reject")
-def connect_reject(
-    proposal_id: str = typer.Argument(..., help="proposal id"),
-    reason: str = typer.Option(..., "--reason", help="拒绝理由"),
-) -> None:
-    """拒绝提案并记录理由（→ REJECTED）。"""
-    settings = load_settings()
-    ws = Workspace(settings.paths.var_dir)
-    ws.ensure()
-    try:
-        InteractionRepository(ws).reject(proposal_id, reason)
-    except KeyError:
-        typer.echo(f"proposal not found: {proposal_id}")
-        raise typer.Exit(code=1) from None
-    typer.echo(f"rejected {proposal_id}")
-
-
-@connect_app.command("edit")
-def connect_edit(
-    proposal_id: str = typer.Argument(..., help="proposal id"),
-    path: str = typer.Option(..., "--file", help="人工修订后的草稿文件"),
-) -> None:
-    """保存人工修订草稿；修改正文使旧批准失效（回到 PROPOSED，revision+1）。"""
-    settings = load_settings()
-    ws = Workspace(settings.paths.var_dir)
-    ws.ensure()
-    repo = InteractionRepository(ws)
-    if repo.get(proposal_id) is None:
-        typer.echo(f"proposal not found: {proposal_id}")
-        raise typer.Exit(code=1)
-    try:
-        revised = Path(path).read_text()
-    except OSError as exc:
-        typer.echo(f"cannot read file: {exc}")
-        raise typer.Exit(code=1) from exc
-    repo.edit(proposal_id, revised)
-    typer.echo(f"edited {proposal_id} (approval invalidated if previously approved)")
-
-@connect_app.command("record")
-def connect_record(
-    proposal_id: str = typer.Argument(..., help="proposal id"),
-    url: str = typer.Option(..., "--url", help="实际发布/互动的 URL"),
-    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
-) -> None:
-    """记录一次真实互动为 InteractionRecord（需先批准；同一 proposal 幂等，不重复计两次）。"""
-    settings = load_settings()
-    ws = Workspace(settings.paths.var_dir)
-    ws.ensure()
-    proposal = InteractionRepository(ws).get(proposal_id)
-    if proposal is None:
-        typer.echo(f"proposal not found: {proposal_id}")
-        raise typer.Exit(code=1)
-    if proposal.status != InteractionStatus.APPROVED:
-        typer.echo(f"proposal not approved (approve first): {proposal_id}")
-        raise typer.Exit(code=1)
-    record = InteractionRecord(
-        id=f"rec_{proposal_id}",
-        proposal_id=proposal_id,
-        peer_id=proposal.peer_id or "",
-        platform=proposal.post.platform,
-        source_url=url,
-        published_body=proposal.revised_draft or proposal.draft or "",
-        occurred_at=datetime.now(UTC),
-        outcome="published",
-    )
-    InteractionRecordRepository(ws).upsert(record)
-    if proposal.peer_id:
-        topic = (
-            proposal.post.matched_topics[0]
-            if proposal.post.matched_topics
-            else (proposal.contribution_type.value if proposal.contribution_type else "general")
-        )
-        svc = ConversationService()
-        opened = svc.open_thread(peer_id=proposal.peer_id, topic=topic)
-        thread = ConversationThreadRepository(ws).get(opened.id) or opened
-        thread = svc.append_interaction(thread, record.id, occurred_at=record.occurred_at)
-        ConversationThreadRepository(ws).upsert(thread)
-    if as_json:
-        typer.echo(record.model_dump_json(indent=2))
-    else:
-        typer.echo(f"recorded {record.id}")
 
 
 @peers_app.command("list")
