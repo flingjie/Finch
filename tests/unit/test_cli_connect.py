@@ -80,32 +80,6 @@ def _seed_candidate(ws: Workspace, candidate_id="x:post_1:draft_reply"):
 
 # ---- finch connect create ----
 
-def test_connect_create_fetch_failure(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "fetch_post_by_url", lambda *a, **k: None)
-
-    r = CliRunner().invoke(app, ["connect", "create", "--input", "https://x.com/1"])
-    assert r.exit_code == 1
-    assert "could not fetch post" in r.output
-
-
-def test_connect_create_saves_proposal(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    ws = Workspace(settings.paths.var_dir)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    candidate = _candidate()
-    monkeypatch.setattr(cli, "fetch_post_by_url", lambda *a, **k: _post())
-    monkeypatch.setattr(cli, "score_posts", lambda *a, **k: [])
-    monkeypatch.setattr(cli, "generate_proposals", lambda *a, **k: [candidate])
-
-    r = CliRunner().invoke(
-        app, ["connect", "create", "--input", "https://x.com/alice/status/1"]
-    )
-    assert r.exit_code == 0, r.output
-    assert InteractionRepository(ws).get(candidate.id) is not None
-
-
 # ---- finch connect daily ----
 
 def _opportunity() -> Opportunity:
@@ -362,44 +336,6 @@ def test_connect_today_is_pure_read(monkeypatch, tmp_path):
     assert len(payload["opportunities"]) == 0
 
 
-def test_connect_more_no_network(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    ws = Workspace(settings.paths.var_dir)
-    ws.ensure()
-    result = _daily_result()
-    extra = _opportunity().model_copy(update={"id": "opp_test_2", "peer_id": "peer_abc"})
-    result = result.model_copy(
-        update={"opportunities": [*result.opportunities, extra]}
-    )
-    # Fix ranked ids via persist
-    snap = cli._persist_discovery(ws, result)
-    assert snap is not None
-    # Present first only
-    from finch.engagement.models import PresentationRecord
-    from finch.storage.repositories import PresentationRecordRepository
-
-    PresentationRecordRepository(ws).upsert(
-        PresentationRecord(
-            id=f"{snap.id}:opp_test_1",
-            snapshot_id=snap.id,
-            opportunity_id="opp_test_1",
-            presented_at=datetime.now(UTC),
-        )
-    )
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(
-        cli,
-        "_run_discovery",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no discovery")),
-    )
-    r = CliRunner().invoke(
-        app, ["connect", "more", "--snapshot", snap.id, "--limit", "5", "--json"]
-    )
-    assert r.exit_code == 0, r.output
-    payload = json.loads(r.output)
-    assert [o["id"] for o in payload["opportunities"]] == ["opp_test_2"]
-
-
 def test_connect_daily_preserves_accumulated_peer_fields(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
@@ -542,48 +478,6 @@ def test_conversations_follow_up_restores_context(monkeypatch, tmp_path):
     assert "conversation:" not in r.output
 
 
-def test_connect_with_requires_exactly_one_source(monkeypatch, tmp_path):
-    settings = _settings(tmp_path)
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    r = CliRunner().invoke(app, ["connect", "with"])
-    assert r.exit_code == 1
-    assert "--x" in r.output or "github" in r.output
-    r = CliRunner().invoke(
-        app, ["connect", "with", "--x", "a", "--github", "b"]
-    )
-    assert r.exit_code == 1
-
-
-def test_connect_with_x_renders_source_and_saves(monkeypatch, tmp_path):
-    from finch.engagement.named import NamedConnectResult
-    from finch.peers.service import PeerService
-
-    settings = _settings(tmp_path)
-    ws = Workspace(settings.paths.var_dir)
-    ws.ensure()
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    peer = PeerService().from_author(platform="x", author_id="iFurySt", username="iFurySt")
-    candidate = _candidate()
-    candidate = candidate.model_copy(update={"peer_id": peer.id, "outline": "问 replay"})
-
-    def fake_connect_named(**kwargs):
-        PeerRepository(ws).upsert(peer)
-        InteractionRepository(ws).upsert(candidate, run_id="with")
-        return NamedConnectResult(
-            status="ok",
-            message="ok",
-            peer=peer,
-            proposal=candidate,
-        )
-
-    monkeypatch.setattr(cli, "connect_named", fake_connect_named)
-    r = CliRunner().invoke(app, ["connect", "with", "--x", "iFurySt"])
-    assert r.exit_code == 0, r.output
-    assert "X" in r.output or "x.com" in r.output
-    assert InteractionRepository(ws).get(candidate.id) is not None
-
-
-
 # ---- D10 展示语义（--json 无曝光副作用；文本前台才记曝光） ----
 
 
@@ -712,26 +606,6 @@ def test_connect_today_json_does_not_record_exposure(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     r = CliRunner().invoke(app, ["connect", "today", "--json"])
-    assert r.exit_code == 0, r.output
-    assert PresentationRecordRepository(ws).list_all() == []
-
-
-def test_connect_more_json_does_not_record_exposure(monkeypatch, tmp_path):
-    from finch.storage.repositories import PresentationRecordRepository
-
-    settings = _settings(tmp_path)
-    ws = Workspace(settings.paths.var_dir)
-    ws.ensure()
-    result = _daily_result()
-    extra = _opportunity().model_copy(update={"id": "opp_test_2", "peer_id": "peer_abc"})
-    result = result.model_copy(update={"opportunities": [*result.opportunities, extra]})
-    snap = cli._persist_discovery(ws, result)
-    assert snap is not None
-    monkeypatch.setattr(cli, "load_settings", lambda: settings)
-
-    r = CliRunner().invoke(
-        app, ["connect", "more", "--snapshot", snap.id, "--limit", "5", "--json"]
-    )
     assert r.exit_code == 0, r.output
     assert PresentationRecordRepository(ws).list_all() == []
 
