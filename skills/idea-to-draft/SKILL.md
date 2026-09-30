@@ -1,28 +1,30 @@
 ---
 name: idea-to-draft
 description: >
-  把已确认的 Idea（ContentJob）写成一篇中文原创草稿（Draft），仅作 Assist 模式（代写）。
-  用于「我没时间练习 / 已经想清楚，直接帮我写」类请求；只依据 job 语境（读者问题 / 作者
-  立场 / 核心主张 / 边界）写正文，不搜索新来源、不绑定证据卡；草稿过 Critic（6 检查器，
-  Safety 硬门禁）+ 有限 rewrite 后落库为 Draft + CriticReport，进入人工审核。
+  把用户已想清楚的文本直接写成一篇中文原创草稿（Draft），仅作 Assist 模式（代写）。
+  用于「我没时间练习 / 已经想清楚，直接帮我写」类请求；只依据用户给的语境写正文，不搜索
+  新来源、不绑定证据卡；草稿过 Critic（6 检查器，Safety 硬门禁）+ 有限 rewrite 后落库为
+  Draft + CriticReport，进入人工审核。不强制先确认立场。
 ---
 
 # idea-to-draft（Assist 模式）
 
-把已确认的 Idea 写成草稿。职责单一：从 `ContentJob`（`status=confirmed`）生成一篇**进入人工审核**的 `Draft`，并落库一轮 Critic 报告。未确认的 idea 拒绝生成（`needs_confirmation`）。
+把用户已想清楚的文本写成草稿。职责单一：从用户给的文本直接生成一篇**进入人工审核**的
+`Draft`，并落库一轮 Critic 报告。这是直接写作短路，不强制先确认立场。
 
 这是**代写模式**，不是表达训练。如果用户想通过表达提升能力，先走 `expression-practice`。
 
 ## 职责
 
-- 输入：一个已确认的 `ContentJob`。
-- 输出：一篇 `Draft`（`kind` 随 job 的 `recommended_format`，`claims` 恒为空）+ 一轮 `CriticReport`。
-- 未确认 / 不存在的 idea → 报错，不生成。
-- 草稿只依据 job 语境写，**不搜索新来源、不绑定证据卡**。
+- 输入：用户已想清楚的文本 / 想法。
+- 输出：一篇 `Draft`（`claims` 恒为空）+ 一轮 `CriticReport`，状态为**待审**。
+- 只依据用户给的语境写，**不搜索新来源、不绑定证据卡**。
+- 草稿完成不等于作者认领立场，也不等于已发布。
 
 ## 执行
 
-用 `finch drafts create <idea-id> [--json]`。
+用 `finch drafts write <text> [--json]`。用户已有一个 `status=confirmed` 的 idea 时，
+也可用 `finch drafts create <idea-id> [--json]` 沿既有立场写。
 
 ## 向用户呈现
 
@@ -32,7 +34,7 @@ description: >
 ## 边界
 
 - 不冒充表达训练（→ `expression-practice`）。
-- 不从未经确认的 `topic-dialogue` 结果直接写草稿；完成讨论 ≠ 立场已确认（须用户保存为观点候选并 `confirm`）。
+- 完成讨论 ≠ 立场已确认；`drafts write` 只生成待审草稿，不自动认领立场（见 `_shared/author-position.md`）。
 - 不改变已确认立场（claim/decision/tradeoff 只原样表达，见 `_shared/author-position.md`）。
 - 不从外部信号补造个人经历（见 `_shared/evidence-policy.md`）。
 - 不自动发布（见 `_shared/publication-safety.md`）。

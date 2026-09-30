@@ -5,7 +5,13 @@ from finch.opportunities.assess import (
     assess_opportunity,
     build_opportunity,
 )
-from finch.opportunities.models import ContributionForm, EntryKind, Opportunity
+from finch.opportunities.models import (
+    ContributionForm,
+    EntryKind,
+    EvidenceRef,
+    EvidenceTier,
+    Opportunity,
+)
 
 
 class FakeRunner:
@@ -98,3 +104,28 @@ def test_build_opportunity_none_when_not_recommend():
 
 def test_build_opportunity_none_when_no_contribution():
     assert build_opportunity(_draft(contribution="  "), opportunity_id="o") is None
+
+
+def test_build_opportunity_carries_thread_ref_and_evidence_refs():
+    draft = _draft(
+        thread_ref="https://x.com/alice/status/1",
+        evidence_refs=[
+            EvidenceRef(
+                source_ref="https://x.com/alice/status/1",
+                quote="同一任务重跑结果不同",
+                claim="失败可复现",
+                tier=EvidenceTier.EXPLICIT,
+            )
+        ],
+    )
+    opp = build_opportunity(draft, opportunity_id="opp_1", person_ref="person_1")
+    assert opp.thread_ref == "https://x.com/alice/status/1"
+    assert len(opp.evidence_refs) == 1
+    assert opp.evidence_refs[0].tier == EvidenceTier.EXPLICIT
+
+
+def test_assess_opportunity_marks_eval_failed_on_error():
+    runner = FakeRunner(exc=RuntimeError("boom"))
+    out = assess_opportunity(runner, **_kwargs())
+    assert out.eval_failed is True
+    assert out.recommend is False

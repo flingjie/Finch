@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from typing import Literal
 
 from finch.codex.runner import CodexRunner
 from finch.discovery.candidate_pool import build_pool
@@ -15,7 +16,7 @@ from finch.engagement.models import (
 )
 from finch.engagement.relationship import PeerValue
 from finch.llm.base import StructuredInferenceRunner
-from finch.opportunities.discover import discover_preferred_opportunity
+from finch.opportunities.discover import discover_preferred_opportunity_outcome
 from finch.opportunities.models import Opportunity as OppAggregate
 from finch.opportunities.repository import OpportunityRepository as OppAggregateRepository
 from finch.opportunities.service import OpportunityService
@@ -60,10 +61,21 @@ class DailyDiscoveryResult:
     sync_results: list[SyncResult] = field(default_factory=list)
     recommendations: DailyRecommendationSet | None = None
     preferred_opportunity: OppAggregate | None = None
+    opportunity_assessments: list[OpportunityAssessment] = field(default_factory=list)
     engagement: EngagementRunResult | None = None
     collision_id: str = ""
     detail: str = ""
     metrics: RunMetrics = field(default_factory=lambda: RunMetrics())
+
+
+@dataclass
+class OpportunityAssessment:
+    """首选机会评估单条结果：推荐 / 跳过 / 评估失败。"""
+
+    person_id: str
+    outcome: Literal["recommended", "skipped", "eval_failed"]
+    reason: str = ""
+    opportunity: OppAggregate | None = None
 
 
 @dataclass
@@ -308,23 +320,38 @@ def run_daily_discovery(
     )
     metrics.recommended_count = recs.total
 
-    # 首选机会（新聚合）：对 priority 首位做一次 LLM 机会判断并落库；失败/无贡献点自然为空。
+    # 首选机会（新聚合）：在预算内评估少量 priority 候选，区分推荐 / 跳过 / 评估失败。
     result.preferred_opportunity = None
     if runner is not None and recs.priority:
-        top = recs.priority[0].candidate
-        arts = ArtifactRepository(ws).list_by_ids(top.artifact_ids)
-        result.preferred_opportunity = discover_preferred_opportunity(
-            runner=runner,
-            peer_id=top.peer.id,
-            display_name=top.peer.display_name,
-            platform=top.platform,
-            current_work=top.peer.current_work,
-            why_relevant=top.peer.why_relevant,
-            person_ref=top.person_id,
-            artifacts=arts,
-            service=OpportunityService(OppAggregateRepository(ws)),
-            user_context=question or plan.ranking_question or "",
+        assess_limit = max(
+            1, settings.discovery.daily_people.opportunity_assess_limit
         )
+        for rec in recs.priority[:assess_limit]:
+            top = rec.candidate
+            arts = ArtifactRepository(ws).list_by_ids(top.artifact_ids)
+            outcome = discover_preferred_opportunity_outcome(
+                runner=runner,
+                peer_id=top.peer.id,
+                display_name=top.peer.display_name,
+                platform=top.platform,
+                current_work=top.peer.current_work,
+                why_relevant=top.peer.why_relevant,
+                person_ref=top.person_id,
+                artifacts=arts,
+                service=OpportunityService(OppAggregateRepository(ws)),
+                user_context=question or plan.ranking_question or "",
+            )
+            result.opportunity_assessments.append(
+                OpportunityAssessment(
+                    person_id=top.person_id,
+                    outcome=outcome.outcome,
+                    reason=outcome.reason,
+                    opportunity=outcome.opportunity,
+                )
+            )
+            if outcome.opportunity is not None:
+                result.preferred_opportunity = outcome.opportunity
+                break
 
     peers_out: list[RankedPeer] = []
     for rec in recs.priority:

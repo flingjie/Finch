@@ -12,7 +12,13 @@ from typing import cast
 from pydantic import BaseModel, Field
 
 from finch.llm.base import StructuredInferenceRunner
-from finch.opportunities.models import ContributionForm, EntryKind, Opportunity, Proposal
+from finch.opportunities.models import (
+    ContributionForm,
+    EntryKind,
+    EvidenceRef,
+    Opportunity,
+    Proposal,
+)
 
 _PROMPT = Path("prompts/opportunity.md")
 
@@ -21,6 +27,7 @@ class OpportunityDraft(BaseModel):
     """LLM 机会判断输出：可审阅语义字段，无任何数字总分。"""
 
     topic: str = ""
+    thread_ref: str = ""
     entry_kind: EntryKind | None = None
     why_me: str = ""
     why_continue: str = ""
@@ -29,8 +36,10 @@ class OpportunityDraft(BaseModel):
     expected_output: str = ""
     scope: str = ""
     open_questions: list[str] = Field(default_factory=list)
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     recommend: bool = False
     skip_reason: str = ""
+    eval_failed: bool = False
 
 
 def assess_opportunity(
@@ -57,7 +66,11 @@ def assess_opportunity(
     try:
         return cast(OpportunityDraft, runner.run(prompt, OpportunityDraft))
     except Exception:
-        return OpportunityDraft(recommend=False, skip_reason="机会判断失败（LLM 异常）")
+        return OpportunityDraft(
+            recommend=False,
+            skip_reason="机会判断失败（LLM 异常）",
+            eval_failed=True,
+        )
 
 
 def build_opportunity(
@@ -73,7 +86,7 @@ def build_opportunity(
     return Opportunity(
         id=opportunity_id,
         person_ref=person_ref,
-        thread_ref=thread_ref,
+        thread_ref=draft.thread_ref or thread_ref,
         topic=draft.topic,
         entry_kind=draft.entry_kind,
         why_me=draft.why_me,
@@ -85,4 +98,5 @@ def build_opportunity(
             scope=draft.scope,
         ),
         open_questions=list(draft.open_questions),
+        evidence_refs=list(draft.evidence_refs),
     )

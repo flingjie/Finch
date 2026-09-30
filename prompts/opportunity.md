@@ -23,18 +23,26 @@ deterministic recommendation gate lives in code.
 ## Fields to produce
 
 1. topic: the concrete, continuable topic (one specific thread / claim / problem).
-2. entry_kind: one of difficulty / result / disagreement / co_exploration / cross_domain.
-3. why_me: why the user cares, tied to a current question, curiosity, or a traceable basis;
+2. thread_ref: the canonical URL of the specific thread / post the topic comes from; empty if
+   no single source stands out.
+3. entry_kind: one of difficulty / result / disagreement / co_exploration / cross_domain.
+4. why_me: why the user cares, tied to a current question, curiosity, or a traceable basis;
    mark inference as inference — do not fabricate the user's personal experience.
-4. why_continue: what room the peer has to add — experience, counterexample, a boundary, or a
+5. why_continue: what room the peer has to add — experience, counterexample, a boundary, or a
    next step. This is a reasoned hypothesis, never a promised reply.
-5. contribution: the smallest concrete contribution: a method card, a demo, a clarifying
+6. contribution: the smallest concrete contribution: a method card, a demo, a clarifying
    question, a reply draft, or a case. Keep it narrow and outcome-shaped, not "keep researching".
-6. form: which ContributionForm the contribution takes.
-7. expected_output: what will exist when the contribution is done (something showable / comparable / checkable).
-8. scope: what this first version covers, and explicitly what it does not.
-9. open_questions: unknowns that could change the recommendation (may be empty).
-10. recommend: true only if there is real value and a concrete contribution; false otherwise,
+7. form: which ContributionForm the contribution takes.
+8. expected_output: what will exist when the contribution is done (something showable / comparable / checkable).
+9. scope: what this first version covers, and explicitly what it does not.
+10. open_questions: unknowns that could change the recommendation (may be empty).
+11. evidence_refs: the minimum evidence that supports the recommendation, each with:
+    - source_ref: the artifact_id or canonical URL from the peer's artifacts.
+    - quote: a short verbatim excerpt from that artifact (do not paraphrase).
+    - claim: what this excerpt supports.
+    - tier: "explicit" when the excerpt states it, "inferred" when it is derived, "unknown"
+      when the link is unclear. May be empty when there is no usable excerpt.
+12. recommend: true only if there is real value and a concrete contribution; false otherwise,
     with a one-line skip_reason.
 
 Do not fabricate the peer's difficulties or the user's personal experience. Do not invent

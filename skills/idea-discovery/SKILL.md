@@ -25,8 +25,8 @@ fragment / conversation / signals 仍单候选。机械变化、新闻、纯情�
   无 commit 也可；产出会带 `source_kind` / `facts` / `interpretation` / `evidence_status`
   （`observed` / `externally_reported` / `unverified`）。外部文章描述实验 →
   `externally_reported`，不得写成第一人称亲历。
-- 与讨论配对：`finch connect create --input <url> --from-idea <id>` 或 `--note "..."`
-  （默认提纲，零贡献时「暂不回复」）。
+- 与讨论配对：选中后走 `finch connect prepare --opportunity <id>`（默认正文，零贡献时
+  「暂不回复」）。
 - **conversation 来源**：`finch ideas create --conversation <thread_id>`，读取线索与
   `observation_notes`（problem / workaround / usage_feedback）作为**对方**报告，不得改写为
   作者亲历；本人实践须用户明确输入。见 `references/conversation-signals.md`。

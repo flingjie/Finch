@@ -24,10 +24,10 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 ## CLI
 
 - 首页：`finch connect daily`（默认读最新快照，展示 3 个重点 + 真实跟进；不因过期隐式抓取）
-- 刷新：`finch connect daily --refresh`（有界刷新后展示；`finch connect refresh` 只刷新不展示）
+- 刷新：`finch connect daily --refresh`（有界刷新后展示）
 - 浏览：`finch connect daily --view browse`（同一快照的 50 人分层列表）
 - 问题探索：`finch connect daily --question "其他行业如何处理责任交接？" --refresh`
-- 指定对象：`finch connect with --x <handle>` / `--github <login>`（复用 interaction-preparation）
+- 查看指定对象：`finch connect person <person_id>`（只读）
 - 查看某人物完整证据：`finch connect person <person_id>`（只读，不生成互动准备）
 - 准备互动：`finch connect prepare --opportunity <id>`（可重复；每次最多 5；**必须选中**）
 - 保存启发：`finch inspirations save --text "…" [--source <ref>]`
@@ -61,7 +61,7 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 
 ## 边界
 
-- 用户点名具体人（handle / 主页）时，这不是发现请求 → `interaction-preparation` 的 `connect with`。不要用今日机会名单顶替。
+- 用户点名具体人（handle / 主页）时，这不是发现请求 → `interaction-preparation` 的 `connect prepare`。不要用今日机会名单顶替。
 - 不替用户形成观点（→ `idea-discovery`）。
 - 不把别人的经历写成用户经历；仅有 bio/转发时标记待了解，不占核心证据位。
 - 普通浏览不生成完整回复（→ `interaction-preparation`）。

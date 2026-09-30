@@ -4,6 +4,8 @@ from finch.cli import _render_preferred_opportunity
 from finch.opportunities.models import (
     ContributionForm,
     EntryKind,
+    EvidenceRef,
+    EvidenceTier,
     Opportunity,
     Proposal,
 )
@@ -45,3 +47,22 @@ def test_render_preferred_opportunity_omits_missing_sections():
     assert "最小贡献" not in text
     assert "待确认" not in text
     assert "首选机会" in text
+
+
+def test_render_preferred_opportunity_includes_id_and_source():
+    opp = _opp().model_copy(
+        update={
+            "thread_ref": "https://x.com/alice/status/1",
+            "evidence_refs": [
+                EvidenceRef(
+                    source_ref="https://x.com/alice/status/1",
+                    quote="q",
+                    claim="c",
+                    tier=EvidenceTier.EXPLICIT,
+                )
+            ],
+        }
+    )
+    text = "\n".join(_render_preferred_opportunity(opp))
+    assert "机会 ID：opp_person_1" in text
+    assert "来源：https://x.com/alice/status/1" in text

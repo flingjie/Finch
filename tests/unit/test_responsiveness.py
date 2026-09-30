@@ -29,9 +29,16 @@ def test_reply_with_question_passes():
     assert result.passed is True
 
 
-def test_reply_with_invitation_passes():
+def test_reply_with_generic_invitation_fails():
     result = ResponsivenessChecker().check(
         _ctx("Replays helped here — what do you think?", RecommendedFormat.QUOTE)
+    )
+    assert result.passed is False
+
+
+def test_reply_with_substantive_question_passes():
+    result = ResponsivenessChecker().check(
+        _ctx("Have you seen a case where the replay diverges?", RecommendedFormat.REPLY)
     )
     assert result.passed is True
 

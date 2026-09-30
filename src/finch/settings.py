@@ -335,6 +335,7 @@ class DailyPeopleSettings(BaseModel):
     candidate_pool_size: int = 100
     semantic_assess_limit: int = 20
     deep_prepare_limit: int = 5
+    opportunity_assess_limit: int = 5
     max_per_platform: int = 20
     min_chinese_platforms_total: int = 15
     min_artifacts_priority: int = 1

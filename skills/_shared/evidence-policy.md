@@ -2,13 +2,13 @@
 
 ## 证据链（按内容类型）
 
-### 原创草稿（`finch drafts create`）
+### 原创草稿（`finch drafts create`，证据绑定路径）
 
 - 对外事实性主张必须能回溯到证据：`Commit → EngineeringEvent → EvidenceCard → Draft`。
 - 没有 Evidence Card 不生成可发布原创草稿。
 - 每条事实性主张绑定一个 `evidence_card_id`，且该卡 ∈ 候选的匹配集（不从全库另选）。
 
-### 回复提纲（`finch connect create` / `prepare`，默认 outline）
+### 回复 / 方法卡（`finch connect prepare`，默认正文）
 
 - 可引用个人笔记 / `ContentJob`（`source_kind` + `facts` + `evidence_status`），**不要求**先有 Evidence Card。
 - 只有 `evidence_status=observed` 时，提纲/草稿才可声称第一人称亲历。

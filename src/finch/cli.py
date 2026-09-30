@@ -69,7 +69,11 @@ from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
 from .opportunities.models import Opportunity as PreferredOpportunity
 from .opportunities.models import OpportunityStatus
-from .opportunities.prepare import prepare_contribution
+from .opportunities.prepare import (
+    PreparedArtifact,
+    PreparedContribution,
+    prepare_contribution,
+)
 from .opportunities.repository import (
     ArtifactRepository as PreferredArtifactRepository,
 )
@@ -139,7 +143,7 @@ review_app = typer.Typer(help="Review original drafts (accept/revise/skip, no au
 app.add_typer(review_app, name="review")
 
 connect_app = typer.Typer(
-    help="连接主循环：daily / prepare / with / approve / reject / edit / record"
+    help="连接主循环：today / daily / person / record-presented / prepare / feedback"
 )
 app.add_typer(connect_app, name="connect")
 
@@ -1944,6 +1948,12 @@ def _render_home_entries(
 def _render_preferred_opportunity(opp: PreferredOpportunity) -> list[str]:
     """渲染首选机会（0-1）为可读文本（规范 §6.1 六问）。"""
     lines = ["## 首选机会"]
+    lines.append(f"机会 ID：{opp.id}")
+    source = opp.thread_ref or next(
+        (ref.source_ref for ref in opp.evidence_refs if ref.source_ref), ""
+    )
+    if source:
+        lines.append(f"来源：{source}")
     lines.append(f"话题：{opp.topic or '（未给出）'}")
     if opp.entry_kind is not None:
         lines.append(f"入口：{opp.entry_kind.value}")
@@ -1964,9 +1974,23 @@ def _render_preferred_opportunity(opp: PreferredOpportunity) -> list[str]:
     return lines
 
 
+def _render_opportunity_assessment_coverage(assessments: list) -> str:
+    """无首选机会时，如实说明本轮评估覆盖（跳过 / 评估失败）。"""
+    if not assessments:
+        return ""
+    skipped = sum(1 for a in assessments if a.outcome == "skipped")
+    failed = sum(1 for a in assessments if a.outcome == "eval_failed")
+    parts: list[str] = []
+    if skipped:
+        parts.append(f"{skipped} 跳过")
+    if failed:
+        parts.append(f"{failed} 评估失败")
+    return f"本次评估 {len(assessments)} 位候选人：{'、'.join(parts)}。"
+
+
 def _prepare_new_opportunity(
     settings: Settings, ws: Workspace, opportunity_id: str
-) -> PreferredOpportunity | None:
+) -> PreparedContribution | None:
     """对首选机会（新聚合）执行 select → prepare_contribution → ready（幂等）。
 
     proposed → select → 生成正文 → 登记 Artifact → mark_ready；已 ready 直接返回；
@@ -1983,9 +2007,59 @@ def _prepare_new_opportunity(
     if opp.status == OpportunityStatus.PROPOSED:
         opp = service.select(opportunity_id)
     if opp.status == OpportunityStatus.READY:
-        return opp
+        return _prepared_contribution_for(ws, opp)
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     return prepare_contribution(opportunity=opp, runner=runner, service=service)
+
+
+def _prepared_contribution_for(
+    ws: Workspace, opp: PreferredOpportunity
+) -> PreparedContribution:
+    """从已 ready 机会重建可直接审阅的成果（正文 + 来源 + 执行状态）。"""
+    art_repo = PreferredArtifactRepository(ws)
+    artifacts: list[PreparedArtifact] = []
+    for ref in opp.artifact_refs:
+        art = art_repo.get(opp.id, ref)
+        if art is None:
+            continue
+        artifacts.append(
+            PreparedArtifact(
+                id=art.id,
+                kind=art.kind,
+                body=art_repo.read_content(opp.id, ref) or "",
+                source_refs=list(art.source_refs),
+                execution_status=art.execution_status,
+            )
+        )
+    return PreparedContribution(opportunity=opp, artifacts=artifacts)
+
+
+def _render_prepared_contribution(pc: PreparedContribution) -> list[str]:
+    """渲染 prepare 结果：机会摘要 + 可审阅正文。"""
+    lines = _render_preferred_opportunity(pc.opportunity)
+    for a in pc.artifacts:
+        lines.append(f"成果（{a.kind.value}）：")
+        lines.append(a.body)
+        lines.append("")
+    return lines
+
+
+def _prepared_payload(pc: PreparedContribution) -> dict:
+    """把 prepare 结果序列化为 JSON（含正文，直接可审阅）。"""
+    return {
+        "opportunity_id": pc.opportunity.id,
+        "status": pc.opportunity.status.value,
+        "artifacts": [
+            {
+                "id": a.id,
+                "kind": a.kind.value,
+                "body": a.body,
+                "source_refs": list(a.source_refs),
+                "execution_status": a.execution_status.value,
+            }
+            for a in pc.artifacts
+        ],
+    }
 
 
 def _persist_discovery(
@@ -2236,6 +2310,18 @@ def connect_daily(
             "snapshot_id": snapshot.id if snapshot else None,
             "refreshed": need_refresh,
             "home_person_ids": home_ids,
+            "preferred_opportunity": (
+                preferred.model_dump(mode="json") if preferred else None
+            ),
+            "opportunity_assessments": [
+                {
+                    "person_id": a.person_id,
+                    "outcome": a.outcome,
+                    "reason": a.reason,
+                    "opportunity_id": a.opportunity.id if a.opportunity else None,
+                }
+                for a in (daily.opportunity_assessments if daily is not None else [])
+            ],
             "recommendations": (
                 _recommendations_payload(daily.recommendations)
                 if (daily is not None and daily.recommendations is not None)
@@ -2270,8 +2356,13 @@ def connect_daily(
         else:
             rec_lines = [
                 "今天没有值得优先投入的讨论（--view browse 可浏览 50 人列表）。",
-                "",
             ]
+            coverage = _render_opportunity_assessment_coverage(
+                daily.opportunity_assessments if daily is not None else []
+            )
+            if coverage:
+                rec_lines.append(coverage)
+            rec_lines.append("")
         shown_entries = []
     # D10：仅文本前台实际输出时记录曝光；首页只记实际展示的人物，浏览记全部展开条目。
     _record_person_presentations(
@@ -2442,17 +2533,17 @@ def connect_prepare(
     cap = settings.discovery.daily_people.deep_prepare_limit
     over_cap = len(ids) > cap
     selected = ids[:cap]
-    prepared: list[PreferredOpportunity] = []
+    prepared: list[PreparedContribution] = []
     misses: list[str] = []
     for oid in selected:
-        opp = _prepare_new_opportunity(settings, ws, oid)
-        if opp is None:
+        pc = _prepare_new_opportunity(settings, ws, oid)
+        if pc is None:
             misses.append(oid)
         else:
-            prepared.append(opp)
+            prepared.append(pc)
     if as_json:
         payload = {
-            "opportunities": [o.model_dump(mode="json") for o in prepared],
+            "opportunities": [_prepared_payload(pc) for pc in prepared],
             "misses": misses,
             "over_cap": over_cap,
             "cap": cap,
@@ -2461,8 +2552,8 @@ def connect_prepare(
         if over_cap or misses or not prepared:
             raise typer.Exit(code=1)
         return
-    for opp in prepared:
-        typer.echo("\n".join(_render_preferred_opportunity(opp)))
+    for pc in prepared:
+        typer.echo("\n".join(_render_prepared_contribution(pc)))
     if misses:
         typer.echo("could not prepare: " + ", ".join(misses))
     if over_cap:

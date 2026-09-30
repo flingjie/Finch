@@ -28,15 +28,13 @@ uv run finch init [--prune]             # 初始化 var/ 文件工作区
 uv run finch diagnose                    # 探测 gh / opencli 可用性
 
 # —— 连接主循环 ——
-uv run finch connect refresh             # 有界刷新发现池 + 快照
 uv run finch connect daily [--refresh] [--view home|browse] [--question "…"]  # 首页 3 重点 + 50 人分层浏览（同一快照）
 uv run finch connect today --limit 10    # 别名：connect daily 首页（纯读）
 uv run finch connect person <person_id>  # 查看某人完整证据与档案（只读）
-uv run finch connect more --snapshot ID --limit 5
 uv run finch connect prepare --opportunity ID   # 深度准备（默认每次最多 5）
 uv run finch connect feedback --file feedback.json
 uv run finch peers list / show <peer_id> # 同行档案与关系上下文
-uv run finch connect approve / reject / edit / record
+uv run finch connections record --person <peer_id> --url <url> --body "..."   # 用户亲自发布后登记
 uv run finch conversations list --needs-follow-up / show / follow-up / ingest / note / commit / defer / close
 
 # —— 灵感笔记 ——
@@ -45,7 +43,7 @@ uv run finch inspirations list / show <id> / note <id> --text "…" / archive <i
 
 # —— 表达复利循环 ——
 uv run finch ideas commit / create / list / show / confirm / revise-position / skip
-uv run finch drafts create / show / revise
+uv run finch drafts write / create / show / revise
 uv run finch review list / show / approve / revise / skip
 uv run finch voice show / approve-example / reject-example / propose
 uv run finch weekly
@@ -69,12 +67,11 @@ uv run finch twitter search / import-bookmarks / diagnose
 # 1. 发现交流机会（轻量卡，无整表草稿）
 uv run finch connect daily --refresh
 
-# 2. 选中后深度准备（批准 ≠ 已发布）
+# 2. 选中后深度准备（生成正文 ≠ 已发布）
 uv run finch connect prepare --opportunity <opportunity_id>
-uv run finch connect approve <proposal_id>
 
 # 3. 记录真实互动（含系统外导入），收到回复后跟进
-uv run finch connect record <proposal_id> --url <url>
+uv run finch connections record --person <peer_id> --url <url> --body "..." --opportunity <opportunity_id>
 uv run finch conversations ingest --peer <peer_id> --url <url> --body "..." --attested
 uv run finch conversations follow-up <conversation_id>
 

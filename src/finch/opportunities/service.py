@@ -3,6 +3,10 @@
 状态转换表来自规范 §11.1 状态图；每次转换先追加事件（带 ``expected_revision`` 锚点）
 再更新快照，``revision`` 递增。乐观并发：调用方提供 ``expected_revision``，与快照
 不一致即抛 ``OpportunityConflictError``（显式冲突）。
+
+事实来源：``opportunity.yaml`` 快照是唯一事实来源；``events.jsonl`` 只作审计，
+不用于重建状态（MVP 不做事件重放）。读改写由仓库级写锁串行化，``expected_revision``
+仅作跨进程乐观校验的补充。
 """
 
 from datetime import UTC, datetime
@@ -55,6 +59,10 @@ class OpportunityService:
         self.repo = repo
         self.artifacts = artifacts
 
+    def locked(self, opportunity_id: str):
+        """对该机会的读改写加写锁（可重入），供外部组合操作使用。"""
+        return self.repo.locked(opportunity_id)
+
     def create(
         self,
         *,
@@ -86,16 +94,17 @@ class OpportunityService:
 
     def create_from(self, opportunity: Opportunity) -> Opportunity:
         """用预构建的 Opportunity 落库（写 proposed 事件 + 快照）。"""
-        self.repo.append_event(
-            OpportunityEvent(
-                event_id=f"{opportunity.id}:r1",
-                opportunity_id=opportunity.id,
-                event_type="proposed",
-                expected_revision=0,
+        with self.repo.locked(opportunity.id):
+            self.repo.append_event(
+                OpportunityEvent(
+                    event_id=f"{opportunity.id}:r1",
+                    opportunity_id=opportunity.id,
+                    event_type="proposed",
+                    expected_revision=0,
+                )
             )
-        )
-        self.repo.save(opportunity)
-        return opportunity
+            self.repo.save(opportunity)
+            return opportunity
 
     def get(self, opportunity_id: str) -> Opportunity | None:
         """读快照；不存在返回 None。"""
@@ -114,34 +123,37 @@ class OpportunityService:
         """
         if self.artifacts is None:
             raise ValueError("add_artifact requires an ArtifactRepository")
-        opp = self.repo.get(opportunity_id)
-        if opp is None:
-            raise KeyError(opportunity_id)
-        if expected_revision is not None and expected_revision != opp.revision:
-            raise OpportunityConflictError(
-                f"revision conflict: expected {expected_revision}, "
-                f"current {opp.revision}"
+        with self.repo.locked(opportunity_id):
+            opp = self.repo.get(opportunity_id)
+            if opp is None:
+                raise KeyError(opportunity_id)
+            if expected_revision is not None and expected_revision != opp.revision:
+                raise OpportunityConflictError(
+                    f"revision conflict: expected {expected_revision}, "
+                    f"current {opp.revision}"
+                )
+            if artifact.id in opp.artifact_refs:
+                return opp
+            self.artifacts.save(
+                artifact.model_copy(update={"opportunity_id": opportunity_id})
             )
-        if artifact.id in opp.artifact_refs:
-            return opp
-        self.artifacts.save(artifact.model_copy(update={"opportunity_id": opportunity_id}))
-        new_opp = opp.model_copy(
-            update={
-                "artifact_refs": [*opp.artifact_refs, artifact.id],
-                "revision": opp.revision + 1,
-                "updated_at": datetime.now(UTC),
-            }
-        )
-        self.repo.append_event(
-            OpportunityEvent(
-                event_id=f"{opportunity_id}:r{new_opp.revision}",
-                opportunity_id=opportunity_id,
-                event_type="artifact_added",
-                expected_revision=opp.revision,
+            new_opp = opp.model_copy(
+                update={
+                    "artifact_refs": [*opp.artifact_refs, artifact.id],
+                    "revision": opp.revision + 1,
+                    "updated_at": datetime.now(UTC),
+                }
             )
-        )
-        self.repo.save(new_opp)
-        return new_opp
+            self.repo.append_event(
+                OpportunityEvent(
+                    event_id=f"{opportunity_id}:r{new_opp.revision}",
+                    opportunity_id=opportunity_id,
+                    event_type="artifact_added",
+                    expected_revision=opp.revision,
+                )
+            )
+            self.repo.save(new_opp)
+            return new_opp
 
     def select(
         self,
@@ -233,45 +245,46 @@ class OpportunityService:
         decision: str | None = None,
         request_id: str | None = None,
     ) -> Opportunity:
-        opp = self.repo.get(opportunity_id)
-        if opp is None:
-            raise KeyError(opportunity_id)
-        # request_id 幂等：同一请求已应用且快照已推进 → 返回当前快照。
-        if request_id is not None:
-            applied = self._applied_event(opportunity_id, request_id)
-            if applied is not None and opp.revision > applied.expected_revision:
-                return opp
-            # 快照仍停在事件前（append_event 与 save 之间崩溃）→ 落下来重放修复快照。
-        if to_status not in _TRANSITIONS[opp.status]:
-            raise ValueError(
-                f"illegal transition: {opp.status.value} -> {to_status.value} "
-                f"for opportunity {opportunity_id}"
+        with self.repo.locked(opportunity_id):
+            opp = self.repo.get(opportunity_id)
+            if opp is None:
+                raise KeyError(opportunity_id)
+            # request_id 幂等：同一请求已应用且快照已推进 → 返回当前快照。
+            if request_id is not None:
+                applied = self._applied_event(opportunity_id, request_id)
+                if applied is not None and opp.revision > applied.expected_revision:
+                    return opp
+                # 快照仍停在事件前（append_event 与 save 之间崩溃）→ 落下重放修复快照。
+            if to_status not in _TRANSITIONS[opp.status]:
+                raise ValueError(
+                    f"illegal transition: {opp.status.value} -> {to_status.value} "
+                    f"for opportunity {opportunity_id}"
+                )
+            if expected_revision is not None and expected_revision != opp.revision:
+                raise OpportunityConflictError(
+                    f"revision conflict: expected {expected_revision}, "
+                    f"current {opp.revision}"
+                )
+            new_opp = opp.model_copy(
+                update={
+                    "status": to_status,
+                    "decision": decision if decision is not None else opp.decision,
+                    "revision": opp.revision + 1,
+                    "updated_at": datetime.now(UTC),
+                }
             )
-        if expected_revision is not None and expected_revision != opp.revision:
-            raise OpportunityConflictError(
-                f"revision conflict: expected {expected_revision}, "
-                f"current {opp.revision}"
+            self.repo.append_event(
+                OpportunityEvent(
+                    event_id=f"{opportunity_id}:r{new_opp.revision}",
+                    opportunity_id=opportunity_id,
+                    event_type=to_status.value,
+                    expected_revision=opp.revision,
+                    decision=decision,
+                    request_id=request_id,
+                )
             )
-        new_opp = opp.model_copy(
-            update={
-                "status": to_status,
-                "decision": decision if decision is not None else opp.decision,
-                "revision": opp.revision + 1,
-                "updated_at": datetime.now(UTC),
-            }
-        )
-        self.repo.append_event(
-            OpportunityEvent(
-                event_id=f"{opportunity_id}:r{new_opp.revision}",
-                opportunity_id=opportunity_id,
-                event_type=to_status.value,
-                expected_revision=opp.revision,
-                decision=decision,
-                request_id=request_id,
-            )
-        )
-        self.repo.save(new_opp)
-        return new_opp
+            self.repo.save(new_opp)
+            return new_opp
 
     def _applied_event(
         self, opportunity_id: str, request_id: str

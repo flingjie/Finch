@@ -14,7 +14,7 @@
 回复「采用」「改：收紧开头」或「跳过」。
 ```
 
-素材来自 `finch drafts create` / `show`（正文 + 质检结论 + 卡末审核命令）。主文不贴 `draft_*` / `critic_rounds`。
+素材来自 `finch drafts write` / `show`（正文 + 质检结论 + 卡末审核命令）。主文不贴 `draft_*` / `critic_rounds`。
 
 ## 用户下一轮 → CLI
 

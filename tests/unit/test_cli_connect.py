@@ -112,6 +112,7 @@ def _seed_new_opportunity(ws, opportunity_id: str = "opp_person_1"):
 
 def test_connect_prepare_with_opportunity(monkeypatch, tmp_path):
     from finch.opportunities.models import OpportunityStatus
+    from finch.opportunities.prepare import PreparedContribution
 
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
@@ -120,7 +121,12 @@ def test_connect_prepare_with_opportunity(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     def _fake_prepare(*, opportunity, runner, service):
-        return opportunity.model_copy(update={"status": OpportunityStatus.READY})
+        return PreparedContribution(
+            opportunity=opportunity.model_copy(
+                update={"status": OpportunityStatus.READY}
+            ),
+            artifacts=[],
+        )
 
     monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
 
@@ -130,8 +136,53 @@ def test_connect_prepare_with_opportunity(monkeypatch, tmp_path):
     assert "失败回放" in r.output
 
 
+def test_connect_prepare_json_returns_reviewable_body(monkeypatch, tmp_path):
+    from finch.opportunities.models import (
+        ArtifactKind,
+        ExecutionStatus,
+        OpportunityStatus,
+    )
+    from finch.opportunities.prepare import PreparedArtifact, PreparedContribution
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_new_opportunity(ws, "opp_person_1")
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    def _fake_prepare(*, opportunity, runner, service):
+        return PreparedContribution(
+            opportunity=opportunity.model_copy(
+                update={"status": OpportunityStatus.READY}
+            ),
+            artifacts=[
+                PreparedArtifact(
+                    id="art_opp_person_1_method_card",
+                    kind=ArtifactKind.METHOD_CARD,
+                    body="适用处境：…",
+                    source_refs=["https://x.com/alice/status/1"],
+                    execution_status=ExecutionStatus.NOT_RUN,
+                )
+            ],
+        )
+
+    monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
+    r = CliRunner().invoke(
+        app, ["connect", "prepare", "--opportunity", "opp_person_1", "--json"]
+    )
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    opp = payload["opportunities"][0]
+    assert opp["opportunity_id"] == "opp_person_1"
+    assert opp["status"] == "ready"
+    assert opp["artifacts"][0]["body"] == "适用处境：…"
+    assert opp["artifacts"][0]["source_refs"] == ["https://x.com/alice/status/1"]
+    assert opp["artifacts"][0]["execution_status"] == "not_run"
+
+
 def test_connect_prepare_caps_at_deep_prepare_limit(monkeypatch, tmp_path):
     from finch.opportunities.models import OpportunityStatus
+    from finch.opportunities.prepare import PreparedContribution
 
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
@@ -147,7 +198,12 @@ def test_connect_prepare_caps_at_deep_prepare_limit(monkeypatch, tmp_path):
 
     def _fake_prepare(*, opportunity, runner, service):
         calls["n"] += 1
-        return opportunity.model_copy(update={"status": OpportunityStatus.READY})
+        return PreparedContribution(
+            opportunity=opportunity.model_copy(
+                update={"status": OpportunityStatus.READY}
+            ),
+            artifacts=[],
+        )
 
     monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
 
@@ -178,6 +234,9 @@ def test_connect_daily_json(monkeypatch, tmp_path):
     payload = json.loads(r.output)
     assert payload["schema_version"] == 2
     assert payload["snapshot_id"] == "daily_test"
+    assert "preferred_opportunity" in payload
+    assert payload["preferred_opportunity"] is None
+    assert "opportunity_assessments" in payload
     # 阶段 3：移除旧三槽位 shortlist 兼容字段。
     assert "shortlist" not in payload
 

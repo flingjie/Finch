@@ -6,6 +6,8 @@
 ``execution_status`` 记录，模型不得声称「已运行」或虚构个人经历。
 """
 
+import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -16,9 +18,11 @@ from finch.opportunities.models import (
     Artifact,
     ArtifactKind,
     ContributionForm,
+    EvidenceRef,
     ExecutionStatus,
     MaterialOrigin,
     Opportunity,
+    OpportunityStatus,
 )
 from finch.opportunities.service import OpportunityService
 
@@ -39,9 +43,37 @@ class ContributionBodyOutput(BaseModel):
     body: str
 
 
+@dataclass
+class PreparedArtifact:
+    """可审阅成果：正文 + 来源 + 执行状态（与 Artifact 元数据一一对应）。"""
+
+    id: str
+    kind: ArtifactKind
+    body: str
+    source_refs: list[str]
+    execution_status: ExecutionStatus
+
+
+@dataclass
+class PreparedContribution:
+    """``prepare_contribution`` 的结果：机会（ready）+ 可直接审阅的成果正文。"""
+
+    opportunity: Opportunity
+    artifacts: list[PreparedArtifact]
+
+
 def artifact_kind_for(form: ContributionForm) -> ArtifactKind:
     """把贡献形式映射为成果种类（澄清问题归入 reply_draft）。"""
     return _FORM_TO_KIND[form]
+
+
+def render_evidence_refs(refs: list[EvidenceRef]) -> str:
+    """把机会的证据引用渲染进写作 prompt（原文摘录 + 支持判断 + 分层）。"""
+    return json.dumps(
+        [ref.model_dump(mode="json") for ref in refs],
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 def write_contribution(
@@ -58,6 +90,7 @@ def write_contribution(
         form=p.form.value if p else "method_card",
         expected_output=p.expected_output if p else "(none)",
         scope=p.scope if p else "(none)",
+        evidence=render_evidence_refs(opportunity.evidence_refs),
     )
     out = cast(ContributionBodyOutput, runner.run(prompt, ContributionBodyOutput))
     return out.body
@@ -68,7 +101,7 @@ def prepare_contribution(
     opportunity: Opportunity,
     runner: StructuredInferenceRunner,
     service: OpportunityService,
-) -> Opportunity:
+) -> PreparedContribution:
     """选定机会后按需制作：生成正文 → 写文件 → 登记 Artifact → mark_ready。
 
     正文是可审阅表达方案，默认 material_origin=SYNTHETIC、execution_status=NOT_RUN；
@@ -76,17 +109,42 @@ def prepare_contribution(
     """
     if service.artifacts is None:
         raise ValueError("prepare_contribution requires an ArtifactRepository")
-    body = write_contribution(runner, opportunity)
-    p = opportunity.proposal
-    form = p.form if p else ContributionForm.METHOD_CARD
-    artifact_id = f"art_{opportunity.id}_{form.value}"
-    service.artifacts.write_content(opportunity.id, artifact_id, body)
-    artifact = Artifact(
-        id=artifact_id,
-        kind=artifact_kind_for(form),
-        path=f"artifacts/{artifact_id}.md",
-        material_origin=MaterialOrigin.SYNTHETIC,
-        execution_status=ExecutionStatus.NOT_RUN,
-    )
-    service.add_artifact(opportunity.id, artifact)
-    return service.mark_ready(opportunity.id)
+    with service.locked(opportunity.id):
+        opp = service.get(opportunity.id)
+        if opp is None:
+            raise KeyError(opportunity.id)
+        # 未选中直接拒绝，避免先调模型/写文件后才因状态转换非法报错。
+        if opp.status != OpportunityStatus.SELECTED:
+            raise ValueError(
+                f"illegal state to prepare: {opp.status.value} "
+                f"(expected selected) for opportunity {opportunity.id}"
+            )
+        body = write_contribution(runner, opp)
+        p = opp.proposal
+        form = p.form if p else ContributionForm.METHOD_CARD
+        artifact_id = f"art_{opp.id}_{form.value}"
+        source_refs = [
+            ref.source_ref for ref in opp.evidence_refs if ref.source_ref
+        ]
+        service.artifacts.write_content(opp.id, artifact_id, body)
+        artifact = Artifact(
+            id=artifact_id,
+            kind=artifact_kind_for(form),
+            path=f"artifacts/{artifact_id}.md",
+            source_refs=source_refs,
+            material_origin=MaterialOrigin.SYNTHETIC,
+            execution_status=ExecutionStatus.NOT_RUN,
+        )
+        service.add_artifact(opp.id, artifact)
+        ready = service.mark_ready(opp.id)
+        prepared_artifact = PreparedArtifact(
+            id=artifact.id,
+            kind=artifact.kind,
+            body=body,
+            source_refs=source_refs,
+            execution_status=artifact.execution_status,
+        )
+        return PreparedContribution(
+            opportunity=ready,
+            artifacts=[prepared_artifact],
+        )
