@@ -120,7 +120,7 @@ def test_connect_prepare_with_opportunity(monkeypatch, tmp_path):
     _seed_new_opportunity(ws, "opp_person_1")
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
-    def _fake_prepare(*, opportunity, runner, service):
+    def _fake_prepare(*, opportunity, runner, service, **_kw):
         return PreparedContribution(
             opportunity=opportunity.model_copy(
                 update={"status": OpportunityStatus.READY}
@@ -132,7 +132,8 @@ def test_connect_prepare_with_opportunity(monkeypatch, tmp_path):
 
     r = CliRunner().invoke(app, ["connect", "prepare", "--opportunity", "opp_person_1"])
     assert r.exit_code == 0, r.output
-    assert "首选机会" in r.output
+    assert "成果待审阅" in r.output
+    assert "状态：ready" in r.output
     assert "失败回放" in r.output
 
 
@@ -150,7 +151,7 @@ def test_connect_prepare_json_returns_reviewable_body(monkeypatch, tmp_path):
     _seed_new_opportunity(ws, "opp_person_1")
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
-    def _fake_prepare(*, opportunity, runner, service):
+    def _fake_prepare(*, opportunity, runner, service, **_kw):
         return PreparedContribution(
             opportunity=opportunity.model_copy(
                 update={"status": OpportunityStatus.READY}
@@ -196,7 +197,7 @@ def test_connect_prepare_caps_at_deep_prepare_limit(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     calls = {"n": 0}
 
-    def _fake_prepare(*, opportunity, runner, service):
+    def _fake_prepare(*, opportunity, runner, service, **_kw):
         calls["n"] += 1
         return PreparedContribution(
             opportunity=opportunity.model_copy(
@@ -541,7 +542,10 @@ def test_connect_daily_home_renders_preferred_opportunity(monkeypatch, tmp_path)
         Opportunity as OppAggregate,
     )
     from finch.opportunities.repository import OpportunityRepository as OppRepo
-    from finch.storage.repositories import DiscoverySnapshotRepository
+    from finch.storage.repositories import (
+        DiscoverySnapshotRepository,
+        PresentationRecordRepository,
+    )
 
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
@@ -575,9 +579,60 @@ def test_connect_daily_home_renders_preferred_opportunity(monkeypatch, tmp_path)
     r = CliRunner().invoke(app, ["connect", "daily"])
     assert r.exit_code == 0, r.output
     assert "首选机会" in r.output
+    assert "状态：proposed" in r.output
     assert "失败回放" in r.output
     assert "为什么值得参与" in r.output
     assert "最小贡献" in r.output
+    # 文本前台实际展示首选 → PresentationRecord（漏斗口径）
+    presented = PresentationRecordRepository(ws).list_all()
+    assert len(presented) == 1
+    assert presented[0].opportunity_id == "opp_person_1"
+
+
+def test_connect_daily_replays_assessment_coverage_from_snapshot(monkeypatch, tmp_path):
+    from finch.engagement.models import (
+        DiscoverySnapshot,
+        OpportunityAssessmentEntry,
+    )
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    DiscoverySnapshotRepository(ws).upsert(
+        DiscoverySnapshot(
+            id="snap_assess",
+            created_at=datetime.now(UTC),
+            context_fingerprint="ctx",
+            opportunity_assessments=[
+                OpportunityAssessmentEntry(
+                    person_id="person_a",
+                    outcome="skipped",
+                    reason="已解决",
+                    fingerprint="fp1",
+                ),
+                OpportunityAssessmentEntry(
+                    person_id="person_b",
+                    outcome="skipped",
+                    reason="与现有回复重复",
+                    fingerprint="fp2",
+                ),
+            ],
+        )
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["connect", "daily"])
+    assert r.exit_code == 0, r.output
+    assert "今天没有值得优先投入的讨论" in r.output
+    assert "本次评估 2 位候选人：2 跳过" in r.output
+    assert "为何未首选：已解决；与现有回复重复" in r.output
+
+    r_json = CliRunner().invoke(app, ["connect", "daily", "--json"])
+    assert r_json.exit_code == 0, r_json.output
+    payload = json.loads(r_json.output)
+    assert len(payload["opportunity_assessments"]) == 2
+    assert payload["opportunity_assessments"][0]["reason"] == "已解决"
 
 
 def test_connect_today_json_does_not_record_exposure(monkeypatch, tmp_path):

@@ -1,9 +1,10 @@
 """贡献制作（规范 §6）：选定机会后按需制作方法卡/回复草稿/演示说明等。
 
 ``write_contribution`` 是纯写作步骤：用 ``prompts/prepare-contribution.md`` 让模型按机会的
-``proposal``（最小贡献 + 形式 + 预期输出 + 范围）产出正文。正文是可审阅表达方案，不是作者
-已确认的立场，材料来源与执行状态由代码侧 ``Artifact`` 的 ``material_origin`` /
-``execution_status`` 记录，模型不得声称「已运行」或虚构个人经历。
+``proposal``（最小贡献 + 形式 + 预期输出 + 范围）产出正文。可注入 voice 摘要与已确认
+AuthorPosition；正文是可审阅表达方案，不是作者已确认的立场。材料来源与执行状态由代码侧
+``Artifact`` 的 ``material_origin`` / ``execution_status`` 记录，模型不得声称「已运行」或
+虚构个人经历。
 """
 
 import json
@@ -13,6 +14,8 @@ from typing import cast
 
 from pydantic import BaseModel
 
+from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
+from finch.content.voice import VoiceProfile
 from finch.llm.base import StructuredInferenceRunner
 from finch.opportunities.models import (
     Artifact,
@@ -76,8 +79,53 @@ def render_evidence_refs(refs: list[EvidenceRef]) -> str:
     )
 
 
+def render_voice_summary(profile: VoiceProfile | None) -> str:
+    """把 voice profile 压成短摘要；空画像返回 (none)。"""
+    if profile is None or profile.is_empty():
+        return "(none)"
+    lines: list[str] = []
+    if profile.preferred_patterns:
+        lines.append("偏好: " + "；".join(profile.preferred_patterns[:5]))
+    if profile.avoid_phrases:
+        lines.append("避免: " + "；".join(profile.avoid_phrases[:5]))
+    if profile.rhythm_rules:
+        lines.append("节奏: " + "；".join(profile.rhythm_rules[:3]))
+    return "\n".join(lines) if lines else "(none)"
+
+
+def render_user_positions(jobs: list[ContentJob], *, limit: int = 5) -> str:
+    """取最近已确认立场（最多 ``limit`` 条）渲染进写作 prompt。"""
+    confirmed: list[AuthorPosition] = []
+    for job in sorted(jobs, key=lambda j: j.id, reverse=True):
+        if job.status != ContentJobStatus.CONFIRMED:
+            continue
+        if job.author_position is None:
+            continue
+        confirmed.append(job.author_position)
+        if len(confirmed) >= limit:
+            break
+    if not confirmed:
+        return "(none)"
+    return json.dumps(
+        [
+            {
+                "claim": p.claim,
+                "decision": p.decision,
+                "tradeoff": p.tradeoff,
+            }
+            for p in confirmed
+        ],
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 def write_contribution(
-    runner: StructuredInferenceRunner, opportunity: Opportunity
+    runner: StructuredInferenceRunner,
+    opportunity: Opportunity,
+    *,
+    voice_profile: VoiceProfile | None = None,
+    confirmed_jobs: list[ContentJob] | None = None,
 ) -> str:
     """按机会的 proposal 生成贡献正文（纯正文，不落库、不改状态）。"""
     p = opportunity.proposal
@@ -90,7 +138,10 @@ def write_contribution(
         form=p.form.value if p else "method_card",
         expected_output=p.expected_output if p else "(none)",
         scope=p.scope if p else "(none)",
+        cost_note=(p.cost_note if p and p.cost_note else "(none)"),
         evidence=render_evidence_refs(opportunity.evidence_refs),
+        voice_summary=render_voice_summary(voice_profile),
+        user_positions=render_user_positions(confirmed_jobs or []),
     )
     out = cast(ContributionBodyOutput, runner.run(prompt, ContributionBodyOutput))
     return out.body
@@ -101,6 +152,8 @@ def prepare_contribution(
     opportunity: Opportunity,
     runner: StructuredInferenceRunner,
     service: OpportunityService,
+    voice_profile: VoiceProfile | None = None,
+    confirmed_jobs: list[ContentJob] | None = None,
 ) -> PreparedContribution:
     """选定机会后按需制作：生成正文 → 写文件 → 登记 Artifact → mark_ready。
 
@@ -119,7 +172,12 @@ def prepare_contribution(
                 f"illegal state to prepare: {opp.status.value} "
                 f"(expected selected) for opportunity {opportunity.id}"
             )
-        body = write_contribution(runner, opp)
+        body = write_contribution(
+            runner,
+            opp,
+            voice_profile=voice_profile,
+            confirmed_jobs=confirmed_jobs,
+        )
         p = opp.proposal
         form = p.form if p else ContributionForm.METHOD_CARD
         artifact_id = f"art_{opp.id}_{form.value}"

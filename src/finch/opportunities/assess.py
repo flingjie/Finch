@@ -35,6 +35,7 @@ class OpportunityDraft(BaseModel):
     form: ContributionForm = ContributionForm.METHOD_CARD
     expected_output: str = ""
     scope: str = ""
+    cost_note: str = ""
     open_questions: list[str] = Field(default_factory=list)
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     recommend: bool = False
@@ -96,6 +97,7 @@ def build_opportunity(
             form=draft.form,
             expected_output=draft.expected_output,
             scope=draft.scope,
+            cost_note=draft.cost_note,
         ),
         open_questions=list(draft.open_questions),
         evidence_refs=list(draft.evidence_refs),

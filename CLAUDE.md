@@ -18,7 +18,7 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (typer sub-apps / commands): `finch connect ...` (refresh / today / daily / more / expand / prepare / feedback / approve / reject / edit / record / record-presented / create / with), `finch peers ...` (list / show / get), `finch conversations ...` (list / show / get / follow-up / ingest / defer / close), `finch dialogue ...` (save / search / show / forget), `finch ideas ...` (commit / create / list / show / confirm / revise-position / skip), `finch inspirations ...` (save / list / show / note / archive), `finch community ...` (context / save / inspect / feedback / list), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / show / revise), `finch review ...` (list / show / approve / revise / skip), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
+CLI surface (typer sub-apps / commands): `finch connect ...` (today / daily / person / record-presented / prepare / feedback / assess / artifact-status), `finch connections ...` (today / record / follow-up), `finch peers ...` (list / show / get), `finch people shortlist`, `finch conversations ...` (list / show / get / follow-up / ingest / note / commit / experiment / mark-important / defer / close), `finch dialogue ...` (save / search / show / forget), `finch ideas ...` (commit / create / choose / list / show / confirm / revise-position / skip), `finch inspirations ...` (save / list / show / note / archive), `finch community ...` (context / save / inspect / feedback / list / run / runs / run-trace), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / write / show / revise), `finch review ...` (list / show / approve / revise / skip / weekly), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch sources ...` (doctor / sync), `finch collisions ...`, `finch experiments ...`, `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
 
 ## Architecture
 
@@ -61,7 +61,10 @@ src/finch/
   evidence/      Commit → EngineeringEvent → EvidenceCard 提取 + 安全扫描（scan_cards）
   github/        gh adapter (read-only): commit/PR/issue reading, repo discovery
   twitter/       opencli adapter (read-only): search/thread/bookmarks
-  engagement/    Opportunity 发现 / scoring / proposals / guard / evidence_upgrade / metrics
+  opportunities/ 交流机会聚合（why_me/why_continue/proposal + 生命周期 + prepare）
+  discovery/     每日发现（sources sync → people shortlist → 首选机会评估）
+  sources/       跨平台抓取编排（opencli gateway + RawArtifact 存储）
+  engagement/    发现快照 / InteractionRecord / 推荐反馈（旧管线已移除）
   storage/       file workspace: Workspace + repositories (YAML/Markdown/JSONL, atomic write)
   settings.py    finch.yaml + env loading (Pydantic)
   cli.py         typer app (connect/peers/conversations/dialogue/ideas/practice/style/drafts/review/weekly/voice/github/twitter/init/diagnose)
@@ -69,11 +72,11 @@ src/finch/
 
 Config lives in `finch.yaml` (repositories, repository_discovery, twitter, quality_gates, paths, engagement, interests, llm, extraction). Prompts live in `prompts/`.
 
-## Engagement track (peer-discovery library)
+## Opportunity discovery (peer-discovery)
 
-The engagement module (`engagement/`) is the peer-discovery library: search → prefilter → peer aggregation → coarse relationship ranking → semantic opportunity assessment (LLM dims, no `total`) → `select_opportunity_set` → snapshot. Drafts via `generate_proposals` run only on `connect prepare` for selected opportunities. `InteractionProposal` / `ConversationEvidence` feed the inbox (`finch review`); opportunities and relationships are surfaced via `finch connect` / `finch peers` / `finch conversations`.
+Daily discovery lives in `discovery/daily.py` + `opportunities/`：sources sync → CreatorEvidence → people shortlist（50 人分层）→ 预算内顺序评估 priority 候选 → 首选机会 0–1 条写入 `DiscoverySnapshot`。`connect prepare --opportunity` 对已选机会制作可审阅贡献（Artifact）；`connections record` 登记真实互动事实。旧 engagement 评分/提案管线已删除。
 
-Pipeline files: `models.py` (Opportunity + proposals) → `search.py` → `peer_aggregation.py` → `relationship.py` → `scoring.py` (`weighted_total` only) → `opportunity.py` (selection) → `proposals.py` (prepare path) → `guard.py` → `evidence_upgrade.py` → `metrics.py`.
+Key files: `opportunities/models.py`（Opportunity + Artifact）→ `assess.py` / `discover.py` → `prepare.py` → `service.py`（状态机）→ `repository.py`（快照 + events.jsonl + skip 缓存）。
 
 ## Invariants (do not violate)
 

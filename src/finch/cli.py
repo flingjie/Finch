@@ -143,7 +143,10 @@ review_app = typer.Typer(help="Review original drafts (accept/revise/skip, no au
 app.add_typer(review_app, name="review")
 
 connect_app = typer.Typer(
-    help="连接主循环：today / daily / person / record-presented / prepare / feedback"
+    help=(
+        "连接主循环：today / daily / person / record-presented / "
+        "prepare / feedback / assess / artifact-status"
+    )
 )
 app.add_typer(connect_app, name="connect")
 
@@ -153,7 +156,7 @@ app.add_typer(peers_app, name="peers")
 people_app = typer.Typer(help="今日承诺面：需回应/兑现的真实对话线索")
 app.add_typer(people_app, name="people")
 
-connections_app = typer.Typer(help="连接机会与互动记录（用户亲自发布）")
+connections_app = typer.Typer(help="连接机会与互动记录（record / follow-up）")
 app.add_typer(connections_app, name="connections")
 
 collisions_app = typer.Typer(help="跨领域碰撞")
@@ -1330,6 +1333,20 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
         worth_following_count=worth,
         prepared_count=prepared,
     )
+    from finch.opportunities.funnel import (
+        compute_opportunity_funnel,
+        render_opportunity_funnel,
+    )
+
+    funnel = compute_opportunity_funnel(
+        snapshots=DiscoverySnapshotRepository(ws).list_all(),
+        opportunities=PreferredOpportunityRepository(ws).list_all(),
+        opportunity_repo=PreferredOpportunityRepository(ws),
+        interactions=InteractionRecordRepository(ws).list_all(),
+        feedbacks=FeedbackSnapshotRepository(ws).list_all(),
+        presentations=presentations,
+        since=since,
+    )
     records = InteractionRecordRepository(ws).list_all()
     message_excerpts = [
         f"[{r.id}] {r.direction}: {(r.body or r.published_body)[:160]}"
@@ -1367,8 +1384,12 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
         typer.echo(f"weekly reflection failed: {exc}")
         raise typer.Exit(code=1) from exc
     if as_json:
-        typer.echo(reflection.model_dump_json(indent=2))
+        payload = reflection.model_dump(mode="json")
+        payload["opportunity_funnel"] = funnel.model_dump(mode="json")
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
+        typer.echo(render_opportunity_funnel(funnel))
+        typer.echo("")
         typer.echo(render_reflection(reflection))
 
 
@@ -1946,9 +1967,17 @@ def _render_home_entries(
 
 
 def _render_preferred_opportunity(opp: PreferredOpportunity) -> list[str]:
-    """渲染首选机会（0-1）为可读文本（规范 §6.1 六问）。"""
-    lines = ["## 首选机会"]
+    """渲染首选机会（0-1）为可读文本（规范 §6.1 六问）；按状态区分标题。"""
+    headings = {
+        OpportunityStatus.PROPOSED: "## 首选机会",
+        OpportunityStatus.SELECTED: "## 已选定机会",
+        OpportunityStatus.READY: "## 成果待审阅",
+        OpportunityStatus.PARKED: "## 已暂存机会",
+        OpportunityStatus.CLOSED: "## 已关闭机会",
+    }
+    lines = [headings.get(opp.status, "## 首选机会")]
     lines.append(f"机会 ID：{opp.id}")
+    lines.append(f"状态：{opp.status.value}")
     source = opp.thread_ref or next(
         (ref.source_ref for ref in opp.evidence_refs if ref.source_ref), ""
     )
@@ -1968,24 +1997,44 @@ def _render_preferred_opportunity(opp: PreferredOpportunity) -> list[str]:
             lines.append(f"可见结果：{opp.proposal.expected_output}")
         if opp.proposal.scope:
             lines.append(f"范围：{opp.proposal.scope}")
+        if opp.proposal.cost_note:
+            lines.append(f"成本与未知：{opp.proposal.cost_note}")
+    if opp.previous_opportunity_id:
+        lines.append(f"接续自：{opp.previous_opportunity_id}")
     if opp.open_questions:
         lines.append(f"待确认：{'；'.join(opp.open_questions)}")
     lines.append("")
     return lines
 
 
-def _render_opportunity_assessment_coverage(assessments: list) -> str:
-    """无首选机会时，如实说明本轮评估覆盖（跳过 / 评估失败）。"""
+def _render_opportunity_assessment_coverage(assessments: list) -> list[str]:
+    """说明本轮评估覆盖（跳过 / 评估失败）并附上跳过原因（规范 §5.5）。"""
     if not assessments:
-        return ""
-    skipped = sum(1 for a in assessments if a.outcome == "skipped")
-    failed = sum(1 for a in assessments if a.outcome == "eval_failed")
+        return []
+    skipped = [a for a in assessments if a.outcome == "skipped"]
+    failed = [a for a in assessments if a.outcome == "eval_failed"]
     parts: list[str] = []
     if skipped:
-        parts.append(f"{skipped} 跳过")
+        parts.append(f"{len(skipped)} 跳过")
     if failed:
-        parts.append(f"{failed} 评估失败")
-    return f"本次评估 {len(assessments)} 位候选人：{'、'.join(parts)}。"
+        parts.append(f"{len(failed)} 评估失败")
+    if not parts:
+        return []
+    lines = [f"本次评估 {len(assessments)} 位候选人：{'、'.join(parts)}。"]
+    reasons = [a.reason for a in assessments if a.reason and a.outcome != "recommended"]
+    if reasons:
+        lines.append("为何未首选：" + "；".join(reasons[:3]))
+    return lines
+
+
+def _render_preferred_skips(assessments: list) -> list[str]:
+    """有首选时附一句其他候选为何未优先（规范 §5.5）。"""
+    reasons = [
+        a.reason for a in assessments if a.outcome == "skipped" and a.reason
+    ]
+    if not reasons:
+        return []
+    return [f"其他候选未优先：{'；'.join(reasons[:3])}", ""]
 
 
 def _prepare_new_opportunity(
@@ -2009,7 +2058,13 @@ def _prepare_new_opportunity(
     if opp.status == OpportunityStatus.READY:
         return _prepared_contribution_for(ws, opp)
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
-    return prepare_contribution(opportunity=opp, runner=runner, service=service)
+    return prepare_contribution(
+        opportunity=opp,
+        runner=runner,
+        service=service,
+        voice_profile=load_voice_profile(settings.paths.voice_profile_path),
+        confirmed_jobs=ContentJobRepository(ws).list_jobs(),
+    )
 
 
 def _prepared_contribution_for(
@@ -2288,12 +2343,16 @@ def connect_daily(
     home_ids = snapshot.home_person_ids if snapshot is not None else []
 
     preferred: PreferredOpportunity | None = None
+    assessments: list = []
     if daily is not None:
         preferred = daily.preferred_opportunity
-    elif snapshot is not None and snapshot.preferred_opportunity_id:
-        preferred = PreferredOpportunityRepository(ws).get(
-            snapshot.preferred_opportunity_id
-        )
+        assessments = list(daily.opportunity_assessments)
+    elif snapshot is not None:
+        assessments = list(snapshot.opportunity_assessments)
+        if snapshot.preferred_opportunity_id:
+            preferred = PreferredOpportunityRepository(ws).get(
+                snapshot.preferred_opportunity_id
+            )
 
     refresh_status = _connect_daily_refresh_status(
         daily=daily, snapshot=snapshot, stale=stale
@@ -2318,9 +2377,14 @@ def connect_daily(
                     "person_id": a.person_id,
                     "outcome": a.outcome,
                     "reason": a.reason,
-                    "opportunity_id": a.opportunity.id if a.opportunity else None,
+                    "opportunity_id": (
+                        a.opportunity.id
+                        if getattr(a, "opportunity", None) is not None
+                        else getattr(a, "opportunity_id", None)
+                    ),
+                    "fingerprint": getattr(a, "fingerprint", "") or "",
                 }
-                for a in (daily.opportunity_assessments if daily is not None else [])
+                for a in assessments
             ],
             "recommendations": (
                 _recommendations_payload(daily.recommendations)
@@ -2353,15 +2417,12 @@ def connect_daily(
     else:
         if preferred is not None:
             rec_lines = _render_preferred_opportunity(preferred)
+            rec_lines.extend(_render_preferred_skips(assessments))
         else:
             rec_lines = [
                 "今天没有值得优先投入的讨论（--view browse 可浏览 50 人列表）。",
             ]
-            coverage = _render_opportunity_assessment_coverage(
-                daily.opportunity_assessments if daily is not None else []
-            )
-            if coverage:
-                rec_lines.append(coverage)
+            rec_lines.extend(_render_opportunity_assessment_coverage(assessments))
             rec_lines.append("")
         shown_entries = []
     # D10：仅文本前台实际输出时记录曝光；首页只记实际展示的人物，浏览记全部展开条目。
@@ -2371,6 +2432,9 @@ def connect_daily(
         shown_entries,
         surface="browse" if view == "browse" else "home",
     )
+    # 首页实际展示首选机会时写入 PresentationRecord（漏斗「呈现首选」口径）。
+    if view != "browse" and preferred is not None:
+        _record_presentations(ws, snapshot.id, [preferred.id])
     if rec_lines:
         typer.echo("\n".join(rec_lines))
     else:
@@ -2635,6 +2699,97 @@ def connect_feedback(
     typer.echo(f"saved {saved} recommendation feedback record(s)")
 
 
+@connect_app.command("assess")
+def connect_assess(
+    url: str = typer.Option(..., "--url", help="指定讨论 URL"),
+    question: str = typer.Option("", "--question", help="用户当前问题/意图"),
+    person: str = typer.Option("", "--person", help="已知 person_id（可选）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """入口 2：看看这个帖子，我能补充什么（webfetch → 同一机会判断）。"""
+    from finch.opportunities.from_url import assess_from_url
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    result = assess_from_url(
+        url=url,
+        runner=runner,
+        service=OpportunityService(PreferredOpportunityRepository(ws)),
+        user_context=question,
+        person_ref=person or None,
+    )
+    if as_json:
+        typer.echo(json.dumps({
+            "outcome": result.outcome,
+            "reason": result.reason,
+            "url": result.url,
+            "opportunity": (
+                result.opportunity.model_dump(mode="json")
+                if result.opportunity is not None
+                else None
+            ),
+        }, ensure_ascii=False, indent=2))
+        if result.opportunity is None:
+            raise typer.Exit(code=1)
+        return
+    if result.opportunity is None:
+        typer.echo(f"未形成机会（{result.outcome}）：{result.reason or '无最小贡献'}")
+        raise typer.Exit(code=1)
+    typer.echo("\n".join(_render_preferred_opportunity(result.opportunity)))
+
+
+@connect_app.command("artifact-status")
+def connect_artifact_status(
+    opportunity: str = typer.Option(..., "--opportunity", help="机会 ID"),
+    artifact: str = typer.Option(..., "--artifact", help="成果 ID"),
+    execution: str = typer.Option(
+        ...,
+        "--execution",
+        help="ran_ok|ran_failed|unclear|not_run|n/a",
+    ),
+    note: str = typer.Option("", "--note", help="观察/限制说明"),
+    real_material: bool = typer.Option(
+        False, "--real-material", help="声明材料来自真实经历（USER_ATTESTED）"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """回填演示/成果执行事实（唯一可将 not_run 改为 ran_* 的路径）。"""
+    from finch.opportunities.models import ExecutionStatus, MaterialOrigin
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    try:
+        status = ExecutionStatus(execution)
+    except ValueError as exc:
+        typer.echo(f"invalid --execution: {execution}")
+        raise typer.Exit(code=1) from exc
+    service = OpportunityService(
+        PreferredOpportunityRepository(ws),
+        artifacts=PreferredArtifactRepository(ws),
+    )
+    try:
+        art = service.update_artifact(
+            opportunity,
+            artifact,
+            execution_status=status,
+            material_origin=MaterialOrigin.REAL if real_material else None,
+            author_note=note or None,
+        )
+    except KeyError as exc:
+        typer.echo(f"not found: {exc}")
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(json.dumps(art.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    typer.echo(
+        f"updated {art.id}: execution={art.execution_status.value} "
+        f"origin={art.material_origin.value}"
+    )
+
+
 @peers_app.command("list")
 def peers_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
     """列出全部同行档案（按 peer id 稳定排序）。"""
@@ -2753,6 +2908,92 @@ def connections_record(
     updated = apply_stage_upgrade(peer, review)
     peer_repo.upsert(updated)
     typer.echo(f"recorded {record.id}; stage → {updated.relationship_stage.value}")
+
+
+@connections_app.command("follow-up")
+def connections_follow_up(
+    opportunity: str = typer.Option(..., "--opportunity", help="前次机会 ID"),
+    reply_body: str = typer.Option("", "--reply-body", help="对方回应正文"),
+    reply_url: str = typer.Option("", "--reply-url", help="对方回应链接"),
+    person: str = typer.Option(
+        "", "--person", help="person_id 或 peer_id（默认真机会 person_ref）"
+    ),
+    platform: str = typer.Option("x", "--platform", help="平台"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """获知真实回应后提出接续建议（登记 inbound + 可选新 proposed 机会）。"""
+    from finch.opportunities.follow_up import follow_up_opportunity
+    from finch.peers.person_service import PersonRepository
+    from finch.storage.repositories import FeedbackSnapshotRepository
+
+    if not reply_body.strip() and not reply_url.strip():
+        typer.echo("pass --reply-body and/or --reply-url")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    opp_repo = PreferredOpportunityRepository(ws)
+    previous = opp_repo.get(opportunity)
+    if previous is None:
+        typer.echo(f"opportunity not found: {opportunity}")
+        raise typer.Exit(code=1)
+
+    peer_id = ""
+    if person:
+        peer = PeerRepository(ws).get(person)
+        if peer is None:
+            prow = PersonRepository(ws).get(person)
+            if prow and prow.identities:
+                peer = PeerRepository(ws).get(prow.identities[0].peer_id)
+        if peer is None:
+            typer.echo(f"person/peer not found: {person}")
+            raise typer.Exit(code=1)
+        peer_id = peer.id
+    elif previous.person_ref:
+        # person_ref 可能是 person_id；尝试解析到 peer。
+        prow = PersonRepository(ws).get(previous.person_ref)
+        if prow and prow.identities:
+            peer_id = prow.identities[0].peer_id
+        else:
+            peer_id = previous.person_ref
+    else:
+        typer.echo("pass --person (opportunity has no person_ref)")
+        raise typer.Exit(code=1)
+
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    result = follow_up_opportunity(
+        previous=previous,
+        reply_body=reply_body,
+        reply_url=reply_url,
+        peer_id=peer_id,
+        platform=platform,
+        runner=runner,
+        service=OpportunityService(opp_repo),
+        interactions=InteractionRecordRepository(ws),
+        feedbacks=FeedbackSnapshotRepository(ws),
+    )
+    if as_json:
+        typer.echo(json.dumps({
+            "interaction_id": result.interaction.id,
+            "meaningful": result.meaningful,
+            "skip_reason": result.skip_reason,
+            "reused_interaction": result.reused_interaction,
+            "opportunity": (
+                result.opportunity.model_dump(mode="json")
+                if result.opportunity is not None
+                else None
+            ),
+        }, ensure_ascii=False, indent=2))
+        return
+    typer.echo(
+        f"recorded {result.interaction.id}"
+        f"{' (reused)' if result.reused_interaction else ''}; "
+        f"meaningful={result.meaningful}"
+    )
+    if result.opportunity is not None:
+        typer.echo("\n".join(_render_preferred_opportunity(result.opportunity)))
+    else:
+        typer.echo(result.skip_reason or "暂无接续建议")
 
 
 @collisions_app.command("generate")

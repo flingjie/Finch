@@ -8,7 +8,7 @@
 - Codex 是智能节点，不是工作流 Runtime；状态、顺序、重试、幂等由确定性 Python 领域服务负责。
 - 读取/写入权限分离：`gh` 仅读取；`opencli` 仅读取/搜索，禁止 twitter 写命令。
 - 子进程参数用数组传递；每次调用设超时；输出强制 JSON 并 Pydantic 校验。
-- 发现单位是轻量 `Opportunity`（交流机会，不是商业机会）；`InteractionProposal` 仅在用户选中后深度准备。LLM 不输出最终 `total`。
+- 发现单位是轻量 `Opportunity`（交流机会，不是商业机会）；用户选定后由 `connect prepare` 深度准备可审阅贡献。LLM 不输出最终 `total`。
 - 问题/workaround/使用反馈以 ConversationThread 笔记记录（必填 source_ref）；不建独立问题库或工具收款后台。礼貌兴趣 ≠ 试用成功 ≠ 付款。
 
 ## 交互约定（产品使用）
@@ -25,7 +25,9 @@
 
 ## 目录
 
-- `src/finch/engagement/` 发现 / 机会 / 提案 / 门禁
+- `src/finch/opportunities/` 交流机会聚合（评估 / 状态机 / 贡献制作）
+- `src/finch/discovery/` 每日发现编排
+- `src/finch/engagement/` 发现快照 / InteractionRecord / 推荐反馈（旧评分管线已移除）
 - `src/finch/storage/` 文件 Workspace（YAML/Markdown/JSONL，原子写）
 - `src/finch/github/` `src/finch/twitter/` 只读 adapter
 - `src/finch/conversations/` 对话线索与跟进

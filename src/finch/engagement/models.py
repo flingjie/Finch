@@ -30,6 +30,16 @@ class RecommendationEntry(BaseModel):
     hit_labels: list[str] = Field(default_factory=list)
 
 
+class OpportunityAssessmentEntry(BaseModel):
+    """快照持久化的一条首选机会评估结果（非刷新可读；含 skip 原因）。"""
+
+    person_id: str
+    outcome: Literal["recommended", "skipped", "eval_failed"]
+    reason: str = ""
+    opportunity_id: str | None = None
+    fingerprint: str = ""
+
+
 class DiscoverySnapshot(BaseModel):
     """一次有界发现刷新的缓存快照（B）。"""
 
@@ -51,6 +61,10 @@ class DiscoverySnapshot(BaseModel):
     home_person_ids: list[str] = Field(default_factory=list)
     # 首选机会（新聚合）id：首页 0-1 条首选；空表示本轮无值得优先投入的机会。
     preferred_opportunity_id: str = ""
+    # 本轮评估覆盖（含跳过原因）：非刷新读取可重放「为何无首选 / 为何优先」。
+    opportunity_assessments: list[OpportunityAssessmentEntry] = Field(
+        default_factory=list
+    )
 
 
 class PresentationRecord(BaseModel):

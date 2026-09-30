@@ -24,5 +24,8 @@
 
 - `采用` → 用户在原平台亲自发送，再 `uv run finch connections record --person <person_id>
   --url <url> --body "<正文>" --opportunity <id>` 登记事实。
+- `演示跑通了` → `uv run finch connect artifact-status --opportunity <id> --artifact <id>
+  --execution ran_ok [--real-material] [--note …]`
+- `对方回应了：…` → `uv run finch connections follow-up --opportunity <id> --reply-body "…"`
 - `改：…` → 继续用 `finch drafts revise`（若正文走草稿流）或直接按指令改正文后重新生成。
 - `跳过` → 结束本机会，不登记。

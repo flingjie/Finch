@@ -21,15 +21,22 @@ description: >
 - 选中机会：`finch connect prepare --opportunity <id>`（可重复；本批最多 5 = deep_prepare_limit）
 - 查看机会：`finch connect daily`（首页 0-1 条首选）或 `finch connect daily --view browse`
   （50 人分层浏览）；选中前不要整表生成正文。
+- 指定帖子评估：`finch connect assess --url <url> [--question …]`（入口 2，跳过全平台发现）
 - 查看人物证据：`finch connect person <person_id>`（只读）。
+- 演示/成果事实回填：`finch connect artifact-status --opportunity <id> --artifact <id>
+  --execution ran_ok|ran_failed|unclear [--real-material] [--note …]`
+  （唯一可将 `not_run` 改为 `ran_*` 的路径）。
 - 用户已在平台发出后登记事实：`finch connections record --person <person_id> --url <url>
   --body "<正文>" --opportunity <id>`（记录真实互动，不等同于批准）。
+- 获知回应后接续：`finch connections follow-up --opportunity <id> --reply-body "…"
+  [--reply-url …]`（实质回应可生成关联的新 proposed 机会）。
 
 ## 产出契约（Artifact）
 
 - 正文是可审阅表达方案，不是作者已确认的立场；`source_refs` 回溯机会的证据引用。
-- `execution_status`：`not_run`（方法卡/回复草稿未运行）；演示是否真正运行由用户后续更新，
-  代码不得把未运行标为已运行。
+- `execution_status`：默认 `not_run`；演示真正跑过后由用户经
+  `finch connect artifact-status --execution ran_ok|ran_failed` 回填，
+  代码不得把未运行标为已运行。可同时 `--real-material` 声明材料来自真实经历。
 - 默认展示：对方具体问题、我能补充什么、来源 refs、正文、一个下一步。
 - **允许零结果**：无具体观察/问题/贡献时输出「暂不回复」及原因，不强行生成空泛回复。
   **具体观察 + 诚实提问**即可作为有效建议，无需个人经验；只有声称亲历（我用过/测试过）

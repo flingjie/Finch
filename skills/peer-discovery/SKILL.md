@@ -30,14 +30,15 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 - 查看指定对象：`finch connect person <person_id>`（只读）
 - 查看某人物完整证据：`finch connect person <person_id>`（只读，不生成互动准备）
 - 准备互动：`finch connect prepare --opportunity <id>`（可重复；每次最多 5；**必须选中**）
+- 指定帖子：`finch connect assess --url <url> [--question …]`（入口 2）
 - 保存启发：`finch inspirations save --text "…" [--source <ref>]`
 - 反馈：`finch connect feedback --file feedback.json`
+- 回应接续：`finch connections follow-up --opportunity <id> --reply-body "…"`
 
 ## 产出契约
 
-- `Opportunity`：稳定 id、来源链接、`why_relevant`、`opening`、`suggested_mode`
-  （learn/discuss/investigate）、`shared_problem`、`contribution_basis_refs`、`next_action`、
-  `estimated_minutes`、`uncertainty`
+- `Opportunity`（新聚合）：`why_me` / `why_continue` / `entry_kind` / `proposal`
+  （含 `cost_note`）/ `open_questions` / `evidence_refs` / 生命周期状态
 - `PeerProfile`：身份、主题重叠、可选 `current_work` / 实践证据引用 / `evidence_status`
 
 ## 向用户呈现
@@ -62,6 +63,7 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 ## 边界
 
 - 用户点名具体人（handle / 主页）时，这不是发现请求 → `interaction-preparation` 的 `connect prepare`。不要用今日机会名单顶替。
+- 用户给出具体帖子/链接「我能补充什么」→ `finch connect assess --url`，不是全平台刷新。
 - 不替用户形成观点（→ `idea-discovery`）。
 - 不把别人的经历写成用户经历；仅有 bio/转发时标记待了解，不占核心证据位。
 - 普通浏览不生成完整回复（→ `interaction-preparation`）。

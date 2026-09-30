@@ -15,6 +15,8 @@ from finch.opportunities.models import (
     Artifact,
     EntryKind,
     EvidenceRef,
+    ExecutionStatus,
+    MaterialOrigin,
     Opportunity,
     OpportunityEvent,
     OpportunityStatus,
@@ -154,6 +156,72 @@ class OpportunityService:
             )
             self.repo.save(new_opp)
             return new_opp
+
+    def update_artifact(
+        self,
+        opportunity_id: str,
+        artifact_id: str,
+        *,
+        execution_status: ExecutionStatus | None = None,
+        material_origin: MaterialOrigin | None = None,
+        author_note: str | None = None,
+        expected_revision: int | None = None,
+        request_id: str | None = None,
+    ) -> Artifact:
+        """回填演示/成果事实（§6.4）：仅用户声明可将 not_run 改为 ran_*。
+
+        代码不得自行把未运行标为已运行；本方法是唯一合法写入路径。
+        """
+        if self.artifacts is None:
+            raise ValueError("update_artifact requires an ArtifactRepository")
+        with self.repo.locked(opportunity_id):
+            opp = self.repo.get(opportunity_id)
+            if opp is None:
+                raise KeyError(opportunity_id)
+            if expected_revision is not None and expected_revision != opp.revision:
+                raise OpportunityConflictError(
+                    f"revision conflict: expected {expected_revision}, "
+                    f"current {opp.revision}"
+                )
+            if request_id is not None:
+                for e in self.repo.list_events(opportunity_id):
+                    if e.request_id == request_id and e.event_type == "artifact_updated":
+                        art = self.artifacts.get(opportunity_id, artifact_id)
+                        if art is None:
+                            raise KeyError(artifact_id)
+                        return art
+            art = self.artifacts.get(opportunity_id, artifact_id)
+            if art is None:
+                raise KeyError(artifact_id)
+            updates: dict = {}
+            if execution_status is not None:
+                updates["execution_status"] = execution_status
+            if material_origin is not None:
+                updates["material_origin"] = material_origin
+            if author_note is not None:
+                updates["author_note"] = author_note
+            if not updates:
+                return art
+            updates["revision"] = art.revision + 1
+            new_art = art.model_copy(update=updates)
+            self.artifacts.save(new_art)
+            new_opp = opp.model_copy(
+                update={
+                    "revision": opp.revision + 1,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+            self.repo.append_event(
+                OpportunityEvent(
+                    event_id=f"{opportunity_id}:r{new_opp.revision}",
+                    opportunity_id=opportunity_id,
+                    event_type="artifact_updated",
+                    expected_revision=opp.revision,
+                    request_id=request_id,
+                )
+            )
+            self.repo.save(new_opp)
+            return new_art
 
     def select(
         self,

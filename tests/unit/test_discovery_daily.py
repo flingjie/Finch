@@ -160,6 +160,113 @@ def test_run_daily_skips_network_with_seeded_artifacts(tmp_path: Path):
     assert len(result.recommendations.priority) >= 1 or result.engagement.posts_found >= 2
 
 
+def test_snapshot_persists_opportunity_assessments(tmp_path: Path):
+    """首选评估覆盖写入 DiscoverySnapshot，非刷新可读。"""
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    arts = [
+        _art("1", "alice", "long enough content about agent harness failures and retries xx"),
+        _art("2", "alice", "second long enough post about eval trajectories in production yy"),
+    ]
+    for a in arts:
+        ArtifactRepository(ws).upsert(a)
+    from finch.sources.projector import ArtifactProjector
+
+    ArtifactProjector(ws).project(arts)
+
+    settings = Settings(
+        paths={"var_dir": tmp_path},  # type: ignore[arg-type]
+        sources=SourcesSettings(twitter=SourceTwitterPlan(queries=[])),
+        interests={"practice_refs": ["practice:1"], "long_term_interests": ["agents"]},  # type: ignore[arg-type]
+    )
+    settings.paths.var_dir = tmp_path
+
+    def fake_run(argv, timeout):
+        return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+    result = run_daily_discovery(
+        settings,
+        runner=_FakeRunner(),
+        gateway=OpenCliGateway(run_fn=fake_run),
+        skip_sync=True,
+    )
+    assert result.preferred_opportunity is not None
+    assert result.opportunity_assessments
+    assert result.opportunity_assessments[0].outcome == "recommended"
+
+    snap = DiscoverySnapshotRepository(ws).latest()
+    assert snap is not None
+    assert snap.preferred_opportunity_id == result.preferred_opportunity.id
+    assert snap.opportunity_assessments
+    assert snap.opportunity_assessments[0].outcome == "recommended"
+    assert snap.opportunity_assessments[0].opportunity_id == result.preferred_opportunity.id
+    assert snap.opportunity_assessments[0].fingerprint
+
+
+def test_opportunity_assess_soft_stops_on_discovery_deadline(tmp_path: Path, monkeypatch):
+    """发现时限耗尽时首选评估 soft-stop，不继续调 LLM。"""
+    import time
+
+    from finch.opportunities import discover as discover_mod
+
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    arts = [
+        _art("1", "alice", "long enough content about agent harness failures and retries xx"),
+        _art("2", "alice", "second long enough post about eval trajectories in production yy"),
+        _art("3", "bob", "long enough content about agent reliability from another author xx"),
+        _art("4", "bob", "second long enough post about eval trajectories from bob yy"),
+    ]
+    for a in arts:
+        ArtifactRepository(ws).upsert(a)
+    from finch.sources.projector import ArtifactProjector
+
+    ArtifactProjector(ws).project(arts)
+
+    settings = Settings(
+        paths={"var_dir": tmp_path},  # type: ignore[arg-type]
+        sources=SourcesSettings(twitter=SourceTwitterPlan(queries=[])),
+        interests={"practice_refs": ["practice:1"], "long_term_interests": ["agents"]},  # type: ignore[arg-type]
+    )
+    settings.paths.var_dir = tmp_path
+    settings.discovery.discovery_deadline_seconds = 1
+    settings.discovery.daily_people.opportunity_assess_limit = 5
+
+    # 第 1 次 monotonic = started_at；之后的检查一律超时。
+    mono_calls = {"n": 0}
+
+    def fake_monotonic() -> float:
+        mono_calls["n"] += 1
+        return 0.0 if mono_calls["n"] == 1 else 10.0
+
+    monkeypatch.setattr(time, "monotonic", fake_monotonic)
+    assess_calls = {"n": 0}
+
+    def boom(*args, **kwargs):
+        assess_calls["n"] += 1
+        raise AssertionError("should not assess after deadline")
+
+    monkeypatch.setattr(discover_mod, "discover_preferred_opportunity_outcome", boom)
+
+    def fake_run(argv, timeout):
+        return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+    result = run_daily_discovery(
+        settings,
+        runner=_FakeRunner(),
+        gateway=OpenCliGateway(run_fn=fake_run),
+        skip_sync=True,
+    )
+    assert assess_calls["n"] == 0
+    assert result.preferred_opportunity is None
+    assert any(
+        a.reason == "发现运行时限已到，未继续评估"
+        for a in result.opportunity_assessments
+    )
+
+
 def test_run_daily_three_slot_cap_and_metrics(tmp_path: Path):
     """Phase 0 回归：短名单仍 ≤3，观测指标被记录且不改变选择。"""
     ws = Workspace(tmp_path)

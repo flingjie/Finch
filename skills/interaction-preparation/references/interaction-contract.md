@@ -6,7 +6,9 @@
 - 形式由机会的 `proposal.form` 决定：`reply_draft` / `method_card` / `clarifying_question` /
   `case` / `demo`（`clarifying_question` 落成 `reply_draft`）。
 - `source_refs` 来自机会的 `evidence_refs`，是正文的事实来源；正文只允许提问或明确标注推测。
-- `execution_status` 只描述是否运行：`not_run` 表示未运行，不得标为 `ran_ok`。
+- `execution_status` 只描述是否运行：默认 `not_run`；真正跑过后由用户经
+  `connect artifact-status --execution ran_ok|ran_failed` 回填，代码不得自行标为已运行。
+  `--real-material` 可将 `material_origin` 升为 `real`（用户声明语义）。
 
 ## 理解经历与试用意图（不新建销售枚举）
 
@@ -31,4 +33,5 @@
 ## 三事实分离
 
 `Opportunity`（交流机会 + 生命周期）、`Artifact`（可审阅成果）、`InteractionRecord`
-（已发生互动）是三个不同事实，不得互相替代。
+（已发生互动）是三个不同事实，不得互相替代。接续提案是**新的** Opportunity
+（`previous_opportunity_id` 指向前次），不复活原任务。

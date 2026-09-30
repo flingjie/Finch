@@ -18,7 +18,9 @@ description: >
 
 用户在平台发布后：`finch connections record --person <person_id> --url <url>
 --body "<正文>" [--opportunity <id>]`（若有选中的机会）；无机会时用 `finch conversations
-ingest` 登记真实互动。登记后可用 `follow-up` 恢复上下文。**不要**把生成正文当成已发布。
+ingest` 登记真实互动。对方有回应后：`finch connections follow-up --opportunity <id>
+--reply-body "…" [--reply-url …]`（实质回应可生成关联的新 proposed 机会）。登记后也可用
+`conversations follow-up` 恢复线索上下文。**不要**把生成正文当成已发布。
 
 跟进只由真实触发驱动：`new_reply` / `own_commitment` / `new_evidence` /
 `related_update`。提供样本或试用的承诺必须是用户明确记录的 `Commitment`。无回复 ≠ 拒绝；

@@ -1,8 +1,8 @@
 # Finch 交流机会系统 —— 现有实现代码映射
 
-> 本文是《Finch 交流机会驱动系统》实施计划的阶段 0 交付物：把当前仓库的真实模块映射固化下来，作为后续阶段「字段落在哪个对象、改哪个文件」的唯一事实来源。
+> **历史文档（2026-09-30 阶段 0）**。下文描述的三层 engagement 管线 / `InteractionProposal` / 未接线的 `ConnectionOpportunity` **已被 `src/finch/opportunities/` 聚合取代**。以当前代码与 `CLAUDE.md` 为准；本文仅保留决策追溯，勿再按其中模块路径实施。
 >
-> 依据：三路代码探索（engagement 管线 / skills+prompts+content / 服务+CLI+存储）与 `docs/product-contract.md`、`CLAUDE.md`。所有行号对应 2026-09-30 工作树。
+> 本文是《Finch 交流机会驱动系统》实施计划的阶段 0 交付物：把当时仓库的真实模块映射固化下来。所有行号对应 2026-09-30 早期工作树。
 
 ## 0. 三层现状（同一「发现」问题的三个实现层）
 

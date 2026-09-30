@@ -109,7 +109,9 @@ skills/
 src/finch/
   peers/           PeerProfile 关系领域（按 platform+author_id 幂等归一化）
   conversations/   ConversationThread / 跟进触发 / Commitment
-  engagement/      Opportunity / InteractionProposal / InteractionRecord / 发现流水线
+  opportunities/   交流机会聚合（评估 / 状态机 / 贡献制作）
+  discovery/       每日发现编排（sources → people → 首选机会）
+  engagement/      发现快照 / InteractionRecord / 推荐反馈
   ideas/           观点状态机 + Commit/Fragment 服务
   drafts/          DraftService（已确认观点 → Draft + CriticReport）
   practice/        expression-practice 会话

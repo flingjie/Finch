@@ -164,6 +164,40 @@ def test_write_contribution_includes_evidence_in_prompt():
     assert "同一任务重跑结果不同" in p
 
 
+def test_write_contribution_injects_voice_and_positions():
+    from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
+    from finch.content.models import ContentType, RecommendedFormat
+    from finch.content.voice import VoiceProfile
+
+    runner = FakeRunner("x")
+    write_contribution(
+        runner,
+        _opportunity(),
+        voice_profile=VoiceProfile(preferred_patterns=["先给结论"], avoid_phrases=["赋能"]),
+        confirmed_jobs=[
+            ContentJob(
+                id="idea_1",
+                source_card_ids=[],
+                status=ContentJobStatus.CONFIRMED,
+                reader_problem="p",
+                core_message="m",
+                why_now="n",
+                recommended_format=RecommendedFormat.SHORT_POST,
+                content_type=ContentType.METHOD_CARD,
+                author_position=AuthorPosition(
+                    claim="失败要变成回归",
+                    decision="做回放卡",
+                    tradeoff="覆盖面换精确度",
+                ),
+            )
+        ],
+    )
+    p = runner.last_prompt or ""
+    assert "先给结论" in p
+    assert "赋能" in p
+    assert "失败要变成回归" in p
+
+
 def test_render_evidence_refs_is_json():
     out = render_evidence_refs(
         [EvidenceRef(source_ref="s", quote="q", claim="c", tier=EvidenceTier.EXPLICIT)]

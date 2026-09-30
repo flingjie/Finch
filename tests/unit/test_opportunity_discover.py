@@ -167,6 +167,38 @@ def test_outcome_distinguishes_recommended_skipped_and_eval_failed(tmp_path):
     assert discover_preferred_opportunity_outcome(**failed).outcome == "eval_failed"
 
 
+def test_skipped_assessment_is_cached_and_not_reassessed(tmp_path):
+    from finch.opportunities.repository import SkipAssessmentRepository
+
+    kwargs = _kwargs(tmp_path)
+    kwargs["skips"] = SkipAssessmentRepository(Workspace(tmp_path))
+    kwargs["runner"] = FakeRunner(_draft(recommend=False, skip_reason="已解决"))
+    first = discover_preferred_opportunity_outcome(**kwargs)
+    assert first.outcome == "skipped"
+    assert kwargs["runner"].calls == 1
+
+    second = discover_preferred_opportunity_outcome(**kwargs)
+    assert second.outcome == "skipped"
+    assert second.reason == "已解决"
+    assert kwargs["runner"].calls == 1  # 命中 skip 缓存，未重新调 LLM
+
+
+def test_eval_failed_is_not_cached(tmp_path):
+    from finch.opportunities.repository import SkipAssessmentRepository
+
+    kwargs = _kwargs(tmp_path)
+    kwargs["skips"] = SkipAssessmentRepository(Workspace(tmp_path))
+
+    class Boom:
+        def run(self, prompt, output_model, **kw):
+            raise RuntimeError("boom")
+
+    kwargs["runner"] = Boom()
+    assert discover_preferred_opportunity_outcome(**kwargs).outcome == "eval_failed"
+    # 换一个仍失败的 runner，确认没有被误缓存成 skipped。
+    assert discover_preferred_opportunity_outcome(**kwargs).outcome == "eval_failed"
+
+
 def test_context_fingerprint_changes_with_user_question(tmp_path):
     base = dict(
         person_ref="person_1",

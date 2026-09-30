@@ -35,14 +35,21 @@ deterministic recommendation gate lives in code.
 7. form: which ContributionForm the contribution takes.
 8. expected_output: what will exist when the contribution is done (something showable / comparable / checkable).
 9. scope: what this first version covers, and explicitly what it does not.
-10. open_questions: unknowns that could change the recommendation (may be empty).
-11. evidence_refs: the minimum evidence that supports the recommendation, each with:
+10. cost_note: a rough effort range and material unknowns in plain language
+    (e.g. "约半小时；未核对线程已有回复"). Do not invent precise minutes.
+11. open_questions: unknowns that could change the recommendation (may be empty).
+    Important: this assessor only sees the peer's recent artifacts, not thread replies.
+    If you have not verified whether the problem is still open or whether replies already
+    cover the contribution, put that in open_questions (e.g. "未核对线程已有回复是否已覆盖
+    此建议"). Missing critical context should lower recommend confidence — prefer skip or
+    a clarifying_question form over a strong method_card recommendation.
+12. evidence_refs: the minimum evidence that supports the recommendation, each with:
     - source_ref: the artifact_id or canonical URL from the peer's artifacts.
     - quote: a short verbatim excerpt from that artifact (do not paraphrase).
     - claim: what this excerpt supports.
     - tier: "explicit" when the excerpt states it, "inferred" when it is derived, "unknown"
       when the link is unclear. May be empty when there is no usable excerpt.
-12. recommend: true only if there is real value and a concrete contribution; false otherwise,
+13. recommend: true only if there is real value and a concrete contribution; false otherwise,
     with a one-line skip_reason.
 
 Do not fabricate the peer's difficulties or the user's personal experience. Do not invent

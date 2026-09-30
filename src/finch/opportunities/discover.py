@@ -6,7 +6,7 @@
 
 机会 ID 关联「具体讨论 + 切入点」而非人物：``person_ref`` 表示身份，ID 带内容/问题的
 稳定指纹。来源内容或用户问题变化 → 新指纹 → 重新评估；同一指纹已存在但已关闭/暂存 →
-不直接作为今日首选重新出现。
+不直接作为今日首选重新出现。同指纹已跳过（``SkipAssessment``）→ 不重复调 LLM。
 """
 
 import hashlib
@@ -16,7 +16,8 @@ from typing import Literal
 
 from finch.llm.base import StructuredInferenceRunner
 from finch.opportunities.assess import assess_opportunity, build_opportunity
-from finch.opportunities.models import Opportunity, OpportunityStatus
+from finch.opportunities.models import Opportunity, OpportunityStatus, SkipAssessment
+from finch.opportunities.repository import SkipAssessmentRepository
 from finch.opportunities.service import OpportunityService
 from finch.sources.models import RawArtifact
 
@@ -54,6 +55,8 @@ class DiscoverOutcome:
     opportunity: Opportunity | None
     outcome: Literal["recommended", "skipped", "eval_failed"]
     reason: str = ""
+    fingerprint: str = ""
+    opportunity_id: str = ""
 
 
 def opportunity_context_fingerprint(
@@ -94,8 +97,9 @@ def discover_preferred_opportunity_outcome(
     artifacts: list[RawArtifact],
     service: OpportunityService,
     user_context: str = "",
+    skips: SkipAssessmentRepository | None = None,
 ) -> DiscoverOutcome:
-    """对首选候选做机会判断并落库；幂等（同指纹已存在返回既有），无贡献点 → 跳过。"""
+    """对首选候选做机会判断并落库；幂等（同指纹已存在 / 已跳过返回既有），无贡献点 → 跳过。"""
     fingerprint = opportunity_context_fingerprint(
         person_ref=person_ref,
         current_work=current_work,
@@ -111,8 +115,27 @@ def discover_preferred_opportunity_outcome(
                 None,
                 "skipped",
                 f"机会已{existing.status.value}，材料未变化",
+                fingerprint=fingerprint,
+                opportunity_id=opportunity_id,
             )
-        return DiscoverOutcome(existing, "recommended")
+        return DiscoverOutcome(
+            existing,
+            "recommended",
+            fingerprint=fingerprint,
+            opportunity_id=opportunity_id,
+        )
+
+    # 同指纹已跳过：不重复调 LLM（eval_failed 不缓存）。
+    if skips is not None:
+        cached = skips.get(opportunity_id)
+        if cached is not None:
+            return DiscoverOutcome(
+                None,
+                "skipped",
+                cached.reason or "无最小贡献",
+                fingerprint=fingerprint,
+                opportunity_id=opportunity_id,
+            )
 
     draft = assess_opportunity(
         runner,
@@ -125,13 +148,56 @@ def discover_preferred_opportunity_outcome(
         user_context=user_context,
     )
     if draft.eval_failed:
-        return DiscoverOutcome(None, "eval_failed", draft.skip_reason)
+        return DiscoverOutcome(
+            None,
+            "eval_failed",
+            draft.skip_reason,
+            fingerprint=fingerprint,
+            opportunity_id=opportunity_id,
+        )
     if not draft.recommend or not draft.contribution.strip():
-        return DiscoverOutcome(None, "skipped", draft.skip_reason or "无最小贡献")
+        reason = draft.skip_reason or "无最小贡献"
+        if skips is not None:
+            skips.save(
+                SkipAssessment(
+                    opportunity_id=opportunity_id,
+                    person_ref=person_ref,
+                    fingerprint=fingerprint,
+                    reason=reason,
+                )
+            )
+        return DiscoverOutcome(
+            None,
+            "skipped",
+            reason,
+            fingerprint=fingerprint,
+            opportunity_id=opportunity_id,
+        )
     opp = build_opportunity(draft, opportunity_id=opportunity_id, person_ref=person_ref)
     if opp is None:
-        return DiscoverOutcome(None, "skipped", "无最小贡献")
-    return DiscoverOutcome(service.create_from(opp), "recommended")
+        reason = "无最小贡献"
+        if skips is not None:
+            skips.save(
+                SkipAssessment(
+                    opportunity_id=opportunity_id,
+                    person_ref=person_ref,
+                    fingerprint=fingerprint,
+                    reason=reason,
+                )
+            )
+        return DiscoverOutcome(
+            None,
+            "skipped",
+            reason,
+            fingerprint=fingerprint,
+            opportunity_id=opportunity_id,
+        )
+    return DiscoverOutcome(
+        service.create_from(opp),
+        "recommended",
+        fingerprint=fingerprint,
+        opportunity_id=opportunity_id,
+    )
 
 
 def discover_preferred_opportunity(
@@ -146,6 +212,7 @@ def discover_preferred_opportunity(
     artifacts: list[RawArtifact],
     service: OpportunityService,
     user_context: str = "",
+    skips: SkipAssessmentRepository | None = None,
 ) -> Opportunity | None:
     """兼容包装：返回首选机会或 None（详见 ``discover_preferred_opportunity_outcome``）。"""
     return discover_preferred_opportunity_outcome(
@@ -159,4 +226,5 @@ def discover_preferred_opportunity(
         artifacts=artifacts,
         service=service,
         user_context=user_context,
+        skips=skips,
     ).opportunity

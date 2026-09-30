@@ -10,7 +10,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from finch.opportunities.models import Artifact, Opportunity, OpportunityEvent
+from finch.opportunities.models import (
+    Artifact,
+    Opportunity,
+    OpportunityEvent,
+    SkipAssessment,
+)
 from finch.storage.workspace import Workspace
 
 try:
@@ -96,6 +101,29 @@ class OpportunityRepository:
             if obj is not None:
                 out.append(obj)
         return out
+
+
+class SkipAssessmentRepository:
+    """否定评估缓存：``var/opportunities/_skips/<opportunity_id>.yaml``。
+
+    与机会快照同根目录，但用 ``_skips`` 前缀避免与真实机会目录冲突。
+    """
+
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
+
+    def _path(self, opportunity_id: str) -> Path:
+        return (
+            self.ws.dir("opportunities")
+            / "_skips"
+            / f"{self.ws.safe_filename(opportunity_id)}.yaml"
+        )
+
+    def save(self, record: SkipAssessment) -> None:
+        self.ws.write_yaml(self._path(record.opportunity_id), record)
+
+    def get(self, opportunity_id: str) -> SkipAssessment | None:
+        return self.ws.read_yaml(self._path(opportunity_id), SkipAssessment)
 
 
 class ArtifactRepository:

@@ -12,6 +12,7 @@ from finch.discovery.candidate_pool import build_pool
 from finch.engagement.flow import EngagementRunResult, RankedPeer
 from finch.engagement.models import (
     DiscoverySnapshot,
+    OpportunityAssessmentEntry,
     RecommendationEntry,
 )
 from finch.engagement.relationship import PeerValue
@@ -19,6 +20,7 @@ from finch.llm.base import StructuredInferenceRunner
 from finch.opportunities.discover import discover_preferred_opportunity_outcome
 from finch.opportunities.models import Opportunity as OppAggregate
 from finch.opportunities.repository import OpportunityRepository as OppAggregateRepository
+from finch.opportunities.repository import SkipAssessmentRepository
 from finch.opportunities.service import OpportunityService
 from finch.peers.evidence_repo import CreatorEvidenceRepository
 from finch.peers.evidence_service import CreatorEvidenceService
@@ -76,6 +78,28 @@ class OpportunityAssessment:
     outcome: Literal["recommended", "skipped", "eval_failed"]
     reason: str = ""
     opportunity: OppAggregate | None = None
+    fingerprint: str = ""
+    opportunity_id: str = ""
+
+
+def _assessment_entries(
+    assessments: list[OpportunityAssessment],
+) -> list[OpportunityAssessmentEntry]:
+    """把本轮评估结果序列化为可持久化的快照条目。"""
+    return [
+        OpportunityAssessmentEntry(
+            person_id=a.person_id,
+            outcome=a.outcome,
+            reason=a.reason,
+            opportunity_id=(
+                a.opportunity.id
+                if a.opportunity is not None
+                else (a.opportunity_id or None)
+            ),
+            fingerprint=a.fingerprint,
+        )
+        for a in assessments
+    ]
 
 
 @dataclass
@@ -245,6 +269,8 @@ def run_daily_discovery(
     plan = build_discovery_plan(settings, lookback_hours=lookback_hours, intent=question)
     result = DailyDiscoveryResult(run_id=run_id)
     metrics = RunMetrics()
+    started_at = time.monotonic()
+    deadline_seconds = max(1, settings.discovery.discovery_deadline_seconds)
 
     gw = gateway or OpenCliGateway(profile=settings.opencli.profile)
     orch = DiscoveryOrchestrator(ws, gateway=gw)
@@ -320,13 +346,28 @@ def run_daily_discovery(
     )
     metrics.recommended_count = recs.total
 
-    # 首选机会（新聚合）：在预算内评估少量 priority 候选，区分推荐 / 跳过 / 评估失败。
+    # 首选机会（新聚合）：在预算与发现时限内评估少量 priority 候选。
     result.preferred_opportunity = None
     if runner is not None and recs.priority:
         assess_limit = max(
             1, settings.discovery.daily_people.opportunity_assess_limit
         )
+        skip_repo = SkipAssessmentRepository(ws)
+        opp_service = OpportunityService(OppAggregateRepository(ws))
         for rec in recs.priority[:assess_limit]:
+            if time.monotonic() - started_at >= deadline_seconds:
+                result.opportunity_assessments.append(
+                    OpportunityAssessment(
+                        person_id=rec.candidate.person_id,
+                        outcome="skipped",
+                        reason="发现运行时限已到，未继续评估",
+                    )
+                )
+                result.detail = (
+                    (result.detail + "; " if result.detail else "")
+                    + f"opportunity assess soft-stopped at {deadline_seconds}s"
+                )
+                break
             top = rec.candidate
             arts = ArtifactRepository(ws).list_by_ids(top.artifact_ids)
             outcome = discover_preferred_opportunity_outcome(
@@ -338,8 +379,9 @@ def run_daily_discovery(
                 why_relevant=top.peer.why_relevant,
                 person_ref=top.person_id,
                 artifacts=arts,
-                service=OpportunityService(OppAggregateRepository(ws)),
+                service=opp_service,
                 user_context=question or plan.ranking_question or "",
+                skips=skip_repo,
             )
             result.opportunity_assessments.append(
                 OpportunityAssessment(
@@ -347,6 +389,8 @@ def run_daily_discovery(
                     outcome=outcome.outcome,
                     reason=outcome.reason,
                     opportunity=outcome.opportunity,
+                    fingerprint=outcome.fingerprint,
+                    opportunity_id=outcome.opportunity_id,
                 )
             )
             if outcome.opportunity is not None:
@@ -434,6 +478,7 @@ def run_daily_discovery(
         preferred_opportunity_id=(
             result.preferred_opportunity.id if result.preferred_opportunity else ""
         ),
+        opportunity_assessments=_assessment_entries(result.opportunity_assessments),
     )
     DiscoverySnapshotRepository(ws).upsert(snapshot)
 

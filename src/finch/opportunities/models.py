@@ -65,6 +65,7 @@ class Proposal(BaseModel):
     form: ContributionForm
     expected_output: str
     scope: str = ""
+    cost_note: str = ""  # 粗略投入范围与未知（自然语言，不伪造精确耗时）
 
 
 class Opportunity(BaseModel):
@@ -84,6 +85,8 @@ class Opportunity(BaseModel):
     status: OpportunityStatus = OpportunityStatus.PROPOSED
     decision: str | None = None
     artifact_refs: list[str] = Field(default_factory=list)
+    # 接续提案引用前次机会（规范 §10.4 / §11.1：不复活原任务）。
+    previous_opportunity_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -143,4 +146,17 @@ class Artifact(BaseModel):
     author_note: str = ""
     material_origin: MaterialOrigin = MaterialOrigin.SYNTHETIC
     execution_status: ExecutionStatus = ExecutionStatus.N_A
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SkipAssessment(BaseModel):
+    """否定评估缓存（规范 §11.3）：同指纹已跳过则不重复调 LLM。
+
+    只缓存 ``skipped``；``eval_failed`` 为瞬时失败，不得缓存以免永久抑制重试。
+    """
+
+    opportunity_id: str
+    person_ref: str
+    fingerprint: str
+    reason: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
