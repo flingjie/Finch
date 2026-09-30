@@ -468,8 +468,6 @@ def _idea_next_steps(job: ContentJob) -> list[str]:
         ]
     if job.status == ContentJobStatus.CONFIRMED:
         return [f"uv run finch drafts create {job.id}"]
-    if job.status == ContentJobStatus.DRAFTED:
-        return ["uv run finch review list"]
     return []
 
 

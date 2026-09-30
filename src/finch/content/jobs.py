@@ -1,7 +1,7 @@
 """Content Job 模型：idea 候选流的持久化实体（Skill 架构 Step 1）。
 
 ``ContentJob`` 是 ``IdeaCandidate`` 落库后的唯一权威表示，承载状态机
-``PROPOSED → CONFIRMED → DRAFTED``（或 ``→ SKIPPED``）与作者立场。
+``PROPOSED → CONFIRMED``（或 ``→ SKIPPED``）与作者立场。
 """
 
 from datetime import datetime
@@ -35,12 +35,12 @@ _LEGACY_ORIGIN = {"commit": "practice", "user": "practice", "search": "synthesis
 class ContentJobStatus(StrEnum):
     """Content Job 状态枚举（idea 候选流状态机）。
 
-    ``PROPOSED → CONFIRMED → DRAFTED``，或 ``PROPOSED → SKIPPED``。
+    ``PROPOSED → CONFIRMED``，或 ``PROPOSED → SKIPPED``；草稿走待审语义（``review``），
+    不改 job 状态。
     """
 
     PROPOSED = "proposed"
     CONFIRMED = "confirmed"
-    DRAFTED = "drafted"
     SKIPPED = "skipped"
 
 

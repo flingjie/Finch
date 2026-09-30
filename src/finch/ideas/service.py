@@ -6,7 +6,7 @@
 
 状态机（与 ``ContentJobStatus`` 一致）：
 
-- ``PROPOSED → CONFIRMED → DRAFTED``
+- ``PROPOSED → CONFIRMED``
 - ``PROPOSED → SKIPPED``（也允许 ``CONFIRMED → SKIPPED``）
 - ``revise_position`` 只改立场、不改状态（PROPOSED/CONFIRMED 均合法）。
 
@@ -222,18 +222,6 @@ class IdeaService:
         if job is None or job.status != ContentJobStatus.CONFIRMED:
             status = job.status.value if job is not None else "missing"
             raise ValueError(f"idea {idea_id} needs_confirmation (status={status})")
-        return job
-
-    def mark_drafted(self, idea_id: str) -> ContentJob:
-        """CONFIRMED → DRAFTED。"""
-        job = self._get_job(idea_id)
-        if job.status != ContentJobStatus.CONFIRMED:
-            raise ValueError(
-                f"illegal transition: {job.status.value} -> drafted for idea {idea_id}; "
-                "only confirmed -> drafted is legal"
-            )
-        job = job.model_copy(update={"status": ContentJobStatus.DRAFTED})
-        self.jobs.upsert_job(job)
         return job
 
     def skip(self, idea_id: str, reason: str) -> ContentJob:

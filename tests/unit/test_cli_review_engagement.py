@@ -37,7 +37,7 @@ def _job(job_id: str = "job_1") -> ContentJob:
             tradeoff="orchestrator was hard to rerun",
         ),
         recommended_format=RecommendedFormat.SHORT_POST,
-        status=ContentJobStatus.DRAFTED,
+        status=ContentJobStatus.CONFIRMED,
         core_message="deterministic graphs",
         why_now="failures can now be replayed",
         origin="practice",

@@ -238,23 +238,6 @@ def test_revise_position_legal_from_confirmed():
     assert revised.status == ContentJobStatus.CONFIRMED
 
 
-# ---- mark_drafted ----
-
-
-def test_mark_drafted_confirmed_to_drafted():
-    svc, _ = _service()
-    job = svc.confirm_position(svc.create_candidate(_candidate()).id)
-    drafted = svc.mark_drafted(job.id)
-    assert drafted.status == ContentJobStatus.DRAFTED
-
-
-def test_mark_drafted_illegal_from_proposed():
-    svc, _ = _service()
-    job = svc.create_candidate(_candidate())
-    with pytest.raises(ValueError):
-        svc.mark_drafted(job.id)
-
-
 # ---- skip ----
 
 
@@ -264,13 +247,6 @@ def test_skip_sets_reject_reason():
     skipped = svc.skip(job.id, "没有新意")
     assert skipped.status == ContentJobStatus.SKIPPED
     assert skipped.reject_reason == "没有新意"
-
-
-def test_skip_illegal_from_drafted():
-    svc, _ = _service()
-    job = svc.mark_drafted(svc.confirm_position(svc.create_candidate(_candidate()).id).id)
-    with pytest.raises(ValueError):
-        svc.skip(job.id, "late")
 
 
 # ---- create_from_angle ----

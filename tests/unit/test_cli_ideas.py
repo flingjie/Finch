@@ -488,7 +488,7 @@ def test_ideas_skip_illegal_transition_exits(monkeypatch, tmp_path):
     settings = _paths_settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
     _patch_settings(monkeypatch, settings)
-    job = _manual_job(status=ContentJobStatus.DRAFTED)
+    job = _manual_job(status=ContentJobStatus.SKIPPED)
     ContentJobRepository(ws).upsert_job(job)
 
     r = CliRunner().invoke(app, ["ideas", "skip", job.id, "--reason", "not_now"])

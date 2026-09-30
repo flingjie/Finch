@@ -41,7 +41,6 @@ class TestContentJob:
         """Test ContentJobStatus enum string values."""
         assert ContentJobStatus.PROPOSED.value == "proposed"
         assert ContentJobStatus.CONFIRMED.value == "confirmed"
-        assert ContentJobStatus.DRAFTED.value == "drafted"
         assert ContentJobStatus.SKIPPED.value == "skipped"
 
     def test_content_job_core_defaults(self):
