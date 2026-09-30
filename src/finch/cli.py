@@ -44,17 +44,12 @@ from .engagement.models import (
     ActionFeedbackValue,
     DiscoverySnapshot,
     InteractionAction,
-    InteractionProposal,
-    InteractionStatus,
     InterestFeedbackValue,
     Opportunity,
     PresentationRecord,
     RecommendationEntry,
     RecommendationFeedback,
 )
-from .engagement.proposals import generate_proposals
-from .engagement.scoring import ScoredPost, rank_candidates, score_posts
-from .engagement.search import fetch_post_by_url
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient
@@ -287,12 +282,6 @@ _ACTION_LABELS = {
     InteractionAction.DRAFT_QUOTE: "引用",
     InteractionAction.DRAFT_DM: "私信",
 }
-
-
-def _action_label(action: InteractionAction) -> str:
-    return _ACTION_LABELS.get(action, action.value)
-
-
 def _thread_next_step(thread: ConversationThread) -> str:
     now = datetime.now(UTC)
     # Important review due with no new facts → remind only, never auto-greet.
@@ -456,64 +445,6 @@ def _render_peer_detail(peer: PeerProfile) -> str:
         lines.append(f"代表帖: {signal}")
     lines.append("uv run finch connect prepare")
     return "\n".join(lines)
-
-
-def _render_proposal_card(proposal: InteractionProposal) -> str:
-    """互动提案决策卡：对方问题 / 贡献点 / 证据 / 提纲 / 下一步；完整草稿仅在有时展示。"""
-    outline = (proposal.outline or "").strip()
-    draft = (proposal.revised_draft or proposal.draft or "").strip()
-    lines = [f"动作: {_action_label(proposal.action)}"]
-    source_summary = proposal.source_summary or ""
-    if source_summary.strip():
-        lines.append(f"对方问题: {source_summary.strip()}")
-    if (proposal.value_added or "").strip():
-        lines.append(f"我能补充: {proposal.value_added.strip()}")
-    elif (proposal.why_this_person or "").strip():
-        lines.append(f"为什么是这个人: {proposal.why_this_person}")
-    if proposal.contribution_basis_refs:
-        lines.append(f"证据: {', '.join(proposal.contribution_basis_refs[:5])}")
-    if outline:
-        lines.append("提纲:")
-        for raw in outline.splitlines():
-            bullet = raw.strip()
-            if bullet:
-                lines.append(f"  - {bullet.lstrip('- ').strip()}")
-    elif draft:
-        preview = " ".join(draft.split())[:120]
-        lines.append(f"草稿预览: {preview}")
-    if (proposal.why_now or "").strip():
-        lines.append(f"为什么现在: {proposal.why_now}")
-    if (proposal.expected_conversation_opening or "").strip():
-        lines.append(f"预期开口: {proposal.expected_conversation_opening}")
-    if proposal.factual_risks:
-        lines.append(f"事实风险: {'; '.join(proposal.factual_risks[:3])}")
-    if proposal.status == InteractionStatus.PROPOSED:
-        lines.append(f"下一步: uv run finch connect approve {proposal.id}")
-        lines.append(f"登记发布: uv run finch connect record {proposal.id} --url <url>")
-    return "\n".join(lines)
-
-
-def _render_proposal_cards(
-    proposals: list[InteractionProposal],
-    *,
-    limit: int = _CONNECT_CARD_LIMIT,
-    include_reject: bool = True,
-) -> str:
-    if not proposals:
-        return "no interaction proposals"
-    shown = proposals[:limit]
-    parts = ["\n\n".join(_render_proposal_card(p) for p in shown)]
-    if len(proposals) > limit:
-        parts.append(
-            f"共 {len(proposals)} 个候选，以上 {len(shown)} 个。"
-            "其余：uv run finch connect prepare --json"
-        )
-    first = shown[0]
-    if include_reject and first.status == InteractionStatus.PROPOSED:
-        parts.append(f"uv run finch connect reject {first.id} --reason ...")
-    return "\n\n".join(parts)
-
-
 def _render_thread_card(thread: ConversationThread, *, for_follow_up: bool = False) -> str:
     """对话线索决策卡：话题 / 未解问题 / 观察笔记 / 建议下一步。"""
     lines = [f"话题: {thread.topic}"]
@@ -2343,172 +2274,6 @@ def _render_daily(focus: TodayFocus) -> str:
             _with_more(idea_body, len(ideas["items"]), ideas["total"]),
         ),
     ])
-
-
-def _prepare_opportunity(
-    settings: Settings,
-    ws: Workspace,
-    opportunity_id: str,
-) -> InteractionProposal | None:
-    """对指定机会深读并生成提案（≤ prepare 路径，不刷全量发现）。
-
-    try/repro/observe → 无公开回复草稿的最小贡献清单（observe_author）。
-    ask/reply/case → 草稿路径；无实践依据时拦截虚构亲历。
-    """
-    from finch.engagement.opportunity import assign_next_action
-    from finch.engagement.proposals import (
-        context_version_for,
-        generation_key_for,
-    )
-    from finch.peers.service import peer_id_for
-
-    opp = OpportunityRepository(ws).get(opportunity_id)
-    if opp is None:
-        return None
-    url = opp.source_refs[0] if opp.source_refs else ""
-    if not url:
-        return None
-    post = fetch_post_by_url(
-        url, opencli=OpenCliClient(), reddit_opencli=RedditOpenCliClient()
-    )
-    if post is None and opp.post is not None:
-        post = opp.post
-    if post is None:
-        return None
-
-    practice_refs = list(settings.interests.practice_refs)
-    # Prefer opportunity-linked basis; fall back to interests.
-    basis = list(opp.contribution_basis_refs) or list(practice_refs)
-    time_budget = settings.interests.time_budget_minutes
-    next_action = opp.next_action
-    minutes = opp.estimated_minutes
-    if next_action is None:
-        next_action, minutes = assign_next_action(
-            opp.suggested_mode,
-            has_practice=bool(basis),
-            time_budget=time_budget,
-        )
-    elif minutes is None:
-        _, minutes = assign_next_action(
-            opp.suggested_mode,
-            has_practice=bool(basis),
-            time_budget=time_budget,
-        )
-
-    ctx_ver = context_version_for(
-        practice_refs=practice_refs,
-        current_questions=settings.interests.current_questions,
-    )
-    peer_id = opp.peer_id or peer_id_for(post.platform, post.author_id)
-
-    # Min-contribution path: no public reply draft.
-    if next_action in {"try", "repro", "observe"}:
-        from finch.engagement.models import ConversationScore
-
-        checklist = _min_contribution_checklist(opp, next_action, minutes or 10, basis)
-        action = InteractionAction.OBSERVE_AUTHOR
-        score = ConversationScore(
-            relevance=0.8,
-            novelty=0.7,
-            discussability=0.5,
-            practical_evidence=0.7,
-            relationship_value=0.5,
-            total=0.75,
-            reasons=[opp.why_relevant or "selected opportunity"],
-        )
-        proposal = InteractionProposal(
-            id=f"{post.platform}:{post.id}:{action.value}",
-            post=post,
-            score=score,
-            action=action,
-            draft="",  # no public reply
-            intent=checklist,
-            source_summary=opp.source_excerpt or (post.content[:200] if post else ""),
-            factual_risks=["min contribution — not yet done; do not mark complete"],
-            approval_required=False,
-            peer_id=peer_id,
-            why_this_person=opp.why_relevant,
-            expected_conversation_opening=opp.opening,
-            why_now=opp.novelty_reason or opp.shared_problem or opp.why_relevant,
-            generation_key=generation_key_for(
-                peer_id=peer_id,
-                post_id=post.id,
-                action=action,
-                context_version=ctx_ver,
-            ),
-        )
-        InteractionRepository(ws).upsert(proposal, run_id=f"prepare_{opportunity_id}")
-        return proposal
-
-    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
-    scored = score_posts(runner, [post], settings.engagement.weights)
-    ranked = rank_candidates(scored, min_candidate_score=settings.engagement.min_candidate_score)
-    if not ranked:
-        from finch.engagement.models import ConversationScore
-
-        synthetic = ScoredPost(
-            post=post,
-            score=ConversationScore(
-                relevance=0.8,
-                novelty=0.8,
-                discussability=0.8,
-                practical_evidence=0.7,
-                relationship_value=0.5,
-                total=0.78,
-                reasons=[opp.why_relevant or "selected opportunity"],
-            ),
-        )
-        ranked = [synthetic]
-    proposals = generate_proposals(
-        runner,
-        ranked,
-        settings.engagement,
-        context_version=ctx_ver,
-        contribution_basis_refs=basis,
-        full_draft=False,
-    )
-    if not proposals:
-        return None
-    proposal = proposals[0]
-    if opp.peer_id:
-        proposal = proposal.model_copy(
-            update={
-                "peer_id": opp.peer_id,
-                "why_this_person": opp.why_relevant,
-                "expected_conversation_opening": opp.opening,
-                "why_now": opp.novelty_reason or opp.why_relevant,
-            }
-        )
-    InteractionRepository(ws).upsert(proposal, run_id=f"prepare_{opportunity_id}")
-    return proposal
-
-
-def _min_contribution_checklist(
-    opp: Opportunity,
-    next_action: str,
-    minutes: int,
-    basis: list[str],
-) -> str:
-    """Internal checklist for try/repro/observe — not a public reply draft."""
-    lines = [
-        f"最小贡献（{next_action}，约 {minutes} 分钟）",
-        f"对象: {opp.shared_problem or opp.source_excerpt[:120] or opp.id}",
-    ]
-    if next_action == "observe":
-        lines.append("动作: 阅读来源与上下文，记下一个具体问题；暂不回复。")
-    elif next_action == "try":
-        lines.append("动作: 按对方分享试跑一个具体任务，记录卡点（未完成不算已试用）。")
-    else:
-        lines.append("动作: 复现对方描述的边界/失败，记录结果引用（artifact）。")
-    if basis:
-        lines.append("可用个人实践: " + ", ".join(basis[:5]))
-    else:
-        lines.append("个人实践: 无 — 只提问或观察，禁止声称已测试。")
-    if opp.uncertainty:
-        lines.append(f"不确定性: {opp.uncertainty}")
-    return "\n".join(lines)
-
-
 @connect_app.command("today")
 def connect_today(
     limit: int = typer.Option(10, "--limit", help="展示机会数（目标 8–12）"),
