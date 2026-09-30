@@ -2063,19 +2063,14 @@ def _persist_discovery(
     *,
     snapshot_id: str | None = None,
 ) -> DiscoverySnapshot | None:
-    """把发现结果的同行与机会落库；可选写入 DiscoverySnapshot。"""
+    """把发现结果的同行落库；可选写入 DiscoverySnapshot。"""
     peers = PeerRepository(ws)
-    opportunities = OpportunityRepository(ws)
     peer_svc = PeerService()
     for ranked in result.peers:
         merged = peer_svc.merge_discovered(peers.get(ranked.profile.id), ranked.profile)
         peers.upsert(merged)
-    for opp in result.opportunities:
-        opportunities.upsert(opp)
-    for candidate in result.candidates:
-        InteractionRepository(ws).upsert(candidate, run_id=result.run_id)
 
-    if not result.opportunities and result.status == "failed":
+    if result.status == "failed":
         return DiscoverySnapshotRepository(ws).latest()
 
     # F1：保留 run_daily_discovery 已写入的完整 50 人推荐与首页投影，避免覆盖。
@@ -2099,15 +2094,13 @@ def _persist_discovery(
         context_fingerprint=result.context_fingerprint,
         source_coverage={
             "posts_found": result.posts_found,
-            "opportunity_count": len(result.opportunities),
             "status": result.status,
             **(result.source_coverage or {}),
         },
-        failures=[
-            {"platform": f.platform, "query": f.query or "", "reason": f.reason}
-            for f in result.failures
-        ],
-        ranked_opportunity_ids=[o.id for o in result.opportunities],
+        failures=(latest.failures if latest is not None else []),
+        ranked_opportunity_ids=(
+            latest.ranked_opportunity_ids if latest is not None else []
+        ),
         ranking_version=ranking_version,
         plan_id=plan_id,
         plan_summary=plan_summary,

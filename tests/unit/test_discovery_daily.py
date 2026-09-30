@@ -359,8 +359,6 @@ def test_run_daily_source_failure_coverage_and_fingerprint(tmp_path, monkeypatch
     assert eng.source_coverage["source_failures"]
     plan = build_discovery_plan(settings, lookback_hours=24)
     assert eng.context_fingerprint == plan.config_fingerprint
-    # 浏览机会已移除（首选机会取代），eng.opportunities 恒为空。
-    assert len(eng.opportunities) == 0
 
 
 def test_snapshot_persists_plan_and_coverage(tmp_path, monkeypatch):

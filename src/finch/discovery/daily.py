@@ -366,9 +366,7 @@ def run_daily_discovery(
     engagement = EngagementRunResult(
         run_id=run_id,
         posts_found=len(artifacts),
-        opportunities=[],
         peers=peers_out,
-        failures=[],
         status=status,  # type: ignore[arg-type]
         summary=f"sources→people priority={len(recs.priority)}",
         context_fingerprint=plan.config_fingerprint,
