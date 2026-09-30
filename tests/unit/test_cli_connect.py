@@ -276,51 +276,75 @@ def test_connect_daily_persists_peers_and_renders_sections(monkeypatch, tmp_path
     assert PeerRepository(ws).get("peer_abc") is not None
 
 
+def _seed_new_opportunity(ws, opportunity_id: str = "opp_person_1"):
+    from finch.opportunities.models import (
+        ContributionForm,
+        EntryKind,
+        Proposal,
+    )
+    from finch.opportunities.models import (
+        Opportunity as NewOpp,
+    )
+    from finch.opportunities.repository import OpportunityRepository as NewOppRepo
+
+    NewOppRepo(ws).save(
+        NewOpp(
+            id=opportunity_id,
+            person_ref="person_1",
+            topic="失败回放",
+            entry_kind=EntryKind.DIFFICULTY,
+            why_me="与回归测试探索直接相关",
+            why_continue="作者已保存 trace",
+            proposal=Proposal(
+                contribution="做一张最小回放方法卡",
+                form=ContributionForm.METHOD_CARD,
+                expected_output="一张方法卡",
+                scope="一个失败案例",
+            ),
+        )
+    )
+
+
 def test_connect_prepare_with_opportunity(monkeypatch, tmp_path):
+    from finch.opportunities.models import OpportunityStatus
+
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
-    OpportunityRepository(ws).upsert(_opportunity())
+    _seed_new_opportunity(ws, "opp_person_1")
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "fetch_post_by_url", lambda *a, **k: _post())
-    monkeypatch.setattr(
-        cli,
-        "score_posts",
-        lambda *a, **k: [],
-    )
-    monkeypatch.setattr(cli, "generate_proposals", lambda *a, **k: [_candidate()])
 
-    r = CliRunner().invoke(app, ["connect", "prepare", "--opportunity", "opp_test_1"])
+    def _fake_prepare(*, opportunity, runner, service):
+        return opportunity.model_copy(update={"status": OpportunityStatus.READY})
+
+    monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
+
+    r = CliRunner().invoke(app, ["connect", "prepare", "--opportunity", "opp_person_1"])
     assert r.exit_code == 0, r.output
-    assert "动作: 回复" in r.output
-    assert "草稿预览: a draft reply" in r.output
-    assert InteractionRepository(ws).get("x:post_1:draft_reply") is not None
+    assert "首选机会" in r.output
+    assert "失败回放" in r.output
 
 
 def test_connect_prepare_caps_at_deep_prepare_limit(monkeypatch, tmp_path):
+    from finch.opportunities.models import OpportunityStatus
+
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
 
     ids = []
     for i in range(12):
-        oid = f"opp_{i}"
+        oid = f"opp_person_{i}"
         ids.append(oid)
-        OpportunityRepository(ws).upsert(
-            _opportunity().model_copy(
-                update={"id": oid, "source_refs": [f"https://x.com/a/status/{i}"]}
-            )
-        )
+        _seed_new_opportunity(ws, oid)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
-    monkeypatch.setattr(cli, "fetch_post_by_url", lambda *a, **k: _post())
     calls = {"n": 0}
 
-    def _gen(*a, **k):
+    def _fake_prepare(*, opportunity, runner, service):
         calls["n"] += 1
-        return [_candidate(f"x:post_{calls['n']}:draft_reply")]
+        return opportunity.model_copy(update={"status": OpportunityStatus.READY})
 
-    monkeypatch.setattr(cli, "generate_proposals", _gen)
-    monkeypatch.setattr(cli, "score_posts", lambda *a, **k: [])
+    monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
 
     args = ["connect", "prepare"]
     for oid in ids:

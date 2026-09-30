@@ -77,7 +77,15 @@ from .learn.reflection import (
 from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
 from .opportunities.models import Opportunity as PreferredOpportunity
-from .opportunities.repository import OpportunityRepository as PreferredOpportunityRepository
+from .opportunities.models import OpportunityStatus
+from .opportunities.prepare import prepare_contribution
+from .opportunities.repository import (
+    ArtifactRepository as PreferredArtifactRepository,
+)
+from .opportunities.repository import (
+    OpportunityRepository as PreferredOpportunityRepository,
+)
+from .opportunities.service import OpportunityService
 from .peers.models import PeerProfile
 from .peers.service import PeerService, profile_url_for
 from .practice.service import PracticeService
@@ -2129,6 +2137,30 @@ def _render_preferred_opportunity(opp: PreferredOpportunity) -> list[str]:
     return lines
 
 
+def _prepare_new_opportunity(
+    settings: Settings, ws: Workspace, opportunity_id: str
+) -> PreferredOpportunity | None:
+    """对首选机会（新聚合）执行 select → prepare_contribution → ready（幂等）。
+
+    proposed → select → 生成正文 → 登记 Artifact → mark_ready；已 ready 直接返回；
+    parked / closed 不可准备，返回 None。
+    """
+    service = OpportunityService(
+        PreferredOpportunityRepository(ws), artifacts=PreferredArtifactRepository(ws)
+    )
+    opp = service.get(opportunity_id)
+    if opp is None:
+        return None
+    if opp.status in (OpportunityStatus.PARKED, OpportunityStatus.CLOSED):
+        return None
+    if opp.status == OpportunityStatus.PROPOSED:
+        opp = service.select(opportunity_id)
+    if opp.status == OpportunityStatus.READY:
+        return opp
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    return prepare_contribution(opportunity=opp, runner=runner, service=service)
+
+
 def _persist_discovery(
     ws: Workspace,
     result: EngagementRunResult,
@@ -2931,12 +2963,12 @@ def connect_prepare(
         list[str] | None,
         typer.Option(
             "--opportunity",
-            help="选中的机会 ID（可重复；本批最多 10；必须至少指定一个）",
+            help="选中的首选机会 ID（可重复；必须至少指定一个）",
         ),
     ] = None,
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """为选中机会准备互动提案（必须 --opportunity；本批最多 10；不把浏览列表写成完整回复）。"""
+    """为选中的首选机会制作贡献（select → 生成正文 → 登记 Artifact → ready）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -2947,53 +2979,39 @@ def connect_prepare(
             "(browse with connect daily; do not prepare the whole list)"
         )
         raise typer.Exit(code=1)
-    # F2：选中后的深度准备取 deep_prepare_limit 与 max_reply_drafts 的较小值。
-    cap = min(
-        settings.discovery.daily_people.deep_prepare_limit,
-        settings.engagement.max_reply_drafts,
-    )
+    cap = settings.discovery.daily_people.deep_prepare_limit
     over_cap = len(ids) > cap
     selected = ids[:cap]
-    proposals: list[InteractionProposal] = []
+    prepared: list[PreferredOpportunity] = []
     misses: list[str] = []
     for oid in selected:
-        proposal = _prepare_opportunity(settings, ws, oid)
-        if proposal is None:
+        opp = _prepare_new_opportunity(settings, ws, oid)
+        if opp is None:
             misses.append(oid)
         else:
-            proposals.append(proposal)
-    # Record selection on latest snapshot when present.
-    snap_repo = DiscoverySnapshotRepository(ws)
-    snapshot = snap_repo.latest()
-    if snapshot is not None:
-        merged = list(dict.fromkeys([*snapshot.selected_opportunity_ids, *selected]))
-        snap_repo.upsert(
-            snapshot.model_copy(update={"selected_opportunity_ids": merged})
-        )
+            prepared.append(opp)
     if as_json:
         payload = {
-            "proposals": [p.model_dump(mode="json") for p in proposals],
+            "opportunities": [o.model_dump(mode="json") for o in prepared],
             "misses": misses,
             "over_cap": over_cap,
             "cap": cap,
         }
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
-        if over_cap or misses or not proposals:
+        if over_cap or misses or not prepared:
             raise typer.Exit(code=1)
         return
-    if proposals:
-        typer.echo(_render_proposal_cards(proposals))
+    for opp in prepared:
+        typer.echo("\n".join(_render_preferred_opportunity(opp)))
     if misses:
-        typer.echo(
-            "could not prepare: " + ", ".join(misses)
-        )
+        typer.echo("could not prepare: " + ", ".join(misses))
     if over_cap:
         typer.echo(
             f"batch limit is {cap}; prepared first {cap} of {len(ids)} selected"
         )
-    if over_cap or misses or not proposals:
-        if not proposals:
-            typer.echo("no interaction proposals")
+    if over_cap or misses or not prepared:
+        if not prepared:
+            typer.echo("no opportunities prepared")
         raise typer.Exit(code=1)
 
 
