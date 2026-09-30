@@ -8,6 +8,7 @@
 from datetime import UTC, datetime
 
 from finch.opportunities.models import (
+    Artifact,
     EntryKind,
     EvidenceRef,
     Opportunity,
@@ -15,7 +16,7 @@ from finch.opportunities.models import (
     OpportunityStatus,
     Proposal,
 )
-from finch.opportunities.repository import OpportunityRepository
+from finch.opportunities.repository import ArtifactRepository, OpportunityRepository
 
 
 class OpportunityConflictError(Exception):
@@ -43,10 +44,16 @@ _TRANSITIONS: dict[OpportunityStatus, set[OpportunityStatus]] = {
 
 
 class OpportunityService:
-    """机会聚合领域服务：只依赖注入的 ``OpportunityRepository``，不调 LLM、不自动重试。"""
+    """机会聚合领域服务：只依赖注入的 ``OpportunityRepository``（+ 可选 ArtifactRepository），
+    不调 LLM、不自动重试。"""
 
-    def __init__(self, repo: OpportunityRepository) -> None:
+    def __init__(
+        self,
+        repo: OpportunityRepository,
+        artifacts: ArtifactRepository | None = None,
+    ) -> None:
         self.repo = repo
+        self.artifacts = artifacts
 
     def create(
         self,
@@ -93,6 +100,48 @@ class OpportunityService:
     def get(self, opportunity_id: str) -> Opportunity | None:
         """读快照；不存在返回 None。"""
         return self.repo.get(opportunity_id)
+
+    def add_artifact(
+        self,
+        opportunity_id: str,
+        artifact: Artifact,
+        *,
+        expected_revision: int | None = None,
+    ) -> Opportunity:
+        """登记成果（§10.4「任务完成」）：保存 Artifact 并链到机会，revision 递增。
+
+        幂等：同一 artifact id 已登记则原样返回。需要注入 ``ArtifactRepository``。
+        """
+        if self.artifacts is None:
+            raise ValueError("add_artifact requires an ArtifactRepository")
+        opp = self.repo.get(opportunity_id)
+        if opp is None:
+            raise KeyError(opportunity_id)
+        if expected_revision is not None and expected_revision != opp.revision:
+            raise OpportunityConflictError(
+                f"revision conflict: expected {expected_revision}, "
+                f"current {opp.revision}"
+            )
+        if artifact.id in opp.artifact_refs:
+            return opp
+        self.artifacts.save(artifact.model_copy(update={"opportunity_id": opportunity_id}))
+        new_opp = opp.model_copy(
+            update={
+                "artifact_refs": [*opp.artifact_refs, artifact.id],
+                "revision": opp.revision + 1,
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        self.repo.append_event(
+            OpportunityEvent(
+                event_id=f"{opportunity_id}:r{new_opp.revision}",
+                opportunity_id=opportunity_id,
+                event_type="artifact_added",
+                expected_revision=opp.revision,
+            )
+        )
+        self.repo.save(new_opp)
+        return new_opp
 
     def select(
         self,

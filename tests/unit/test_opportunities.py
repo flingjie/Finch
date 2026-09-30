@@ -143,6 +143,48 @@ def test_transitions_append_events_with_expected_revision(ws, service):
     assert [e.expected_revision for e in events] == [0, 1]
 
 
+# ---- Artifact 登记（add_artifact：成果登记事件）----
+
+def _art_service(ws) -> OpportunityService:
+    return OpportunityService(
+        OpportunityRepository(ws), artifacts=ArtifactRepository(ws)
+    )
+
+
+def test_add_artifact_links_and_records_event(ws):
+    service = _art_service(ws)
+    service.create(opportunity_id="opp_abc", topic="t")
+    service.select("opp_abc")
+    art = Artifact(id="art_1", kind=ArtifactKind.METHOD_CARD)
+    opp = service.add_artifact("opp_abc", art)
+
+    assert "art_1" in opp.artifact_refs
+    assert opp.revision == 3
+    saved = ArtifactRepository(ws).get("opp_abc", "art_1")
+    assert saved is not None
+    assert saved.opportunity_id == "opp_abc"
+    events = OpportunityRepository(ws).list_events("opp_abc")
+    assert events[-1].event_type == "artifact_added"
+
+
+def test_add_artifact_is_idempotent(ws):
+    service = _art_service(ws)
+    service.create(opportunity_id="opp_abc", topic="t")
+    service.add_artifact("opp_abc", Artifact(id="art_1", kind=ArtifactKind.DRAFT))
+    opp = service.add_artifact("opp_abc", Artifact(id="art_1", kind=ArtifactKind.DRAFT))
+    assert opp.artifact_refs == ["art_1"]
+    assert opp.revision == 2  # 未重复递增
+
+
+def test_add_artifact_conflict_raises(ws):
+    service = _art_service(ws)
+    service.create(opportunity_id="opp_abc", topic="t")
+    with pytest.raises(OpportunityConflictError):
+        service.add_artifact(
+            "opp_abc", Artifact(id="art_1", kind=ArtifactKind.DRAFT), expected_revision=999
+        )
+
+
 # ---- Artifact（规范 §10.3：成果对象，material_origin / execution_status）----
 
 def test_artifact_round_trip(ws):
