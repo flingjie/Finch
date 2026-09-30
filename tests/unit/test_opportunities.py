@@ -185,6 +185,34 @@ def test_add_artifact_conflict_raises(ws):
         )
 
 
+# ---- request_id 幂等（§11.3：写命令带请求 ID，重复执行返回已有结果）----
+
+def test_transition_request_id_is_idempotent(ws):
+    service = OpportunityService(OpportunityRepository(ws))
+    service.create(opportunity_id="opp_abc", topic="t")
+    first = service.select("opp_abc", request_id="req_1")
+    assert first.status == OpportunityStatus.SELECTED
+    assert first.revision == 2
+
+    # 重复执行同一 request_id → 返回当前快照，不重复应用、不报非法转换。
+    second = service.select("opp_abc", request_id="req_1")
+    assert second == first
+    assert second.revision == 2
+    events = OpportunityRepository(ws).list_events("opp_abc")
+    assert [e.event_type for e in events] == ["proposed", "selected"]
+
+
+def test_distinct_request_ids_apply_distinct_transitions(ws):
+    service = OpportunityService(OpportunityRepository(ws))
+    service.create(opportunity_id="opp_abc", topic="t")
+    service.select("opp_abc", request_id="req_select")
+    opp = service.mark_ready("opp_abc", request_id="req_ready")
+    assert opp.status == OpportunityStatus.READY
+    assert opp.revision == 3
+    events = OpportunityRepository(ws).list_events("opp_abc")
+    assert [e.request_id for e in events] == [None, "req_select", "req_ready"]
+
+
 # ---- Artifact（规范 §10.3：成果对象，material_origin / execution_status）----
 
 def test_artifact_round_trip(ws):

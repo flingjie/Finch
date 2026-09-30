@@ -149,6 +149,7 @@ class OpportunityService:
         *,
         expected_revision: int | None = None,
         decision: str | None = None,
+        request_id: str | None = None,
     ) -> Opportunity:
         """用户选定方向（proposed → selected；ready → selected 表示调整贡献）。"""
         return self._transition(
@@ -156,6 +157,7 @@ class OpportunityService:
             OpportunityStatus.SELECTED,
             expected_revision=expected_revision,
             decision=decision,
+            request_id=request_id,
         )
 
     def park(
@@ -164,6 +166,7 @@ class OpportunityService:
         *,
         expected_revision: int | None = None,
         decision: str | None = None,
+        request_id: str | None = None,
     ) -> Opportunity:
         """暂存（proposed / selected → parked）。"""
         return self._transition(
@@ -171,6 +174,7 @@ class OpportunityService:
             OpportunityStatus.PARKED,
             expected_revision=expected_revision,
             decision=decision,
+            request_id=request_id,
         )
 
     def close(
@@ -179,6 +183,7 @@ class OpportunityService:
         *,
         expected_revision: int | None = None,
         decision: str | None = None,
+        request_id: str | None = None,
     ) -> Opportunity:
         """本次结束（proposed / ready → closed）。"""
         return self._transition(
@@ -186,6 +191,7 @@ class OpportunityService:
             OpportunityStatus.CLOSED,
             expected_revision=expected_revision,
             decision=decision,
+            request_id=request_id,
         )
 
     def mark_ready(
@@ -193,12 +199,14 @@ class OpportunityService:
         opportunity_id: str,
         *,
         expected_revision: int | None = None,
+        request_id: str | None = None,
     ) -> Opportunity:
         """成果可审阅（selected → ready）。"""
         return self._transition(
             opportunity_id,
             OpportunityStatus.READY,
             expected_revision=expected_revision,
+            request_id=request_id,
         )
 
     def reopen(
@@ -206,12 +214,14 @@ class OpportunityService:
         opportunity_id: str,
         *,
         expected_revision: int | None = None,
+        request_id: str | None = None,
     ) -> Opportunity:
         """重新开启（parked / closed → proposed）。"""
         return self._transition(
             opportunity_id,
             OpportunityStatus.PROPOSED,
             expected_revision=expected_revision,
+            request_id=request_id,
         )
 
     def _transition(
@@ -221,10 +231,14 @@ class OpportunityService:
         *,
         expected_revision: int | None = None,
         decision: str | None = None,
+        request_id: str | None = None,
     ) -> Opportunity:
         opp = self.repo.get(opportunity_id)
         if opp is None:
             raise KeyError(opportunity_id)
+        # request_id 幂等：同一请求已应用 → 返回当前快照，不重复应用、不报非法转换。
+        if request_id is not None and self._request_applied(opportunity_id, request_id):
+            return opp
         if to_status not in _TRANSITIONS[opp.status]:
             raise ValueError(
                 f"illegal transition: {opp.status.value} -> {to_status.value} "
@@ -250,7 +264,14 @@ class OpportunityService:
                 event_type=to_status.value,
                 expected_revision=opp.revision,
                 decision=decision,
+                request_id=request_id,
             )
         )
         self.repo.save(new_opp)
         return new_opp
+
+    def _request_applied(self, opportunity_id: str, request_id: str) -> bool:
+        """事件日志中是否已存在该 request_id（幂等去重）。"""
+        return any(
+            e.request_id == request_id for e in self.repo.list_events(opportunity_id)
+        )

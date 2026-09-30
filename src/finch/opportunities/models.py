@@ -96,6 +96,7 @@ class OpportunityEvent(BaseModel):
     event_type: str
     expected_revision: int
     decision: str | None = None
+    request_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
