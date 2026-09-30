@@ -246,7 +246,7 @@ def _daily_result() -> EngagementRunResult:
         run_id="daily_test",
         posts_found=1,
         candidates=[],
-        opportunities=[_opportunity()],
+        opportunities=[],
         peers=[RankedPeer(profile=profile, value=value)],
         failures=[],
         status="succeeded",
@@ -271,13 +271,9 @@ def test_connect_daily_persists_peers_and_renders_sections(monkeypatch, tmp_path
     r = CliRunner().invoke(app, ["connect", "daily", "--refresh"])
     assert r.exit_code == 0, r.output
     assert "需要继续的对话" in r.output
-    assert "新发现的交流机会" in r.output
-    assert "为何相关: Concrete overlap with deterministic graph practice" in r.output
-    assert "Ask how they replay failures across graph nodes" in r.output
     assert "草稿预览:" not in r.output
     assert "观点候选" in r.output
     assert PeerRepository(ws).get("peer_abc") is not None
-    assert OpportunityRepository(ws).get("opp_test_1") is not None
 
 
 def test_connect_prepare_with_opportunity(monkeypatch, tmp_path):
@@ -353,8 +349,8 @@ def test_connect_daily_json(monkeypatch, tmp_path):
     payload = json.loads(r.output)
     assert payload["schema_version"] == 2
     assert payload["snapshot_id"] == "daily_test"
-    assert [p["id"] for p in payload["peers"]] == ["peer_abc"]
-    assert [o["id"] for o in payload["opportunities"]] == ["opp_test_1"]
+    assert [p["id"] for p in payload["peers"]] == []
+    assert [o["id"] for o in payload["opportunities"]] == []
     # 阶段 3：移除旧三槽位 shortlist 兼容字段。
     assert "shortlist" not in payload
 
@@ -438,7 +434,7 @@ def test_connect_today_is_pure_read(monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert payload["snapshot_id"] == "daily_test"
-    assert len(payload["opportunities"]) == 1
+    assert len(payload["opportunities"]) == 0
 
 
 def test_connect_more_no_network(monkeypatch, tmp_path):

@@ -2320,7 +2320,6 @@ def _render_daily(focus: TodayFocus) -> str:
         return f"## {title}\n{body}"
 
     conv = focus["conversations"]
-    opps = focus["opportunities"]
     ideas = focus["ideas"]
 
     def _with_more(body: str, shown: int, total: int) -> str:
@@ -2333,7 +2332,6 @@ def _render_daily(focus: TodayFocus) -> str:
         if conv["items"]
         else "- (none)"
     )
-    opp_body = _render_opportunity_cards(opps["items"], limit=len(opps["items"]) or 1)
     idea_body = (
         "\n\n".join(_render_idea_card(j) for j in ideas["items"])
         if ideas["items"]
@@ -2343,10 +2341,6 @@ def _render_daily(focus: TodayFocus) -> str:
         _section(
             "需要继续的对话",
             _with_more(conv_body, len(conv["items"]), conv["total"]),
-        ),
-        _section(
-            "新发现的交流机会",
-            _with_more(opp_body, len(opps["items"]), opps["total"]),
         ),
         _section(
             "可分享的素材 / 观点候选",

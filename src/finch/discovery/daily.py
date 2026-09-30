@@ -47,7 +47,6 @@ from finch.sources.query_plan import (
 from finch.sources.store import ArtifactRepository
 from finch.storage.repositories import (
     DiscoverySnapshotRepository,
-    OpportunityRepository,
     PeerRepository,
 )
 from finch.storage.workspace import Workspace
@@ -388,15 +387,6 @@ def run_daily_discovery(
     )
     metrics.recommended_count = recs.total
 
-    # Browse opportunities from filtered artifacts (no second X/Reddit search)
-    opps = opportunities_from_artifacts(
-        filtered, limit=settings.engagement.max_display_opportunities
-    )
-    result.opportunities = opps
-    opp_repo = OpportunityRepository(ws)
-    for opp in opps:
-        opp_repo.upsert(opp)
-
     # 首选机会（新聚合）：对 priority 首位做一次 LLM 机会判断并落库；失败/无贡献点自然为空。
     result.preferred_opportunity = None
     if runner is not None and recs.priority:
@@ -433,7 +423,7 @@ def run_daily_discovery(
             )
         )
 
-    status = "succeeded" if (recs.priority or opps) else "empty"
+    status = "succeeded" if recs.priority else "empty"
     source_failures = [
         {
             "source": r.source.value,
@@ -455,11 +445,11 @@ def run_daily_discovery(
     engagement = EngagementRunResult(
         run_id=run_id,
         posts_found=len(artifacts),
-        opportunities=opps,
+        opportunities=[],
         peers=peers_out,
         failures=[],
         status=status,  # type: ignore[arg-type]
-        summary=f"sources→people priority={len(recs.priority)} opps={len(opps)}",
+        summary=f"sources→people priority={len(recs.priority)}",
         context_fingerprint=plan.config_fingerprint,
         source_coverage={
             "sources": {
@@ -488,7 +478,7 @@ def run_daily_discovery(
         context_fingerprint=plan.config_fingerprint,
         source_coverage=engagement.source_coverage,
         failures=source_failures,
-        ranked_opportunity_ids=[o.id for o in opps],
+        ranked_opportunity_ids=[],
         ranking_version="people-first-1",
         plan_id=plan.plan_id,
         plan_summary=plan_summary,
