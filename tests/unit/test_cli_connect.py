@@ -14,21 +14,11 @@ from finch.cli import app
 from finch.conversations.models import ConversationThread
 from finch.conversations.service import ConversationService
 from finch.engagement.flow import EngagementRunResult, RankedPeer
-from finch.engagement.models import (
-    ConversationScore,
-    ExternalPost,
-    InteractionAction,
-    InteractionProposal,
-    Opportunity,
-    SuggestedMode,
-)
 from finch.engagement.relationship import PeerValue
 from finch.peers.models import PeerProfile, PlatformIdentity, RelationshipStage
 from finch.settings import Paths, Settings
 from finch.storage.repositories import (
     ConversationThreadRepository,
-    InteractionRepository,
-    OpportunityRepository,
     PeerRepository,
 )
 from finch.storage.workspace import Workspace
@@ -37,67 +27,7 @@ from finch.storage.workspace import Workspace
 def _settings(tmp_path) -> Settings:
     return Settings(paths=Paths(var_dir=tmp_path))
 
-
-def _post() -> ExternalPost:
-    return ExternalPost(
-        id="post_1",
-        platform="x",
-        url="https://x.com/alice/status/1",
-        author_id="author_1",
-        author_name="alice",
-        content="interesting engineering take on deterministic graphs",
-        published_at=datetime.now(UTC),
-        matched_topics=["graphs"],
-    )
-
-
-def _candidate(candidate_id: str = "x:post_1:draft_reply") -> InteractionProposal:
-    return InteractionProposal(
-        id=candidate_id,
-        post=_post(),
-        score=ConversationScore(
-            relevance=0.8,
-            novelty=0.7,
-            discussability=0.6,
-            practical_evidence=0.5,
-            relationship_value=0.4,
-            total=0.62,
-            reasons=["relevant"],
-        ),
-        action=InteractionAction.DRAFT_REPLY,
-        draft="a draft reply",
-        approval_required=True,
-        peer_id="peer_abc",
-        why_this_person="writes about deterministic graphs",
-        why_now="thread is still active",
-        expected_conversation_opening="ask how they replay failures",
-    )
-
-
-def _seed_candidate(ws: Workspace, candidate_id="x:post_1:draft_reply"):
-    InteractionRepository(ws).upsert(_candidate(candidate_id), run_id="run_1")
-
-
-# ---- finch connect create ----
-
 # ---- finch connect daily ----
-
-def _opportunity() -> Opportunity:
-    return Opportunity(
-        id="opp_test_1",
-        peer_id="peer_abc",
-        source_refs=["https://x.com/alice/status/1"],
-        source_excerpt="interesting engineering take on deterministic graphs",
-        content_fingerprint="abc",
-        why_relevant="Concrete overlap with deterministic graph practice",
-        opening="Ask how they replay failures across graph nodes",
-        suggested_mode=SuggestedMode.DISCUSS,
-        novelty_reason="active thread",
-        score_total=0.82,
-        post=_post(),
-    )
-
-
 def _daily_result() -> EngagementRunResult:
     profile = PeerProfile(
         id="peer_abc",
@@ -248,8 +178,6 @@ def test_connect_daily_json(monkeypatch, tmp_path):
     payload = json.loads(r.output)
     assert payload["schema_version"] == 2
     assert payload["snapshot_id"] == "daily_test"
-    assert [p["id"] for p in payload["peers"]] == []
-    assert [o["id"] for o in payload["opportunities"]] == []
     # 阶段 3：移除旧三槽位 shortlist 兼容字段。
     assert "shortlist" not in payload
 
@@ -333,7 +261,6 @@ def test_connect_today_is_pure_read(monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert payload["snapshot_id"] == "daily_test"
-    assert len(payload["opportunities"]) == 0
 
 
 def test_connect_daily_preserves_accumulated_peer_fields(monkeypatch, tmp_path):
@@ -509,7 +436,6 @@ def _seed_daily_snapshot(ws: Workspace, snapshot_id: str = "snap_1") -> None:
             home_person_ids=["p1"],
         )
     )
-    OpportunityRepository(ws).upsert(_opportunity())
 
 
 def test_connect_daily_json_does_not_record_exposure(monkeypatch, tmp_path):

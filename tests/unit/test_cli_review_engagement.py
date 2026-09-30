@@ -5,7 +5,6 @@ LLM path (`review revise`) is monkeypatched at the service-module boundary.
 """
 
 import json
-from datetime import UTC, datetime
 
 from typer.testing import CliRunner
 
@@ -13,19 +12,12 @@ from finch import cli
 from finch.cli import app
 from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from finch.content.models import Draft, DraftKind, RecommendedFormat
-from finch.engagement.models import (
-    ConversationScore,
-    ExternalPost,
-    InteractionAction,
-    InteractionProposal,
-)
 from finch.inbox.models import DecisionAction
 from finch.settings import Paths, Settings
 from finch.storage.repositories import (
     ContentJobRepository,
     DecisionRecordRepository,
     DraftRepository,
-    InteractionRepository,
 )
 from finch.storage.workspace import Workspace
 
@@ -64,44 +56,6 @@ def _draft(job_id: str = "job_1", draft_id: str = "draft_1", body: str = "hello 
 def _seed_job_and_draft(ws: Workspace, job_id="job_1", draft_id="draft_1", body="hello world"):
     ContentJobRepository(ws).upsert_job(_job(job_id))
     DraftRepository(ws).upsert_draft(_draft(job_id, draft_id, body))
-
-
-def _post() -> ExternalPost:
-    return ExternalPost(
-        id="post_1",
-        platform="x",
-        url="https://x.com/alice/status/1",
-        author_id="author_1",
-        author_name="alice",
-        content="interesting engineering take on deterministic graphs",
-        published_at=datetime.now(UTC),
-        matched_topics=["graphs"],
-    )
-
-
-def _candidate(candidate_id: str = "x:post_1:draft_reply") -> InteractionProposal:
-    return InteractionProposal(
-        id=candidate_id,
-        post=_post(),
-        score=ConversationScore(
-            relevance=0.8,
-            novelty=0.7,
-            discussability=0.6,
-            practical_evidence=0.5,
-            relationship_value=0.4,
-            total=0.62,
-            reasons=["relevant"],
-        ),
-        action=InteractionAction.DRAFT_REPLY,
-        draft="a draft reply",
-        approval_required=True,
-    )
-
-
-def _seed_candidate(ws: Workspace, candidate_id="x:post_1:draft_reply"):
-    InteractionRepository(ws).upsert(_candidate(candidate_id), run_id="run_1")
-
-
 # ---- finch review list ----
 
 def test_review_list_json_lists_pending_original_drafts(monkeypatch, tmp_path):

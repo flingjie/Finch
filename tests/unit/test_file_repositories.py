@@ -6,14 +6,7 @@ from finch.author.models import PublicationIntent
 from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.content.models import ClaimRef, Draft, DraftKind
 from finch.conversations.models import ConversationThread
-from finch.engagement.models import (
-    ConversationScore,
-    ExternalPost,
-    InteractionAction,
-    InteractionProposal,
-    InteractionRecord,
-    InteractionStatus,
-)
+from finch.engagement.models import InteractionRecord
 from finch.evidence.models import ClaimConfidence
 from finch.inbox.models import DecisionAction, DecisionRecord
 from finch.peers.models import PeerProfile, PlatformIdentity
@@ -24,7 +17,6 @@ from finch.storage.repositories import (
     DecisionRecordRepository,
     DraftRepository,
     InteractionRecordRepository,
-    InteractionRepository,
     PeerRepository,
     PublicationIntentRepository,
 )
@@ -56,29 +48,6 @@ def test_content_job_find_by_generation_key(tmp_path):
     repo.upsert_job(job)
     assert repo.find_by_generation_key("gk1").id == "idea_abc"
     assert repo.find_by_generation_key("nope") is None
-
-
-def test_interaction_approve_reject(tmp_path):
-    repo = InteractionRepository(Workspace(tmp_path))
-    post = ExternalPost(
-        id="post1", platform="x", url="https://x.com/u/1", author_id="a", author_name="A",
-        content="hello", published_at=datetime(2026, 1, 1, tzinfo=UTC),
-    )
-    score = ConversationScore(
-        relevance=0.5, novelty=0.5, discussability=0.5, practical_evidence=0.5,
-        relationship_value=0.5, total=0.5, reasons=[],
-    )
-    cand = InteractionProposal(
-        id="c1", post=post, score=score, action=InteractionAction.DRAFT_REPLY,
-        approval_required=True, status=InteractionStatus.PROPOSED, generation_key="g1",
-    )
-    repo.upsert(cand, run_id="run1")
-    assert len(repo.list_pending()) == 1
-    repo.approve("c1")
-    assert repo.get("c1").status == InteractionStatus.APPROVED
-    assert repo.list_pending() == []
-    repo.reject("c1", "reason")
-    assert repo.get("c1").status == InteractionStatus.REJECTED
 
 
 def test_interaction_record_list_by_peer(tmp_path):

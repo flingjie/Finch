@@ -21,10 +21,7 @@ from finch.engagement.models import (
     DiscoverySnapshot,
     EngagementRunStats,
     FeedbackSnapshot,
-    InteractionProposal,
     InteractionRecord,
-    InteractionStatus,
-    Opportunity,
     PresentationRecord,
     RecommendationFeedback,
 )
@@ -251,101 +248,6 @@ class CriticReportRepository:
                 for k in sorted(latest)
             ]
         return result
-
-
-class InteractionRepository:
-    def __init__(self, ws: Workspace) -> None:
-        self.ws = ws
-
-    def upsert(self, candidate: InteractionProposal, run_id: str) -> None:
-        # run_id 保留签名兼容；文件形式不单独持久化（原列仅用于回填，从未被读取）。
-        _write(self.ws, "interactions/proposals", candidate.id, candidate)
-
-    def get(self, candidate_id: str) -> InteractionProposal | None:
-        return _read(self.ws, "interactions/proposals", candidate_id, InteractionProposal)
-
-    def find_by_generation_key(self, generation_key: str) -> InteractionProposal | None:
-        if generation_key is None:
-            return None
-        for c in self.list_all():
-            if c.generation_key == generation_key:
-                return c
-        return None
-
-    def list_pending(self) -> list[InteractionProposal]:
-        return [c for c in self.list_all() if c.status == InteractionStatus.PROPOSED]
-
-    def list_all(self) -> list[InteractionProposal]:
-        return _list_all(self.ws, "interactions/proposals", InteractionProposal)
-
-    def list_executed(self) -> list[InteractionProposal]:
-        return [c for c in self.list_all() if c.status == InteractionStatus.EXECUTED]
-
-    def _update(self, candidate_id: str, **updates: object) -> None:
-        candidate = self.get(candidate_id)
-        if candidate is None:
-            raise KeyError(candidate_id)
-        self.upsert(candidate.model_copy(update=updates), run_id="")
-
-    def approve(self, candidate_id: str) -> None:
-        candidate = self.get(candidate_id)
-        if candidate is None:
-            raise KeyError(candidate_id)
-        self.upsert(
-            candidate.model_copy(
-                update={
-                    "status": InteractionStatus.APPROVED,
-                    "reject_reason": None,
-                    "approval_revision": candidate.revision,
-                }
-            ),
-            run_id="",
-        )
-
-    def reject(self, candidate_id: str, reason: str) -> None:
-        self._update(candidate_id, status=InteractionStatus.REJECTED, reject_reason=reason)
-
-    def edit(self, candidate_id: str, revised_draft: str) -> None:
-        """Save revised body; bump revision and invalidate prior approval."""
-        candidate = self.get(candidate_id)
-        if candidate is None:
-            raise KeyError(candidate_id)
-        updates: dict[str, object] = {
-            "revised_draft": revised_draft,
-            "revision": candidate.revision + 1,
-            "approval_revision": None,
-        }
-        if candidate.status == InteractionStatus.APPROVED:
-            updates["status"] = InteractionStatus.PROPOSED
-        self.upsert(candidate.model_copy(update=updates), run_id="")
-
-    def record_execution(self, candidate_id: str, outcome: str, detail: str) -> None:
-        candidate = self.get(candidate_id)
-        if candidate is None:
-            raise KeyError(candidate_id)
-        self.upsert(
-            candidate.model_copy(update={"status": InteractionStatus.EXECUTED}), run_id=""
-        )
-
-
-class OpportunityRepository:
-    def __init__(self, ws: Workspace) -> None:
-        self.ws = ws
-
-    def upsert(self, opportunity: Opportunity) -> None:
-        _write(self.ws, "interactions/opportunities", opportunity.id, opportunity)
-
-    def get(self, opportunity_id: str) -> Opportunity | None:
-        return _read(self.ws, "interactions/opportunities", opportunity_id, Opportunity)
-
-    def list_all(self) -> list[Opportunity]:
-        return _list_all(self.ws, "interactions/opportunities", Opportunity)
-
-    def list_by_ids(self, ids: list[str]) -> list[Opportunity]:
-        by_id = {o.id: o for o in self.list_all()}
-        return [by_id[i] for i in ids if i in by_id]
-
-
 class DiscoverySnapshotRepository:
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws

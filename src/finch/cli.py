@@ -43,9 +43,7 @@ from .engagement.metrics import (
 from .engagement.models import (
     ActionFeedbackValue,
     DiscoverySnapshot,
-    InteractionAction,
     InterestFeedbackValue,
-    Opportunity,
     PresentationRecord,
     RecommendationEntry,
     RecommendationFeedback,
@@ -102,8 +100,6 @@ from .storage.repositories import (
     FeedbackSnapshotRepository,
     IdeaExplorationRepository,
     InteractionRecordRepository,
-    InteractionRepository,
-    OpportunityRepository,
     PeerRepository,
     PracticeSessionRepository,
     PresentationRecordRepository,
@@ -274,14 +270,6 @@ def _render_exploration(exploration, job: "ContentJob | None") -> str:
 
 _CONNECT_CARD_LIMIT = 6
 
-_ACTION_LABELS = {
-    InteractionAction.IGNORE: "忽略",
-    InteractionAction.BOOKMARK: "收藏",
-    InteractionAction.OBSERVE_AUTHOR: "观察",
-    InteractionAction.DRAFT_REPLY: "回复",
-    InteractionAction.DRAFT_QUOTE: "引用",
-    InteractionAction.DRAFT_DM: "私信",
-}
 def _thread_next_step(thread: ConversationThread) -> str:
     now = datetime.now(UTC)
     # Important review due with no new facts → remind only, never auto-greet.
@@ -338,61 +326,6 @@ def _peer_signal_post_url(peer: PeerProfile) -> str | None:
         if ref.startswith(("http://", "https://")):
             return ref
     return None
-
-
-def _render_opportunity_card(opp: Opportunity, *, index: int | None = None) -> str:
-    """轻量机会卡：正在做什么 / 为何相关 / 可贡献什么 / 下一步 / 时间与不确定性。"""
-    prefix = f"{index}. " if index is not None else ""
-    who = opp.peer_id
-    if opp.post is not None:
-        who = opp.post.author_name or opp.post.author_id or opp.peer_id
-    link = opp.source_refs[0] if opp.source_refs else ""
-    doing = opp.shared_problem.strip() or opp.source_excerpt.strip() or opp.novelty_reason.strip()
-    if not doing and opp.post is not None:
-        doing = " ".join(opp.post.content.split())[:120]
-    lines = [
-        f"{prefix}谁: {who}",
-        f"模式: {opp.suggested_mode.value}",
-    ]
-    if link:
-        lines.append(f"来源: {link}")
-    if doing:
-        lines.append(f"正在做什么: {doing}")
-    if opp.why_relevant.strip():
-        lines.append(f"为何相关: {opp.why_relevant}")
-    if opp.contribution_basis_refs:
-        lines.append(f"可贡献什么: 关联实践 {', '.join(opp.contribution_basis_refs[:3])}")
-        if opp.opening.strip():
-            lines.append(f"切入点: {opp.opening}")
-    elif opp.opening.strip():
-        lines.append(f"可贡献什么: 需先准备 — {opp.opening}")
-    elif opp.suggested_mode.value == "learn":
-        lines.append("可贡献什么: 需先准备（先了解）")
-    else:
-        lines.append("可贡献什么: 需先准备")
-    action = opp.next_action or "observe"
-    minutes = opp.estimated_minutes
-    if minutes is not None:
-        lines.append(f"建议下一步: {action}（约 {minutes} 分钟）")
-    else:
-        lines.append(f"建议下一步: {action}")
-    if opp.uncertainty.strip():
-        lines.append(f"不确定性: {opp.uncertainty}")
-    if opp.novelty_reason.strip():
-        lines.append(f"增量: {opp.novelty_reason}")
-    lines.append(f"uv run finch connect prepare --opportunity {opp.id}")
-    return "\n".join(lines)
-
-
-def _render_opportunity_cards(opps: list[Opportunity], *, limit: int = 12) -> str:
-    if not opps:
-        return "- (none)"
-    shown = opps[:limit]
-    return "\n\n".join(
-        _render_opportunity_card(o, index=i) for i, o in enumerate(shown, start=1)
-    )
-
-
 def _render_peer_card(peer: PeerProfile) -> str:
     """同行决策卡：谁 / 为什么值得连 / 链接 / 下一步；show 命令带真实 id。"""
     lines = [f"谁: {peer.display_name or peer.id}"]
@@ -1381,8 +1314,8 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
     )
     prepared = sum(
         1
-        for p in InteractionRepository(ws).list_all()
-        if p.status.value in {"proposed", "approved", "executed", "rejected"}
+        for o in PreferredOpportunityRepository(ws).list_all()
+        if o.status == OpportunityStatus.READY
     )
     rel_metrics = compute_relationship_metrics(
         peers=PeerRepository(ws).list_all(),
@@ -2187,10 +2120,6 @@ def _load_today_payload(
     """纯读取今日投影（无网络/LLM）。"""
     now = datetime.now(UTC)
     snapshot = DiscoverySnapshotRepository(ws).latest()
-    opp_repo = OpportunityRepository(ws)
-    opps: list[Opportunity] = []
-    if snapshot is not None:
-        opps = opp_repo.list_by_ids(snapshot.ranked_opportunity_ids[:limit])
     threads = ConversationThreadRepository(ws).list_all()
     needs_follow_up = [
         t for t in threads if ConversationService().needs_follow_up(t, now=now)
@@ -2199,38 +2128,10 @@ def _load_today_payload(
         j for j in ContentJobRepository(ws).list_jobs()
         if j.status == ContentJobStatus.PROPOSED
     ]
-    # Peers from ranked opportunities' peer_ids if present; else empty ranked list.
-    peer_repo = PeerRepository(ws)
-    ranked_peers = []
-    from finch.engagement.flow import RankedPeer
-    from finch.engagement.relationship import PeerValue
-
-    for opp in opps:
-        profile = peer_repo.get(opp.peer_id)
-        if profile is None:
-            continue
-        ranked_peers.append(
-            RankedPeer(
-                profile=profile,
-                value=PeerValue(
-                    topic_overlap=0.0,
-                    practical_depth=0.0,
-                    contribution_space=0.0,
-                    continuity_potential=0.0,
-                    repetition_penalty=0.0,
-                    promotion_risk=0.0,
-                    total=opp.score_total,
-                    reasons=[],
-                ),
-            )
-        )
     focus = build_today_focus(
-        peers=ranked_peers,
         threads=needs_follow_up,
         ideas=idea_candidates,
-        opportunities=opps,
         now=now,
-        opportunity_limit=limit,
     )
     return focus, snapshot
 
@@ -2345,10 +2246,6 @@ def connect_daily(
             "conversations_needing_follow_up": [
                 t.model_dump(mode="json") for t in focus["conversations"]["items"]
             ],
-            "peers": [rp.profile.model_dump(mode="json") for rp in focus["peers"]["items"]],
-            "opportunities": [
-                o.model_dump(mode="json") for o in focus["opportunities"]["items"]
-            ],
             "idea_candidates": [
                 j.model_dump(mode="json") for j in focus["ideas"]["items"]
             ],
@@ -2379,9 +2276,6 @@ def connect_daily(
             ]
         shown_entries = []
     # D10：仅文本前台实际输出时记录曝光；首页只记实际展示的人物，浏览记全部展开条目。
-    _record_presentations(
-        ws, snapshot.id, [o.id for o in focus["opportunities"]["items"]]
-    )
     _record_person_presentations(
         ws,
         snapshot.id,

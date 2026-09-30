@@ -6,8 +6,6 @@ from typing import TypedDict
 from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.conversations.models import ConversationThread
 from finch.conversations.service import ConversationService
-from finch.engagement.flow import RankedPeer
-from finch.engagement.models import Opportunity
 from finch.inbox.models import InboxTrack
 from finch.inbox.service import list_items
 from finch.storage.repositories import (
@@ -85,37 +83,20 @@ class TodayFocus(TypedDict):
     """今日聚焦投影（确定性，无 LLM）。"""
 
     conversations: FocusSection[ConversationThread]
-    peers: FocusSection[RankedPeer]
-    opportunities: FocusSection[Opportunity]
     ideas: FocusSection[ContentJob]
 
 
 def build_today_focus(
     *,
-    peers: list[RankedPeer],
     threads: list[ConversationThread],
     ideas: list[ContentJob],
-    opportunities: list[Opportunity] | None = None,
     now: datetime | None = None,
-    opportunity_limit: int = 10,
 ) -> TodayFocus:
-    """确定性「今日聚焦」投影：对话区独立；新发现机会 8–12；无草稿浏览列表。"""
+    """确定性「今日聚焦」投影：对话区独立；无草稿浏览列表。"""
     now = now or datetime.now(UTC)
     conv_sorted = sorted(threads, key=lambda t: _thread_overdue_key(t, now))
-    peer_sorted = sorted(peers, key=lambda rp: (-rp.value.total, rp.profile.id))
-    opp_list = opportunities if opportunities is not None else []
-    if not opp_list:
-        # Rebuild from repo is caller's job; empty means none.
-        opp_sorted: list[Opportunity] = []
-    else:
-        opp_sorted = sorted(opp_list, key=lambda o: (-o.score_total, o.id))
     idea_sorted = sorted(ideas, key=lambda j: (not _position_complete(j), j.id))
     return {
         "conversations": {"items": conv_sorted[:2], "total": len(conv_sorted)},
-        "peers": {"items": peer_sorted[:opportunity_limit], "total": len(peer_sorted)},
-        "opportunities": {
-            "items": opp_sorted[:opportunity_limit],
-            "total": len(opp_sorted),
-        },
         "ideas": {"items": idea_sorted[:1], "total": len(idea_sorted)},
     }
