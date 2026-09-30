@@ -206,7 +206,7 @@ def test_snapshot_persists_opportunity_assessments(tmp_path: Path):
 
 
 def test_opportunity_assess_soft_stops_on_discovery_deadline(tmp_path: Path, monkeypatch):
-    """发现时限耗尽时首选评估 soft-stop，不继续调 LLM。"""
+    """评估时限耗尽时首选评估 soft-stop，不继续调 LLM。"""
     import time
 
     from finch.opportunities import discover as discover_mod
@@ -234,7 +234,7 @@ def test_opportunity_assess_soft_stops_on_discovery_deadline(tmp_path: Path, mon
     settings.discovery.discovery_deadline_seconds = 1
     settings.discovery.daily_people.opportunity_assess_limit = 5
 
-    # 第 1 次 monotonic = started_at；之后的检查一律超时。
+    # 评估循环内第 1 次 monotonic = assess_started；之后的检查一律超时。
     mono_calls = {"n": 0}
 
     def fake_monotonic() -> float:

@@ -2143,6 +2143,9 @@ def _persist_discovery(
     preferred_opportunity_id = (
         latest.preferred_opportunity_id if latest is not None else ""
     )
+    opportunity_assessments = (
+        list(latest.opportunity_assessments) if latest is not None else []
+    )
     plan_id = latest.plan_id if latest is not None else ""
     plan_summary = latest.plan_summary if latest is not None else {}
     ranking_version = latest.ranking_version if latest is not None else "1"
@@ -2168,6 +2171,7 @@ def _persist_discovery(
         recommendation_shortfall=recommendation_shortfall,
         home_person_ids=home_person_ids,
         preferred_opportunity_id=preferred_opportunity_id,
+        opportunity_assessments=opportunity_assessments,
     )
     DiscoverySnapshotRepository(ws).upsert(snapshot)
     return snapshot

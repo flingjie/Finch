@@ -856,6 +856,48 @@ def test_persist_discovery_preserves_plan_fields(tmp_path):
     assert out.ranking_version == "people-first-1"
 
 
+def test_persist_discovery_preserves_opportunity_assessments(tmp_path):
+    """_persist_discovery 不得清空 run_daily_discovery 已写入的评估覆盖。"""
+    from finch.engagement.models import (
+        DiscoverySnapshot,
+        OpportunityAssessmentEntry,
+    )
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    assessments = [
+        OpportunityAssessmentEntry(
+            person_id="person_a",
+            outcome="skipped",
+            reason="发现运行时限已到，未继续评估",
+            fingerprint="fp1",
+        ),
+        OpportunityAssessmentEntry(
+            person_id="person_b",
+            outcome="recommended",
+            reason="",
+            opportunity_id="opp_1",
+            fingerprint="fp2",
+        ),
+    ]
+    DiscoverySnapshotRepository(ws).upsert(
+        DiscoverySnapshot(
+            id="daily_test",
+            created_at=datetime.now(UTC),
+            context_fingerprint="cfg",
+            preferred_opportunity_id="opp_1",
+            opportunity_assessments=assessments,
+        )
+    )
+    out = cli._persist_discovery(ws, _daily_result())
+    assert out is not None
+    assert out.preferred_opportunity_id == "opp_1"
+    assert len(out.opportunity_assessments) == 2
+    assert out.opportunity_assessments[0].reason == "发现运行时限已到，未继续评估"
+    assert out.opportunity_assessments[1].opportunity_id == "opp_1"
+
+
 def test_lookback_hours_parses_and_rejects():
     import typer
 

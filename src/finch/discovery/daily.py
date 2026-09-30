@@ -269,8 +269,6 @@ def run_daily_discovery(
     plan = build_discovery_plan(settings, lookback_hours=lookback_hours, intent=question)
     result = DailyDiscoveryResult(run_id=run_id)
     metrics = RunMetrics()
-    started_at = time.monotonic()
-    deadline_seconds = max(1, settings.discovery.discovery_deadline_seconds)
 
     gw = gateway or OpenCliGateway(profile=settings.opencli.profile)
     orch = DiscoveryOrchestrator(ws, gateway=gw)
@@ -346,7 +344,8 @@ def run_daily_discovery(
     )
     metrics.recommended_count = recs.total
 
-    # 首选机会（新聚合）：在预算与发现时限内评估少量 priority 候选。
+    # 首选机会（新聚合）：在评估时限内评估少量 priority 候选。
+    # 时限从评估循环起算（不含 sync/证据 LLM），避免抓取耗尽预算后永远评不到首选。
     result.preferred_opportunity = None
     if runner is not None and recs.priority:
         assess_limit = max(
@@ -354,8 +353,10 @@ def run_daily_discovery(
         )
         skip_repo = SkipAssessmentRepository(ws)
         opp_service = OpportunityService(OppAggregateRepository(ws))
+        assess_started = time.monotonic()
+        deadline_seconds = max(1, settings.discovery.discovery_deadline_seconds)
         for rec in recs.priority[:assess_limit]:
-            if time.monotonic() - started_at >= deadline_seconds:
+            if time.monotonic() - assess_started >= deadline_seconds:
                 result.opportunity_assessments.append(
                     OpportunityAssessment(
                         person_id=rec.candidate.person_id,

@@ -347,8 +347,8 @@ class DiscoverySettings(BaseModel):
 
     ``lookback_hours`` / ``freshness_boost_hours`` / ``nominate_limit`` 是连接雷达的
     顶层窗口与预算（P1）；``daily_people`` 仍是分层推荐预算的兼容容器。
-    ``discovery_deadline_seconds`` 是整轮发现软时限（规范 §13）：到时交付已有结果，
-    不伪造完整结论；首选评估循环在时限内 soft-stop。
+    ``discovery_deadline_seconds`` 是首选机会评估循环的软时限（规范 §13）：从评估
+    开始起算（不含 sync / 证据 LLM），到时交付已有结果，不伪造完整结论。
     """
 
     daily_people: DailyPeopleSettings = Field(default_factory=DailyPeopleSettings)
