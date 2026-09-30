@@ -2,12 +2,13 @@
 
 把已确认的 ``ContentJob``（idea 候选）生成统一 ``Draft``：加载 job → ``require_confirmed``
 语义 → ``draft_generation_key`` 幂等命中 → 生成正文（只依据 job 语境，不搜索新来源、
-不绑定证据卡）→ Critic（6 检查器，Safety 硬门禁）→ 有限 rewrite → 落库 ``Draft`` +
-``CriticReport``。
+不绑定证据卡）→ Critic（类型自适应检查器套件，Safety 硬门禁）→ 有限 rewrite → 落库
+``Draft`` + ``CriticReport``。
 
 本模块是纯领域服务：只依赖注入的仓储与 runner，不直接访问 DB、不做自动重试、
-不自动发布。idea 候选没有证据卡，故复用 ``idea`` 流的 Critic 套件（``idea_checker_suite``，
-去掉 EvidenceChecker），而不是证据绑定的 ``default_checker_suite``。
+不自动发布。Critic 套件按 job 的内容类型选择（``checker_suite_for(content_type_for(job))``），
+去掉强制绑定个人项目的 PortabilityChecker 与强制 decision/tradeoff 的 DecisionChecker，
+安全 hard-fail（SafetyChecker）对所有类型恒开。
 
 幂等：``draft_generation_key`` 由 (idea 指纹, idea-to-draft 版本, 格式, voice 版本)
 的 sha256 决定，同一 idea + 同一生成配置重复创建时命中同一 ``draft_id``，返回已存在的
@@ -21,12 +22,13 @@ from pydantic import BaseModel, Field
 from finch.codex.runner import CodexRunner
 from finch.content.checkers.aggregate import AggregateOutcome, aggregate_checks
 from finch.content.checkers.base import CheckContext, CheckResult
+from finch.content.checkers.suites import checker_suite_for, content_type_for
 from finch.content.critic import _run_checks
 from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.content.models import Draft
 from finch.content.voice import VoiceProfile
 from finch.content.writer import write_original_from_job
-from finch.idea.service import idea_checker_suite, rewrite_idea
+from finch.idea.service import rewrite_idea
 from finch.settings import QualityGates
 from finch.storage.repositories import (
     ContentJobRepository,
@@ -159,18 +161,23 @@ class DraftService:
         version: str,
         format: str,
         voice_version: str,
+        allow_unconfirmed: bool = False,
     ) -> Draft:
-        """从已确认 idea 生成 Draft（幂等）：未确认抛 ValueError，命中已有 Draft 直接返回。
+        """从 idea 生成 Draft（幂等）：默认未确认抛 ValueError，命中已有 Draft 直接返回。
+
+        ``allow_unconfirmed=True`` 用于「直接写作」短路：用户明确要求把一段文本写成草稿时，
+        允许从 PROPOSED（甚至无 author_position）的 job 直接起草，草稿仍是「待审」制品，
+        AuthorPosition 保持 proposed，不自动确认立场。
 
         生成正文只依据 job 语境（``write_original_from_job``，不搜索新来源、不绑定证据卡）；
-        Critic 用 6 检查器套件（去掉 EvidenceChecker），有限 rewrite 至多
-        ``max_rewrite_rounds`` 轮。``pass`` 或 rewrite 用尽 → 落库并返回最终 Draft；
-        ``reject``（hard_fail）/``needs_input`` → 丢弃（抛 ValueError，fail-closed）。
+        Critic 用类型自适应检查器套件（``checker_suite_for(content_type_for(job))``），
+        有限 rewrite 至多 ``max_rewrite_rounds`` 轮。``pass`` 或 rewrite 用尽 → 落库并返回
+        最终 Draft；``reject``（hard_fail）/``needs_input`` → 丢弃（抛 ValueError，fail-closed）。
         """
         job = self.jobs.get_job(idea_id)
         if job is None:
             raise KeyError(idea_id)
-        if job.status != ContentJobStatus.CONFIRMED:
+        if job.status != ContentJobStatus.CONFIRMED and not allow_unconfirmed:
             raise ValueError(
                 f"idea {idea_id} needs_confirmation (status={job.status.value})"
             )
@@ -192,13 +199,18 @@ class DraftService:
         version: str,
         format: str,
         voice_version: str,
+        allow_unconfirmed: bool = False,
     ) -> DraftCreateResult:
         """``create`` + 从 Critic 报告派生审核元数据（缓存命中与新建路径都可用）。
 
         ``outcome`` 取最后一轮报告的 ``outcome``；无报告（遗留草稿）时为 ``"unknown"``。
         """
         draft = self.create(
-            idea_id, version=version, format=format, voice_version=voice_version
+            idea_id,
+            version=version,
+            format=format,
+            voice_version=voice_version,
+            allow_unconfirmed=allow_unconfirmed,
         )
         reports = self.critic_reports.list_reports(draft.id)
         outcome = reports[-1]["outcome"] if reports else "unknown"
@@ -216,7 +228,7 @@ class DraftService:
 
     def _critic_loop(self, draft: Draft, job: ContentJob, draft_id: str) -> Draft:
         """Critic + 有限 rewrite：逐轮写 CriticReport，pass/rewrite 用尽保留，硬失败丢弃。"""
-        suite = idea_checker_suite(self.runner, self.voice_profile)
+        suite = checker_suite_for(content_type_for(job), self.runner, self.voice_profile)
         current = draft
         for round_no in range(self.max_rewrite_rounds + 1):
             checks = _run_checks(suite, CheckContext(draft=current, cards=[], job=job))

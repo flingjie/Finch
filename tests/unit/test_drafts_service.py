@@ -229,6 +229,36 @@ def test_create_raises_when_unconfirmed():
     assert "idea_abc123" in str(excinfo.value)
 
 
+def test_create_drafts_unconfirmed_job_when_flagged():
+    runner = FakeRunner()
+    svc, drafts, _ = _service(_idea(status=ContentJobStatus.PROPOSED), runner)
+    draft = svc.create(
+        "idea_abc123",
+        version="1.0.0",
+        format="original",
+        voice_version="1.0.0",
+        allow_unconfirmed=True,
+    )
+    assert draft.id.startswith("draft_")
+    assert drafts.get_draft(draft.id) == draft
+
+
+def test_create_drafts_job_without_author_position_keeps_empty_statement():
+    runner = FakeRunner()
+    svc, _, _ = _service(
+        _idea(author_position=None, status=ContentJobStatus.PROPOSED), runner
+    )
+    draft = svc.create(
+        "idea_abc123",
+        version="1.0.0",
+        format="original",
+        voice_version="1.0.0",
+        allow_unconfirmed=True,
+    )
+    assert draft.position_statement == ""
+    assert draft.claims == []
+
+
 # ---- create: 幂等 ----
 
 def test_create_is_idempotent_no_second_llm_call():

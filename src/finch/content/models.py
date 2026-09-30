@@ -35,6 +35,21 @@ def draft_kind_for(fmt: RecommendedFormat) -> DraftKind:
     return DraftKind.ORIGINAL
 
 
+class ContentType(StrEnum):
+    """草稿内容类型（规范 §7.2）：决定 Critic 检查器组合与措辞规则。
+
+    与 ``RecommendedFormat``（发布形式）正交：同一形式可承载不同内容类型，
+    同一内容类型也可用不同形式表达。``content_type_for`` 从 job 显式字段或
+    recommended_format + intent 推导；未显式指定时默认 concept_explanation。
+    """
+
+    CONCEPT_EXPLANATION = "concept_explanation"
+    METHOD_CARD = "method_card"
+    EXPERIENCE_RETROSPECTIVE = "experience_retrospective"
+    DISCUSSION_REPLY = "discussion_reply"
+    EXPLORATION_HYPOTHESIS = "exploration_hypothesis"
+
+
 class ClaimRef(BaseModel):
     statement: str
     evidence_card_id: str

@@ -1240,6 +1240,55 @@ def drafts_create(
             typer.echo(_render_run_details(result))
 
 
+@drafts_app.command("write")
+def drafts_write(
+    text: str = typer.Argument(..., help="要写成草稿的文本"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """把一段文本直接写成草稿（直接写作短路：不强制先确认立场，草稿仍为待审）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    try:
+        idea = FragmentService(runner).from_text(text)
+        job = IdeaService(ContentJobRepository(ws)).create_candidate(idea)
+    except (RuntimeError, StructuredOutputError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    service = DraftService(
+        DraftRepository(ws),
+        CriticReportRepository(ws),
+        ContentJobRepository(ws),
+        runner,
+        max_rewrite_rounds=settings.quality_gates.max_rewrite_rounds,
+        voice_profile=load_voice_profile(settings.paths.voice_profile_path),
+    )
+    try:
+        result = service.create_result(
+            job.id,
+            version="1.0.0",
+            format="original",
+            voice_version="1.0.0",
+            allow_unconfirmed=True,
+        )
+    except (KeyError, ValueError, RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        payload = {
+            "draft_id": result.draft.id,
+            "idea_id": job.id,
+            "status": "drafted",
+            "body": result.draft.body,
+            "critic_rounds": result.critic_rounds,
+            "outcome": result.outcome,
+        }
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(_render_draft_result(result))
+
+
 @drafts_app.command("show")
 def drafts_show(
     draft_id: str = typer.Argument(..., help="draft id"),
