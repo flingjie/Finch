@@ -49,6 +49,7 @@ Finch 是一个**跨行业连接与灵感助理**：帮你发现不同领域中�
 | `ConversationThread` | 关系领域 | 同一同行、同一主题的多次互动串联；问题/workaround/使用反馈以线程笔记形式挂在线索上（必填 `source_ref`）；跟进由新回复/承诺到期/新证据/相关更新触发，时间陈旧 alone 不触发对外联系。重要关系周期回顾默认关闭、用户主动开启。 |
 | `ContentJob` | 表达领域 | 只表达用户自己的立场（`AuthorPosition` + `position_revisions` append-only；草稿 ≠ 观点已证实）。来源：个人实践、已发生的对话、用户输入。 |
 | `VoiceProfile` | 表达领域 | 只从用户亲写文本、明确批准样本、用户修改后的最终版本更新；不因发现或试用反馈自动调整。 |
+| `PracticeProfile` | 表达 / 关系共用 | 用户亲自确认的真实实践清单（`practice-profile.yaml`）。只有 `confirmed: true` 的条目可被机会评估的 `why_me` 挂钩、被贡献正文以第一人称引用（带 `[id]`，不越 `boundaries`）。`init` 起草 ≠ 已确认；不因发现或反馈自动更新。 |
 
 **三条铁律：**
 

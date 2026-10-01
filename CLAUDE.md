@@ -18,7 +18,7 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (typer sub-apps / commands): `finch connect ...` (today / daily / person / record-presented / prepare / feedback / assess / artifact-status), `finch connections ...` (today / record / follow-up), `finch peers ...` (list / show / get), `finch people shortlist` (`--today` 今日承诺面，等同 `connections today`；`--all` 全部线索), `finch conversations ...` (list / show / get / follow-up / ingest / note / commit / experiment / mark-important / defer / close), `finch dialogue ...` (save / search / show / forget), `finch ideas ...` (commit / create / choose / list / show / confirm / revise-position / skip), `finch inspirations ...` (save / list / show / note / archive), `finch community ...` (context / save / inspect / feedback / list / run / runs / run-trace), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / write / show / revise), `finch review ...` (list / show / approve / revise / skip / weekly), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch sources ...` (doctor / sync；twitter|reddit|github|v2ex|weixin|xiaohongshu), `finch collisions ...` (generate / weekly), `finch experiments start`, `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
+CLI surface (typer sub-apps / commands): `finch connect ...` (today / daily / person / record-presented / prepare / feedback / assess / artifact-status), `finch connections ...` (today / record / follow-up), `finch peers ...` (list / show / get), `finch people shortlist` (`--today` 今日承诺面，等同 `connections today`；`--all` 全部线索), `finch conversations ...` (list / show / get / follow-up / ingest / note / commit / experiment / mark-important / defer / close), `finch dialogue ...` (save / search / show / forget), `finch ideas ...` (commit / create / choose / list / show / confirm / revise-position / skip), `finch inspirations ...` (save / list / show / note / archive), `finch community ...` (context / save / inspect / feedback / list / run / runs / run-trace), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / write / show / revise), `finch review ...` (list / show / approve / revise / skip / weekly), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch profile ...` (show / confirm / revoke / add / init — 用户已确认的真实实践，注入机会评估与贡献制作), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch sources ...` (doctor / sync；twitter|reddit|github|v2ex|weixin|xiaohongshu), `finch collisions ...` (generate / weekly), `finch experiments start`, `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
 
 ## Architecture
 
@@ -60,6 +60,7 @@ src/finch/
   ideas/          IdeaService（ContentJob + position_revisions）、CommitService、FragmentService
   drafts/         DraftService（已确认观点 → Draft + CriticReport，幂等，不自动发布）
   practice/       PracticeService（expression-practice 会话）
+ profile/        PracticeProfile（practice-profile.yaml；只有 confirmed 条目进入 prompt；finch profile）
   idea/           finch drafts 复用的纯函数：rewrite_idea / idea_checker_suite
   content/        ContentJob + AuthorPosition（作者立场状态机）、writer、critic 检查器、voice profile
   communities/    CommunityProfile / CommunityFeedback（community-scout 的薄持久化，无评分）
@@ -96,6 +97,7 @@ Key files: `opportunities/models.py`（Opportunity + Artifact）→ `assess.py` 
 - **Evidence first** — never generate a post directly from a commit; always Commit → EngineeringEvent → EvidenceCard → Draft.
 - **No auto-publish** — `gh` and `opencli` adapters are read-only (opencli has a write-command denylist). Public replies/quotes require human approval; `guard.evaluate_execution` returns `rejected`/`unknown` (never success) unless approved and verified.
 - **External ≠ evidence** — searched posts (`ExternalPost`) can never become personal evidence; only verified `ConversationEvidence` may promote, via `promote_to_personal`.
+- **Confirmed practices only** — first-person experience in contributions may only cite `confirmed: true` items from `practice-profile.yaml`, by `[id]`, within their `boundaries`.
 - **Deterministic totals** — weighted/summary scores are computed in code; LLM output never carries a `total`.
 - **Subprocess discipline** — args as arrays (no shell string concat), per-call timeouts, JSON output validated through Pydantic.
 

@@ -43,3 +43,4 @@
 - `src/finch/collisions/` 跨领域碰撞与一周小实验
 - `src/finch/communities/` 社区档案与反馈（无评分）
 - `src/finch/ideas/` `src/finch/drafts/` 观点与草稿
+- `src/finch/profile/` 用户已确认真实实践（practice-profile.yaml；finch profile）
