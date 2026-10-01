@@ -160,10 +160,8 @@ def test_run_daily_skips_network_with_seeded_artifacts(tmp_path: Path):
     assert len(result.recommendations.priority) >= 1 or result.engagement.posts_found >= 2
 
 
-def test_snapshot_persists_opportunity_assessments(tmp_path: Path):
-    """首选评估覆盖写入 DiscoverySnapshot，非刷新可读。"""
-    from finch.storage.repositories import DiscoverySnapshotRepository
-
+def _seed_priority_candidate_settings(tmp_path: Path) -> Settings:
+    """Seed alice's artifacts (priority candidate) and return matching Settings."""
     ws = Workspace(tmp_path)
     ws.ensure()
     arts = [
@@ -182,6 +180,28 @@ def test_snapshot_persists_opportunity_assessments(tmp_path: Path):
         interests={"practice_refs": ["practice:1"], "long_term_interests": ["agents"]},  # type: ignore[arg-type]
     )
     settings.paths.var_dir = tmp_path
+    return settings
+
+
+class _PromptCapturingRunner(_FakeRunner):
+    def __init__(self) -> None:
+        self.last_prompt: str | None = None
+
+    def run(self, prompt: str, output_model: type[BaseModel], *, timeout: float = 600.0):
+        from finch.opportunities.assess import OpportunityDraft
+
+        if output_model is OpportunityDraft:
+            self.last_prompt = prompt
+            return OpportunityDraft(recommend=False, skip_reason="t")
+        return super().run(prompt, output_model, timeout=timeout)
+
+
+def test_snapshot_persists_opportunity_assessments(tmp_path: Path):
+    """首选评估覆盖写入 DiscoverySnapshot，非刷新可读。"""
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    ws = Workspace(tmp_path)
+    settings = _seed_priority_candidate_settings(tmp_path)
 
     def fake_run(argv, timeout):
         return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
@@ -203,6 +223,36 @@ def test_snapshot_persists_opportunity_assessments(tmp_path: Path):
     assert snap.opportunity_assessments[0].outcome == "recommended"
     assert snap.opportunity_assessments[0].opportunity_id == result.preferred_opportunity.id
     assert snap.opportunity_assessments[0].fingerprint
+
+
+def test_daily_discovery_passes_confirmed_practices_to_assessor(tmp_path: Path):
+    profile_path = tmp_path / "practice-profile.yaml"
+    profile_path.write_text(
+        "items:\n"
+        "  - id: agent-100-days\n"
+        "    domain: agent engineering\n"
+        "    claim: 100 天路径\n"
+        "    evidence_refs: [https://github.com/flingjie/Agent-100-Days]\n"
+        "    status: sourced\n"
+        "    confirmed: true\n"
+    )
+    settings = _seed_priority_candidate_settings(tmp_path)
+    settings.paths.practice_profile_path = profile_path
+    runner = _PromptCapturingRunner()
+
+    def fake_run(argv, timeout):
+        return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+    run_daily_discovery(
+        settings,
+        runner=runner,
+        gateway=OpenCliGateway(run_fn=fake_run),
+        skip_sync=True,
+    )
+    # 模板示例里也含 "[agent-100-days]"，故断言渲染后的完整条目行。
+    assert "- [agent-100-days] (sourced) agent engineering: 100 天路径" in (
+        runner.last_prompt or ""
+    )
 
 
 def test_opportunity_assess_soft_stops_on_discovery_deadline(tmp_path: Path, monkeypatch):

@@ -84,6 +84,8 @@ from .opportunities.service import OpportunityService
 from .peers.models import PeerProfile
 from .peers.service import PeerService, profile_url_for
 from .practice.service import PracticeService
+from .profile.models import load_practice_profile
+from .profile.render import render_user_practices
 from .projections import (
     TodayFocus,
     build_daily_context,
@@ -2717,11 +2719,15 @@ def connect_assess(
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    user_practices = render_user_practices(
+        load_practice_profile(settings.paths.practice_profile_path)
+    )
     result = assess_from_url(
         url=url,
         runner=runner,
         service=OpportunityService(PreferredOpportunityRepository(ws)),
         user_context=question,
+        user_practices=user_practices,
         person_ref=person or None,
     )
     if as_json:

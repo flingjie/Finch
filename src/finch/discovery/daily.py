@@ -33,6 +33,8 @@ from finch.peers.recommendations import (
 )
 from finch.peers.scoring import score_person
 from finch.peers.shortlist import ShortlistCandidate
+from finch.profile.models import load_practice_profile
+from finch.profile.render import render_user_practices
 from finch.settings import Settings
 from finch.sources.models import RawArtifact
 from finch.sources.opencli_gateway import OpenCliGateway
@@ -267,6 +269,9 @@ def run_daily_discovery(
     now = datetime.now(UTC)
     run_id = f"daily_{now.strftime('%Y%m%d%H%M%S')}"
     plan = build_discovery_plan(settings, lookback_hours=lookback_hours, intent=question)
+    user_practices = render_user_practices(
+        load_practice_profile(settings.paths.practice_profile_path)
+    )
     result = DailyDiscoveryResult(run_id=run_id)
     metrics = RunMetrics()
 
@@ -382,6 +387,7 @@ def run_daily_discovery(
                 artifacts=arts,
                 service=opp_service,
                 user_context=question or plan.ranking_question or "",
+                user_practices=user_practices,
                 skips=skip_repo,
             )
             result.opportunity_assessments.append(
