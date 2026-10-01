@@ -46,7 +46,8 @@
 
 ## 3. 数据模型
 
-新增 `src/finch/practice/`（与 `content/voice.py` 同范式：Pydantic 模型 + YAML 加载器）。
+新增 `src/finch/profile/`（与 `content/voice.py` 同范式：Pydantic 模型 + YAML 加载器）。
+注：`src/finch/practice/` 已被 expression-practice 的 `PracticeService` 占用，故模块名用 `profile`，与 CLI `finch profile` 对齐。
 
 ```python
 class PracticeEvidenceStatus(StrEnum):
@@ -102,11 +103,11 @@ items:
 
 ## 4. 接入点
 
-所有读取点只消费 `confirmed_items()`；空画像时 prompt 文本与现状**逐字一致**（回归保护）。
+所有读取点只消费 `confirmed_items()`；空画像时新增的 prompt 块渲染为 `(none)`，其余 prompt 文本与现状一致（回归保护）。
 
 ### 4.1 渲染函数（三处共用）
 
-`src/finch/practice/render.py::render_user_practices(profile) -> str`，空画像返回 `"(none)"`：
+`src/finch/profile/render.py::render_user_practices(profile) -> str`，空画像返回 `"(none)"`：
 
 ```
 - [agent-100-days] (sourced) agent engineering / teaching: 把 2024 至今 Agent 落地失败整理成 100 天路径
