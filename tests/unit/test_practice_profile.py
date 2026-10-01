@@ -1,5 +1,7 @@
 """Tests for PracticeProfile models + YAML load/save (用户真实实践画像)."""
 
+from pathlib import Path
+
 import yaml
 
 from finch.profile.models import (
@@ -10,6 +12,13 @@ from finch.profile.models import (
     save_practice_profile,
 )
 from finch.profile.render import render_user_practices
+from finch.settings import Paths, Settings
+
+
+def test_settings_default_practice_profile_path():
+    assert Paths().practice_profile_path == Path("practice-profile.yaml")
+    s = Settings(paths=Paths(practice_profile_path=Path("/tmp/x.yaml")))
+    assert s.paths.practice_profile_path == Path("/tmp/x.yaml")
 
 
 def _item(**kw) -> PracticeItem:

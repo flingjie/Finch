@@ -6,13 +6,18 @@
 # List explicit repositories as `owner/name`. Leave empty to use repository_discovery.
 # repositories:
 #   - your-org/your-repo
-#   - your-org/another-repo
+#   - flingjie/Agent-100-Days
+#   - flingjie/InvestAI
 repositories: []
 
 repository_discovery:
   enabled: true
   lookback_hours: 24
   max_repos: 10
+
+paths:
+  # 用户真实实践清单（finch profile ...）；只有 confirmed: true 的条目进入机会评估与贡献制作。
+  practice_profile_path: practice-profile.yaml
 
 opencli:
   profile: work
@@ -172,6 +177,13 @@ interests:
     - AI news
     - funding and valuation
     - evidence-free model rankings
+
+  # 存在非空 practice-profile.yaml 时忽略此项（community-scout 改读画像中 confirmed 条目的 evidence_refs）。
+  practice_refs:
+    - flingjie/Finch
+    - flingjie/FDE-Gym
+    - flingjie/builderDNA
+    - flingjie/skills
 
 # api_key is read from LLM_API_KEY in .env; do not commit secrets here.
 llm:

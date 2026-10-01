@@ -14,6 +14,9 @@ class Paths(BaseModel):
     inbox_dir: Path = Field(default_factory=lambda: Path("var/inbox"))
     cache_dir: Path = Field(default_factory=lambda: Path("var/cache"))
     voice_profile_path: Path = Field(default_factory=lambda: Path("voice-profile.yaml"))
+    practice_profile_path: Path = Field(
+        default_factory=lambda: Path("practice-profile.yaml")
+    )
     local_repos_dirs: list[Path] = Field(
         default_factory=lambda: [Path.home() / "underway"]
     )
