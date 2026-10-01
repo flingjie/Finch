@@ -327,3 +327,102 @@ def test_legacy_opportunity_yaml_without_reactions_loads(ws):
     assert loaded is not None
     assert isinstance(loaded, Opportunity)
     assert loaded.reactions == []
+
+
+def test_record_reaction_appends_seq_and_event(ws, service):
+    service.create(opportunity_id="opp_abc", topic="t", proposal=_proposal())
+    opp = service.record_reaction("opp_abc", text="  我当时最难的是不知道任务跑没跑  ")
+    assert [r.seq for r in opp.reactions] == [1]
+    assert opp.reactions[0].text == "我当时最难的是不知道任务跑没跑"
+    assert opp.revision == 2
+    assert opp.status == OpportunityStatus.PROPOSED  # 不改状态
+
+    opp = service.record_reaction("opp_abc", text="后来我们加了幂等键")
+    assert [r.seq for r in opp.reactions] == [1, 2]
+    assert opp.revision == 3
+
+    events = OpportunityRepository(ws).list_events("opp_abc")
+    assert [e.event_type for e in events] == [
+        "proposed",
+        "reaction_recorded",
+        "reaction_recorded",
+    ]
+    assert events[1].expected_revision == 1
+    assert events[2].expected_revision == 2
+
+
+def test_record_reaction_rejects_blank_text(service):
+    service.create(opportunity_id="opp_abc", topic="t")
+    with pytest.raises(ValueError, match="blank"):
+        service.record_reaction("opp_abc", text="   ")
+
+
+def test_record_reaction_rejects_closed(service):
+    service.create(opportunity_id="opp_abc", topic="t")
+    service.close("opp_abc")
+    with pytest.raises(ValueError, match="closed"):
+        service.record_reaction("opp_abc", text="x")
+
+
+def test_record_reaction_allowed_in_selected_ready_parked(service):
+    service.create(opportunity_id="opp_abc", topic="t")
+    service.select("opp_abc")
+    assert service.record_reaction("opp_abc", text="a").reactions[-1].seq == 1
+    service.mark_ready("opp_abc")
+    assert service.record_reaction("opp_abc", text="b").reactions[-1].seq == 2
+    service.select("opp_abc")
+    service.park("opp_abc")
+    assert service.record_reaction("opp_abc", text="c").reactions[-1].seq == 3
+
+
+def test_record_reaction_unknown_opportunity_raises(service):
+    with pytest.raises(KeyError):
+        service.record_reaction("nope", text="x")
+
+
+def test_record_reaction_same_text_is_content_idempotent(ws, service):
+    """LLM 失败后重跑同一条命令不重复记录。"""
+    service.create(opportunity_id="opp_abc", topic="t")
+    first = service.record_reaction("opp_abc", text="同一句话")
+    second = service.record_reaction("opp_abc", text=" 同一句话 ")
+    assert second == first
+    assert len(second.reactions) == 1
+    events = OpportunityRepository(ws).list_events("opp_abc")
+    assert [e.event_type for e in events].count("reaction_recorded") == 1
+
+
+def test_record_reaction_expected_revision_conflict(service):
+    service.create(opportunity_id="opp_abc", topic="t")
+    with pytest.raises(OpportunityConflictError):
+        service.record_reaction("opp_abc", text="x", expected_revision=999)
+    opp = service.record_reaction("opp_abc", text="x", expected_revision=1)
+    assert opp.revision == 2
+
+
+def test_record_reaction_request_id_is_idempotent(ws, service):
+    service.create(opportunity_id="opp_abc", topic="t")
+    first = service.record_reaction("opp_abc", text="x", request_id="req_r1")
+    second = service.record_reaction("opp_abc", text="y", request_id="req_r1")
+    assert second == first
+    assert len(second.reactions) == 1
+    events = OpportunityRepository(ws).list_events("opp_abc")
+    assert [e.request_id for e in events] == [None, "req_r1"]
+
+
+def test_record_reaction_replays_stale_snapshot_after_crash(ws, service):
+    """事件已落盘、快照未推进 → 同 request_id 重放修复快照，不重复事件。"""
+    service.create(opportunity_id="opp_abc", topic="t")
+    service.repo.append_event(
+        OpportunityEvent(
+            event_id="opp_abc:r2",
+            opportunity_id="opp_abc",
+            event_type="reaction_recorded",
+            expected_revision=1,
+            request_id="req_r1",
+        )
+    )
+    opp = service.record_reaction("opp_abc", text="x", request_id="req_r1")
+    assert opp.revision == 2
+    assert [r.text for r in opp.reactions] == ["x"]
+    events = OpportunityRepository(ws).list_events("opp_abc")
+    assert [e.event_type for e in events].count("reaction_recorded") == 1

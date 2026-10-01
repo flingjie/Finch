@@ -21,6 +21,7 @@ from finch.opportunities.models import (
     OpportunityEvent,
     OpportunityStatus,
     Proposal,
+    Reaction,
 )
 from finch.opportunities.repository import ArtifactRepository, OpportunityRepository
 
@@ -222,6 +223,62 @@ class OpportunityService:
             )
             self.repo.save(new_opp)
             return new_art
+
+    def record_reaction(
+        self,
+        opportunity_id: str,
+        *,
+        text: str,
+        expected_revision: int | None = None,
+        request_id: str | None = None,
+    ) -> Opportunity:
+        """记录用户对这条机会亲口说的话（append-only；不改状态）。
+
+        - 空白文本拒绝；closed 拒绝（其余四态允许）。
+        - 内容幂等：与最新一条 text 相同 → 不追加、不写事件（LLM 失败后重跑不重复记录）。
+        - ``request_id`` 幂等与崩溃重放逻辑与 ``_transition`` 相同。
+        """
+        cleaned = text.strip()
+        if not cleaned:
+            raise ValueError("reaction text must not be blank")
+        with self.repo.locked(opportunity_id):
+            opp = self.repo.get(opportunity_id)
+            if opp is None:
+                raise KeyError(opportunity_id)
+            if request_id is not None:
+                applied = self._applied_event(opportunity_id, request_id)
+                if applied is not None and opp.revision > applied.expected_revision:
+                    return opp
+            if opp.status == OpportunityStatus.CLOSED:
+                raise ValueError(
+                    f"cannot record reaction on closed opportunity {opportunity_id}"
+                )
+            if expected_revision is not None and expected_revision != opp.revision:
+                raise OpportunityConflictError(
+                    f"revision conflict: expected {expected_revision}, "
+                    f"current {opp.revision}"
+                )
+            if opp.reactions and opp.reactions[-1].text == cleaned:
+                return opp
+            reaction = Reaction(seq=len(opp.reactions) + 1, text=cleaned)
+            new_opp = opp.model_copy(
+                update={
+                    "reactions": [*opp.reactions, reaction],
+                    "revision": opp.revision + 1,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+            self.repo.append_event(
+                OpportunityEvent(
+                    event_id=f"{opportunity_id}:r{new_opp.revision}",
+                    opportunity_id=opportunity_id,
+                    event_type="reaction_recorded",
+                    expected_revision=opp.revision,
+                    request_id=request_id,
+                )
+            )
+            self.repo.save(new_opp)
+            return new_opp
 
     def select(
         self,
