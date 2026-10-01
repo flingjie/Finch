@@ -46,6 +46,15 @@ def test_load_corrupt_yaml_returns_empty(tmp_path, capsys):
     assert "practice-profile" in capsys.readouterr().err
 
 
+def test_load_non_list_items_returns_empty(tmp_path, capsys):
+    f = tmp_path / "p.yaml"
+    f.write_text("items: true\n")
+    p = load_practice_profile(f)
+    assert p.is_empty()
+    assert p.items == []
+    assert "practice-profile" in capsys.readouterr().err
+
+
 def test_save_and_load_roundtrip(tmp_path):
     f = tmp_path / "p.yaml"
     save_practice_profile(PracticeProfile(items=[_item()]), f)
