@@ -2066,6 +2066,7 @@ def _prepare_new_opportunity(
         service=service,
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
         confirmed_jobs=ContentJobRepository(ws).list_jobs(),
+        practice_profile=load_practice_profile(settings.paths.practice_profile_path),
     )
 
 

@@ -28,6 +28,8 @@ from finch.opportunities.models import (
     OpportunityStatus,
 )
 from finch.opportunities.service import OpportunityService
+from finch.profile.models import PracticeProfile
+from finch.profile.render import render_user_practices
 
 _PROMPT = Path("prompts/prepare-contribution.md")
 
@@ -126,8 +128,12 @@ def write_contribution(
     *,
     voice_profile: VoiceProfile | None = None,
     confirmed_jobs: list[ContentJob] | None = None,
+    practice_profile: PracticeProfile | None = None,
 ) -> str:
-    """按机会的 proposal 生成贡献正文（纯正文，不落库、不改状态）。"""
+    """按机会的 proposal 生成贡献正文（纯正文，不落库、不改状态）。
+
+    ``practice_profile`` 只渲染 confirmed 条目；None / 空 → ``(none)``，正文维持假设场景写法。
+    """
     p = opportunity.proposal
     prompt = _PROMPT.read_text().format(
         topic=opportunity.topic or "(none)",
@@ -142,6 +148,7 @@ def write_contribution(
         evidence=render_evidence_refs(opportunity.evidence_refs),
         voice_summary=render_voice_summary(voice_profile),
         user_positions=render_user_positions(confirmed_jobs or []),
+        user_practices=render_user_practices(practice_profile),
     )
     out = cast(ContributionBodyOutput, runner.run(prompt, ContributionBodyOutput))
     return out.body
@@ -154,6 +161,7 @@ def prepare_contribution(
     service: OpportunityService,
     voice_profile: VoiceProfile | None = None,
     confirmed_jobs: list[ContentJob] | None = None,
+    practice_profile: PracticeProfile | None = None,
 ) -> PreparedContribution:
     """选定机会后按需制作：生成正文 → 写文件 → 登记 Artifact → mark_ready。
 
@@ -177,6 +185,7 @@ def prepare_contribution(
             opp,
             voice_profile=voice_profile,
             confirmed_jobs=confirmed_jobs,
+            practice_profile=practice_profile,
         )
         p = opp.proposal
         form = p.form if p else ContributionForm.METHOD_CARD

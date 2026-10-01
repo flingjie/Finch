@@ -23,6 +23,7 @@ from finch.opportunities.prepare import (
 )
 from finch.opportunities.repository import ArtifactRepository, OpportunityRepository
 from finch.opportunities.service import OpportunityService
+from finch.profile.models import PracticeEvidenceStatus, PracticeItem, PracticeProfile
 from finch.storage.workspace import Workspace
 
 
@@ -204,3 +205,61 @@ def test_render_evidence_refs_is_json():
     )
     assert '"source_ref": "s"' in out
     assert '"quote": "q"' in out
+
+
+def _profile() -> PracticeProfile:
+    return PracticeProfile(
+        items=[
+            PracticeItem(
+                id="agent-100-days",
+                domain="agent engineering",
+                claim="把 Agent 落地失败整理成 100 天路径",
+                evidence_refs=["https://github.com/flingjie/Agent-100-Days"],
+                status=PracticeEvidenceStatus.SOURCED,
+                can_offer=["方法卡"],
+                boundaries="没管过生产 Agent SLA",
+                confirmed=True,
+            )
+        ]
+    )
+
+
+def test_write_contribution_renders_practice_block():
+    runner = FakeRunner("x")
+    write_contribution(runner, _opportunity(), practice_profile=_profile())
+    p = runner.last_prompt or ""
+    assert "## User real practices" in p
+    assert "[agent-100-days]" in p
+    assert "没管过生产 Agent SLA" in p
+
+
+def test_write_contribution_without_profile_renders_none():
+    runner = FakeRunner("x")
+    write_contribution(runner, _opportunity())
+    p = runner.last_prompt or ""
+    section = p.split("## User real practices (confirmed; the ONLY source for first-person")[1]
+    # 精确钉住槽位：规则正文里也出现 (none)，不能用宽松包含断言。
+    assert "experience)\n\n(none)\n\n## Task" in section
+
+
+def test_prepare_contribution_passes_profile(tmp_path):
+    service, _repo, _art_repo = _service(tmp_path)
+    service.create(
+        opportunity_id="opp_1",
+        topic="t",
+        proposal=Proposal(
+            contribution="c",
+            form=ContributionForm.METHOD_CARD,
+            expected_output="o",
+            scope="s",
+        ),
+    )
+    service.select("opp_1")
+    runner = FakeRunner("正文")
+    prepare_contribution(
+        opportunity=service.get("opp_1"),
+        runner=runner,
+        service=service,
+        practice_profile=_profile(),
+    )
+    assert "[agent-100-days]" in (runner.last_prompt or "")
