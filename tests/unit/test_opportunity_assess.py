@@ -147,5 +147,5 @@ def test_assess_opportunity_empty_practices_renders_none():
     runner = FakeRunner(_draft())
     assess_opportunity(runner, **_kwargs())
     p = runner.last_prompt or ""
-    idx = p.index("## User real practices (confirmed, citeable)")
-    assert "(none)" in p[idx : idx + 400]
+    section = p.split("## User real practices (confirmed, citeable)")[1]
+    assert "\n\n(none)\n\n## Fields to produce" in section
