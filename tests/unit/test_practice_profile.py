@@ -9,6 +9,7 @@ from finch.profile.models import (
     load_practice_profile,
     save_practice_profile,
 )
+from finch.profile.render import render_user_practices
 
 
 def _item(**kw) -> PracticeItem:
@@ -121,3 +122,45 @@ def test_get_by_id():
     p = PracticeProfile(items=[_item()])
     assert p.get("agent-100-days") is not None
     assert p.get("missing") is None
+
+
+def test_render_none_or_empty_returns_none_marker():
+    assert render_user_practices(None) == "(none)"
+    assert render_user_practices(PracticeProfile()) == "(none)"
+    assert render_user_practices(PracticeProfile(items=[_item(confirmed=False)])) == "(none)"
+
+
+def test_render_confirmed_items_format():
+    p = PracticeProfile(
+        items=[
+            _item(),
+            _item(
+                id="pharmacy-background",
+                domain="pharmacy",
+                claim="药学本科，熟悉临床证据分级",
+                evidence_refs=[],
+                status=PracticeEvidenceStatus.AUTHOR_STATED,
+                can_offer=["跨领域类比"],
+                boundaries="没做过临床",
+            ),
+        ]
+    )
+    out = render_user_practices(p)
+    assert out == (
+        "- [agent-100-days] (sourced) agent engineering: 把 Agent 落地失败整理成 100 天路径\n"
+        "  can_offer: 方法卡 / 案例 | boundaries: 没管过生产 Agent SLA"
+        " | refs: https://github.com/flingjie/Agent-100-Days\n"
+        "- [pharmacy-background] (author_stated) pharmacy: 药学本科，熟悉临床证据分级\n"
+        "  can_offer: 跨领域类比 | boundaries: 没做过临床"
+    )
+
+
+def test_render_omits_empty_optional_fields():
+    p = PracticeProfile(
+        items=[_item(can_offer=[], boundaries="", evidence_refs=["https://a"], confirmed=True)]
+    )
+    out = render_user_practices(p)
+    assert out == (
+        "- [agent-100-days] (sourced) agent engineering: 把 Agent 落地失败整理成 100 天路径\n"
+        "  refs: https://a"
+    )
