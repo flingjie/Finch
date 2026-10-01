@@ -117,6 +117,20 @@ class GhClient:
             "bio": data.get("bio") or "",
         }
 
+    def readme(self, repo: str) -> str:
+        """只读拉取仓库 README（base64 解码为 Markdown）；失败抛 GhError。"""
+        import base64
+
+        data = self._gh_json(
+            ["gh", "api", "-H", "Accept: application/vnd.github+json", f"repos/{repo}/readme"]
+        )
+        if not isinstance(data, dict) or not data.get("content"):
+            raise GhError(f"no README content for {repo}")
+        try:
+            return base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+        except (ValueError, TypeError) as exc:
+            raise GhError(f"README decode failed for {repo}: {exc}") from exc
+
     def list_public_repos(self, login: str, limit: int = 20) -> list[PublicRepo]:
         cap = max(1, min(limit, 100))
         data = self._gh_json(
