@@ -18,3 +18,6 @@ var/
 
 # Local config (copy finch.example.yaml to finch.yaml)
 finch.yaml
+
+# Git worktrees (local isolation)
+.worktrees/
