@@ -68,6 +68,18 @@ class Proposal(BaseModel):
     cost_note: str = ""  # 粗略投入范围与未知（自然语言，不伪造精确耗时）
 
 
+class Reaction(BaseModel):
+    """用户对这条机会亲口说的话（原话，append-only）。
+
+    不是 InteractionRecord（没有发生互动）、不是 ConversationThread 笔记（没有对方）、
+    不是 PracticeItem（未经 confirm）；只在本聚合内有效。
+    """
+
+    seq: int  # 从 1 起
+    text: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class Opportunity(BaseModel):
     """交流机会聚合：可接续话题 + 双方参与理由 + 最小贡献 + 生命周期。"""
 
@@ -85,6 +97,8 @@ class Opportunity(BaseModel):
     status: OpportunityStatus = OpportunityStatus.PROPOSED
     decision: str | None = None
     artifact_refs: list[str] = Field(default_factory=list)
+    # 用户对这条机会的反应（原话；append-only）。无反应 → prepare 只能出澄清问题。
+    reactions: list[Reaction] = Field(default_factory=list)
     # 接续提案引用前次机会（规范 §10.4 / §11.1：不复活原任务）。
     previous_opportunity_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

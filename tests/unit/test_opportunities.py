@@ -284,3 +284,46 @@ def test_artifact_save_requires_opportunity_id(ws):
     repo = ArtifactRepository(ws)
     with pytest.raises(ValueError):
         repo.save(Artifact(id="orphan", kind=ArtifactKind.DRAFT))
+
+
+# ---- Reaction（用户对这条机会亲口说的话；append-only）----
+
+
+def test_opportunity_reactions_default_empty_and_round_trip(ws):
+    from finch.opportunities.models import Opportunity, Reaction
+
+    repo = OpportunityRepository(ws)
+    repo.save(Opportunity(id="opp_r", topic="t"))
+    loaded = repo.get("opp_r")
+    assert loaded is not None
+    assert loaded.reactions == []
+
+    repo.save(
+        Opportunity(
+            id="opp_r2",
+            topic="t",
+            reactions=[Reaction(seq=1, text="我当时最难的是不知道任务到底跑没跑")],
+        )
+    )
+    loaded2 = repo.get("opp_r2")
+    assert loaded2 is not None
+    assert loaded2.reactions[0].seq == 1
+    assert loaded2.reactions[0].text == "我当时最难的是不知道任务到底跑没跑"
+    assert loaded2.reactions[0].created_at is not None
+
+
+def test_legacy_opportunity_yaml_without_reactions_loads(ws):
+    """旧快照没有 reactions 字段 → 默认空，行为与今天一致。"""
+    from finch.opportunities.models import Opportunity
+
+    path = ws.dir("opportunities") / "opp_old" / "opportunity.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "id: opp_old\nrevision: 1\ntopic: t\nstatus: proposed\n"
+        "evidence_refs: []\nopen_questions: []\nartifact_refs: []\n",
+        encoding="utf-8",
+    )
+    loaded = OpportunityRepository(ws).get("opp_old")
+    assert loaded is not None
+    assert isinstance(loaded, Opportunity)
+    assert loaded.reactions == []
