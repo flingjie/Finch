@@ -17,6 +17,7 @@ from finch.communities.models import (
 )
 from finch.communities.repository import CommunityRepository
 from finch.content.jobs import ContentJobStatus
+from finch.profile.models import load_practice_profile
 from finch.settings import Settings
 from finch.storage.repositories import ContentJobRepository, PeerRepository
 from finch.storage.workspace import Workspace
@@ -24,6 +25,18 @@ from finch.storage.workspace import Workspace
 
 class CommunityNotFoundError(Exception):
     """对不存在的社区 id 记录反馈时的校验失败。"""
+
+
+def _practice_refs(settings: Settings) -> list[str]:
+    """非空 practice profile → confirmed 条目 refs 展平去重；否则回退配置。"""
+    profile = load_practice_profile(settings.paths.practice_profile_path)
+    if profile.is_empty():
+        return list(settings.interests.practice_refs)
+    seen: dict[str, None] = {}
+    for item in profile.confirmed_items():
+        for ref in item.evidence_refs:
+            seen.setdefault(ref, None)
+    return list(seen)
 
 
 def week_label(now: datetime | None = None) -> str:
@@ -51,7 +64,7 @@ class CommunityService:
             week=week_label(now),
             interests=list(settings.interests.long_term_interests),
             current_questions=list(settings.interests.current_questions),
-            practice_refs=list(settings.interests.practice_refs),
+            practice_refs=_practice_refs(settings),
             active_peers=[p.id for p in peers][:50],
             recent_ideas=[
                 j.core_message

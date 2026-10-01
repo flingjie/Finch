@@ -266,3 +266,36 @@ def test_get_run_missing(tmp_path):
     from finch.communities.repository import CommunityRepository
 
     assert CommunityRepository(Workspace(tmp_path)).get_run("nope") is None
+
+
+def test_snapshot_context_practice_refs_from_profile(tmp_path):
+    profile = tmp_path / "practice-profile.yaml"
+    profile.write_text(
+        "items:\n"
+        "  - id: a\n    domain: d\n    claim: c\n"
+        "    evidence_refs: [https://github.com/flingjie/Agent-100-Days, https://x/1]\n"
+        "    status: sourced\n    confirmed: true\n"
+        "  - id: b\n    domain: d\n    claim: c\n"
+        "    evidence_refs: [https://x/1]\n    status: sourced\n    confirmed: true\n"
+        "  - id: c\n    domain: d\n    claim: c\n"
+        "    evidence_refs: [https://ignored]\n    status: sourced\n    confirmed: false\n"
+    )
+    settings = Settings(
+        paths={"var_dir": tmp_path, "practice_profile_path": profile},  # type: ignore[arg-type]
+        interests={"practice_refs": ["from-config"]},  # type: ignore[arg-type]
+    )
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    ctx = CommunityService(ws).snapshot_context(settings, ws)
+    assert ctx.practice_refs == ["https://github.com/flingjie/Agent-100-Days", "https://x/1"]
+
+
+def test_snapshot_context_practice_refs_fallback_to_config(tmp_path):
+    settings = Settings(
+        paths={"var_dir": tmp_path, "practice_profile_path": tmp_path / "missing.yaml"},  # type: ignore[arg-type]
+        interests={"practice_refs": ["from-config"]},  # type: ignore[arg-type]
+    )
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    ctx = CommunityService(ws).snapshot_context(settings, ws)
+    assert ctx.practice_refs == ["from-config"]
