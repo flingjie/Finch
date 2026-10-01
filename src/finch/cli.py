@@ -72,6 +72,8 @@ from .opportunities.models import OpportunityStatus
 from .opportunities.prepare import (
     PreparedArtifact,
     PreparedContribution,
+    artifact_id_for,
+    effective_form,
     prepare_contribution,
 )
 from .opportunities.repository import (
@@ -2229,7 +2231,10 @@ def _prepared_contribution_for(
     """从已 ready 机会重建可直接审阅的成果（正文 + 来源 + 执行状态）。"""
     art_repo = PreferredArtifactRepository(ws)
     artifacts: list[PreparedArtifact] = []
-    for ref in opp.artifact_refs:
+    # 只呈现当前形式 + 反应对应的成果，避免 regenerate 后旧澄清问题一并出现
+    current_id = artifact_id_for(opp, effective_form(opp))
+    refs = [current_id] if current_id in opp.artifact_refs else list(opp.artifact_refs)
+    for ref in refs:
         art = art_repo.get(opp.id, ref)
         if art is None:
             continue

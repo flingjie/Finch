@@ -388,6 +388,43 @@ def test_connect_prepare_ready_without_reaction_returns_existing(monkeypatch, tm
     assert "无反应：本次只准备澄清问题" in r.output
 
 
+def test_connect_prepare_ready_reread_shows_only_current_artifact(monkeypatch, tmp_path):
+    """regenerate 后 refs 同时含旧澄清问题与带反应的新成果；重读只呈现当前那份。"""
+    from finch.opportunities.models import Artifact, ArtifactKind, Reaction
+    from finch.opportunities.prepare import artifact_id_for, effective_form
+    from finch.opportunities.repository import ArtifactRepository as NewArtRepo
+    from finch.opportunities.repository import OpportunityRepository as NewOppRepo
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_ready_opportunity(ws, "opp_ready")
+    repo = NewOppRepo(ws)
+    opp = repo.get("opp_ready")
+    assert opp is not None
+    opp = opp.model_copy(update={"reactions": [Reaction(seq=1, text="我当时靠人工对日志")]})
+    new_id = artifact_id_for(opp, effective_form(opp))
+    assert new_id.endswith("_r1")
+    NewArtRepo(ws).write_content("opp_ready", new_id, "带反应的新正文")
+    NewArtRepo(ws).save(
+        Artifact(id=new_id, opportunity_id="opp_ready", kind=ArtifactKind.METHOD_CARD)
+    )
+    repo.save(
+        opp.model_copy(
+            update={"artifact_refs": ["art_opp_ready_clarifying_question", new_id]}
+        )
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(
+        cli, "prepare_contribution", lambda **_kw: (_ for _ in ()).throw(AssertionError)
+    )
+    r = CliRunner().invoke(app, ["connect", "prepare", "--opportunity", "opp_ready"])
+    assert r.exit_code == 0, r.output
+    assert "带反应的新正文" in r.output
+    assert "旧的澄清问题" not in r.output
+    assert "你的反应（第 1 条）：我当时靠人工对日志" in r.output
+
+
 def test_connect_prepare_ready_with_reaction_reselects_and_regenerates(monkeypatch, tmp_path):
     from finch.opportunities.models import OpportunityStatus, Reaction
     from finch.opportunities.prepare import PreparedContribution
