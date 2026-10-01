@@ -50,7 +50,7 @@ from .engagement.models import (
 )
 from .evidence.extractor import Extractor, build_cards
 from .github.commit_reader import CommitReader, load_commit_details
-from .github.gh_client import GhClient
+from .github.gh_client import GhClient, GhError
 from .github.local_repo import resolve_commit_repo
 from .ideas.commit_service import CommitService
 from .ideas.divergence import IdeaDiverger
@@ -84,6 +84,7 @@ from .opportunities.service import OpportunityService
 from .peers.models import PeerProfile
 from .peers.service import PeerService, profile_url_for
 from .practice.service import PracticeService
+from .profile import bootstrap as profile_bootstrap
 from .profile.models import (
     PracticeEvidenceStatus,
     PracticeItem,
@@ -1662,6 +1663,53 @@ def profile_add(
     )
     save_practice_profile(profile, path)
     typer.echo(f"added (unconfirmed): {item_id} — run `uv run finch profile confirm {item_id}`")
+
+
+@profile_app.command("init")
+def profile_init(
+    repos: list[str] = typer.Option(  # noqa: B008
+        [], "--repo", help="额外仓库 owner/name（可多次）；默认遍历 finch.yaml repositories"
+    ),
+) -> None:
+    """从你自己仓库的 README 起草未确认的实践条目（只读 gh；只追加新 id，不覆盖已有）。"""
+    settings = load_settings()
+    path = settings.paths.practice_profile_path
+    targets = list(dict.fromkeys([*settings.repositories, *repos]))
+    if not targets:
+        typer.echo("no repositories configured; pass --repo owner/name")
+        raise typer.Exit(code=1)
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    gh = GhClient()
+    drafts: list[PracticeItem] = []
+    skipped: list[tuple[str, str]] = []
+    for repo in targets:
+        try:
+            readme = gh.readme(repo)
+        except GhError as exc:
+            skipped.append((repo, f"readme unavailable: {exc}"))
+            continue
+        items = profile_bootstrap.draft_items_from_readme(runner, repo=repo, readme=readme)
+        if not items:
+            skipped.append((repo, "no first-hand practice drafted"))
+            continue
+        drafts.extend(items)
+    if not drafts:
+        typer.echo("no drafts produced; nothing written.")
+        for repo, why in skipped:
+            typer.echo(f"  skipped {repo}: {why}")
+        raise typer.Exit(code=1)
+    profile = load_practice_profile(path)
+    merged, added = profile_bootstrap.merge_drafts(profile, drafts)
+    save_practice_profile(merged, path)
+    lines = [f"drafted {len(added)} new unconfirmed item(s) → {path}"]
+    lines += [f"  + {item_id}" for item_id in added]
+    lines += [f"  skipped {repo}: {why}" for repo, why in skipped]
+    lines += [
+        "",
+        "无公开资产的经历（药学背景 / 健身 / 阅读 / 出版）请用 `uv run finch profile add` 手工补。",
+        "逐条审阅后 `uv run finch profile confirm <id>`；只有已确认条目会进入机会评估与贡献制作。",
+    ]
+    typer.echo("\n".join(lines))
 
 
 def _decision_service(ws: Workspace) -> InboxDecisionService:

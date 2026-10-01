@@ -113,3 +113,78 @@ def test_profile_add_duplicate_id_fails(monkeypatch, tmp_path):
     )
     assert r.exit_code == 1
     assert "already exists" in r.output
+
+
+from finch.github.gh_client import GhError  # noqa: E402
+from finch.profile import bootstrap as bootstrap_mod  # noqa: E402
+from finch.profile.models import PracticeItem as _PI  # noqa: E402
+
+
+def _draft(repo: str) -> _PI:
+    slug = repo.split("/")[-1].lower()
+    return _PI(
+        id=slug, domain="d", claim=f"from {repo}",
+        evidence_refs=[f"https://github.com/{repo}"],
+        status=PracticeEvidenceStatus.SOURCED, confirmed=False,
+    )
+
+
+def _patch_init_deps(monkeypatch, *, readmes: dict[str, str]):
+    class FakeGh:
+        def readme(self, repo):
+            if repo not in readmes:
+                raise GhError("404")
+            return readmes[repo]
+
+    monkeypatch.setattr(cli, "GhClient", lambda: FakeGh())
+    monkeypatch.setattr(cli, "create_runner", lambda llm, node: object())
+    monkeypatch.setattr(
+        bootstrap_mod, "draft_items_from_readme",
+        lambda runner, *, repo, readme: [_draft(repo)] if readme else [],
+    )
+
+
+def test_profile_init_drafts_from_repositories_and_skips_failures(monkeypatch, tmp_path):
+    settings = Settings(
+        paths=Paths(var_dir=tmp_path, practice_profile_path=tmp_path / "p.yaml"),
+        repositories=["o/Alpha", "o/Beta"],
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    _patch_init_deps(monkeypatch, readmes={"o/Alpha": "# a"})
+    r = CliRunner().invoke(app, ["profile", "init"])
+    assert r.exit_code == 0, r.output
+    p = load_practice_profile(settings.paths.practice_profile_path)
+    assert [i.id for i in p.items] == ["alpha"]
+    assert p.items[0].confirmed is False
+    assert "o/Beta" in r.output and "skipped" in r.output
+    assert "finch profile add" in r.output
+
+
+def test_profile_init_extra_repo_and_idempotent(monkeypatch, tmp_path):
+    settings = Settings(
+        paths=Paths(var_dir=tmp_path, practice_profile_path=tmp_path / "p.yaml"),
+        repositories=["o/Alpha"],
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    _patch_init_deps(monkeypatch, readmes={"o/Alpha": "# a", "o/Gamma": "# g"})
+    r1 = CliRunner().invoke(app, ["profile", "init", "--repo", "o/Gamma"])
+    assert r1.exit_code == 0, r1.output
+    # confirm alpha, re-run: alpha must stay confirmed, nothing duplicated
+    CliRunner().invoke(app, ["profile", "confirm", "alpha"])
+    r2 = CliRunner().invoke(app, ["profile", "init", "--repo", "o/Gamma"])
+    assert r2.exit_code == 0, r2.output
+    p = load_practice_profile(settings.paths.practice_profile_path)
+    assert sorted(i.id for i in p.items) == ["alpha", "gamma"]
+    assert p.get("alpha").confirmed is True
+
+
+def test_profile_init_all_failed_writes_nothing(monkeypatch, tmp_path):
+    settings = Settings(
+        paths=Paths(var_dir=tmp_path, practice_profile_path=tmp_path / "p.yaml"),
+        repositories=["o/Alpha"],
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    _patch_init_deps(monkeypatch, readmes={})
+    r = CliRunner().invoke(app, ["profile", "init"])
+    assert r.exit_code == 1
+    assert not settings.paths.practice_profile_path.exists()
