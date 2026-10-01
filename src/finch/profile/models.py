@@ -75,7 +75,10 @@ def load_practice_profile(path: Path | str) -> PracticeProfile:
     if raw_items is None:
         raw_items = []
     elif not isinstance(raw_items, list):
-        _warn(f"{target}: items must be a list, using empty profile (got {type(raw_items).__name__})")
+        _warn(
+            f"{target}: items must be a list, using empty profile "
+            f"(got {type(raw_items).__name__})"
+        )
         raw_items = []
     items: list[PracticeItem] = []
     seen: set[str] = set()
