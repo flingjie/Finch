@@ -96,3 +96,49 @@ cases:
     assertions:
       - name: 确定性
         description: 相同输入两次运行产出相同 peer id（platform+author_id 幂等）
+
+  - id: 8
+    name: 首选机会以具体反应问题收尾
+    input:
+      preferred_opportunity:
+        topic: Agent 重试失败后结果不一致
+        why_me: "[agent-100-days] 处理过调用超时，但没处理过重复执行后果"
+        open_questions: ["未核对线程已有回复"]
+    expected_output:
+      closing_line_is_question: true
+    assertions:
+      - name: 具体问题
+        description: 收尾是一个指向用户经历或分歧的具体问题（A 还是 B / 你那次怎么处理）
+      - name: 禁止泛问
+        description: 不以「你怎么看」「先做这个切口吗」「要不要做」收尾
+
+  - id: 9
+    name: 实质回答传入 --reaction
+    input:
+      user_reply: "我当时最难的是不知道任务到底跑没跑，后来加了幂等键才敢重试"
+    expected_output:
+      cli: "finch connect prepare --opportunity <id> --reaction \"我当时最难的是不知道任务到底跑没跑，后来加了幂等键才敢重试\""
+    assertions:
+      - name: 原话
+        description: --reaction 传用户原话，不润色、不补全、不拆成多条
+
+  - id: 10
+    name: 不回答只得澄清问题
+    input:
+      user_reply: "先准备吧"
+    expected_output:
+      cli: "finch connect prepare --opportunity <id>"
+      explains_clarifying_only: true
+    assertions:
+      - name: 不传反应
+        description: 不传 --reaction；呈现时说明「没有你的反应，这次只准备了一个澄清问题」
+
+  - id: 11
+    name: 空首选不提反应问题
+    input:
+      preferred_opportunity: null
+    expected_output:
+      closing_line_is_question: false
+    assertions:
+      - name: 自然结束
+        description: 说明为何无首选并保留可浏览线索，不硬凑反应问题

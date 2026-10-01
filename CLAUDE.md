@@ -29,7 +29,7 @@ skills/
   peer-discovery/          公开内容 → 首页 0–1 首选机会 + --view browse 的 50 人分层（5/15/30，同一快照）+ PeerProfile（finch connect daily）
   creator-evidence/        有限工件 → CreatorEvidence（必须引用 artifact_id；不改关系状态）
   connection-opportunity/  判断有无真实贡献（无贡献则 SKIP，不硬连）
-  interaction-preparation/ 选中后深度准备（finch connect prepare --opportunity；单次不超过 deep_prepare_limit，默认 5）
+  interaction-preparation/ 选中后深度准备（finch connect prepare --opportunity [--reaction]；无反应只出澄清问题；单次不超过 deep_prepare_limit，默认 5）
   reply-crafting/          公开回复草稿（观察 → 真实经验 → 一个问题）；不发布
   conversation-follow-up/  按真实触发恢复对话（finch conversations follow-up / ingest）
   relationship-review/     由互动记录判断阶段与是否联系；时间陈旧 alone 不触发对外联系
@@ -88,7 +88,7 @@ Config lives in `finch.yaml` (repositories, repository_discovery, opencli, sourc
 
 ## Opportunity discovery (peer-discovery)
 
-Daily discovery lives in `discovery/daily.py` + `opportunities/`：sources sync → CreatorEvidence → people shortlist（50 人分层：5 重点 / 15 摘要 / 30 浏览）→ 预算内顺序评估 priority 候选（`opportunity_assess_limit`，默认 5）→ 首选机会 0–1 条写入 `DiscoverySnapshot`。`finch connect daily` 首页只呈现这条首选（可为空）；`--view browse` 才展开 50 人列表。承诺面独立：`connections today` / `people shortlist --today`，不在首页再造人物池。`connect prepare --opportunity` 对已选机会制作可审阅贡献（Artifact；单次不超过 `deep_prepare_limit`，默认 5）；`connections record` 登记真实互动事实；`connections follow-up` 接续对方回应。旧 engagement 评分/提案管线已删除。
+Daily discovery lives in `discovery/daily.py` + `opportunities/`：sources sync → CreatorEvidence → people shortlist（50 人分层：5 重点 / 15 摘要 / 30 浏览）→ 预算内顺序评估 priority 候选（`opportunity_assess_limit`，默认 5）→ 首选机会 0–1 条写入 `DiscoverySnapshot`。`finch connect daily` 首页只呈现这条首选（可为空）；`--view browse` 才展开 50 人列表。承诺面独立：`connections today` / `people shortlist --today`，不在首页再造人物池。`connect prepare --opportunity` 对已选机会制作可审阅贡献（Artifact；单次不超过 `deep_prepare_limit`，默认 5）；`--reaction "<原话>"` 记录用户对这条机会的反应（`Opportunity.reactions`，append-only），无反应时形式强制 `clarifying_question`；`connections record` 登记真实互动事实；`connections follow-up` 接续对方回应。旧 engagement 评分/提案管线已删除。
 
 Key files: `opportunities/models.py`（Opportunity + Artifact）→ `assess.py` / `discover.py` → `prepare.py` → `service.py`（状态机）→ `repository.py`（快照 + events.jsonl + skip 缓存）。
 

@@ -29,7 +29,8 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 - 问题探索：`finch connect daily --question "其他行业如何处理责任交接？" --refresh`
 - 查看指定对象：`finch connect person <person_id>`（只读）
 - 查看某人物完整证据：`finch connect person <person_id>`（只读，不生成互动准备）
-- 准备互动：`finch connect prepare --opportunity <id>`（可重复；每次最多 5；**必须选中**）
+- 准备互动：`finch connect prepare --opportunity <id> [--reaction "<用户原话>"]`（可重复；每次最多 5；
+  **必须选中**；`--reaction` 只配一条机会。无任何反应时只会得到一个澄清问题）
 - 指定帖子：`finch connect assess --url <url> [--question …]`（入口 2）
 - 保存启发：`finch inspirations save --text "…" [--source <ref>]`
 - 反馈：`finch connect feedback --file feedback.json`
@@ -50,7 +51,10 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
   ① 对象与话题（具体的人/线程 + 可访问来源）② 用户为何在意（指向当前问题或好奇，含依据）
   ③ 对方为何可能接话（可补充空间，不保证回复）④ 最小贡献（明确产物与边界）
   ⑤ 可见结果（完成后能展示/比较/检验的东西）⑥ 成本与未知（粗略投入 + 影响判断的未知）。
-  以「先做这个切口吗？」收尾，接受自然语言接受/修改/拒绝；不暴露内部命令与状态枚举。
+  以**一个指向用户自己经历或分歧的具体问题**收尾（从 `why_me` / `open_questions` / 对方帖子的具体
+  细节组织；「A 还是 B」或「你那次是怎么处理的」式，10 秒内能答；禁止「你怎么看」「要不要做」）。
+  用户的任何实质回答原话传入 `connect prepare --reaction`；不回答则不传 `--reaction`，此时只会得到
+  澄清问题，呈现时说明原因。不暴露内部命令与状态枚举。
 - **浏览列表**（`--view browse`，按请求提供）：50 人分层，每张固定五要素：
   1. **正在做什么**（附实践来源）
   2. **为何值得了解**（对应问题或探索方向；自由发现可写「新视角在于…，用途未知」）

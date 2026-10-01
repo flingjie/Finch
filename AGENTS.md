@@ -9,7 +9,7 @@
 - Codex 是智能节点，不是工作流 Runtime；状态、顺序、重试、幂等由确定性 Python 领域服务负责。
 - 读取/写入权限分离：`gh` 仅读取；`opencli` 仅读取/搜索，禁止 twitter 写命令。
 - 子进程参数用数组传递；每次调用设超时；输出强制 JSON 并 Pydantic 校验。
-- 发现单位是轻量 `Opportunity`（交流机会）。`finch connect daily` 首页只呈现 0–1 条首选；50 人分层在 `--view browse`（5 重点 / 15 摘要 / 30 浏览）。用户选定后由 `connect prepare --opportunity` 深度准备可审阅贡献（单次不超过 `deep_prepare_limit`，默认 5）。LLM 不输出最终 `total`。
+- 发现单位是轻量 `Opportunity`（交流机会）。`finch connect daily` 首页只呈现 0–1 条首选；50 人分层在 `--view browse`（5 重点 / 15 摘要 / 30 浏览）。用户选定后由 `connect prepare --opportunity` 深度准备可审阅贡献（单次不超过 `deep_prepare_limit`，默认 5）。`connect prepare` 接受 `--reaction "<用户原话>"`；无任何反应时只准备澄清问题，正文第一人称只能来自 `[reaction]` 或 confirmed `[practice-id]`。LLM 不输出最终 `total`。
 - 今日承诺面是 `finch connections today` / `finch people shortlist --today`，不在首页再造第二个人物池。
 - 问题/workaround/使用反馈以 ConversationThread 笔记记录（必填 source_ref）；不建独立问题库或工具收款后台。礼貌兴趣 ≠ 试用成功 ≠ 付款。
 

@@ -31,7 +31,7 @@ uv run finch diagnose                    # 探测 gh / opencli 可用性
 uv run finch connect daily [--refresh] [--view home|browse] [--question "…"]  # 首页 0–1 首选机会；browse 为 50 人分层（5/15/30）
 uv run finch connect today --limit 10    # 别名：connect daily 首页（纯读）
 uv run finch connect person <person_id>  # 查看某人完整证据与档案（只读）
-uv run finch connect prepare --opportunity ID   # 深度准备（默认每次最多 5）
+uv run finch connect prepare --opportunity ID --reaction "你的一句反应"   # 深度准备（默认每次最多 5；不传 --reaction 只得澄清问题）
 uv run finch connect assess --url <url>  # 对指定讨论做一次机会评估
 uv run finch connect feedback --file feedback.json
 uv run finch peers list / show <peer_id> # 同行档案与关系上下文
@@ -79,7 +79,7 @@ uv run finch context                     # 每日 / 待办只读投影
 uv run finch connect daily --refresh
 
 # 2. 选中后深度准备（生成正文 ≠ 已发布）
-uv run finch connect prepare --opportunity <opportunity_id>
+uv run finch connect prepare --opportunity <opportunity_id> [--reaction "<你的原话>"]
 
 # 3. 记录真实互动（含系统外导入），收到回复后跟进
 uv run finch connections record --person <peer_id> --url <url> --body "..." --opportunity <opportunity_id>
