@@ -11,6 +11,7 @@ import json
 from dataclasses import dataclass
 
 from finch.llm.base import StructuredInferenceRunner
+from finch.profile.render import NONE_MARKER
 from finch.opportunities.assess import assess_opportunity, build_opportunity
 from finch.opportunities.discover import DiscoverOutcome
 from finch.opportunities.models import Opportunity
@@ -59,7 +60,10 @@ def assess_from_url(
     except WebSourceUnavailable as exc:
         return UrlAssessResult(None, "fetch_failed", str(exc), url=url)
 
-    practice_part = f"\n{user_practices}" if user_practices else ""
+    practices_for_fp = (
+        user_practices if user_practices and user_practices != NONE_MARKER else ""
+    )
+    practice_part = f"\n{practices_for_fp}" if practices_for_fp else ""
     fingerprint = hashlib.sha256(
         f"{url}\n{user_context}{practice_part}\n{body[:2000]}".encode()
     ).hexdigest()[:16]

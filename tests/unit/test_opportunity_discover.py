@@ -225,3 +225,16 @@ def test_context_fingerprint_changes_with_user_practices():
     assert a != b
     # 默认值不改变既有指纹（回归保护）
     assert a == opportunity_context_fingerprint(**{**base, "user_practices": ""})
+
+
+def test_context_fingerprint_none_marker_matches_empty():
+    base = dict(
+        person_ref="person_1",
+        current_work="w",
+        why_relevant="r",
+        artifacts=[_artifact()],
+        user_context="",
+    )
+    assert opportunity_context_fingerprint(**base) == opportunity_context_fingerprint(
+        **{**base, "user_practices": "(none)"}
+    )

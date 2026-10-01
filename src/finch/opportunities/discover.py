@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from finch.llm.base import StructuredInferenceRunner
+from finch.profile.render import NONE_MARKER
 from finch.opportunities.assess import assess_opportunity, build_opportunity
 from finch.opportunities.models import Opportunity, OpportunityStatus, SkipAssessment
 from finch.opportunities.repository import SkipAssessmentRepository
@@ -81,7 +82,7 @@ def opportunity_context_fingerprint(
         for a in artifacts
     )
     parts = [person_ref, current_work, why_relevant, user_context]
-    if user_practices:  # 仅非空时加入，保持既有 opp_* id 稳定
+    if user_practices and user_practices != NONE_MARKER:
         parts.append(user_practices)
     raw = "\n".join([*parts, *artifact_keys])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
