@@ -15,11 +15,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 from finch.llm.base import StructuredInferenceRunner
-from finch.profile.render import NONE_MARKER
 from finch.opportunities.assess import assess_opportunity, build_opportunity
 from finch.opportunities.models import Opportunity, OpportunityStatus, SkipAssessment
 from finch.opportunities.repository import SkipAssessmentRepository
 from finch.opportunities.service import OpportunityService
+from finch.profile.render import NONE_MARKER
 from finch.sources.models import RawArtifact
 
 _TEXT_LIMIT = 600

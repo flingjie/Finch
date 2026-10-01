@@ -11,11 +11,11 @@ import json
 from dataclasses import dataclass
 
 from finch.llm.base import StructuredInferenceRunner
-from finch.profile.render import NONE_MARKER
 from finch.opportunities.assess import assess_opportunity, build_opportunity
 from finch.opportunities.discover import DiscoverOutcome
 from finch.opportunities.models import Opportunity
 from finch.opportunities.service import OpportunityService
+from finch.profile.render import NONE_MARKER
 from finch.webfetch.fetcher import WebFetcher, WebSourceUnavailable
 
 _TEXT_LIMIT = 4000
