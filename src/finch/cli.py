@@ -84,7 +84,12 @@ from .opportunities.service import OpportunityService
 from .peers.models import PeerProfile
 from .peers.service import PeerService, profile_url_for
 from .practice.service import PracticeService
-from .profile.models import load_practice_profile
+from .profile.models import (
+    PracticeEvidenceStatus,
+    PracticeItem,
+    load_practice_profile,
+    save_practice_profile,
+)
 from .profile.render import render_user_practices
 from .projections import (
     TodayFocus,
@@ -134,6 +139,9 @@ app.add_typer(sources_app, name="sources")
 
 voice_app = typer.Typer(help="Manage the author voice profile (local, no auto-publish)")
 app.add_typer(voice_app, name="voice")
+
+profile_app = typer.Typer(help="Manage the user's confirmed practice profile (local only)")
+app.add_typer(profile_app, name="profile")
 
 ideas_app = typer.Typer(help="Idea 候选流（commit / 用户片段 / 对话提炼 + 状态转换）")
 app.add_typer(ideas_app, name="ideas")
@@ -1565,6 +1573,95 @@ def voice_reject_example(
     profile.rejected_examples.append(RejectedExample(id=draft_id, reason=reason))
     save_voice_profile(profile, path)
     typer.echo(f"rejected example: {draft_id}")
+
+
+def _practice_profile_path() -> Path:
+    return load_settings().paths.practice_profile_path
+
+
+def _set_confirmed(item_id: str, value: bool) -> None:
+    path = _practice_profile_path()
+    profile = load_practice_profile(path)
+    item = profile.get(item_id)
+    if item is None:
+        available = ", ".join(i.id for i in profile.items) or "(empty)"
+        typer.echo(f"practice item not found: {item_id}. available: {available}")
+        raise typer.Exit(code=1)
+    item.confirmed = value
+    save_practice_profile(profile, path)
+    typer.echo(f"{'confirmed' if value else 'revoked'}: {item_id}")
+
+
+@profile_app.command("show")
+def profile_show(
+    as_json: bool = typer.Option(False, "--json", help="输出完整 YAML"),
+) -> None:
+    """列出实践条目，标出 confirmed / 未确认。"""
+    profile = load_practice_profile(_practice_profile_path())
+    if as_json:
+        typer.echo(
+            yaml.safe_dump(profile.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
+        )
+        return
+    if not profile.items:
+        typer.echo(
+            "实践画像为空。先运行 `uv run finch profile init`，或 `finch profile add` 手工添加。"
+        )
+        return
+    lines = [f"实践画像（{len(profile.confirmed_items())}/{len(profile.items)} 已确认）", ""]
+    for item in profile.items:
+        flag = "已确认" if item.confirmed else "未确认"
+        lines.append(f"- [{item.id}] {flag} ({item.status.value}) {item.domain}: {item.claim}")
+        if item.boundaries:
+            lines.append(f"    boundaries: {item.boundaries}")
+    lines += ["", "uv run finch profile confirm <id>", "uv run finch profile revoke <id>"]
+    typer.echo("\n".join(lines))
+
+
+@profile_app.command("confirm")
+def profile_confirm(item_id: str = typer.Argument(..., help="practice item id")) -> None:
+    """确认一条实践（之后才会进入 prompt）。"""
+    _set_confirmed(item_id, True)
+
+
+@profile_app.command("revoke")
+def profile_revoke(item_id: str = typer.Argument(..., help="practice item id")) -> None:
+    """撤销确认（条目保留但不再进入 prompt）。"""
+    _set_confirmed(item_id, False)
+
+
+@profile_app.command("add")
+def profile_add(
+    item_id: str = typer.Option(..., "--id", help="slug，如 pharmacy-background"),
+    domain: str = typer.Option(..., "--domain", help="领域标签"),
+    claim: str = typer.Option(..., "--claim", help="一句话：我真的做过什么"),
+    refs: list[str] = typer.Option(  # noqa: B008
+        [], "--ref", help="公开 URL（可多次）；缺省则 author_stated"
+    ),
+    offers: list[str] = typer.Option([], "--offer", help="可贡献形式（可多次）"),  # noqa: B008
+    boundaries: str = typer.Option("", "--boundaries", help="明确不能替我说的话"),
+) -> None:
+    """手工添加一条实践（默认未确认，需再 confirm）。"""
+    path = _practice_profile_path()
+    profile = load_practice_profile(path)
+    if profile.get(item_id) is not None:
+        typer.echo(f"practice item already exists: {item_id}")
+        raise typer.Exit(code=1)
+    status = PracticeEvidenceStatus.SOURCED if refs else PracticeEvidenceStatus.AUTHOR_STATED
+    profile.items.append(
+        PracticeItem(
+            id=item_id,
+            domain=domain,
+            claim=claim,
+            evidence_refs=list(refs),
+            status=status,
+            can_offer=list(offers),
+            boundaries=boundaries,
+            confirmed=False,
+        )
+    )
+    save_practice_profile(profile, path)
+    typer.echo(f"added (unconfirmed): {item_id} — run `uv run finch profile confirm {item_id}`")
 
 
 def _decision_service(ws: Workspace) -> InboxDecisionService:
