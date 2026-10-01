@@ -225,6 +225,230 @@ def test_connect_prepare_requires_selection(monkeypatch, tmp_path):
     assert "selection required" in r.output
 
 
+def test_connect_prepare_passes_reaction_through(monkeypatch, tmp_path):
+    from finch.opportunities.models import OpportunityStatus, Reaction
+    from finch.opportunities.prepare import PreparedContribution
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_new_opportunity(ws, "opp_person_1")
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    seen: dict = {}
+
+    def _fake_prepare(*, opportunity, runner, service, **kw):
+        seen["reaction"] = kw.get("reaction")
+        return PreparedContribution(
+            opportunity=opportunity.model_copy(update={"status": OpportunityStatus.READY}),
+            artifacts=[],
+            reaction=Reaction(seq=1, text=kw.get("reaction") or ""),
+            form_forced=False,
+        )
+
+    monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
+    r = CliRunner().invoke(
+        app,
+        [
+            "connect", "prepare", "--opportunity", "opp_person_1",
+            "--reaction", "我当时最难的是不知道任务到底跑没跑",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    assert seen["reaction"] == "我当时最难的是不知道任务到底跑没跑"
+    assert "你的反应（第 1 条）：我当时最难的是不知道任务到底跑没跑" in r.output
+
+
+def test_connect_prepare_without_reaction_says_clarifying_only(monkeypatch, tmp_path):
+    from finch.opportunities.models import OpportunityStatus
+    from finch.opportunities.prepare import PreparedContribution
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_new_opportunity(ws, "opp_person_1")
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    def _fake_prepare(*, opportunity, runner, service, **kw):
+        assert kw.get("reaction") is None
+        return PreparedContribution(
+            opportunity=opportunity.model_copy(update={"status": OpportunityStatus.READY}),
+            artifacts=[],
+            reaction=None,
+            form_forced=True,
+        )
+
+    monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
+    r = CliRunner().invoke(app, ["connect", "prepare", "--opportunity", "opp_person_1"])
+    assert r.exit_code == 0, r.output
+    assert "无反应：本次只准备澄清问题" in r.output
+
+
+def test_connect_prepare_json_includes_reaction_and_form_forced(monkeypatch, tmp_path):
+    from finch.opportunities.models import OpportunityStatus, Reaction
+    from finch.opportunities.prepare import PreparedContribution
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_new_opportunity(ws, "opp_person_1")
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    def _fake_prepare(*, opportunity, runner, service, **kw):
+        return PreparedContribution(
+            opportunity=opportunity.model_copy(update={"status": OpportunityStatus.READY}),
+            artifacts=[],
+            reaction=Reaction(seq=2, text="第二句"),
+            form_forced=False,
+        )
+
+    monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
+    r = CliRunner().invoke(
+        app,
+        ["connect", "prepare", "--opportunity", "opp_person_1", "--reaction", "第二句", "--json"],
+    )
+    assert r.exit_code == 0, r.output
+    opp = json.loads(r.output)["opportunities"][0]
+    assert opp["reaction"] == {"seq": 2, "text": "第二句"}
+    assert opp["form_forced"] is False
+
+
+def test_connect_prepare_rejects_blank_reaction(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_new_opportunity(ws, "opp_person_1")
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    called = {"n": 0}
+
+    def _fake_prepare(**_kw):
+        called["n"] += 1
+
+    monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
+    r = CliRunner().invoke(
+        app, ["connect", "prepare", "--opportunity", "opp_person_1", "--reaction", "   "]
+    )
+    assert r.exit_code == 1
+    assert "reaction must not be blank" in r.output
+    assert called["n"] == 0
+
+
+def test_connect_prepare_rejects_reaction_with_multiple_opportunities(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_new_opportunity(ws, "opp_a")
+    _seed_new_opportunity(ws, "opp_b")
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    r = CliRunner().invoke(
+        app,
+        ["connect", "prepare", "--opportunity", "opp_a", "--opportunity", "opp_b",
+         "--reaction", "x"],
+    )
+    assert r.exit_code == 1
+    assert "--reaction applies to exactly one --opportunity" in r.output
+
+
+def _seed_ready_opportunity(ws, opportunity_id: str = "opp_ready"):
+    from finch.opportunities.models import Artifact, ArtifactKind, OpportunityStatus
+    from finch.opportunities.repository import ArtifactRepository as NewArtRepo
+    from finch.opportunities.repository import OpportunityRepository as NewOppRepo
+
+    _seed_new_opportunity(ws, opportunity_id)
+    repo = NewOppRepo(ws)
+    opp = repo.get(opportunity_id)
+    assert opp is not None
+    art_id = f"art_{opportunity_id}_clarifying_question"
+    NewArtRepo(ws).write_content(opportunity_id, art_id, "旧的澄清问题")
+    NewArtRepo(ws).save(
+        Artifact(id=art_id, opportunity_id=opportunity_id, kind=ArtifactKind.REPLY_DRAFT)
+    )
+    repo.save(
+        opp.model_copy(
+            update={"status": OpportunityStatus.READY, "artifact_refs": [art_id], "revision": 3}
+        )
+    )
+
+
+def test_connect_prepare_ready_without_reaction_returns_existing(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_ready_opportunity(ws, "opp_ready")
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    called = {"n": 0}
+
+    def _fake_prepare(**_kw):
+        called["n"] += 1
+
+    monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
+    r = CliRunner().invoke(app, ["connect", "prepare", "--opportunity", "opp_ready"])
+    assert r.exit_code == 0, r.output
+    assert called["n"] == 0
+    assert "旧的澄清问题" in r.output
+    assert "无反应：本次只准备澄清问题" in r.output
+
+
+def test_connect_prepare_ready_with_reaction_reselects_and_regenerates(monkeypatch, tmp_path):
+    from finch.opportunities.models import OpportunityStatus, Reaction
+    from finch.opportunities.prepare import PreparedContribution
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_ready_opportunity(ws, "opp_ready")
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    seen: dict = {}
+
+    def _fake_prepare(*, opportunity, runner, service, **kw):
+        seen["status"] = opportunity.status
+        seen["reaction"] = kw.get("reaction")
+        return PreparedContribution(
+            opportunity=opportunity.model_copy(update={"status": OpportunityStatus.READY}),
+            artifacts=[],
+            reaction=Reaction(seq=1, text=kw["reaction"]),
+            form_forced=False,
+        )
+
+    monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
+    r = CliRunner().invoke(
+        app, ["connect", "prepare", "--opportunity", "opp_ready", "--reaction", "新反应"]
+    )
+    assert r.exit_code == 0, r.output
+    assert seen["status"] == OpportunityStatus.SELECTED  # ready → selected（调整贡献）
+    assert seen["reaction"] == "新反应"
+
+
+def test_connect_daily_json_preferred_opportunity_carries_reactions(monkeypatch, tmp_path):
+    """首选机会 JSON 透出 reactions（兼容新增字段）。"""
+    from finch.engagement.models import DiscoverySnapshot
+    from finch.opportunities.models import Reaction
+    from finch.opportunities.repository import OpportunityRepository as NewOppRepo
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_new_opportunity(ws, "opp_person_1")
+    repo = NewOppRepo(ws)
+    opp = repo.get("opp_person_1")
+    assert opp is not None
+    repo.save(opp.model_copy(update={"reactions": [Reaction(seq=1, text="一句反应")]}))
+    DiscoverySnapshotRepository(ws).upsert(
+        DiscoverySnapshot(
+            id="daily_test",
+            created_at=datetime.now(UTC),
+            context_fingerprint="ctx",
+            ranked_opportunity_ids=[],
+            preferred_opportunity_id="opp_person_1",
+        )
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    r = CliRunner().invoke(app, ["connect", "daily", "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["preferred_opportunity"]["reactions"][0]["text"] == "一句反应"
+
+
 def test_connect_daily_json(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)

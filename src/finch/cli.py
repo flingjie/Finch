@@ -2185,12 +2185,17 @@ def _render_preferred_skips(assessments: list) -> list[str]:
 
 
 def _prepare_new_opportunity(
-    settings: Settings, ws: Workspace, opportunity_id: str
+    settings: Settings,
+    ws: Workspace,
+    opportunity_id: str,
+    *,
+    reaction: str | None = None,
 ) -> PreparedContribution | None:
     """对首选机会（新聚合）执行 select → prepare_contribution → ready（幂等）。
 
-    proposed → select → 生成正文 → 登记 Artifact → mark_ready；已 ready 直接返回；
-    parked / closed 不可准备，返回 None。
+    proposed → select → 生成正文 → 登记 Artifact → mark_ready；parked / closed 不可准备，
+    返回 None。已 ready：无 ``reaction`` 直接返回现有成果；有 ``reaction`` 则 ready → selected
+    （合法的「调整贡献」转换）后重新生成。
     """
     service = OpportunityService(
         PreferredOpportunityRepository(ws), artifacts=PreferredArtifactRepository(ws)
@@ -2200,10 +2205,12 @@ def _prepare_new_opportunity(
         return None
     if opp.status in (OpportunityStatus.PARKED, OpportunityStatus.CLOSED):
         return None
-    if opp.status == OpportunityStatus.PROPOSED:
-        opp = service.select(opportunity_id)
     if opp.status == OpportunityStatus.READY:
-        return _prepared_contribution_for(ws, opp)
+        if reaction is None:
+            return _prepared_contribution_for(ws, opp)
+        opp = service.select(opportunity_id)
+    elif opp.status == OpportunityStatus.PROPOSED:
+        opp = service.select(opportunity_id)
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     return prepare_contribution(
         opportunity=opp,
@@ -2212,6 +2219,7 @@ def _prepare_new_opportunity(
         voice_profile=load_voice_profile(settings.paths.voice_profile_path),
         confirmed_jobs=ContentJobRepository(ws).list_jobs(),
         practice_profile=load_practice_profile(settings.paths.practice_profile_path),
+        reaction=reaction,
     )
 
 
@@ -2234,12 +2242,23 @@ def _prepared_contribution_for(
                 execution_status=art.execution_status,
             )
         )
-    return PreparedContribution(opportunity=opp, artifacts=artifacts)
+    latest = opp.reactions[-1] if opp.reactions else None
+    return PreparedContribution(
+        opportunity=opp,
+        artifacts=artifacts,
+        reaction=latest,
+        form_forced=latest is None,
+    )
 
 
 def _render_prepared_contribution(pc: PreparedContribution) -> list[str]:
-    """渲染 prepare 结果：机会摘要 + 可审阅正文。"""
+    """渲染 prepare 结果：机会摘要 + 反应状态 + 可审阅正文。"""
     lines = _render_preferred_opportunity(pc.opportunity)
+    if pc.reaction is not None:
+        lines.append(f"你的反应（第 {pc.reaction.seq} 条）：{pc.reaction.text}")
+    else:
+        lines.append("无反应：本次只准备澄清问题")
+    lines.append("")
     for a in pc.artifacts:
         lines.append(f"成果（{a.kind.value}）：")
         lines.append(a.body)
@@ -2252,6 +2271,10 @@ def _prepared_payload(pc: PreparedContribution) -> dict:
     return {
         "opportunity_id": pc.opportunity.id,
         "status": pc.opportunity.status.value,
+        "reaction": (
+            {"seq": pc.reaction.seq, "text": pc.reaction.text} if pc.reaction else None
+        ),
+        "form_forced": pc.form_forced,
         "artifacts": [
             {
                 "id": a.id,
@@ -2733,6 +2756,11 @@ def connect_prepare(
             help="选中的首选机会 ID（可重复；必须至少指定一个）",
         ),
     ] = None,
+    reaction: str | None = typer.Option(
+        None,
+        "--reaction",
+        help="用户对这条机会的原话（可选；不回答请不传。无反应时只准备澄清问题）",
+    ),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
     """为选中的首选机会制作贡献（select → 生成正文 → 登记 Artifact → ready）。"""
@@ -2746,13 +2774,19 @@ def connect_prepare(
             "(browse with connect daily; do not prepare the whole list)"
         )
         raise typer.Exit(code=1)
+    if reaction is not None and not reaction.strip():
+        typer.echo("reaction must not be blank; omit --reaction if the user did not answer")
+        raise typer.Exit(code=1)
+    if reaction is not None and len(ids) > 1:
+        typer.echo("--reaction applies to exactly one --opportunity")
+        raise typer.Exit(code=1)
     cap = settings.discovery.daily_people.deep_prepare_limit
     over_cap = len(ids) > cap
     selected = ids[:cap]
     prepared: list[PreparedContribution] = []
     misses: list[str] = []
     for oid in selected:
-        pc = _prepare_new_opportunity(settings, ws, oid)
+        pc = _prepare_new_opportunity(settings, ws, oid, reaction=reaction)
         if pc is None:
             misses.append(oid)
         else:
