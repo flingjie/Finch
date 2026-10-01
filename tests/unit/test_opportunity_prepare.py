@@ -12,11 +12,14 @@ from finch.opportunities.models import (
     Opportunity,
     OpportunityStatus,
     Proposal,
+    Reaction,
 )
 from finch.opportunities.prepare import (
     ContributionBodyOutput,
     PreparedContribution,
+    artifact_id_for,
     artifact_kind_for,
+    effective_form,
     prepare_contribution,
     render_evidence_refs,
     write_contribution,
@@ -110,15 +113,15 @@ def test_prepare_contribution_marks_ready_and_records_artifact(tmp_path):
     assert isinstance(prepared, PreparedContribution)
     opp = prepared.opportunity
     assert opp.status == OpportunityStatus.READY
-    assert "art_opp_1_method_card" in opp.artifact_refs
-    assert art_repo.read_content("opp_1", "art_opp_1_method_card") == body
+    assert "art_opp_1_clarifying_question" in opp.artifact_refs
+    assert art_repo.read_content("opp_1", "art_opp_1_clarifying_question") == body
     assert [e.event_type for e in repo.list_events("opp_1")] == [
         "proposed",
         "selected",
         "artifact_added",
         "ready",
     ]
-    saved = art_repo.get("opp_1", "art_opp_1_method_card")
+    saved = art_repo.get("opp_1", "art_opp_1_clarifying_question")
     assert saved is not None
     assert saved.material_origin == MaterialOrigin.SYNTHETIC
     assert prepared.artifacts[0].body == body
@@ -239,7 +242,7 @@ def test_write_contribution_without_profile_renders_none():
     p = runner.last_prompt or ""
     section = p.split("## User real practices (confirmed; the ONLY source for first-person")[1]
     # 精确钉住槽位：规则正文里也出现 (none)，不能用宽松包含断言。
-    assert "experience)\n\n(none)\n\n## Task" in section
+    assert "experience)\n\n(none)\n\n## User reaction to THIS opportunity" in section
 
 
 def test_prepare_contribution_passes_profile(tmp_path):
@@ -263,3 +266,171 @@ def test_prepare_contribution_passes_profile(tmp_path):
         practice_profile=_profile(),
     )
     assert "[agent-100-days]" in (runner.last_prompt or "")
+
+
+# ---- 反应门禁（spec 2026-10-01-reaction-before-prepare §4.2 / §6）----
+
+
+def test_effective_form_forces_clarifying_question_without_reactions():
+    assert effective_form(_opportunity()) == ContributionForm.CLARIFYING_QUESTION
+
+
+def test_effective_form_keeps_proposal_form_with_reactions():
+    opp = _opportunity().model_copy(update={"reactions": [Reaction(seq=1, text="我试过")]})
+    assert effective_form(opp) == ContributionForm.METHOD_CARD
+
+
+def test_effective_form_without_proposal_defaults_then_gates():
+    opp = _opportunity().model_copy(update={"proposal": None})
+    assert effective_form(opp) == ContributionForm.CLARIFYING_QUESTION
+    opp2 = opp.model_copy(update={"reactions": [Reaction(seq=1, text="x")]})
+    assert effective_form(opp2) == ContributionForm.METHOD_CARD
+
+
+def test_artifact_id_for_keeps_legacy_id_without_reactions():
+    assert artifact_id_for(_opportunity(), ContributionForm.METHOD_CARD) == (
+        "art_opp_1_method_card"
+    )
+
+
+def test_artifact_id_for_suffixes_latest_reaction_seq():
+    opp = _opportunity().model_copy(
+        update={"reactions": [Reaction(seq=1, text="a"), Reaction(seq=2, text="b")]}
+    )
+    assert artifact_id_for(opp, ContributionForm.METHOD_CARD) == "art_opp_1_method_card_r2"
+
+
+def test_write_contribution_renders_reaction_slot_none_by_default():
+    runner = FakeRunner("x")
+    write_contribution(runner, _opportunity())
+    p = runner.last_prompt or ""
+    section = p.split("## User reaction to THIS opportunity")[1]
+    assert "\n\n(none)\n\n## Task" in section
+
+
+def test_write_contribution_renders_verbatim_reaction_and_form_override():
+    runner = FakeRunner("x")
+    write_contribution(
+        runner,
+        _opportunity(),
+        user_reaction="我当时最难的是不知道任务到底跑没跑",
+        form=ContributionForm.CLARIFYING_QUESTION,
+    )
+    p = runner.last_prompt or ""
+    assert "我当时最难的是不知道任务到底跑没跑" in p
+    assert "- form: clarifying_question" in p
+    assert "- form: method_card" not in p
+
+
+def test_write_contribution_prompt_unchanged_except_reaction_block():
+    """无反应时，除新增块外 prompt 文本与改动前一致（回归保护）。"""
+    runner = FakeRunner("x")
+    write_contribution(runner, _opportunity())
+    p = runner.last_prompt or ""
+    assert "## User real practices (confirmed; the ONLY source for first-person" in p
+    assert "## User reaction to THIS opportunity (verbatim" in p
+    assert "[reaction]" in p  # 规则文本已加入
+
+
+def test_prepare_without_reaction_forces_clarifying_question(tmp_path):
+    service, repo, art_repo = _service(tmp_path)
+    service.create(
+        opportunity_id="opp_1",
+        topic="t",
+        proposal=Proposal(
+            contribution="c",
+            form=ContributionForm.METHOD_CARD,
+            expected_output="o",
+            scope="s",
+        ),
+    )
+    service.select("opp_1")
+    runner = FakeRunner("观察 + 一个问题")
+    prepared = prepare_contribution(
+        opportunity=service.get("opp_1"), runner=runner, service=service
+    )
+    assert prepared.form_forced is True
+    assert prepared.reaction is None
+    assert prepared.artifacts[0].kind == ArtifactKind.REPLY_DRAFT
+    assert prepared.artifacts[0].id == "art_opp_1_clarifying_question"
+    assert "- form: clarifying_question" in (runner.last_prompt or "")
+    assert [e.event_type for e in repo.list_events("opp_1")] == [
+        "proposed",
+        "selected",
+        "artifact_added",
+        "ready",
+    ]
+
+
+def test_prepare_with_reaction_records_then_keeps_proposal_form(tmp_path):
+    service, repo, art_repo = _service(tmp_path)
+    service.create(
+        opportunity_id="opp_1",
+        topic="t",
+        proposal=Proposal(
+            contribution="c",
+            form=ContributionForm.METHOD_CARD,
+            expected_output="o",
+            scope="s",
+        ),
+    )
+    service.select("opp_1")
+    runner = FakeRunner("方法卡正文 [reaction]")
+    prepared = prepare_contribution(
+        opportunity=service.get("opp_1"),
+        runner=runner,
+        service=service,
+        reaction="我当时最难的是不知道任务到底跑没跑",
+    )
+    assert prepared.form_forced is False
+    assert prepared.reaction is not None
+    assert prepared.reaction.seq == 1
+    assert prepared.reaction.text == "我当时最难的是不知道任务到底跑没跑"
+    assert prepared.artifacts[0].kind == ArtifactKind.METHOD_CARD
+    assert prepared.artifacts[0].id == "art_opp_1_method_card_r1"
+    assert "我当时最难的是不知道任务到底跑没跑" in (runner.last_prompt or "")
+    assert "- form: method_card" in (runner.last_prompt or "")
+    assert [e.event_type for e in repo.list_events("opp_1")] == [
+        "proposed",
+        "selected",
+        "reaction_recorded",
+        "artifact_added",
+        "ready",
+    ]
+    assert art_repo.read_content("opp_1", "art_opp_1_method_card_r1") == "方法卡正文 [reaction]"
+
+
+def test_prepare_uses_latest_stored_reaction_when_none_passed(tmp_path):
+    service, _repo, _art_repo = _service(tmp_path)
+    service.create(
+        opportunity_id="opp_1",
+        topic="t",
+        proposal=Proposal(
+            contribution="c",
+            form=ContributionForm.CASE,
+            expected_output="o",
+            scope="s",
+        ),
+    )
+    service.select("opp_1")
+    service.record_reaction("opp_1", text="早先说过的一句")
+    runner = FakeRunner("x")
+    prepared = prepare_contribution(
+        opportunity=service.get("opp_1"), runner=runner, service=service
+    )
+    assert prepared.form_forced is False
+    assert prepared.reaction is not None and prepared.reaction.text == "早先说过的一句"
+    assert prepared.artifacts[0].id == "art_opp_1_case_r1"
+    assert "早先说过的一句" in (runner.last_prompt or "")
+
+
+def test_prepare_blank_reaction_rejected_before_llm(tmp_path):
+    service, _repo, _art_repo = _service(tmp_path)
+    service.create(opportunity_id="opp_1", topic="t", proposal=None)
+    service.select("opp_1")
+    runner = FakeRunner("x")
+    with pytest.raises(ValueError, match="blank"):
+        prepare_contribution(
+            opportunity=service.get("opp_1"), runner=runner, service=service, reaction="  "
+        )
+    assert runner.calls == 0

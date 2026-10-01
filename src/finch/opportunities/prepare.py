@@ -26,6 +26,7 @@ from finch.opportunities.models import (
     MaterialOrigin,
     Opportunity,
     OpportunityStatus,
+    Reaction,
 )
 from finch.opportunities.service import OpportunityService
 from finch.profile.models import PracticeProfile
@@ -61,15 +62,39 @@ class PreparedArtifact:
 
 @dataclass
 class PreparedContribution:
-    """``prepare_contribution`` 的结果：机会（ready）+ 可直接审阅的成果正文。"""
+    """``prepare_contribution`` 的结果：机会（ready）+ 可直接审阅的成果正文。
+
+    ``reaction`` 是正文所依据的最新一条用户反应（无则 None）；``form_forced`` 为 True 表示
+    因无反应被代码强制为 clarifying_question。
+    """
 
     opportunity: Opportunity
     artifacts: list[PreparedArtifact]
+    reaction: Reaction | None = None
+    form_forced: bool = False
 
 
 def artifact_kind_for(form: ContributionForm) -> ArtifactKind:
     """把贡献形式映射为成果种类（澄清问题归入 reply_draft）。"""
     return _FORM_TO_KIND[form]
+
+
+def effective_form(opportunity: Opportunity) -> ContributionForm:
+    """本设计唯一的 Python 门禁：没有任何用户反应 → 只能准备澄清问题。
+
+    有反应 → 沿用 assess 给出的 ``proposal.form``，如何用进原话由写作 prompt 决定。
+    """
+    p = opportunity.proposal
+    base = p.form if p else ContributionForm.METHOD_CARD
+    return base if opportunity.reactions else ContributionForm.CLARIFYING_QUESTION
+
+
+def artifact_id_for(opportunity: Opportunity, form: ContributionForm) -> str:
+    """成果 id：无反应沿用 ``art_{opp}_{form}``（不动现有数据）；有反应加 ``_r{seq}``。"""
+    base = f"art_{opportunity.id}_{form.value}"
+    if opportunity.reactions:
+        return f"{base}_r{opportunity.reactions[-1].seq}"
+    return base
 
 
 def render_evidence_refs(refs: list[EvidenceRef]) -> str:
@@ -129,19 +154,25 @@ def write_contribution(
     voice_profile: VoiceProfile | None = None,
     confirmed_jobs: list[ContentJob] | None = None,
     practice_profile: PracticeProfile | None = None,
+    user_reaction: str | None = None,
+    form: ContributionForm | None = None,
 ) -> str:
     """按机会的 proposal 生成贡献正文（纯正文，不落库、不改状态）。
 
     ``practice_profile`` 只渲染 confirmed 条目；None / 空 → ``(none)``，正文维持假设场景写法。
+    ``user_reaction`` 是用户对这条机会的原话（None → ``(none)``）；``form`` 覆盖 proposal 的
+    形式（由 ``effective_form`` 决定），None 时沿用 proposal。
     """
     p = opportunity.proposal
+    resolved_form = form if form is not None else (p.form if p else ContributionForm.METHOD_CARD)
+    reaction_text = user_reaction.strip() if user_reaction and user_reaction.strip() else "(none)"
     prompt = _PROMPT.read_text().format(
         topic=opportunity.topic or "(none)",
         entry_kind=opportunity.entry_kind.value if opportunity.entry_kind else "none",
         why_me=opportunity.why_me or "(none)",
         why_continue=opportunity.why_continue or "(none)",
         contribution=p.contribution if p else "(none)",
-        form=p.form.value if p else "method_card",
+        form=resolved_form.value,
         expected_output=p.expected_output if p else "(none)",
         scope=p.scope if p else "(none)",
         cost_note=(p.cost_note if p and p.cost_note else "(none)"),
@@ -149,6 +180,7 @@ def write_contribution(
         voice_summary=render_voice_summary(voice_profile),
         user_positions=render_user_positions(confirmed_jobs or []),
         user_practices=render_user_practices(practice_profile),
+        user_reaction=reaction_text,
     )
     out = cast(ContributionBodyOutput, runner.run(prompt, ContributionBodyOutput))
     return out.body
@@ -162,11 +194,13 @@ def prepare_contribution(
     voice_profile: VoiceProfile | None = None,
     confirmed_jobs: list[ContentJob] | None = None,
     practice_profile: PracticeProfile | None = None,
+    reaction: str | None = None,
 ) -> PreparedContribution:
-    """选定机会后按需制作：生成正文 → 写文件 → 登记 Artifact → mark_ready。
+    """选定机会后按需制作：记录反应 → 决定形式 → 生成正文 → 写文件 → 登记 Artifact → mark_ready。
 
-    正文是可审阅表达方案，默认 material_origin=SYNTHETIC、execution_status=NOT_RUN；
-    演示是否真正运行由用户后续提供事实更新，代码不得把未运行标为已运行。
+    ``reaction`` 非 None 时先经 ``record_reaction`` 落库（空白拒绝、同文本幂等）。没有任何
+    反应 → 形式强制 clarifying_question（唯一的 Python 门禁）。正文是可审阅表达方案，默认
+    material_origin=SYNTHETIC、execution_status=NOT_RUN；代码不得把未运行标为已运行。
     """
     if service.artifacts is None:
         raise ValueError("prepare_contribution requires an ArtifactRepository")
@@ -180,16 +214,20 @@ def prepare_contribution(
                 f"illegal state to prepare: {opp.status.value} "
                 f"(expected selected) for opportunity {opportunity.id}"
             )
+        if reaction is not None:
+            opp = service.record_reaction(opp.id, text=reaction)
+        form = effective_form(opp)
+        latest = opp.reactions[-1] if opp.reactions else None
         body = write_contribution(
             runner,
             opp,
             voice_profile=voice_profile,
             confirmed_jobs=confirmed_jobs,
             practice_profile=practice_profile,
+            user_reaction=latest.text if latest else None,
+            form=form,
         )
-        p = opp.proposal
-        form = p.form if p else ContributionForm.METHOD_CARD
-        artifact_id = f"art_{opp.id}_{form.value}"
+        artifact_id = artifact_id_for(opp, form)
         source_refs = [
             ref.source_ref for ref in opp.evidence_refs if ref.source_ref
         ]
@@ -214,4 +252,6 @@ def prepare_contribution(
         return PreparedContribution(
             opportunity=ready,
             artifacts=[prepared_artifact],
+            reaction=latest,
+            form_forced=latest is None,
         )
