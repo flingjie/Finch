@@ -102,3 +102,16 @@ def test_assess_from_url_idempotent(tmp_path):
     assert second.opportunity is not None
     assert first.opportunity.id == second.opportunity.id
     assert runner.calls == 1
+
+
+def test_assess_from_url_passes_user_practices_to_prompt(tmp_path):
+    service = OpportunityService(OpportunityRepository(Workspace(tmp_path)))
+    runner = FakeRunner(_draft())
+    assess_from_url(
+        url="https://example.com/post",
+        runner=runner,
+        service=service,
+        fetcher=FakeFetcher("body text"),
+        user_practices="- [agent-100-days] (sourced) agent engineering: 100 天路径",
+    )
+    assert "[agent-100-days]" in (runner.last_prompt or "")

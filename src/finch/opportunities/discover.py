@@ -66,8 +66,9 @@ def opportunity_context_fingerprint(
     why_relevant: str,
     artifacts: list[RawArtifact],
     user_context: str,
+    user_practices: str = "",
 ) -> str:
-    """对「人物 + 当前材料 + 用户问题」做稳定指纹；任一变化 → 新指纹。"""
+    """对「人物 + 当前材料 + 用户问题 + 已确认实践」做稳定指纹；任一变化 → 新指纹。"""
     artifact_keys = sorted(
         (
             a.artifact_id
@@ -79,9 +80,10 @@ def opportunity_context_fingerprint(
         )
         for a in artifacts
     )
-    raw = "\n".join(
-        [person_ref, current_work, why_relevant, user_context, *artifact_keys]
-    )
+    parts = [person_ref, current_work, why_relevant, user_context]
+    if user_practices:  # 仅非空时加入，保持既有 opp_* id 稳定
+        parts.append(user_practices)
+    raw = "\n".join([*parts, *artifact_keys])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -97,6 +99,7 @@ def discover_preferred_opportunity_outcome(
     artifacts: list[RawArtifact],
     service: OpportunityService,
     user_context: str = "",
+    user_practices: str = "",
     skips: SkipAssessmentRepository | None = None,
 ) -> DiscoverOutcome:
     """对首选候选做机会判断并落库；幂等（同指纹已存在 / 已跳过返回既有），无贡献点 → 跳过。"""
@@ -106,6 +109,7 @@ def discover_preferred_opportunity_outcome(
         why_relevant=why_relevant,
         artifacts=artifacts,
         user_context=user_context,
+        user_practices=user_practices,
     )
     opportunity_id = f"opp_{person_ref}_{fingerprint}"
     existing = service.get(opportunity_id)
@@ -146,6 +150,7 @@ def discover_preferred_opportunity_outcome(
         why_relevant=why_relevant,
         their_artifacts_json=render_artifacts_json(artifacts),
         user_context=user_context,
+        user_practices=user_practices,
     )
     if draft.eval_failed:
         return DiscoverOutcome(
@@ -212,6 +217,7 @@ def discover_preferred_opportunity(
     artifacts: list[RawArtifact],
     service: OpportunityService,
     user_context: str = "",
+    user_practices: str = "",
     skips: SkipAssessmentRepository | None = None,
 ) -> Opportunity | None:
     """兼容包装：返回首选机会或 None（详见 ``discover_preferred_opportunity_outcome``）。"""
@@ -226,5 +232,6 @@ def discover_preferred_opportunity(
         artifacts=artifacts,
         service=service,
         user_context=user_context,
+        user_practices=user_practices,
         skips=skips,
     ).opportunity

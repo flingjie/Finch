@@ -20,14 +20,24 @@ deterministic recommendation gate lives in code.
 
 {user_context}
 
+## User real practices (confirmed, citeable)
+
+Each line is a practice the user has personally confirmed. `(sourced)` items have public refs;
+`(author_stated)` items are the user's own statement with no public evidence. `boundaries`
+lists what the user has explicitly said they cannot speak to. `(none)` means nothing is confirmed.
+
+{user_practices}
+
 ## Fields to produce
 
 1. topic: the concrete, continuable topic (one specific thread / claim / problem).
 2. thread_ref: the canonical URL of the specific thread / post the topic comes from; empty if
    no single source stands out.
 3. entry_kind: one of difficulty / result / disagreement / co_exploration / cross_domain.
-4. why_me: why the user cares, tied to a current question, curiosity, or a traceable basis;
-   mark inference as inference — do not fabricate the user's personal experience.
+4. why_me: why the user cares. Prefer to anchor it to one confirmed practice above and write
+   its id in square brackets, e.g. "[agent-100-days] …". Only when no practice fits may you fall
+   back to a current question or curiosity, and then mark it as inference — do not fabricate the
+   user's personal experience or claim anything outside a practice's boundaries.
 5. why_continue: what room the peer has to add — experience, counterexample, a boundary, or a
    next step. This is a reasoned hypothesis, never a promised reply.
 6. contribution: the smallest concrete contribution: a method card, a demo, a clarifying

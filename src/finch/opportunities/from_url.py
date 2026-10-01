@@ -43,6 +43,7 @@ def assess_from_url(
     runner: StructuredInferenceRunner,
     service: OpportunityService,
     user_context: str = "",
+    user_practices: str = "",
     fetcher: WebFetcher | None = None,
     person_ref: str | None = None,
     display_name: str = "",
@@ -58,8 +59,9 @@ def assess_from_url(
     except WebSourceUnavailable as exc:
         return UrlAssessResult(None, "fetch_failed", str(exc), url=url)
 
+    practice_part = f"\n{user_practices}" if user_practices else ""
     fingerprint = hashlib.sha256(
-        f"{url}\n{user_context}\n{body[:2000]}".encode()
+        f"{url}\n{user_context}{practice_part}\n{body[:2000]}".encode()
     ).hexdigest()[:16]
     person_key = person_ref or "unknown"
     opportunity_id = f"opp_url_{person_key}_{fingerprint}"
@@ -88,6 +90,7 @@ def assess_from_url(
         why_relevant=user_context or "用户指定的讨论",
         their_artifacts_json=artifacts_json,
         user_context=user_context,
+        user_practices=user_practices,
     )
     if draft.eval_failed:
         return UrlAssessResult(None, "eval_failed", draft.skip_reason, url=url)

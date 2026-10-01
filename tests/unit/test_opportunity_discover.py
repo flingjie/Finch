@@ -210,3 +210,18 @@ def test_context_fingerprint_changes_with_user_question(tmp_path):
     a = opportunity_context_fingerprint(**base)
     b = opportunity_context_fingerprint(**{**base, "user_context": "新问题"})
     assert a != b
+
+
+def test_context_fingerprint_changes_with_user_practices():
+    base = dict(
+        person_ref="person_1",
+        current_work="w",
+        why_relevant="r",
+        artifacts=[_artifact()],
+        user_context="",
+    )
+    a = opportunity_context_fingerprint(**base)
+    b = opportunity_context_fingerprint(**{**base, "user_practices": "- [x] (sourced) d: c"})
+    assert a != b
+    # 默认值不改变既有指纹（回归保护）
+    assert a == opportunity_context_fingerprint(**{**base, "user_practices": ""})

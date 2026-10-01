@@ -53,8 +53,13 @@ def assess_opportunity(
     why_relevant: str,
     their_artifacts_json: str,
     user_context: str = "",
+    user_practices: str = "",
 ) -> OpportunityDraft:
-    """LLM 判断一条首选机会；失败（超时 / 格式不合法）→ 不推荐 draft（fail-soft）。"""
+    """LLM 判断一条首选机会；失败（超时 / 格式不合法）→ 不推荐 draft（fail-soft）。
+
+    ``user_practices`` 是已渲染的用户已确认实践文本块（见 ``finch.profile.render``）；
+    空字符串渲染为 ``(none)``，行为与无画像时一致。
+    """
     prompt = _PROMPT.read_text().format(
         peer_id=peer_id,
         display_name=display_name,
@@ -63,6 +68,7 @@ def assess_opportunity(
         why_relevant=why_relevant,
         their_artifacts=their_artifacts_json,
         user_context=user_context or "(none)",
+        user_practices=user_practices or "(none)",
     )
     try:
         return cast(OpportunityDraft, runner.run(prompt, OpportunityDraft))

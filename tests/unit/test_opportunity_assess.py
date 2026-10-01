@@ -129,3 +129,23 @@ def test_assess_opportunity_marks_eval_failed_on_error():
     out = assess_opportunity(runner, **_kwargs())
     assert out.eval_failed is True
     assert out.recommend is False
+
+
+def test_assess_opportunity_renders_user_practices_block():
+    runner = FakeRunner(_draft())
+    assess_opportunity(
+        runner,
+        **_kwargs(),
+        user_practices="- [agent-100-days] (sourced) agent engineering: 100 天路径",
+    )
+    p = runner.last_prompt or ""
+    assert "## User real practices (confirmed, citeable)" in p
+    assert "[agent-100-days]" in p
+
+
+def test_assess_opportunity_empty_practices_renders_none():
+    runner = FakeRunner(_draft())
+    assess_opportunity(runner, **_kwargs())
+    p = runner.last_prompt or ""
+    idx = p.index("## User real practices (confirmed, citeable)")
+    assert "(none)" in p[idx : idx + 400]
