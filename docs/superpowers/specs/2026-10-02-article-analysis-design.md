@@ -1,7 +1,7 @@
 # article_analysis：文章表达分析
 
 日期：2026-10-02
-状态：已确认（待写实现计划）
+状态：已确认（实现计划见 docs/superpowers/plans/2026-10-02-article-analysis.md）
 代码基线：`main` `8199350`
 对照：`2026-09-08-writing-style-analysis-design.md`（表面风格七维；本 Skill 不替代它）
 
