@@ -31,6 +31,9 @@ EXPECTED: dict[str, set[str]] = {
         "user_reaction",
     },
     "prompts/practice-profile-draft.md": {"repo", "readme"},
+    "prompts/analyze-article.md": {
+        "body",
+    },
 }
 
 ROOT = Path(__file__).resolve().parents[2]
