@@ -140,6 +140,9 @@ app.add_typer(twitter_app, name="twitter")
 sources_app = typer.Typer(help="跨平台 OpenCLI 采集源（只读）")
 app.add_typer(sources_app, name="sources")
 
+repos_app = typer.Typer(help="X 分享的 GitHub 仓库发现与热度榜（只读）")
+app.add_typer(repos_app, name="repos")
+
 voice_app = typer.Typer(help="Manage the author voice profile (local, no auto-publish)")
 app.add_typer(voice_app, name="voice")
 
@@ -713,6 +716,249 @@ def sources_sync(
             f"projected={r.projected_count}"
             + (f" ({r.detail})" if r.detail else "")
         )
+
+
+@repos_app.command("discover")
+def repos_discover(
+    lookback_hours: int | None = typer.Option(
+        None, "--lookback-hours", help="回溯小时数（默认读配置）"
+    ),
+    resume: str | None = typer.Option(None, "--resume", help="续跑未完成的 run_id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """抓取窗口内 X 上分享的 GitHub 仓库，去重并生成热度榜（全量，无 Top-N）。"""
+    from finch.repos.repository import RepoDiscoveryRepository
+    from finch.repos.service import RepoDiscoveryService
+    from finch.twitter.opencli_client import OpenCliClient
+
+    settings = load_settings()
+    cfg = settings.repo_discovery
+    if not cfg.enabled and resume is None:
+        typer.echo("repo_discovery.enabled is false")
+        raise typer.Exit(code=1)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    svc = RepoDiscoveryService(
+        RepoDiscoveryRepository(ws),
+        OpenCliClient(),
+        gh=GhClient(),
+    )
+    run = svc.discover(
+        queries=list(cfg.queries),
+        lookback_hours=lookback_hours or cfg.lookback_hours,
+        timezone=cfg.timezone,
+        resume_run_id=resume,
+        per_query_limit=cfg.execution.per_query_limit,
+        per_slice_budget_seconds=cfg.execution.per_slice_budget_seconds,
+        agent_keywords=list(cfg.agent_tags.keywords),
+        agent_tags_enabled=cfg.agent_tags.enabled,
+        likes_weight=cfg.ranking.likes_weight,
+        fetch_github=True,
+        expand_shorts=cfg.execution.expand_short_urls,
+    )
+    if as_json:
+        typer.echo(json.dumps(run.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        if run.status.value == "failed":
+            raise typer.Exit(code=1)
+        return
+    typer.echo(f"run_id: {run.run_id}")
+    typer.echo(f"status: {run.status.value}")
+    typer.echo(
+        f"window: {run.window_start.isoformat()} → {run.window_end.isoformat()} "
+        f"({run.timezone})"
+    )
+    typer.echo(f"formula: {run.formula_version} | {run.effective_formula}")
+    if run.unavailable_metrics:
+        typer.echo("unavailable metrics: " + ", ".join(run.unavailable_metrics))
+    typer.echo(f"tweets: {run.tweet_count}  repos: {run.repo_count}")
+    for q in run.queries:
+        note = f" ({q.coverage_note})" if q.coverage_note else ""
+        err = f" err={q.error}" if q.error else ""
+        typer.echo(f"  query {q.query_id}: {q.status.value} seen={q.tweets_seen}{note}{err}")
+    if run.errors:
+        typer.echo("errors:")
+        for e in run.errors[:10]:
+            typer.echo(f"  - {e}")
+    if run.status.value == "partial":
+        typer.echo(f"resume: uv run finch repos discover --resume {run.run_id}")
+    if run.status.value == "failed":
+        raise typer.Exit(code=1)
+
+
+@repos_app.command("list")
+def repos_list(
+    run: str = typer.Option(..., "--run", help="discover 产出的 run_id"),
+    sort: str = typer.Option("x_heat", "--sort", help="x_heat|mentions|github_stars|latest"),
+    topic: str = typer.Option("all", "--topic", help="all|agent"),
+    page: int = typer.Option(1, "--page", min=1),
+    page_size: int | None = typer.Option(None, "--page-size"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """分页展示某次运行的仓库榜（分页只影响渲染，不截断数据）。"""
+    from finch.repos.models import SortKey
+    from finch.repos.repository import RepoDiscoveryRepository
+    from finch.repos.service import RepoDiscoveryService
+    from finch.twitter.opencli_client import OpenCliClient
+
+    settings = load_settings()
+    cfg = settings.repo_discovery
+    try:
+        sort_key = SortKey(sort)
+    except ValueError as exc:
+        typer.echo(f"invalid --sort: {sort}")
+        raise typer.Exit(code=1) from exc
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    svc = RepoDiscoveryService(RepoDiscoveryRepository(ws), OpenCliClient())
+    try:
+        snap, page_entries, total = svc.list_page(
+            run,
+            sort=sort_key,
+            topic=topic,
+            page=page,
+            page_size=page_size or cfg.page_size,
+            likes_weight=cfg.ranking.likes_weight,
+        )
+    except KeyError as exc:
+        typer.echo(f"run not found: {run}")
+        raise typer.Exit(code=1) from exc
+    pages = max(1, (total + (page_size or cfg.page_size) - 1) // (page_size or cfg.page_size))
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "run_id": run,
+                    "sort": sort,
+                    "topic": topic,
+                    "page": page,
+                    "page_size": page_size or cfg.page_size,
+                    "total": total,
+                    "pages": pages,
+                    "formula_version": snap.formula_version,
+                    "effective_formula": snap.effective_formula,
+                    "entries": [e.model_dump(mode="json") for e in page_entries],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    run_obj = RepoDiscoveryRepository(ws).get_run(run)
+    status = run_obj.status.value if run_obj else "?"
+    typer.echo(
+        f"run={run} status={status} sort={sort} topic={topic} "
+        f"第 {page} 页，共 {total} 条（{pages} 页）"
+    )
+    typer.echo(f"formula: {snap.effective_formula}")
+    typer.echo("禁止把本页当作完整结果；导出：finch repos export --run …")
+    for e in page_entries:
+        desc = e.description if e.description not in (None, "") else "暂无简介"
+        heat = "—" if e.x_heat is None else str(e.x_heat)
+        stars = "—" if e.github_stars is None else str(e.github_stars)
+        partial = " [partial]" if e.metrics_partial else ""
+        typer.echo(
+            f"{e.rank}. {e.repo_key}  tag={e.topic_tag.value}  "
+            f"heat={heat}  mentions={e.mentions}  stars={stars}{partial}"
+        )
+        typer.echo(f"   {desc}")
+        typer.echo(f"   {e.url}")
+
+
+@repos_app.command("export")
+def repos_export(
+    run: str = typer.Option(..., "--run"),
+    fmt: str = typer.Option("json", "--format", help="json|csv"),
+    output: str = typer.Option(..., "--output", "-o"),
+    sort: str = typer.Option("x_heat", "--sort"),
+    topic: str = typer.Option("all", "--topic"),
+) -> None:
+    """导出完整榜单（JSON 含推文关联；CSV 每仓库一行）。"""
+    import csv
+
+    from finch.repos.models import SortKey
+    from finch.repos.repository import RepoDiscoveryRepository
+    from finch.repos.service import RepoDiscoveryService
+    from finch.twitter.opencli_client import OpenCliClient
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    try:
+        sort_key = SortKey(sort)
+    except ValueError as exc:
+        typer.echo(f"invalid --sort: {sort}")
+        raise typer.Exit(code=1) from exc
+    svc = RepoDiscoveryService(RepoDiscoveryRepository(ws), OpenCliClient())
+    try:
+        snap, entries, total = svc.list_page(
+            run,
+            sort=sort_key,
+            topic=topic,
+            page=1,
+            page_size=10**9,
+            likes_weight=settings.repo_discovery.ranking.likes_weight,
+        )
+    except KeyError as exc:
+        typer.echo(f"run not found: {run}")
+        raise typer.Exit(code=1) from exc
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if fmt == "json":
+        tweets = RepoDiscoveryRepository(ws).list_tweets(run)
+        payload = {
+            "run_id": run,
+            "total": total,
+            "formula_version": snap.formula_version,
+            "effective_formula": snap.effective_formula,
+            "entries": [e.model_dump(mode="json") for e in entries],
+            "tweets": [t.model_dump(mode="json") for t in tweets],
+        }
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    elif fmt == "csv":
+        with path.open("w", encoding="utf-8", newline="") as fh:
+            w = csv.DictWriter(
+                fh,
+                fieldnames=[
+                    "rank",
+                    "repo_key",
+                    "url",
+                    "description",
+                    "topic_tag",
+                    "x_heat",
+                    "mentions",
+                    "github_stars",
+                    "github_forks",
+                    "latest_share_at",
+                    "source_urls",
+                    "metrics_partial",
+                ],
+            )
+            w.writeheader()
+            for e in entries:
+                w.writerow(
+                    {
+                        "rank": e.rank,
+                        "repo_key": e.repo_key,
+                        "url": e.url,
+                        "description": e.description or "",
+                        "topic_tag": e.topic_tag.value,
+                        "x_heat": "" if e.x_heat is None else e.x_heat,
+                        "mentions": e.mentions,
+                        "github_stars": "" if e.github_stars is None else e.github_stars,
+                        "github_forks": "" if e.github_forks is None else e.github_forks,
+                        "latest_share_at": (
+                            e.latest_share_at.isoformat() if e.latest_share_at else ""
+                        ),
+                        "source_urls": " ".join(e.source_urls),
+                        "metrics_partial": e.metrics_partial,
+                    }
+                )
+    else:
+        typer.echo("format must be json or csv")
+        raise typer.Exit(code=1)
+    typer.echo(f"wrote {total} repos → {path}")
 
 
 @github_app.command("reflect")

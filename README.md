@@ -41,6 +41,7 @@ uv run finch connections follow-up --opportunity ID   # 接续对方回应
 uv run finch people shortlist --today    # 同 connections today
 uv run finch conversations list --needs-follow-up / show / follow-up / ingest / note / commit / defer / close
 uv run finch sources doctor / sync       # 只读采集（twitter|reddit|github|v2ex|weixin|xiaohongshu）
+uv run finch repos discover [--resume ID] / list --run ID / export --run ID  # X→GitHub 热度榜
 
 # —— 灵感笔记 ——
 uv run finch inspirations save --text "想保留的启发" [--source <ref>] [--origin …]

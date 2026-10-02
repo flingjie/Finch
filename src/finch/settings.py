@@ -99,6 +99,59 @@ class RepositoryDiscovery(BaseModel):
     max_repos: int = 10
 
 
+class RepoDiscoveryRankingSettings(BaseModel):
+    """X 分享热度权重（适配层未返回的项在 effective_formula 中剔除）。"""
+
+    likes_weight: int = 1
+    reposts_weight: int = 2
+    quotes_weight: int = 2
+    replies_weight: int = 1
+
+
+class RepoDiscoveryAgentTags(BaseModel):
+    enabled: bool = True
+    keywords: list[str] = Field(
+        default_factory=lambda: [
+            "agent",
+            "agentic",
+            "harness",
+            "tool calling",
+            "multi-agent",
+        ]
+    )
+
+
+class RepoDiscoveryExecution(BaseModel):
+    resumable: bool = True
+    per_slice_budget_seconds: int = Field(default=600, ge=1)
+    per_query_limit: int = Field(default=100, ge=1)
+    expand_short_urls: bool = False
+
+
+class RepoDiscoverySettings(BaseModel):
+    """X→GitHub 仓库发现（与 repository_discovery / peer-discovery 隔离）。"""
+
+    enabled: bool = True
+    timezone: str = "Asia/Shanghai"
+    lookback_hours: int = Field(default=24, ge=1)
+    collect_all: bool = True
+    default_view: Literal["all", "agent"] = "all"
+    default_sort: Literal["x_heat", "mentions", "github_stars", "latest"] = "x_heat"
+    page_size: int = Field(default=50, ge=1)
+    # 基础查询覆盖 GitHub 链接分享；主题查询为补充召回。
+    queries: list[str] = Field(
+        default_factory=lambda: [
+            "github.com has:links -filter:nativeretweets",
+            '("agent" OR "agentic" OR harness) github.com has:links',
+        ]
+    )
+    ranking: RepoDiscoveryRankingSettings = Field(
+        default_factory=RepoDiscoveryRankingSettings
+    )
+    agent_tags: RepoDiscoveryAgentTags = Field(default_factory=RepoDiscoveryAgentTags)
+    execution: RepoDiscoveryExecution = Field(default_factory=RepoDiscoveryExecution)
+
+
 class TwitterSettings(BaseModel):
     daily_limit: int = 100
     per_query_limit: int = 20
@@ -364,6 +417,7 @@ class DiscoverySettings(BaseModel):
 class Settings(BaseModel):
     repositories: list[str] = Field(default_factory=list)
     repository_discovery: RepositoryDiscovery = Field(default_factory=RepositoryDiscovery)
+    repo_discovery: RepoDiscoverySettings = Field(default_factory=RepoDiscoverySettings)
     twitter: TwitterSettings = Field(default_factory=TwitterSettings)
     opencli: OpenCliSettings = Field(default_factory=OpenCliSettings)
     sources: SourcesSettings = Field(default_factory=SourcesSettings)

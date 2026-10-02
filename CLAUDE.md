@@ -18,7 +18,7 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (typer sub-apps / commands): `finch connect ...` (today / daily / person / record-presented / prepare / feedback / assess / artifact-status), `finch connections ...` (today / record / follow-up), `finch peers ...` (list / show / get), `finch people shortlist` (`--today` 今日承诺面，等同 `connections today`；`--all` 全部线索), `finch conversations ...` (list / show / get / follow-up / ingest / note / commit / experiment / mark-important / defer / close), `finch dialogue ...` (save / search / show / forget), `finch ideas ...` (commit / create / choose / list / show / confirm / revise-position / skip), `finch inspirations ...` (save / list / show / note / archive), `finch community ...` (context / save / inspect / feedback / list / run / runs / run-trace), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / write / show / revise), `finch review ...` (list / show / approve / revise / skip / weekly), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch profile ...` (show / confirm / revoke / add / init — 用户已确认的真实实践，注入机会评估与贡献制作), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch sources ...` (doctor / sync；twitter|reddit|github|v2ex|weixin|xiaohongshu), `finch collisions ...` (generate / weekly), `finch experiments start`, `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
+CLI surface (typer sub-apps / commands): `finch connect ...` (today / daily / person / record-presented / prepare / feedback / assess / artifact-status), `finch connections ...` (today / record / follow-up), `finch peers ...` (list / show / get), `finch people shortlist` (`--today` 今日承诺面，等同 `connections today`；`--all` 全部线索), `finch conversations ...` (list / show / get / follow-up / ingest / note / commit / experiment / mark-important / defer / close), `finch dialogue ...` (save / search / show / forget), `finch ideas ...` (commit / create / choose / list / show / confirm / revise-position / skip), `finch inspirations ...` (save / list / show / note / archive), `finch community ...` (context / save / inspect / feedback / list / run / runs / run-trace), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch drafts ...` (create / write / show / revise), `finch review ...` (list / show / approve / revise / skip / weekly), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch profile ...` (show / confirm / revoke / add / init — 用户已确认的真实实践，注入机会评估与贡献制作), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch sources ...` (doctor / sync；twitter|reddit|github|v2ex|weixin|xiaohongshu), `finch repos ...` (discover / list / export — X 分享的 GitHub 仓库热度榜；与 `repository_discovery` 无关), `finch collisions ...` (generate / weekly), `finch experiments start`, `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
 
 ## Architecture
 
@@ -27,6 +27,7 @@ Skill + domain services, not an LLM agent loop and not a graph runtime. Connecti
 ```
 skills/
   peer-discovery/          公开内容 → 首页 0–1 首选机会 + --view browse 的 50 人分层（5/15/30，同一快照）+ PeerProfile（finch connect daily）
+  repo-discovery/          X 分享的 GitHub 仓库 → 完整热度榜（finch repos discover/list/export；无 Top-N；不读 Practice）
   creator-evidence/        有限工件 → CreatorEvidence（必须引用 artifact_id；不改关系状态）
   connection-opportunity/  判断有无真实贡献（无贡献则 SKIP，不硬连）
   interaction-preparation/ 选中后深度准备（finch connect prepare --opportunity [--reaction]；无反应只出澄清问题；单次不超过 deep_prepare_limit，默认 5）
@@ -75,6 +76,7 @@ src/finch/
   opportunities/  交流机会聚合（why_me/why_continue/proposal + 生命周期 + prepare）
   discovery/      每日发现（sources sync → people shortlist → 首选机会评估）
   sources/        跨平台抓取编排（opencli gateway + RawArtifact；twitter/reddit/github/v2ex/weixin/xiaohongshu）
+  repos/          X 分享的 GitHub 仓库发现与热度榜（finch repos；与 repository_discovery 无关）
   engagement/     发现快照 / InteractionRecord / 推荐反馈（旧评分管线已移除）
   storage/        file workspace: Workspace + repositories (YAML/Markdown/JSONL, atomic write)
   codex/          `codex exec` 子进程（超时 + Pydantic JSON）
@@ -84,7 +86,7 @@ src/finch/
   cli.py          typer app
 ```
 
-Config lives in `finch.yaml` (repositories, repository_discovery, opencli, sources, interests, engagement, discovery, llm, community_scout; settings also load twitter, quality_gates, paths, extraction). Prompts live in `prompts/`.
+Config lives in `finch.yaml` (repositories, repository_discovery, repo_discovery, opencli, sources, interests, engagement, discovery, llm, community_scout; settings also load twitter, quality_gates, paths, extraction). Prompts live in `prompts/`.
 
 ## Opportunity discovery (peer-discovery)
 

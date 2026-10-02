@@ -15,6 +15,37 @@ repository_discovery:
   lookback_hours: 24
   max_repos: 10
 
+# X 上分享的 GitHub 仓库热度榜（与上面「用户自有仓库发现」无关）
+repo_discovery:
+  enabled: true
+  timezone: Asia/Shanghai
+  lookback_hours: 24
+  collect_all: true
+  default_view: all
+  default_sort: x_heat
+  page_size: 50
+  queries:
+    - "github.com has:links -filter:nativeretweets"
+    - '("agent" OR "agentic" OR harness) github.com has:links'
+  ranking:
+    likes_weight: 1
+    reposts_weight: 2
+    quotes_weight: 2
+    replies_weight: 1
+  agent_tags:
+    enabled: true
+    keywords:
+      - agent
+      - agentic
+      - harness
+      - tool calling
+      - multi-agent
+  execution:
+    resumable: true
+    per_slice_budget_seconds: 600
+    per_query_limit: 100
+    expand_short_urls: false
+
 paths:
   # 用户真实实践清单（finch profile ...）；只有 confirmed: true 的条目进入机会评估与贡献制作。
   practice_profile_path: practice-profile.yaml

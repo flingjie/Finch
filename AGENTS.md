@@ -26,6 +26,7 @@
 - 运行：`uv run finch <command>`
 - 连接：`finch connect daily` / `prepare` / `assess`；`finch connections record` / `follow-up` / `today`
 - 采集：`finch sources doctor` / `sync`（只读；twitter|reddit|github|v2ex|weixin|xiaohongshu）
+- 仓库热度榜：`finch repos discover` / `list` / `export`（X 分享的 GitHub 项目；与 `repository_discovery` 用户自有仓库无关）
 - 灵感与实验：`finch inspirations`、`finch collisions generate|weekly`、`finch experiments start`
 
 ## 目录
@@ -33,6 +34,7 @@
 - `src/finch/opportunities/` 交流机会聚合（评估 / 状态机 / 贡献制作）
 - `src/finch/discovery/` 每日发现编排
 - `src/finch/sources/` 跨平台只读抓取（opencli gateway + RawArtifact）
+- `src/finch/repos/` X 分享的 GitHub 仓库发现与热度榜（finch repos；与 repository_discovery 无关）
 - `src/finch/engagement/` 发现快照 / InteractionRecord / 推荐反馈（旧评分管线已移除）
 - `src/finch/connections/` 真实互动登记与机会跟进
 - `src/finch/storage/` 文件 Workspace（YAML/Markdown/JSONL，原子写）

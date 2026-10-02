@@ -34,11 +34,22 @@ class PublicRepo(BaseModel):
     is_fork: bool = False
     archived: bool = False
     disabled: bool = False
+    # repo-discovery / optional metadata (null when API omitted the field)
+    stargazer_count: int | None = None
+    fork_count: int | None = None
+    topics: list[str] = Field(default_factory=list)
+    github_id: int | None = None
 
 
 def parse_public_repo(data: dict) -> PublicRepo:
     owner = data.get("owner") or {}
     login = owner.get("login") or (data.get("full_name") or "").split("/", 1)[0]
+    stars = data.get("stargazers_count", data.get("stargazerCount"))
+    forks = data.get("forks_count", data.get("forkCount"))
+    topics = data.get("topics") or []
+    if not isinstance(topics, list):
+        topics = []
+    gh_id = data.get("id")
     return PublicRepo(
         name_with_owner=data["full_name"],
         url=data.get("html_url") or f"https://github.com/{data['full_name']}",
@@ -49,6 +60,10 @@ def parse_public_repo(data: dict) -> PublicRepo:
         is_fork=data.get("fork", False),
         archived=data.get("archived", False),
         disabled=data.get("disabled", False),
+        stargazer_count=int(stars) if stars is not None else None,
+        fork_count=int(forks) if forks is not None else None,
+        topics=[str(t) for t in topics],
+        github_id=int(gh_id) if gh_id is not None else None,
     )
 
 
