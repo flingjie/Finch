@@ -1,0 +1,43 @@
+skill_name: article_analysis
+cases:
+  - id: 1
+    name: 表达任务意图路由到本 Skill
+    input:
+      user: "这篇文章为什么这样写？想让读者明白什么？"
+    expected_output:
+      skill: article_analysis
+    assertions:
+      - name: 路由
+        description: 不调用 writing-style-analysis；运行 finch article analyze
+
+  - id: 2
+    name: 风格意图不抢走
+    input:
+      user: "这段文字的节奏和用词有什么特点？"
+    expected_output:
+      skill: writing-style-analysis
+    assertions:
+      - name: 分流
+        description: 交给 writing-style-analysis，不跑 article analyze
+
+  - id: 3
+    name: 呈现五段且推断标注
+    input:
+      text: "测试通过，但问题没解决。记忆不是聊天记录。"
+    expected_output:
+      sections: [表达任务, 读者与预期变化, 表达特点, 目标达成情况, 可借鉴方法]
+    assertions:
+      - name: 五段
+        description: 人类输出含五段标题；inferred 时含「根据文章推断」
+      - name: 无落库
+        description: 不新增 Workspace 报告文件
+
+  - id: 4
+    name: 不重写不练习
+    input:
+      text: "任意短文"
+    expected_output:
+      no_rewrite: true
+    assertions:
+      - name: 边界
+        description: 不生成改写稿；不自动调用 expression-practice

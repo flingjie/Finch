@@ -25,6 +25,15 @@ description: >
 
 分析 → 选一个可实验方法 → `expression-practice` 练习 → 认可后 `voice-profile` 人工更新。
 
+## 与 article_analysis 的路由
+
+| 意图 | Skill |
+|---|---|
+| 风格特点、节奏、用词、可借鉴句式 | `writing-style-analysis`（本 Skill） |
+| 表达任务、读者变化、是否达成目的 | `article_analysis` |
+
+意图不清时先问一句澄清；默认不同时跑两个分析。
+
 ## 参考
 
 - `references/analysis-dimensions.md` — 7 个分析维度判据。
