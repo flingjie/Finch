@@ -865,8 +865,7 @@ def repos_list(
             f"{e.rank}. {e.repo_key}  tag={e.topic_tag.value}  "
             f"heat={heat}  mentions={e.mentions}  stars={stars}{partial}"
         )
-        typer.echo(f"   {desc}")
-        typer.echo(f"   {e.url}")
+        typer.echo(f"   {desc}  |  {e.url}")
 
 
 @repos_app.command("export")

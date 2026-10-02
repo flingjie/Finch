@@ -29,6 +29,7 @@ uv run finch repos export --run <run_id> --format json|csv --output <path> [--so
 见 `references/presentation.md` 与 `_shared/agent-presentation.md`。
 
 - 先给结果：窗口、刷新/公式、完成状态、仓库数；再给当前页列表。
+- 每条仓库项同时给出 GitHub `description`（空则「暂无简介」）和可点击的 GitHub 链接。
 - 明确「第 N 页，共 M 条」；**禁止把第一页说成完整结果**；提示可翻页或 `export`。
 - `partial`：说明覆盖缺口，给出 `discover --resume <run_id>`。
 - `failed`：不能说「今天没有项目」；说明来源失败。

@@ -10,9 +10,8 @@
 
 第 1 页，共 80 条（共 2 页）。这不是完整结果——可说「下一页」或导出。
 
-1. acme/widget  tag=agent  heat=42  mentions=3  stars=1200
+1. [acme/widget](https://github.com/acme/widget)  tag=agent  heat=42  mentions=3  stars=1200
    Agent harness for tool timeouts
-   https://github.com/acme/widget
 …
 ```
 
