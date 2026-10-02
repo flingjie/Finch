@@ -11,6 +11,8 @@ import typer
 import yaml
 from pydantic import ValidationError
 
+from .article.models import ArticleReport
+from .article.service import ArticleAnalysisService
 from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
 from .content.jobs import AuthorPosition, ContentJob, ContentJobStatus
@@ -192,6 +194,9 @@ app.add_typer(practice_app, name="practice")
 
 style_app = typer.Typer(help="分析一段文本/链接的写作特点")
 app.add_typer(style_app, name="style")
+
+article_app = typer.Typer(help="分析一篇文章的表达任务、读者变化与方法有效性")
+app.add_typer(article_app, name="article")
 
 community_app = typer.Typer(help="社区匹配与进入助手（发现、观察、回访可进入的社区）")
 app.add_typer(community_app, name="community")
@@ -4687,6 +4692,95 @@ def _render_report(report: StyleReport) -> str:
     if report.experiments_for_me:
         lines.append("\n可实验：")
         lines += [f"- {e}" for e in report.experiments_for_me]
+    return "\n".join(lines)
+
+
+@article_app.command("analyze")
+def article_analyze(
+    text: str = typer.Option(None, "--text", help="要分析的文本"),
+    file: str = typer.Option(None, "--file", help="文本文件"),
+    url: str = typer.Option(None, "--url", help="要分析的链接（X/Reddit/普通网页）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """分析文章表达：任务、读者变化、方法拆解与可借鉴技巧（不落库）。"""
+    provided = sum(x is not None for x in (text, file, url))
+    if provided != 1:
+        typer.echo("exactly one of --text / --file / --url is required")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    resolver = SourceResolver(OpenCliClient(), RedditOpenCliClient(), WebFetcher())
+    try:
+        if text is not None:
+            source = resolver.resolve_text(text)
+        elif file is not None:
+            source = resolver.resolve_file(file)
+        else:
+            source = resolver.resolve_url(url)
+        if not source.body.strip():
+            typer.echo("empty body after resolve")
+            raise typer.Exit(code=1)
+        runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+        report = ArticleAnalysisService(runner).analyze(source)
+    except (RuntimeError, StructuredOutputError, OSError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(report.model_dump_json(indent=2))
+    else:
+        typer.echo(_render_article_report(report))
+
+
+def _render_article_report(report: ArticleReport) -> str:
+    task = report.expression_task
+    inferred = "（根据文章推断）" if task.inferred else ""
+    aud = report.audience_change
+    lines = [
+        "# 文章表达分析",
+        "",
+        f"## 表达任务{inferred}",
+        f"- 主题：{task.topic}",
+        f"- 主任务：{task.primary_task}",
+    ]
+    if task.secondary_tasks:
+        lines.append(f"- 次任务：{'；'.join(task.secondary_tasks)}")
+    lines += [
+        "",
+        "## 读者与预期变化",
+        f"面向 **{aud.who}**，试图让他们从 **{aud.before}**，转变为 **{aud.after}**。",
+        f"- 读者匹配：{aud.fit_check}",
+        "",
+        "## 表达特点",
+    ]
+    for t in report.techniques:
+        caveat = f" 代价：{t.caveat}" if t.caveat else ""
+        lines.append(
+            f"- 「{t.excerpt}」→ {t.method} → {t.reader_effect}.{caveat}"
+        )
+    if not report.techniques:
+        lines.append("- （无拆解条目）")
+    eff = report.effectiveness
+    lines += [
+        "",
+        "## 目标达成情况",
+        f"- 清晰度：{eff.clarity}",
+        f"- 具体性：{eff.concreteness}",
+        f"- 可信度：{eff.credibility}",
+        f"- 可执行性：{eff.actionability}",
+        "",
+        "## 可借鉴方法",
+    ]
+    for m in report.transferable_methods:
+        lines += [
+            f"- **{m.method}**",
+            f"  为何有效：{m.why_effective_here}",
+            f"  适用：{m.when_to_use}",
+            f"  练习：{m.mini_exercise}",
+        ]
+    if report.limitations:
+        lines += ["", "## 局限"]
+        lines += [f"- {x}" for x in report.limitations]
     return "\n".join(lines)
 
 
