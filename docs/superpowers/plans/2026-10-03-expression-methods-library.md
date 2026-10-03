@@ -1248,15 +1248,97 @@ Expected: PASS
 
 - [ ] **Step 5: CLI practice tests**
 
-In `tests/unit/test_cli_practice.py`, add tests that:
+Append to `tests/unit/test_cli_practice.py`:
 
-1. Seed an `ExpressionMethod` in workspace.
-2. `practice start --method <id> --attempt "..."` → session JSON includes `method_id`.
-3. Missing method id → exit 1.
-4. `finish` without `--verdict` on method session → exit 1.
-5. `finish --verdict worth_reuse` → method `practice_logs` has one entry.
+```python
+from datetime import UTC, datetime
 
-Follow existing monkeypatch patterns in that file for settings / runner.
+from finch.expression_methods.models import ExpressionMethod
+from finch.expression_methods.repository import ExpressionMethodRepository
+
+
+def _seed_method(tmp_path, method_id: str = "emethod_1") -> None:
+    now = datetime.now(UTC)
+    ExpressionMethodRepository(Workspace(tmp_path)).upsert(
+        ExpressionMethod(
+            id=method_id,
+            title="失败开场",
+            why_effective="先见损失",
+            when_to_use="复盘",
+            mini_exercise="写开头",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+
+def test_practice_start_with_method(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    _patch(monkeypatch, settings)
+    _seed_method(tmp_path)
+    r = CliRunner().invoke(
+        app,
+        ["practice", "start", "--method", "emethod_1", "--attempt", "hello", "--json"],
+    )
+    assert r.exit_code == 0, r.output
+    assert '"method_id": "emethod_1"' in r.output
+
+
+def test_practice_start_missing_method(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    r = CliRunner().invoke(
+        app, ["practice", "start", "--method", "nope", "--attempt", "hello"]
+    )
+    assert r.exit_code == 1
+    assert "method not found" in r.output
+
+
+def test_practice_finish_requires_verdict_for_method(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    _patch(monkeypatch, settings)
+    monkeypatch.setattr(cli, "create_runner", lambda *a, **k: _FakeRunner())
+    monkeypatch.setattr(cli, "CodexRunner", _FakeRunner)
+    _seed_method(tmp_path)
+    start = CliRunner().invoke(
+        app, ["practice", "start", "--method", "emethod_1", "--attempt", "hello"]
+    )
+    session_id = start.output.strip().splitlines()[0].removeprefix("id: ")
+    r = CliRunner().invoke(app, ["practice", "finish", session_id, "--final", "终稿"])
+    assert r.exit_code == 1
+    assert "verdict" in r.output.casefold()
+
+
+def test_practice_finish_records_method_log(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    _patch(monkeypatch, settings)
+    monkeypatch.setattr(cli, "create_runner", lambda *a, **k: _FakeRunner())
+    monkeypatch.setattr(cli, "CodexRunner", _FakeRunner)
+    _seed_method(tmp_path)
+    start = CliRunner().invoke(
+        app, ["practice", "start", "--method", "emethod_1", "--attempt", "hello"]
+    )
+    session_id = start.output.strip().splitlines()[0].removeprefix("id: ")
+    r = CliRunner().invoke(
+        app,
+        [
+            "practice",
+            "finish",
+            session_id,
+            "--final",
+            "终稿",
+            "--verdict",
+            "worth_reuse",
+            "--note",
+            "再用",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    method = ExpressionMethodRepository(Workspace(tmp_path)).get("emethod_1")
+    assert method is not None
+    assert method.practice_logs[-1].verdict == "worth_reuse"
+    assert method.practice_logs[-1].session_id == session_id
+```
 
 - [ ] **Step 6: Wire practice CLI**
 
