@@ -12,6 +12,7 @@ import yaml
 from pydantic import ValidationError
 
 from .article.models import ArticleReport
+from .article.repository import ArticleReportRepository
 from .article.service import ArticleAnalysisService
 from .article.source_resolver import SourceResolver
 from .codex.runner import CodexRunner
@@ -4655,8 +4656,9 @@ def article_analyze(
     file: str = typer.Option(None, "--file", help="文本文件"),
     url: str = typer.Option(None, "--url", help="要分析的链接（X/Reddit/普通网页）"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    no_save: bool = typer.Option(False, "--no-save", help="不落库报告"),
 ) -> None:
-    """分析文章表达：任务、读者变化、方法拆解与可借鉴技巧（不落库）。"""
+    """分析文章表达：任务、读者变化、方法拆解与可借鉴技巧。"""
     provided = sum(x is not None for x in (text, file, url))
     if provided != 1:
         typer.echo("exactly one of --text / --file / --url is required")
@@ -4680,6 +4682,27 @@ def article_analyze(
     except (RuntimeError, StructuredOutputError, OSError) as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
+    if not no_save:
+        ArticleReportRepository(ws).upsert(report)
+    if as_json:
+        typer.echo(report.model_dump_json(indent=2))
+    else:
+        typer.echo(_render_article_report(report))
+
+
+@article_app.command("show")
+def article_show(
+    report_id: str = typer.Argument(..., help="report id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """回看已落库的文章分析报告。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    report = ArticleReportRepository(ws).get(report_id)
+    if report is None:
+        typer.echo(f"report not found: {report_id}")
+        raise typer.Exit(code=1)
     if as_json:
         typer.echo(report.model_dump_json(indent=2))
     else:
@@ -4692,6 +4715,8 @@ def _render_article_report(report: ArticleReport) -> str:
     aud = report.audience_change
     lines = [
         "# 文章表达分析",
+        "",
+        f"id: {report.id}",
         "",
         f"## 表达任务{inferred}",
         f"- 主题：{task.topic}",
@@ -4752,13 +4777,17 @@ def _render_article_report(report: ArticleReport) -> str:
         "",
         "## 可借鉴方法",
     ]
-    for m in report.transferable_methods:
+    for i, m in enumerate(report.transferable_methods, start=1):
         lines += [
-            f"- **{m.method}**",
+            f"- **[{i}] {m.method}**",
             f"  为何有效：{m.why_effective_here}",
             f"  适用：{m.when_to_use}",
             f"  练习：{m.mini_exercise}",
         ]
+    lines += [
+        "",
+        "下一步：finch methods save --report <id> --index <n>",
+    ]
     if report.clarity_cost_reductions:
         lines += ["", "## 降低理解成本的写法（ASD-STE100-inspired）"]
         for item in report.clarity_cost_reductions:

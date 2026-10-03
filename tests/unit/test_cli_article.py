@@ -122,6 +122,49 @@ def test_article_analyze_text_human(monkeypatch, tmp_path):
     assert "写作风格" in r.output
     assert "目标达成情况" in r.output
     assert "可借鉴方法" in r.output
+    assert "id: article_x" in r.output
+    assert "[1]" in r.output
+
+
+def test_article_analyze_persists_by_default(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    monkeypatch.setattr(cli, "ArticleAnalysisService", lambda runner: _FakeService())
+    r = CliRunner().invoke(app, ["article", "analyze", "--text", "hello"])
+    assert r.exit_code == 0, r.output
+    assert "id: article_x" in r.output or "report id" in r.output.casefold() or "article_x" in r.output
+    from finch.article.repository import ArticleReportRepository
+    from finch.storage.workspace import Workspace
+
+    got = ArticleReportRepository(Workspace(tmp_path)).get("article_x")
+    assert got is not None
+
+
+def test_article_analyze_no_save(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    monkeypatch.setattr(cli, "ArticleAnalysisService", lambda runner: _FakeService())
+    r = CliRunner().invoke(
+        app, ["article", "analyze", "--text", "hello", "--no-save"]
+    )
+    assert r.exit_code == 0, r.output
+    from finch.article.repository import ArticleReportRepository
+    from finch.storage.workspace import Workspace
+
+    assert ArticleReportRepository(Workspace(tmp_path)).get("article_x") is None
+
+
+def test_article_show(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    monkeypatch.setattr(cli, "ArticleAnalysisService", lambda runner: _FakeService())
+    CliRunner().invoke(app, ["article", "analyze", "--text", "hello"])
+    r = CliRunner().invoke(app, ["article", "show", "article_x"])
+    assert r.exit_code == 0, r.output
+    assert "可借鉴方法" in r.output
+
+
+def test_article_show_missing(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    r = CliRunner().invoke(app, ["article", "show", "missing"])
+    assert r.exit_code == 1
 
 
 def test_article_analyze_human_omits_clarity_section_when_empty(monkeypatch, tmp_path):
