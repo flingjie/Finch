@@ -54,6 +54,16 @@ class TransferableMethod(BaseModel):
     mini_exercise: str
 
 
+class ClarityCostReduction(BaseModel):
+    """写法如何降低理解成本（ASD-STE100-inspired lens）。"""
+
+    excerpt: str
+    method: str
+    reader_effect: str
+    mini_exercise: str
+    rule_id: str | None = None  # optional CL*
+
+
 class ArticleReport(BaseModel):
     """文章表达分析报告（即算即打印，不落库）。"""
 
@@ -67,4 +77,7 @@ class ArticleReport(BaseModel):
     techniques: list[TechniqueBreakdown] = Field(default_factory=list)
     effectiveness: Effectiveness
     transferable_methods: list[TransferableMethod] = Field(min_length=2, max_length=3)
+    clarity_cost_reductions: list[ClarityCostReduction] = Field(
+        default_factory=list, max_length=3
+    )
     limitations: list[str] = Field(default_factory=list)

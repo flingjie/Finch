@@ -4803,6 +4803,15 @@ def _render_article_report(report: ArticleReport) -> str:
             f"  适用：{m.when_to_use}",
             f"  练习：{m.mini_exercise}",
         ]
+    if report.clarity_cost_reductions:
+        lines += ["", "## 降低理解成本的写法（ASD-STE100-inspired）"]
+        for item in report.clarity_cost_reductions:
+            rid = f" [{item.rule_id}]" if item.rule_id else ""
+            lines += [
+                f"- 「{item.excerpt}」→ {item.method}{rid}",
+                f"  作用：{item.reader_effect}",
+                f"  练习：{item.mini_exercise}",
+            ]
     if report.limitations:
         lines += ["", "## 局限"]
         lines += [f"- {x}" for x in report.limitations]

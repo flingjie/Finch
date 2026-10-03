@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from finch.article.models import (
     ArticleReport,
     AudienceChange,
+    ClarityCostReduction,
     Effectiveness,
     ExpressionTask,
     TechniqueBreakdown,
@@ -77,3 +78,43 @@ def test_transferable_methods_must_be_two_or_three():
         ArticleReport(**base, transferable_methods=_methods(4))
     ok = ArticleReport(**base, transferable_methods=_methods(3))
     assert len(ok.transferable_methods) == 3
+
+
+def _base_kwargs():
+    return dict(
+        expression_task=ExpressionTask(topic="t", primary_task="p"),
+        audience_change=AudienceChange(who="w", before="b", after="a", fit_check="f"),
+        effectiveness=Effectiveness(
+            clarity="c", concreteness="c", credibility="c", actionability="n/a"
+        ),
+        transferable_methods=_methods(2),
+    )
+
+
+def test_clarity_cost_reductions_max_three():
+    items = [
+        ClarityCostReduction(
+            excerpt=f"e{i}",
+            method="m",
+            reader_effect="r",
+            mini_exercise="ex",
+            rule_id="CL01",
+        )
+        for i in range(3)
+    ]
+    report = ArticleReport(**_base_kwargs(), clarity_cost_reductions=items)
+    assert len(report.clarity_cost_reductions) == 3
+
+
+def test_clarity_cost_reductions_rejects_four():
+    items = [
+        ClarityCostReduction(excerpt=f"e{i}", method="m", reader_effect="r", mini_exercise="ex")
+        for i in range(4)
+    ]
+    with pytest.raises(ValidationError):
+        ArticleReport(**_base_kwargs(), clarity_cost_reductions=items)
+
+
+def test_clarity_cost_reductions_default_empty():
+    report = ArticleReport(**_base_kwargs())
+    assert report.clarity_cost_reductions == []

@@ -18,6 +18,13 @@ Return JSON matching ArticleReport judgment fields only. Leave id/source_type/so
 
 5. transferable_methods: exactly 2 or 3 items. Each: method, why_effective_here, when_to_use, mini_exercise (a small practice the reader can do). Methods to learn — not sentences to copy.
 
+6. clarity_cost_reductions (0–3 items, ASD-STE100-inspired clarity lens):
+   For each: excerpt (verbatim) → method → reader_effect → mini_exercise;
+   optional rule_id from CL01–CL08 when it clearly fits.
+   Focus on moves that lower ambiguity, make actors/actions concrete, keep
+   consistent terms, or place prerequisites next to advice.
+   If none are clear, return an empty list — do not invent.
+
 Also fill limitations (short sample, inferred intent, etc.) when relevant.
 
 Hard rules:

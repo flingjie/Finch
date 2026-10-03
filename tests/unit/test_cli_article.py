@@ -16,10 +16,13 @@ def _patch(monkeypatch, settings):
 
 
 class _FakeService:
+    with_clarity = False
+
     def analyze(self, source):
         from finch.article.models import (
             ArticleReport,
             AudienceChange,
+            ClarityCostReduction,
             Effectiveness,
             ExpressionTask,
             TechniqueBreakdown,
@@ -62,6 +65,19 @@ class _FakeService:
                     mini_exercise="e",
                 ),
             ],
+            clarity_cost_reductions=(
+                [
+                    ClarityCostReduction(
+                        excerpt="先备份再升级",
+                        method="前置条件紧邻建议",
+                        reader_effect="读者不必回查",
+                        mini_exercise="把前提挪到动作前",
+                        rule_id="CL03",
+                    )
+                ]
+                if self.with_clarity
+                else []
+            ),
         )
 
 
@@ -92,3 +108,25 @@ def test_article_analyze_text_human(monkeypatch, tmp_path):
     assert "表达特点" in r.output
     assert "目标达成情况" in r.output
     assert "可借鉴方法" in r.output
+
+
+def test_article_analyze_human_omits_clarity_section_when_empty(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    monkeypatch.setattr(cli, "ArticleAnalysisService", lambda runner: _FakeService())
+    r = CliRunner().invoke(app, ["article", "analyze", "--text", "hello"])
+    assert r.exit_code == 0, r.output
+    assert "降低理解成本" not in r.output
+
+
+def test_article_analyze_human_renders_clarity_section(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+
+    class _Svc(_FakeService):
+        with_clarity = True
+
+    monkeypatch.setattr(cli, "ArticleAnalysisService", lambda runner: _Svc())
+    r = CliRunner().invoke(app, ["article", "analyze", "--text", "hello"])
+    assert r.exit_code == 0, r.output
+    assert "降低理解成本" in r.output
+    assert "[CL03]" in r.output
+    assert "先备份再升级" in r.output
