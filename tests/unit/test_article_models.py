@@ -9,6 +9,8 @@ from finch.article.models import (
     ClarityCostReduction,
     Effectiveness,
     ExpressionTask,
+    StyleBlock,
+    StyleEvidence,
     TechniqueBreakdown,
     TransferableMethod,
 )
@@ -118,3 +120,51 @@ def test_clarity_cost_reductions_rejects_four():
 def test_clarity_cost_reductions_default_empty():
     report = ArticleReport(**_base_kwargs())
     assert report.clarity_cost_reductions == []
+
+
+def test_article_report_default_style_is_empty_block():
+    report = ArticleReport(
+        expression_task=ExpressionTask(topic="t", primary_task="p"),
+        audience_change=AudienceChange(
+            who="w", before="b", after="a", fit_check="f"
+        ),
+        effectiveness=Effectiveness(
+            clarity="c", concreteness="c", credibility="c", actionability="n/a"
+        ),
+        transferable_methods=_methods(2),
+    )
+    assert isinstance(report.style, StyleBlock)
+    assert report.style.opening == []
+    assert report.style.scope == "single_text"
+    assert report.style.overall_confidence == "medium"
+
+
+def test_style_block_round_trip_seven_dimensions():
+    ev = StyleEvidence(
+        dimension="opening",
+        observation="先给结论",
+        excerpts=["先说结果"],
+        confidence="high",
+    )
+    block = StyleBlock(
+        scope="single_text",
+        overall_confidence="high",
+        opening=[ev],
+        signature_patterns=["短句收束"],
+        transferable_techniques=["结论先行"],
+        potential_weaknesses=["缺反例"],
+        experiments_for_me=["下次开头先写结论"],
+    )
+    report = ArticleReport(
+        expression_task=ExpressionTask(topic="t", primary_task="p"),
+        audience_change=AudienceChange(
+            who="w", before="b", after="a", fit_check="f"
+        ),
+        effectiveness=Effectiveness(
+            clarity="c", concreteness="c", credibility="c", actionability="n/a"
+        ),
+        transferable_methods=_methods(2),
+        style=block,
+    )
+    assert report.style.opening[0].excerpts == ["先说结果"]
+    assert "rhetorical_patterns" not in StyleBlock.model_fields
