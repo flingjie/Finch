@@ -9,7 +9,7 @@ from finch.article.models import (
     TransferableMethod,
 )
 from finch.article.service import ArticleAnalysisService
-from finch.style.source_resolver import ResolvedSource
+from finch.article.source_resolver import ResolvedSource
 
 
 class _Runner:

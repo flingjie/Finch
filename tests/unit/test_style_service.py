@@ -1,9 +1,9 @@
 """WritingStyleService：analyze 覆盖确定性字段 + compare 三桶。"""
 
+from finch.article.source_resolver import ResolvedSource
 from finch.content.voice import VoiceProfile
 from finch.style.models import StyleComparison, StyleReport
 from finch.style.service import WritingStyleService
-from finch.style.source_resolver import ResolvedSource
 
 
 class _Runner:

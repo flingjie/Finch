@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from .article.models import ArticleReport
 from .article.service import ArticleAnalysisService
+from .article.source_resolver import SourceResolver
 from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
 from .content.jobs import AuthorPosition, ContentJob, ContentJobStatus
@@ -125,7 +126,6 @@ from .storage.repositories import (
 from .storage.workspace import Workspace
 from .style.models import StyleReport
 from .style.service import WritingStyleService
-from .style.source_resolver import SourceResolver
 from .twitter.normalizer import normalize_tweets
 from .twitter.opencli_client import OpenCliClient
 from .twitter.query_builder import QueryBuilder

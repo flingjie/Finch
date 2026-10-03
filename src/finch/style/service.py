@@ -9,10 +9,10 @@ import hashlib
 from pathlib import Path
 from typing import cast
 
+from finch.article.source_resolver import ResolvedSource
 from finch.content.voice import VoiceProfile
 from finch.llm.base import StructuredInferenceRunner
 from finch.style.models import StyleComparison, StyleReport
-from finch.style.source_resolver import ResolvedSource
 
 _ANALYZER_VERSION = "1.0.0"
 _PROMPT_PATH = Path("prompts/analyze-writing-style.md")
