@@ -53,6 +53,8 @@ from .engagement.models import (
     RecommendationFeedback,
 )
 from .evidence.extractor import Extractor, build_cards
+from .expression_methods.repository import ExpressionMethodRepository
+from .expression_methods.service import ExpressionMethodService
 from .github.commit_reader import CommitReader, load_commit_details
 from .github.gh_client import GhClient, GhError
 from .github.local_repo import resolve_commit_repo
@@ -194,6 +196,9 @@ app.add_typer(practice_app, name="practice")
 
 article_app = typer.Typer(help="分析一篇文章的表达任务、读者变化与方法有效性")
 app.add_typer(article_app, name="article")
+
+methods_app = typer.Typer(help="表达方法库（从文章分析选中可迁移方法）")
+app.add_typer(methods_app, name="methods")
 
 community_app = typer.Typer(help="社区匹配与进入助手（发现、观察、回访可进入的社区）")
 app.add_typer(community_app, name="community")
@@ -4707,6 +4712,130 @@ def article_show(
         typer.echo(report.model_dump_json(indent=2))
     else:
         typer.echo(_render_article_report(report))
+
+
+def _methods_service(ws: Workspace, settings: Settings) -> ExpressionMethodService:
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    return ExpressionMethodService(
+        ExpressionMethodRepository(ws),
+        ArticleReportRepository(ws),
+        runner,
+    )
+
+
+@methods_app.command("save")
+def methods_save(
+    report: str = typer.Option(..., "--report", help="ArticleReport id"),
+    index: int = typer.Option(..., "--index", help="1-based transferable_methods index"),
+    as_new: bool = typer.Option(False, "--as-new", help="强制新建"),
+    merge: str | None = typer.Option(None, "--merge", help="合并到已有 method id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """保存选中方法：默认只打印合并候选（exit 2）；--as-new / --merge 才写入。"""
+    if as_new and merge:
+        typer.echo("use only one of --as-new / --merge")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    svc = _methods_service(ws, settings)
+    try:
+        if as_new:
+            method = svc.save_as_new(report, index)
+        elif merge:
+            method = svc.merge_into(merge, report, index)
+        else:
+            report_obj = ArticleReportRepository(ws).get(report)
+            if report_obj is None:
+                typer.echo(f"report not found: {report}")
+                raise typer.Exit(code=1)
+            draft = svc.from_report(report_obj, index)
+            suggestion = svc.suggest_merges(draft)
+            if as_json:
+                typer.echo(suggestion.model_dump_json(indent=2))
+            else:
+                typer.echo(f"pending method: {draft.title}")
+                if not suggestion.candidates:
+                    typer.echo("no merge candidates")
+                for c in suggestion.candidates:
+                    typer.echo(f"- {c.method_id}: {c.reason}")
+                typer.echo(
+                    "确认：finch methods save --report "
+                    f"{report} --index {index} --as-new"
+                    "  或  --merge <method-id>"
+                )
+            raise typer.Exit(code=2)
+    except KeyError as exc:
+        key = str(exc).strip("'")
+        if key == report or "report" in str(exc).casefold():
+            typer.echo(f"report not found: {report}")
+        else:
+            typer.echo(f"method not found: {key}")
+        raise typer.Exit(code=1) from None
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(method.model_dump_json(indent=2))
+    else:
+        typer.echo(f"id: {method.id}")
+        typer.echo(f"title: {method.title}")
+        typer.echo(f"sources: {len(method.sources)}")
+
+
+@methods_app.command("list")
+def methods_list(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """列出表达方法库。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    rows = ExpressionMethodRepository(ws).list_all()
+    if as_json:
+        typer.echo(
+            json.dumps([r.model_dump(mode="json") for r in rows], ensure_ascii=False, indent=2)
+        )
+        return
+    if not rows:
+        typer.echo("(empty)")
+        return
+    for m in rows:
+        typer.echo(
+            f"{m.id}\t{m.title}\tsources={len(m.sources)}\tlogs={len(m.practice_logs)}"
+        )
+
+
+@methods_app.command("show")
+def methods_show(
+    method_id: str = typer.Argument(..., help="method id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """展示一个表达方法（来源 + 练习记录）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    m = ExpressionMethodRepository(ws).get(method_id)
+    if m is None:
+        typer.echo(f"method not found: {method_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(m.model_dump_json(indent=2))
+        return
+    typer.echo(f"id: {m.id}")
+    typer.echo(f"title: {m.title}")
+    typer.echo(f"why_effective: {m.why_effective}")
+    typer.echo(f"when_to_use: {m.when_to_use}")
+    typer.echo(f"boundaries: {m.boundaries}")
+    typer.echo(f"mini_exercise: {m.mini_exercise}")
+    for s in m.sources:
+        typer.echo(
+            f"source: report={s.report_id} index={s.method_index} ref={s.source_ref}"
+        )
+    for log in m.practice_logs:
+        typer.echo(
+            f"practice: session={log.session_id} verdict={log.verdict} note={log.note}"
+        )
 
 
 def _render_article_report(report: ArticleReport) -> str:
