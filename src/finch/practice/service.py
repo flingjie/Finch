@@ -9,7 +9,12 @@ from typing import cast
 from uuid import uuid4
 
 from finch.llm.base import StructuredInferenceRunner
-from finch.practice.models import PracticeDiagnosis, PracticeLesson, PracticeSession
+from finch.practice.models import (
+    MethodVerdictLiteral,
+    PracticeDiagnosis,
+    PracticeLesson,
+    PracticeSession,
+)
 from finch.storage.repositories import PracticeSessionRepository
 
 _DIAGNOSE_PROMPT = """\
@@ -69,6 +74,7 @@ class PracticeService:
         *,
         idea_id: str | None = None,
         initial_attempt: str,
+        method_id: str | None = None,
     ) -> PracticeSession:
         """创建会话，记 initial_attempt。"""
         now = datetime.now(UTC)
@@ -76,6 +82,7 @@ class PracticeService:
             id=f"practice_{uuid4().hex[:8]}",
             idea_id=idea_id,
             initial_attempt=initial_attempt,
+            method_id=method_id,
             created_at=now,
             updated_at=now,
         )
@@ -119,9 +126,18 @@ class PracticeService:
         self.sessions.upsert(session)
         return session
 
-    def finish(self, session_id: str, final_expression: str) -> PracticeSession:
-        """记最终版 + LLM 生成 lesson，置 finished。"""
+    def finish(
+        self,
+        session_id: str,
+        final_expression: str,
+        *,
+        method_verdict: MethodVerdictLiteral | None = None,
+        method_verdict_note: str = "",
+    ) -> PracticeSession:
+        """记最终版 + LLM 生成 lesson，置 finished；方法练习必须给 verdict。"""
         session = self._require_started(session_id)
+        if session.method_id and method_verdict is None:
+            raise ValueError("method_verdict required when session has method_id")
         lesson = cast(
             PracticeLesson,
             self.runner.run(
@@ -136,6 +152,8 @@ class PracticeService:
                 "final_expression": final_expression,
                 "lesson": lesson.lesson,
                 "status": "finished",
+                "method_verdict": method_verdict,
+                "method_verdict_note": method_verdict_note,
                 "updated_at": datetime.now(UTC),
             }
         )

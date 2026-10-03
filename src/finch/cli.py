@@ -53,6 +53,7 @@ from .engagement.models import (
     RecommendationFeedback,
 )
 from .evidence.extractor import Extractor, build_cards
+from .expression_methods.models import ExpressionMethod, MethodVerdict
 from .expression_methods.repository import ExpressionMethodRepository
 from .expression_methods.service import ExpressionMethodService
 from .github.commit_reader import CommitReader, load_commit_details
@@ -4527,21 +4528,40 @@ def conversations_close(
 def practice_start(
     idea: str = typer.Option(None, "--idea", help="关联 idea id"),
     attempt: str = typer.Option(..., "--attempt", help="用户首稿"),
+    method: str = typer.Option(None, "--method", help="练习的表达方法 id（finch methods）"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """开始一次表达练习（可选关联 idea + 首稿）。"""
+    """开始一次表达练习（可选关联 idea / 表达方法 + 首稿）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
+    if method is not None and ExpressionMethodRepository(ws).get(method) is None:
+        typer.echo(f"method not found: {method}")
+        raise typer.Exit(code=1)
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     session = PracticeService(PracticeSessionRepository(ws), runner).start(
-        idea_id=idea, initial_attempt=attempt
+        idea_id=idea, initial_attempt=attempt, method_id=method
     )
     if as_json:
         typer.echo(session.model_dump_json(indent=2))
     else:
         typer.echo(f"id: {session.id}")
         typer.echo("下一步：诊断本次表达")
+
+
+def _render_method_drill_card(method: ExpressionMethod) -> str:
+    """方法卡仅作诊断语境；不要求评分技巧是否被使用。"""
+    return (
+        "## Expression method drill\n"
+        f"id: {method.id}\n"
+        f"title: {method.title}\n"
+        f"why_effective: {method.why_effective}\n"
+        f"when_to_use: {method.when_to_use}\n"
+        f"boundaries: {method.boundaries}\n"
+        f"mini_exercise: {method.mini_exercise}\n"
+        "Do NOT score whether the technique was used; "
+        "diagnose clarity of purpose for the reader."
+    )
 
 
 @practice_app.command("diagnose")
@@ -4555,6 +4575,12 @@ def practice_diagnose(
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    existing = PracticeSessionRepository(ws).get(session_id)
+    if existing is not None and existing.method_id:
+        method_obj = ExpressionMethodRepository(ws).get(existing.method_id)
+        if method_obj is not None:
+            card = _render_method_drill_card(method_obj)
+            context = card + ("\n\n" + context if context else "")
     try:
         session = PracticeService(PracticeSessionRepository(ws), runner).diagnose(
             session_id, context=context
@@ -4601,23 +4627,46 @@ def practice_save(
         typer.echo("下一步：诊断本次表达")
 
 
+_METHOD_VERDICTS = ("worth_reuse", "practice_again", "not_for_me")
+
+
 @practice_app.command("finish")
 def practice_finish(
     session_id: str = typer.Argument(..., help="session id"),
     final: str = typer.Option(..., "--final", help="最终表达"),
+    verdict: str = typer.Option(
+        None, "--verdict", help="方法练习结论：worth_reuse|practice_again|not_for_me"
+    ),
+    note: str = typer.Option("", "--note", help="方法练习备注"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
     """记最终版 + LLM 经验总结，置 finished。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
+    if verdict is not None and verdict not in _METHOD_VERDICTS:
+        typer.echo(f"invalid verdict: {verdict}. expected one of {', '.join(_METHOD_VERDICTS)}")
+        raise typer.Exit(code=1)
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     try:
         session = PracticeService(PracticeSessionRepository(ws), runner).finish(
-            session_id, final
+            session_id,
+            final,
+            method_verdict=cast(MethodVerdict | None, verdict),
+            method_verdict_note=note,
         )
-    except KeyError:
-        typer.echo(f"session not found: {session_id}")
+        if session.method_id and session.method_verdict:
+            ExpressionMethodService(
+                ExpressionMethodRepository(ws), ArticleReportRepository(ws), runner
+            ).append_practice_log(
+                session.method_id, session.id, session.method_verdict, session.method_verdict_note
+            )
+    except KeyError as exc:
+        key = str(exc).strip("'")
+        if key == session_id:
+            typer.echo(f"session not found: {session_id}")
+        else:
+            typer.echo(f"method not found: {key}")
         raise typer.Exit(code=1) from None
     except (ValueError, RuntimeError, StructuredOutputError) as exc:
         typer.echo(str(exc))
@@ -4647,6 +4696,11 @@ def practice_show(
     else:
         typer.echo(f"id: {session.id}")
         typer.echo(f"status: {session.status}")
+        if session.method_id:
+            typer.echo(f"method_id: {session.method_id}")
+        if session.method_verdict:
+            typer.echo(f"method_verdict: {session.method_verdict}")
+            typer.echo(f"method_verdict_note: {session.method_verdict_note}")
         typer.echo(f"initial_attempt: {session.initial_attempt}")
         typer.echo(f"diagnosis: {session.diagnosis}")
         typer.echo(f"questions_asked: {json.dumps(session.questions_asked, ensure_ascii=False)}")

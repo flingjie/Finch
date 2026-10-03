@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+MethodVerdictLiteral = Literal["worth_reuse", "practice_again", "not_for_me"]
+
 
 class PracticeSession(BaseModel):
     """一次表达练习会话：首稿 + 诊断 + 追问 + 修订 + 最终版 + 经验。"""
@@ -18,6 +20,9 @@ class PracticeSession(BaseModel):
     final_expression: str = ""
     lesson: str = ""
     status: Literal["started", "finished"] = "started"
+    method_id: str | None = None
+    method_verdict: MethodVerdictLiteral | None = None
+    method_verdict_note: str = ""
     created_at: datetime
     updated_at: datetime
 

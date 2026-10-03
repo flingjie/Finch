@@ -82,3 +82,31 @@ def test_diagnose_prompt_mentions_clarity_rules():
     prompt = practice_service._DIAGNOSE_PROMPT
     assert "CL01" in prompt or "clarity" in prompt.casefold()
     assert "ASD-STE100" in prompt
+
+
+def test_start_with_method_id(tmp_path):
+    svc = _service(tmp_path)
+    s = svc.start(initial_attempt="初稿", method_id="emethod_1")
+    assert s.method_id == "emethod_1"
+
+
+def test_finish_requires_verdict_when_method(tmp_path):
+    svc = _service(tmp_path)
+    s = svc.start(initial_attempt="初稿", method_id="emethod_1")
+    try:
+        svc.finish(s.id, "最终版")
+    except ValueError as e:
+        assert "verdict" in str(e).casefold()
+        return
+    raise AssertionError("expected ValueError")
+
+
+def test_finish_with_verdict(tmp_path):
+    svc = _service(tmp_path)
+    s = svc.start(initial_attempt="初稿", method_id="emethod_1")
+    s = svc.finish(
+        s.id, "最终版", method_verdict="worth_reuse", method_verdict_note="再用"
+    )
+    assert s.status == "finished"
+    assert s.method_verdict == "worth_reuse"
+    assert s.method_verdict_note == "再用"
