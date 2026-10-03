@@ -1,5 +1,6 @@
 """PracticeService：start / diagnose / save_revision / finish。"""
 
+from finch.practice import service as practice_service
 from finch.practice.models import PracticeDiagnosis, PracticeLesson
 from finch.practice.service import PracticeService
 from finch.storage.repositories import PracticeSessionRepository
@@ -75,3 +76,9 @@ def test_operations_on_finished_session_rejected(tmp_path):
         except ValueError:
             continue
         raise AssertionError("expected ValueError on finished session")
+
+
+def test_diagnose_prompt_mentions_clarity_rules():
+    prompt = practice_service._DIAGNOSE_PROMPT
+    assert "CL01" in prompt or "clarity" in prompt.casefold()
+    assert "ASD-STE100" in prompt
