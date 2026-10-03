@@ -40,6 +40,7 @@ EXPECTED: dict[str, set[str]] = {
         "cards",
     },
     "prompts/analyze-article.md": {
+        "sample_size",
         "body",
     },
 }

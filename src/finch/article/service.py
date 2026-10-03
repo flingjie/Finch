@@ -27,7 +27,9 @@ class ArticleAnalysisService:
         self.runner = runner
 
     def analyze(self, source: ResolvedSource) -> ArticleReport:
-        prompt = _PROMPT_PATH.read_text().format(body=source.body)
+        prompt = _PROMPT_PATH.read_text().format(
+            sample_size=source.sample_size, body=source.body
+        )
         raw = cast(ArticleReport, self.runner.run(prompt, ArticleReport))
         return raw.model_copy(
             update={

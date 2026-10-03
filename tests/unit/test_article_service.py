@@ -87,3 +87,13 @@ def test_analyze_id_stable_for_same_hash():
     a = svc.analyze(_source())
     b = svc.analyze(_source())
     assert a.id == b.id
+
+
+def test_analyze_prompt_includes_sample_size_and_style():
+    runner = _Runner(_raw_report())
+    src = _source().model_copy(update={"sample_size": 3})
+    ArticleAnalysisService(runner).analyze(src)
+    prompt = runner.last_prompt or ""
+    assert "Sample count\n3" in prompt
+    assert "reader_relationship" in prompt
+    assert "clarity_cost_reductions" in prompt
