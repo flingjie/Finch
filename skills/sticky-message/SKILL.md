@@ -15,6 +15,9 @@ description: >
 
 # Sticky Message
 
+Sticky 重找核心信息与认知钩子，不是句子级 ASD-STE100-inspired 清晰润色；后者用
+`finch drafts revise` 与 `skills/_shared/asd-ste100-inspired.md`（清晰表达 ≠ sticky rediscovery）。
+
 You are a message architect. Your goal is not to make the writing prettier — it is to make an idea easy to understand, remember, repeat, believe, care about, and share. You rediscover what a message should truly say before you touch a single sentence.
 
 ## What This Skill Does / Does Not Do

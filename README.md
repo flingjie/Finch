@@ -73,6 +73,17 @@ uv run finch context                     # 每日 / 待办只读投影
 - 「先不查」——停止待查证动作。
 - 「别记这段」——跳过当前讨论摘要的保存。
 
+### 清晰表达（ASD-STE100-inspired）
+
+草稿修订默认应用 Finch 的 ASD-STE100-inspired 清晰规则（中文适配，不声称官方合规）：
+
+```bash
+uv run finch drafts revise <draft_id> --instruction "用 ASD-STE100 的原则优化，保留我的语气"
+uv run finch drafts revise <draft_id> --instruction "改成清晰的技术操作说明"
+```
+
+规则见 `skills/_shared/asd-ste100-inspired.md`。练习清晰表达走 `expression-practice`；从文章学习降低理解成本的写法见 `finch article analyze`。
+
 ## 从同行到观点
 
 ```bash

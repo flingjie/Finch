@@ -4,7 +4,9 @@ description: >
   把用户已想清楚的文本直接写成一篇中文原创草稿（Draft），仅作 Assist 模式（代写）。
   用于「我没时间练习 / 已经想清楚，直接帮我写」类请求；只依据用户给的语境写正文，不搜索
   新来源、不绑定证据卡；草稿过 Critic（6 检查器，Safety 硬门禁）+ 有限 rewrite 后落库为
-  Draft + CriticReport，进入人工审核。不强制先确认立场。
+  Draft + CriticReport，进入人工审核。不强制先确认立场。成稿后的句子级清晰表达（ASD-STE100-inspired
+  / 简化技术英语原则，中文适配）用 `finch drafts revise` 与 `skills/_shared/asd-ste100-inspired.md`，
+  不在本 Skill 内代做。
 ---
 
 # idea-to-draft（Assist 模式）
@@ -40,6 +42,7 @@ description: >
 - 不自动发布（见 `_shared/publication-safety.md`）。
 - 不把 AI 生成文本直接加入 VoiceProfile（→ `voice-profile`）。
 - 无来源的效果数字、付费「已验证」主张、以及把对方试用写成自己亲历 → Critic 硬失败。
+- 成稿后的清晰表达润色 → `finch drafts revise`（默认走 ASD-STE100-inspired 共享规则，见 `_shared/asd-ste100-inspired.md`）。
 
 ## 参考
 

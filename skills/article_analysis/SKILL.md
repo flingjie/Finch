@@ -4,7 +4,8 @@ description: >
   分析一篇文章的表达任务、目标读者与预期变化、方法拆解与达成情况，并提炼
   2–3 个可迁移方法。用于“为什么这样写”“面向谁、是否有效”“这篇想让读者
   变成什么”等请求。只生成 ArticleReport，不重写、不做 AI 检测、不更新 VoiceProfile。
-  风格表面特点请用 writing-style-analysis。
+  风格表面特点请用 writing-style-analysis。可选从「降低理解成本」视角标注
+  clarity_cost_reductions（受 ASD-STE100-inspired / 清晰表达规则启发，见共享规则文件）。
 ---
 
 # article_analysis
@@ -27,6 +28,12 @@ description: >
 | 表达任务、读者变化、是否达成目的 | `article_analysis` |
 
 意图不清时先问一句澄清；默认不同时跑两个分析。
+
+## 清晰表达透镜（可选）
+
+报告可含 `clarity_cost_reductions`：文章如何用结构、用词、步骤划分降低读者的理解成本。
+判据与 `skills/_shared/asd-ste100-inspired.md` 中的 ASD-STE100-inspired / 简化技术英语原则
+对齐（启发式，非官方 STE 合规）。本 Skill 仍只产出分析，不改写你的 Draft；改写走 `finch drafts revise`。
 
 ## 边界
 

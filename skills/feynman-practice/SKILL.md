@@ -16,6 +16,9 @@ description: >
 
 # Feynman Practice
 
+已有 Draft 的句子级清晰表达（ASD-STE100-inspired）请用 `skills/_shared/asd-ste100-inspired.md` 与
+`finch drafts revise`；本 Skill 只做理解调试（费曼），不做成稿 prose 润色。
+
 ## Purpose
 
 This skill helps the user practice the Feynman Technique.
