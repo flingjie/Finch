@@ -131,7 +131,7 @@ def test_article_analyze_persists_by_default(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "ArticleAnalysisService", lambda runner: _FakeService())
     r = CliRunner().invoke(app, ["article", "analyze", "--text", "hello"])
     assert r.exit_code == 0, r.output
-    assert "id: article_x" in r.output or "report id" in r.output.casefold() or "article_x" in r.output
+    assert "id: article_x" in r.output
     from finch.article.repository import ArticleReportRepository
     from finch.storage.workspace import Workspace
 
