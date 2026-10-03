@@ -17,3 +17,10 @@ expression-practice 与 idea-to-draft 共用的表达边界。核心：表达训
 
 - expression-practice 保存 initial_attempt 与每次 revision，最终版与 lesson 一并落库。
 - 不覆盖、不丢弃用户原文；版本可追溯。
+
+## Clarity editing (ASD-STE100-inspired)
+
+`finch drafts revise` loads `skills/_shared/asd-ste100-inspired.md` by default
+(`asd-ste100-inspired`; switch to `asd-ste100-technical` when the instruction asks
+for technical procedure wording). See that file for CL01–CL08. Clarity editing
+does not replace expression-practice (user writes first) and does not auto-publish.
