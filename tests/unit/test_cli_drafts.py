@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 
 from finch import cli
 from finch.cli import app
+from finch.content.clarity import RULES_VERSION, ClarityChange, ClarityReview
 from finch.content.models import Draft, DraftKind
 from finch.content.voice import VoiceProfile
 from finch.drafts.service import DraftCreateResult
@@ -199,7 +200,23 @@ class _FakeRewrite:
         _FakeRewrite.called.append(
             {"instruction": instruction, "job_id": job.id if job else None}
         )
-        return draft.model_copy(update={"body": "REVISED: " + draft.body})
+        review = ClarityReview(
+            preset="asd-ste100-inspired",
+            rules_version=RULES_VERSION,
+            changes=[
+                ClarityChange(
+                    rule_id="CL04",
+                    before="显著提升",
+                    after="（待补充指标）",
+                    reason="抽象判断缺支撑",
+                )
+            ],
+            meaning_check="passed",
+            missing_information=["缺少性能指标"],
+        )
+        return draft.model_copy(
+            update={"body": "REVISED: " + draft.body, "clarity_review": review}
+        )
 
 
 def _raising_rewrite(runner, draft, instruction, cards_by_id, job):
@@ -227,8 +244,26 @@ def test_drafts_revise_updates_body(monkeypatch, tmp_path):
     payload = json.loads(r.output)
     assert payload["draft_id"] == "draft_fake1234"
     assert payload["body"] == "REVISED: " + BODY
+    assert payload["clarity_review"]["preset"] == "asd-ste100-inspired"
+    assert payload["clarity_review"]["changes"][0]["rule_id"] == "CL04"
     assert _FakeRewrite.called == [{"instruction": "make it shorter", "job_id": None}]
-    assert DraftRepository(ws).get_draft("draft_fake1234").body == "REVISED: " + BODY
+    stored = DraftRepository(ws).get_draft("draft_fake1234")
+    assert stored.body == "REVISED: " + BODY
+    assert stored.clarity_review is not None
+    assert stored.clarity_review.missing_information == ["缺少性能指标"]
+
+
+def test_drafts_revise_human_output_shows_clarity_review(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    _patch_revise(monkeypatch, settings)
+    _seed_draft(ws)
+
+    r = CliRunner().invoke(
+        app, ["drafts", "revise", "draft_fake1234", "--instruction", "make it shorter"]
+    )
+    assert r.exit_code == 0, r.output
+    assert "CL04" in r.output or "关键修改" in r.output
 
 
 def test_drafts_revise_unknown_exits(monkeypatch, tmp_path):

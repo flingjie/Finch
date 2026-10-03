@@ -1443,12 +1443,38 @@ def drafts_revise(
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
     draft_repo.upsert_draft(revised)
+    review_payload = (
+        revised.clarity_review.model_dump(mode="json")
+        if revised.clarity_review is not None
+        else None
+    )
     if as_json:
-        payload = {"draft_id": revised.id, "body": revised.body}
+        payload = {
+            "draft_id": revised.id,
+            "body": revised.body,
+            "clarity_review": review_payload,
+        }
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         typer.echo(f"已更新草稿 {revised.id}:")
         typer.echo(revised.body)
+        if revised.clarity_review is not None:
+            cr = revised.clarity_review
+            typer.echo("")
+            typer.echo(
+                f"清晰度复核：preset={cr.preset} rules={cr.rules_version} "
+                f"meaning_check={cr.meaning_check}"
+            )
+            if cr.changes:
+                typer.echo("关键修改：")
+                for ch in cr.changes:
+                    typer.echo(f"- [{ch.rule_id}] {ch.reason}")
+                    typer.echo(f"  前：{ch.before}")
+                    typer.echo(f"  后：{ch.after}")
+            if cr.missing_information:
+                typer.echo("待补信息：")
+                for gap in cr.missing_information:
+                    typer.echo(f"- {gap}")
 
 
 @twitter_app.command("search")
