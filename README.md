@@ -57,7 +57,7 @@ uv run finch voice show / approve-example / reject-example / revoke-example / pr
 uv run finch weekly
 uv run finch learn <draft_id>            # 记录发布反馈
 uv run finch practice start --idea <id> --attempt "<首稿>"
-uv run finch style analyze --text "<文本>" | --file posts.md | --url "<链接>"
+uv run finch article analyze --text "<文本>" | --file posts.md | --url "<链接>"  # 含写作风格七维
 uv run finch community context / list / run
 uv run finch dialogue save / search / show / forget
 uv run finch github reflect
@@ -127,7 +127,7 @@ skills/
   # —— 独立训练工具（不进入默认流水线）——
   community-scout/         围绕问题发现并持续参与社区（三入口 + 观察/可参与分层，验证中）
   expression-practice/     表达训练
-  writing-style-analysis/  分析他人写作风格（只读，不写画像）
+  article_analysis/        文章表达 + 写作风格分析（只读，不写画像）
   feynman-practice/        费曼技巧
   sticky-message/          检查想法是否清晰易记
   topic-dialogue/          围绕话题讨论，形成或修正判断（不写关系记录）
@@ -152,7 +152,7 @@ src/finch/
   practice/        expression-practice 会话
   idea/            finch drafts 复用的纯函数
   content/         ContentJob、writer、critic 检查器、voice profile
-  style/           writing-style-analysis（只读）
+  article/         article_analysis（ArticleReport + SourceResolver，只读）
   webfetch/        通用网页正文提取器（只读 adapter，fail-closed）
   inbox/           连接主循环 + 表达复利循环的只读统一投影与决策
   learn/           Feedback + 周复盘指标 + 定性复盘

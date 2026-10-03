@@ -28,7 +28,7 @@
 - 采集：`finch sources doctor` / `sync`（只读；twitter|reddit|github|v2ex|weixin|xiaohongshu）
 - 仓库热度榜：`finch repos discover` / `list` / `export`（X 分享的 GitHub 项目；与 `repository_discovery` 用户自有仓库无关）
 - 灵感与实验：`finch inspirations`、`finch collisions generate|weekly`、`finch experiments start`
-- 表达分析：`finch style analyze`（风格）；`finch article analyze`（表达任务/读者/有效性）
+- 表达分析：`finch article analyze`（表达任务/读者/有效性 + 写作风格七维，统一 ArticleReport）
 
 ## 目录
 

@@ -1,7 +1,7 @@
 # 合并 writing-style-analysis 到 article_analysis
 
 日期：2026-10-03  
-状态：待用户审阅  
+状态：已确认（实现计划见 `docs/superpowers/plans/2026-10-03-merge-style-into-article-analysis.md`）  
 对照：`docs/superpowers/specs/2026-09-08-writing-style-analysis-design.md`（本设计取代其产品入口）、`docs/superpowers/specs/2026-10-02-article-analysis-design.md`
 
 ## 1. 背景与问题

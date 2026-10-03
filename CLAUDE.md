@@ -18,7 +18,7 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (typer sub-apps / commands): `finch connect ...` (today / daily / person / record-presented / prepare / feedback / assess / artifact-status), `finch connections ...` (today / record / follow-up), `finch peers ...` (list / show / get), `finch people shortlist` (`--today` 今日承诺面，等同 `connections today`；`--all` 全部线索), `finch conversations ...` (list / show / get / follow-up / ingest / note / commit / experiment / mark-important / defer / close), `finch dialogue ...` (save / search / show / forget), `finch ideas ...` (commit / create / choose / list / show / confirm / revise-position / skip), `finch inspirations ...` (save / list / show / note / archive), `finch community ...` (context / save / inspect / feedback / list / run / runs / run-trace), `finch practice ...` (start / diagnose / save / finish / show), `finch style ...` (analyze), `finch article ...` (analyze), `finch drafts ...` (create / write / show / revise), `finch review ...` (list / show / approve / revise / skip / weekly), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch profile ...` (show / confirm / revoke / add / init — 用户已确认的真实实践，注入机会评估与贡献制作), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch sources ...` (doctor / sync；twitter|reddit|github|v2ex|weixin|xiaohongshu), `finch repos ...` (discover / list / export — X 分享的 GitHub 仓库热度榜；与 `repository_discovery` 无关), `finch collisions ...` (generate / weekly), `finch experiments start`, `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
+CLI surface (typer sub-apps / commands): `finch connect ...` (today / daily / person / record-presented / prepare / feedback / assess / artifact-status), `finch connections ...` (today / record / follow-up), `finch peers ...` (list / show / get), `finch people shortlist` (`--today` 今日承诺面，等同 `connections today`；`--all` 全部线索), `finch conversations ...` (list / show / get / follow-up / ingest / note / commit / experiment / mark-important / defer / close), `finch dialogue ...` (save / search / show / forget), `finch ideas ...` (commit / create / choose / list / show / confirm / revise-position / skip), `finch inspirations ...` (save / list / show / note / archive), `finch community ...` (context / save / inspect / feedback / list / run / runs / run-trace), `finch practice ...` (start / diagnose / save / finish / show), `finch article ...` (analyze), `finch drafts ...` (create / write / show / revise), `finch review ...` (list / show / approve / revise / skip / weekly), `finch weekly`, `finch learn <draft_id> ...` (记录发布反馈), `finch voice ...` (show / approve-example / reject-example / revoke-example / propose), `finch profile ...` (show / confirm / revoke / add / init — 用户已确认的真实实践，注入机会评估与贡献制作), `finch github reflect`, `finch twitter ...` (search / import-bookmarks / diagnose), `finch sources ...` (doctor / sync；twitter|reddit|github|v2ex|weixin|xiaohongshu), `finch repos ...` (discover / list / export — X 分享的 GitHub 仓库热度榜；与 `repository_discovery` 无关), `finch collisions ...` (generate / weekly), `finch experiments start`, `finch init`, `finch diagnose`, `finch context` (daily/pending projections).
 
 ## Architecture
 
@@ -43,8 +43,7 @@ skills/
   # —— 独立训练工具（不进入默认流水线）——
   community-scout/         围绕问题发现并持续参与社区：三入口 + 观察/可参与分层 + 回访（finch community，验证中）
   expression-practice/     表达训练（finch practice）
-  writing-style-analysis/  分析他人写作风格，只读不写画像（finch style analyze）
-  article_analysis/ 文章表达分析：任务/读者变化/方法有效性（finch article analyze）
+  article_analysis/        文章表达 + 写作风格七维（finch article analyze；只读不写画像）
   feynman-practice/        费曼技巧（检查理解）
   sticky-message/          检查想法是否清晰易记
   topic-dialogue/          围绕话题讨论，形成或修正判断（不写关系记录）
@@ -66,8 +65,7 @@ src/finch/
   idea/           finch drafts 复用的纯函数：rewrite_idea / idea_checker_suite
   content/        ContentJob + AuthorPosition（作者立场状态机）、writer、critic 检查器、voice profile
   communities/    CommunityProfile / CommunityFeedback（community-scout 的薄持久化，无评分）
-  style/          writing-style-analysis：StyleReport/StyleComparison + SourceResolver
-  article/        article_analysis：ArticleReport + ArticleAnalysisService（复用 SourceResolver）
+  article/        article_analysis：ArticleReport/StyleBlock + SourceResolver + ArticleAnalysisService
   webfetch/       通用网页正文提取器（只读 adapter，fail-closed）
   inbox/          连接 + 表达循环的只读统一投影与决策（InboxDecisionService，供 review 命令）
   learn/          Feedback 模型 + weekly 指标 + WeeklyReflectionService 定性复盘 + finch learn
