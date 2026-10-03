@@ -4,6 +4,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from finch.content.clarity import ClarityReview
 from finch.evidence.models import ClaimConfidence
 
 
@@ -67,6 +68,7 @@ class Draft(BaseModel):
     position_statement: str = ""
     critic_report_id: str | None = None
     run_id: str = ""                  # 当次 run（回溯到来源）
+    clarity_review: ClarityReview | None = None
 
 
 class DraftBodyOutput(BaseModel):
