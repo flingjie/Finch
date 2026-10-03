@@ -25,6 +25,8 @@ class _FakeService:
             ClarityCostReduction,
             Effectiveness,
             ExpressionTask,
+            StyleBlock,
+            StyleEvidence,
             TechniqueBreakdown,
             TransferableMethod,
         )
@@ -65,6 +67,17 @@ class _FakeService:
                     mini_exercise="e",
                 ),
             ],
+            style=StyleBlock(
+                opening=[
+                    StyleEvidence(
+                        dimension="opening",
+                        observation="结论先行",
+                        excerpts=["先说结果"],
+                        confidence="high",
+                    )
+                ],
+                transferable_techniques=["结论先行"],
+            ),
             clarity_cost_reductions=(
                 [
                     ClarityCostReduction(
@@ -106,6 +119,7 @@ def test_article_analyze_text_human(monkeypatch, tmp_path):
     assert "根据文章推断" in r.output
     assert "读者与预期变化" in r.output
     assert "表达特点" in r.output
+    assert "写作风格" in r.output
     assert "目标达成情况" in r.output
     assert "可借鉴方法" in r.output
 
@@ -130,3 +144,21 @@ def test_article_analyze_human_renders_clarity_section(monkeypatch, tmp_path):
     assert "降低理解成本" in r.output
     assert "[CL03]" in r.output
     assert "先备份再升级" in r.output
+
+
+def test_article_analyze_renders_style_section(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    monkeypatch.setattr(cli, "ArticleAnalysisService", lambda runner: _FakeService())
+    r = CliRunner().invoke(app, ["article", "analyze", "--text", "hello"])
+    assert r.exit_code == 0, r.output
+    assert "## 写作风格" in r.output
+    assert "结论先行" in r.output
+    assert "先说结果" in r.output
+    assert r.output.index("## 表达特点") < r.output.index("## 写作风格")
+    assert r.output.index("## 写作风格") < r.output.index("## 目标达成情况")
+
+
+def test_style_subcommand_removed(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    r = CliRunner().invoke(app, ["style", "analyze", "--text", "hello"])
+    assert r.exit_code != 0

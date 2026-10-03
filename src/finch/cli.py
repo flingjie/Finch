@@ -124,8 +124,6 @@ from .storage.repositories import (
     RecommendationFeedbackRepository,
 )
 from .storage.workspace import Workspace
-from .style.models import StyleReport
-from .style.service import WritingStyleService
 from .twitter.normalizer import normalize_tweets
 from .twitter.opencli_client import OpenCliClient
 from .twitter.query_builder import QueryBuilder
@@ -192,8 +190,6 @@ app.add_typer(conversations_app, name="conversations")
 practice_app = typer.Typer(help="表达练习")
 app.add_typer(practice_app, name="practice")
 
-style_app = typer.Typer(help="分析一段文本/链接的写作特点")
-app.add_typer(style_app, name="style")
 
 article_app = typer.Typer(help="分析一篇文章的表达任务、读者变化与方法有效性")
 app.add_typer(article_app, name="article")
@@ -4653,73 +4649,6 @@ def practice_show(
         typer.echo(f"lesson: {session.lesson}")
 
 
-@style_app.command("analyze")
-def style_analyze(
-    text: str = typer.Option(None, "--text", help="要分析的文本"),
-    file: str = typer.Option(None, "--file", help="文本文件（可用 --- 分隔多篇）"),
-    url: str = typer.Option(None, "--url", help="要分析的链接（X/Reddit/普通网页）"),
-    compare_voice: bool = typer.Option(False, "--compare-voice", help="追加对比我的画像"),
-    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
-) -> None:
-    """分析写作风格，产出风格报告（可选与个人声音画像比较）。"""
-    provided = sum(x is not None for x in (text, file, url))
-    if provided != 1:
-        typer.echo("exactly one of --text / --file / --url is required")
-        raise typer.Exit(code=1)
-    settings = load_settings()
-    ws = Workspace(settings.paths.var_dir)
-    ws.ensure()
-    resolver = SourceResolver(OpenCliClient(), RedditOpenCliClient(), WebFetcher())
-    try:
-        if text is not None:
-            source = resolver.resolve_text(text)
-        elif file is not None:
-            source = resolver.resolve_file(file)
-        else:
-            source = resolver.resolve_url(url)
-        runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
-        report = WritingStyleService(runner).analyze(source)
-    except (RuntimeError, StructuredOutputError, OSError) as exc:
-        typer.echo(str(exc))
-        raise typer.Exit(code=1) from exc
-    if compare_voice:
-        try:
-            runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
-            voice = load_voice_profile(settings.paths.voice_profile_path)
-            comparison = WritingStyleService(runner).compare(report, voice)
-        except (RuntimeError, StructuredOutputError) as exc:
-            typer.echo(str(exc))
-            raise typer.Exit(code=1) from exc
-        if as_json:
-            typer.echo(json.dumps(
-                {"report": report.model_dump(mode="json"),
-                 "comparison": comparison.model_dump(mode="json")},
-                ensure_ascii=False, indent=2,
-            ))
-        else:
-            typer.echo(json.dumps(comparison.model_dump(mode="json"), ensure_ascii=False, indent=2))
-        return
-    if as_json:
-        typer.echo(report.model_dump_json(indent=2))
-    else:
-        typer.echo(_render_report(report))
-
-
-def _render_report(report: StyleReport) -> str:
-    lines = [f"# 写作风格分析（{report.scope}，{report.overall_confidence}）"]
-    for name in ("opening", "structure", "rhythm", "word_choice", "stance",
-                 "concreteness", "reader_relationship", "rhetorical_patterns"):
-        for ev in getattr(report, name):
-            lines.append(f"- [{name}] {ev.observation}")
-    if report.transferable_techniques:
-        lines.append("\n可借鉴：")
-        lines += [f"- {t}" for t in report.transferable_techniques]
-    if report.experiments_for_me:
-        lines.append("\n可实验：")
-        lines += [f"- {e}" for e in report.experiments_for_me]
-    return "\n".join(lines)
-
-
 @article_app.command("analyze")
 def article_analyze(
     text: str = typer.Option(None, "--text", help="要分析的文本"),
@@ -4785,6 +4714,33 @@ def _render_article_report(report: ArticleReport) -> str:
         )
     if not report.techniques:
         lines.append("- （无拆解条目）")
+    style = report.style
+    lines += [
+        "",
+        "## 写作风格",
+        f"- scope：{style.scope}；confidence：{style.overall_confidence}",
+    ]
+    for dim_name, items in (
+        ("开头", style.opening),
+        ("结构", style.structure),
+        ("节奏", style.rhythm),
+        ("用词", style.word_choice),
+        ("立场", style.stance),
+        ("具体性", style.concreteness),
+        ("读者关系", style.reader_relationship),
+    ):
+        for ev in items:
+            excerpts = " / ".join(ev.excerpts)
+            suffix = f" 摘录：{excerpts}" if excerpts else ""
+            lines.append(f"- {dim_name}：{ev.observation}.{suffix}")
+    if style.transferable_techniques:
+        lines.append("- 可迁移技巧：" + "；".join(style.transferable_techniques))
+    if style.signature_patterns:
+        lines.append("- 标志模式：" + "；".join(style.signature_patterns))
+    if style.potential_weaknesses:
+        lines.append("- 潜在弱点：" + "；".join(style.potential_weaknesses))
+    if style.experiments_for_me:
+        lines.append("- 可实验：" + "；".join(style.experiments_for_me))
     eff = report.effectiveness
     lines += [
         "",
