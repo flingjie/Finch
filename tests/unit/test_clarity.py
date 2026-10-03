@@ -8,6 +8,7 @@ from finch.content.clarity import (
     parse_clarity_preset,
 )
 from finch.content.models import Draft, DraftKind
+from finch.content.writer import rewrite_with_instruction
 from finch.storage.repositories import DraftRepository
 from finch.storage.workspace import Workspace
 
@@ -101,3 +102,48 @@ def test_draft_without_clarity_review_still_loads(tmp_path):
     loaded = DraftRepository(ws).get_draft("draft_old1")
     assert loaded is not None
     assert loaded.clarity_review is None
+
+
+class _FakeRunner:
+    def __init__(self, output: ClarityEditOutput):
+        self.output = output
+        self.prompts: list[str] = []
+
+    def run(self, prompt: str, model):
+        self.prompts.append(prompt)
+        assert model is ClarityEditOutput
+        return self.output
+
+
+def test_rewrite_with_instruction_applies_clarity_and_overwrites_preset():
+    draft = Draft(
+        id="draft_x",
+        kind=DraftKind.ORIGINAL,
+        language="zh",
+        body="通过优化显著提升性能。",
+        claims=[],
+        content_job_id=None,
+        run_id="idea",
+    )
+    llm_out = ClarityEditOutput(
+        body="请补充具体改动与指标后再写性能结论。",
+        clarity_review=ClarityReview(
+            preset="asd-ste100-technical",  # model lies — code must overwrite
+            rules_version="wrong",
+            changes=[],
+            meaning_check="passed",
+            missing_information=["缺少改动方式与耗时/准确率指标"],
+        ),
+    )
+    runner = _FakeRunner(llm_out)
+    revised = rewrite_with_instruction(
+        runner, draft, "用 ASD-STE100 的原则优化，保留语气", {}, None
+    )
+    assert revised.id == "draft_x"
+    assert revised.run_id == "idea"
+    assert revised.body == llm_out.body
+    assert revised.clarity_review is not None
+    assert revised.clarity_review.preset == "asd-ste100-inspired"
+    assert revised.clarity_review.rules_version == RULES_VERSION
+    assert "ASD-STE100" in runner.prompts[0] or "clarity" in runner.prompts[0].casefold()
+    assert "CL01" in runner.prompts[0] or "asd-ste100-inspired" in runner.prompts[0]

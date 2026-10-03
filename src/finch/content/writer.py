@@ -8,11 +8,14 @@ from typing import cast
 
 from finch.codex.runner import CodexRunner
 from finch.content.checkers.base import CheckResult
+from finch.content.clarity import RULES_VERSION, ClarityEditOutput, parse_clarity_preset
 from finch.content.jobs import ContentJob
 from finch.content.models import Draft, DraftBodyOutput, draft_kind_for
 from finch.evidence.models import EvidenceCard, sanitize_model_confidence
 
 _FROM_JOB_PROMPT_PATH = Path("prompts/draft-from-job.md")
+_CLARITY_PROMPT_PATH = Path("prompts/clarity-revise.md")
+_CLARITY_RULES_PATH = Path("skills/_shared/asd-ste100-inspired.md")
 
 _REWRITE_PROMPT = """\
 You rewrite a draft to address specific critic check failures. Return JSON matching the schema.
@@ -146,8 +149,29 @@ def rewrite_with_instruction(
     cards_by_id: dict[str, EvidenceCard],
     job: ContentJob | None = None,
 ) -> Draft:
-    """按自然语言指令重写（单一决策点 `decide revise` 路径）。"""
-    return _rewrite(runner, draft, instruction, cards_by_id, job)
+    """按自然语言指令重写，并附带 ASD-STE100-inspired ClarityReview（一次调用）。"""
+    preset = parse_clarity_preset(instruction)
+    card_ids = {ref.evidence_card_id for ref in draft.claims}
+    cards = [cards_by_id[cid] for cid in card_ids if cid in cards_by_id]
+    prompt = _CLARITY_PROMPT_PATH.read_text().format(
+        preset=preset,
+        rules=_CLARITY_RULES_PATH.read_text(),
+        instruction=instruction,
+        job_context=_render_job_context(job),
+        body=draft.body,
+        cards=_render_cards(cards),
+    )
+    out = cast(ClarityEditOutput, runner.run(prompt, ClarityEditOutput))
+    # preset / rules_version 由代码决定，不信任模型；changes 最多保留 3 条
+    review = out.clarity_review.model_copy(
+        update={
+            "preset": preset,
+            "rules_version": RULES_VERSION,
+            "changes": list(out.clarity_review.changes[:3]),
+        }
+    )
+    revised = _sanitize_draft_claims(draft.model_copy(update={"body": out.body}))
+    return revised.model_copy(update={"clarity_review": review})
 
 
 def _rewrite(

@@ -199,7 +199,14 @@ def test_rewrite_with_instruction_uses_nl_instruction(monkeypatch):
     class _Runner:
         def run(self, prompt, model):
             captured["prompt"] = prompt
-            return Draft(id="d1", kind=DraftKind.ORIGINAL, body="revised", claims=[])
+            from finch.content.clarity import ClarityEditOutput, ClarityReview
+
+            return ClarityEditOutput(
+                body="revised",
+                clarity_review=ClarityReview(
+                    preset="asd-ste100-inspired", meaning_check="passed"
+                ),
+            )
 
     monkeypatch.setattr(writer, "_sanitize_draft_claims", lambda d: d)
     draft = Draft(id="d1", kind=DraftKind.ORIGINAL, body="before", claims=[], run_id="r1")
