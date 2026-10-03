@@ -16,7 +16,12 @@ description: >
 
 ## 执行
 
-`finch article analyze --text/--file/--url [--json]`
+`finch article analyze --text/--file/--url [--json] [--no-save]`
+
+报告默认落库 Workspace（`article_reports`）；`--no-save` 可跳过写入。呈现含报告 `id` 与可迁移方法序号 `[1]…[n]`。
+`finch article show <id>` 可回看已保存报告。
+
+用户要把某条可迁移方法收入表达方法库时：`finch methods save --report <id> --index <n>`，再按 CLI 提示选择 `--as-new` 或 `--merge`。
 
 呈现固定段落：表达任务、读者与预期变化、表达特点、**写作风格**（七维 + 可迁移技巧等）、目标达成情况、可借鉴方法。
 `inferred=true` 时在表达任务标明「根据文章推断」。`--json` 时 `style` 为嵌套 `StyleBlock`。
@@ -30,8 +35,8 @@ description: >
 ## 边界
 
 - 不判断是否 AI 创作；不推断作者性格；不评价观点对错。
-- 不重写原文；不生成分享稿；不自动改 VoiceProfile / practice-profile。
-- 不落库；无可执行目标时「可执行性」可为不适用，不因此判失败。
+- 不重写原文；不生成分享稿；不自动改 VoiceProfile / practice-profile（风格观察只留在报告内）。
+- 无可执行目标时「可执行性」可为不适用，不因此判失败。
 
 ## 参考
 

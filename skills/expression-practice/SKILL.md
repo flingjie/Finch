@@ -15,12 +15,23 @@ description: >
 
 ## 流程
 
+**按 Idea 练表达（默认）**
+
 1. 选 Idea（`finch ideas list` 挑选）。
 2. 用户先表达 → `finch practice start --idea <id> --attempt "..."`。
 3. 诊断最大问题 → `finch practice diagnose <session-id>`。
 4. 用户重新表达 → `finch practice save <session-id> --revision "..."`。
 5. 重复 3-4 直到满意，或用户说「直接帮我写」→ 转 `idea-to-draft`。
 6. 保存最终版 → `finch practice finish <session-id> --final "..."`。
+
+**按表达方法练（可选分支）**
+
+1. （可选）`finch methods list` / `show` 选一条已保存方法。
+2. 用户先表达 → `finch practice start --method <id> --attempt "..."`（可同时 `--idea <id>`）。
+3. 诊断 → `finch practice diagnose <session-id>`（与 Idea 流程相同）。
+4. 修订 → `finch practice save <session-id> --revision "..."`（不变）。
+5. 结束并反馈方法 → `finch practice finish <session-id> --final "..." --verdict worth_reuse|practice_again|not_for_me [--note "..."]`。
+6. 反馈优先问「这条方法是否值得再用」，不检查「有没有用上技巧」或代写达标范文。
 
 ## 检查维度
 
