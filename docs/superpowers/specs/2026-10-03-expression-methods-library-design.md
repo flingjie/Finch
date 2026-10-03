@@ -1,7 +1,7 @@
 # 表达方法库：选中 → 练一次 → 留下反馈
 
 日期：2026-10-03
-状态：已确认（待写实现计划）
+状态：已确认（实现计划见 docs/superpowers/plans/2026-10-03-expression-methods-library.md）
 对照：`2026-10-02-article-analysis-design.md`（报告即算即打印 → 本设计改为默认落库）；
 `2026-10-01-practice-profile-design.md`（真实实践清单，与本方法库分离）；
 `2026-09-08-writing-style-analysis-design.md`（观察→实验→Voice，方法库从未落地）
