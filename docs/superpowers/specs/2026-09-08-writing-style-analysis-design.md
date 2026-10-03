@@ -1,7 +1,7 @@
 # writing-style-analysis Skill 设计
 
 日期：2026-09-08
-状态：待用户评审
+状态：已被取代（产品入口合并进 article_analysis；见 docs/superpowers/specs/2026-10-03-merge-style-into-article-analysis-design.md）
 
 ## 1. 为什么是 Skill（三问检验）
 
