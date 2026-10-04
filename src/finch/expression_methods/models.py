@@ -1,5 +1,8 @@
 """表达方法库模型。"""
 
+from __future__ import annotations
+
+import hashlib
 from datetime import datetime
 from typing import Literal
 
@@ -13,6 +16,8 @@ class MethodSource(BaseModel):
     method_index: int  # 1-based into ArticleReport.transferable_methods
     excerpt: str = ""
     source_ref: str | None = None
+    why_effective_here: str = ""
+    content_hash: str = ""
 
 
 class MethodPracticeLog(BaseModel):
@@ -29,10 +34,27 @@ class ExpressionMethod(BaseModel):
     when_to_use: str
     boundaries: str = ""
     mini_exercise: str = ""
+    purpose_tags: list[str] = Field(default_factory=list)
+    required_material: str = ""
     sources: list[MethodSource] = Field(default_factory=list)
     practice_logs: list[MethodPracticeLog] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+    def content_fingerprint(self) -> str:
+        """Deterministic hash of method body fields (for exploration cache)."""
+        tags = ",".join(sorted(self.purpose_tags))
+        payload = "\n".join(
+            [
+                self.title,
+                self.when_to_use,
+                self.boundaries,
+                self.mini_exercise,
+                self.required_material,
+                tags,
+            ]
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()
 
 
 class MergeCandidate(BaseModel):

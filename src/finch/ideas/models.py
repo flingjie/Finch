@@ -44,6 +44,7 @@ class IdeaBoundaries(BaseModel):
 
 TakeawayKind = Literal["diagnosis", "decision_criteria", "method", "pitfall"]
 EvidenceSupport = Literal["observed_this_run", "inferred_cause", "unverified_general"]
+MethodUseAs = Literal["idea_angle", "draft_technique"]
 
 
 class IdeaGenerator(BaseModel):
@@ -51,6 +52,23 @@ class IdeaGenerator(BaseModel):
 
     skill: str
     version: str
+
+
+class MethodSelection(BaseModel):
+    """方法匹配结果：适配原因与素材缺口（不进入事实 source_refs）。"""
+
+    method_id: str
+    fit_reason: str
+    material_refs: list[str] = Field(default_factory=list)
+    missing_requirements: list[str] = Field(default_factory=list)
+    use_as: MethodUseAs
+
+
+class DraftTechniqueNote(BaseModel):
+    """仅影响写法的技巧建议，不单独成为 idea。"""
+
+    method_id: str
+    note: str
 
 
 class IdeaAngle(BaseModel):
@@ -64,6 +82,10 @@ class IdeaAngle(BaseModel):
     evidence_support: EvidenceSupport
     counterexample_or_limit: str
     source_refs: list[SourceRef]
+    method_id: str | None = None
+    use_as: MethodUseAs | None = None
+    fit_reason: str = ""
+    missing_requirements: list[str] = Field(default_factory=list)
 
 
 class RejectedAngle(BaseModel):
@@ -97,6 +119,8 @@ class IdeaExploration(BaseModel):
     recommended_index: int | None = None
     recommendation_reason: str = ""
     selections: list[Selection] = Field(default_factory=list)
+    method_selections: list[MethodSelection] = Field(default_factory=list)
+    draft_techniques: list[DraftTechniqueNote] = Field(default_factory=list)
     generator: IdeaGenerator
 
 
@@ -138,3 +162,7 @@ class IdeaCandidate(BaseModel):
     takeaway_kind: TakeawayKind | None = None
     evidence_support: EvidenceSupport | None = None
     counterexample_or_limit: str = ""
+    method_id: str | None = None
+    method_use_as: MethodUseAs | None = None
+    method_fit_reason: str = ""
+    method_version_hash: str = ""

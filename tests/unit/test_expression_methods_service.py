@@ -79,7 +79,18 @@ def test_save_as_new_maps_fields(tmp_path):
     assert m.boundaries == ""
     assert m.sources[0].method_index == 2
     assert m.sources[0].source_ref == "https://example.com/a"
+    assert m.sources[0].why_effective_here == "降低抽象"
+    assert m.sources[0].content_hash == "h"
     assert ExpressionMethodRepository(Workspace(tmp_path)).get(m.id) is not None
+
+
+def test_save_as_new_idempotent_same_report_index(tmp_path):
+    _report(tmp_path)
+    svc = _svc(tmp_path)
+    a = svc.save_as_new("article_x", 1)
+    b = svc.save_as_new("article_x", 1)
+    assert a.id == b.id
+    assert len(ExpressionMethodRepository(Workspace(tmp_path)).list_all()) == 1
 
 
 def test_save_index_out_of_range(tmp_path):
@@ -133,3 +144,39 @@ def test_append_practice_log(tmp_path):
     m = svc.append_practice_log(m.id, "practice_1", "worth_reuse", note="好用")
     assert m.practice_logs[-1].verdict == "worth_reuse"
     assert m.practice_logs[-1].note == "好用"
+
+
+def test_resolve_methods_by_id_and_missing(tmp_path):
+    _report(tmp_path)
+    svc = _svc(tmp_path)
+    m = svc.save_as_new("article_x", 1)
+    got = svc.resolve_methods_for_discovery(method_ids=[m.id])
+    assert [x.id for x in got] == [m.id]
+    try:
+        svc.resolve_methods_for_discovery(method_ids=["nope"])
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("expected KeyError")
+
+
+def test_resolve_methods_from_report_ephemeral_when_unsaved(tmp_path):
+    _report(tmp_path)
+    svc = _svc(tmp_path)
+    got = svc.resolve_methods_for_discovery(report_id="article_x")
+    assert len(got) == 2
+    assert all(g.id.startswith("emethod_ephemeral_") for g in got)
+    assert ExpressionMethodRepository(Workspace(tmp_path)).list_all() == []
+
+
+def test_soft_filter_keeps_when_required_material_matches(tmp_path):
+    _report(tmp_path)
+    svc = _svc(tmp_path)
+    m = svc.save_as_new("article_x", 1)
+    m = m.model_copy(update={"required_material": "启动开销"})
+    ExpressionMethodRepository(Workspace(tmp_path)).upsert(m)
+    kept = svc.soft_filter_for_facts([m], ["启动开销使整体耗时很长"])
+    assert kept == [m]
+    dropped = svc.soft_filter_for_facts([m], ["无关事实"])
+    # lenient fallback: if all drop, return original list
+    assert dropped == [m]

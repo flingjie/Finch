@@ -28,7 +28,7 @@
 - 采集：`finch sources doctor` / `sync`（只读；twitter|reddit|github|v2ex|weixin|xiaohongshu）
 - 仓库热度榜：`finch repos discover` / `list` / `export`（X 分享的 GitHub 项目；与 `repository_discovery` 用户自有仓库无关）
 - 灵感与实验：`finch inspirations`、`finch collisions generate|weekly`、`finch experiments start`
-- 表达分析与方法库：`finch article analyze|show`（ArticleReport 默认落库）；`finch methods save|list|show`；`finch practice start --method` / `finish --verdict`
+- 表达分析与方法库：`finch article analyze|show`（ArticleReport 默认落库）；`finch methods save|list|show`；`finch practice start --method` / `finish --verdict`；`finch ideas commit --method|--methods-from-report|--use-method-library`（显式方法辅助发现）
 
 ## 目录
 

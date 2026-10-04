@@ -21,6 +21,10 @@ fragment / conversation / signals 仍单候选。机械变化、新闻、纯情�
 - **commit 来源**：`finch ideas commit [--since 7d]`。默认当前 checkout 的 origin、近 7 天；
   只有用户点名别的仓库才传 `--repo`。见 `references/commit-signals.md`。
   发散后按 `references/presentation.md` 呈现 2–4 个角度与推荐，改选用 `finch ideas choose`。
+  **方法辅助（显式）**：`--method <id>`（可重复）、`--methods-from-report <report_id>`、
+  `--use-method-library`。未传任何方法旗标时行为与原先一致。方法用于提出角度与组织表达；
+  **方法来源 ≠ 事实证据**（不得把文章案例写成用户亲历）。节奏/句式类结果标为草稿写法建议，
+  不单独变成新 idea。
 - **fragment 来源**：`finch ideas create --text "..."`，见 `references/fragment-signals.md`。
   无 commit 也可；产出会带 `source_kind` / `facts` / `interpretation` / `evidence_status`
   （`observed` / `externally_reported` / `unverified`）。外部文章描述实验 →

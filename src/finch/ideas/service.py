@@ -105,6 +105,10 @@ class IdeaService:
             interpretation=idea.interpretation,
             evidence_status=idea.evidence_status,
             limitations=idea.limitations,
+            method_id=idea.method_id,
+            method_use_as=idea.method_use_as,
+            method_fit_reason=idea.method_fit_reason,
+            method_version_hash=idea.method_version_hash,
         )
         self.jobs.upsert_job(job)
         return job
@@ -115,6 +119,7 @@ class IdeaService:
         *,
         bundle: FactBundle,
         generator: IdeaGenerator,
+        method_version_hash: str = "",
     ) -> ContentJob:
         """把一个发散角度映射为 IdeaCandidate 并幂等落库（复用 create_candidate）。"""
         candidate = IdeaCandidate(
@@ -144,6 +149,10 @@ class IdeaService:
             takeaway_kind=angle.takeaway_kind,
             evidence_support=angle.evidence_support,
             counterexample_or_limit=angle.counterexample_or_limit,
+            method_id=angle.method_id,
+            method_use_as=angle.use_as,
+            method_fit_reason=angle.fit_reason,
+            method_version_hash=method_version_hash,
         )
         return self.create_candidate(candidate)
 

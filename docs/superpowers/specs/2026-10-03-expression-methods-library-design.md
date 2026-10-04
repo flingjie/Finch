@@ -30,7 +30,7 @@
 | D4 | 合并 | 保存时 LLM 给 0–3 个同义候选；裸 save 只打印候选不落库；须 `--merge` 或 `--as-new` 才写 |
 | D5 | 练习接入 | 沿用现有 `expression-practice` 诊断；方法卡仅作 context；`finish` 记三选一 |
 | D6 | 反馈形状 | `worth_reuse` / `practice_again` / `not_for_me` + 可选一句原话 |
-| D7 | 推荐 | MVP **不做**按表达任务自动推荐；先证明「保存的会被再练」 |
+| D7 | 推荐 | MVP **不做**默认按任务自动推荐；**显式**方法辅助 idea-discovery 见 `2026-10-04-methods-idea-discovery` |
 | D8 | 非目标 | 无自动评分、向量库、掌握等级、独立学习 Agent |
 
 ## 3. 目标与非目标

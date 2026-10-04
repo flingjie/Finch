@@ -65,11 +65,14 @@ class _FakeExtractor:
 
 
 class _FakeDiverger:
+    last_methods = None
+
     def __init__(self, runner):
         self.runner = runner
 
-    def explore(self, bundle):
+    def explore(self, bundle, *, methods=None):
         from finch.ideas.models import IdeaAngle, IdeaExploration, IdeaGenerator
+        type(self).last_methods = methods
         angle = IdeaAngle(
             index=1, core_point="make the orchestrator a deterministic graph",
             reader_situation="orchestrator was hard to rerun",
@@ -83,7 +86,7 @@ class _FakeDiverger:
             source_refs=list(bundle.source_refs), boundaries=bundle.boundaries,
             angles=[angle], rejected_angles=[], recommended_index=1,
             recommendation_reason="可验证", selections=[],
-            generator=IdeaGenerator(skill="idea-discovery", version="2.0.0"),
+            generator=IdeaGenerator(skill="idea-discovery", version="2.1.0"),
         )
 
 
@@ -191,6 +194,41 @@ def test_ideas_commit_defaults_repo_from_settings(monkeypatch, tmp_path):
     assert len(record) == 1
     assert record[0][0] == "acme/proj"
     assert record[0][1] is not None  # since 被 _since_iso 转成 ISO 时间
+
+
+def test_ideas_commit_missing_method_exits(monkeypatch, tmp_path):
+    settings = _settings(tmp_path, ["acme/proj"])
+    _patch_cli(monkeypatch, settings, [])
+    r = CliRunner().invoke(app, ["ideas", "commit", "--method", "nope"])
+    assert r.exit_code == 1
+    assert "method not found" in r.output
+
+
+def test_ideas_commit_passes_resolved_method(monkeypatch, tmp_path):
+    from datetime import UTC, datetime
+
+    from finch.expression_methods.models import ExpressionMethod
+    from finch.expression_methods.repository import ExpressionMethodRepository
+
+    settings = _settings(tmp_path, ["acme/proj"])
+    _patch_cli(monkeypatch, settings, [])
+    now = datetime.now(UTC)
+    ExpressionMethodRepository(Workspace(tmp_path)).upsert(
+        ExpressionMethod(
+            id="emethod_x",
+            title="失败开场",
+            why_effective="w",
+            when_to_use="u",
+            mini_exercise="e",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    _FakeDiverger.last_methods = None
+    r = CliRunner().invoke(app, ["ideas", "commit", "--method", "emethod_x", "--json"])
+    assert r.exit_code == 0, r.output
+    assert _FakeDiverger.last_methods is not None
+    assert [m.id for m in _FakeDiverger.last_methods] == ["emethod_x"]
 
 
 def _git_checkout(root, origin="git@github.com:flingjie/Finch.git"):

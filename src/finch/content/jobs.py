@@ -109,6 +109,11 @@ class ContentJob(BaseModel):
     interpretation: str = ""
     evidence_status: EvidenceStatus | None = None
     limitations: str = ""
+    # ---- 表达方法应用引用（≠ 事实证据；可选）----
+    method_id: str | None = None
+    method_use_as: str | None = None
+    method_fit_reason: str = ""
+    method_version_hash: str = ""
 
     @field_validator("origin", mode="before")
     @classmethod

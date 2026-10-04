@@ -308,3 +308,23 @@ def test_create_from_angle_second_angle_makes_second_job():
     )
     assert first.id != second.id
     assert len(repo._by_id) == 2
+
+
+def test_create_from_angle_copies_method_refs():
+    svc, _ = _service()
+    job = svc.create_from_angle(
+        _angle(
+            method_id="emethod_1",
+            use_as="idea_angle",
+            fit_reason="失败切入",
+        ),
+        bundle=_bundle(),
+        generator=IdeaGenerator(skill="idea-discovery", version="2.1.0"),
+        method_version_hash="abc123",
+    )
+    assert job.method_id == "emethod_1"
+    assert job.method_use_as == "idea_angle"
+    assert job.method_fit_reason == "失败切入"
+    assert job.method_version_hash == "abc123"
+    # method refs must not pollute facts
+    assert job.facts == ["graph 支持重放"]

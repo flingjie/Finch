@@ -274,6 +274,20 @@ def _render_exploration(exploration, job: "ContentJob | None") -> str:
                                  for r in exploration.rejected_angles) + "）"]
         else:
             lines = ["（无角度值得写）"]
+        if exploration.method_selections:
+            lines.append("方法匹配:")
+            for sel in exploration.method_selections:
+                lines.append(
+                    f"  - {sel.method_id} ({sel.use_as}): {sel.fit_reason}"
+                )
+                if sel.missing_requirements:
+                    lines.append(
+                        "    缺材料: " + "；".join(sel.missing_requirements)
+                    )
+        if exploration.draft_techniques:
+            lines.append("草稿写法建议（非新 idea）:")
+            for dt in exploration.draft_techniques:
+                lines.append(f"  - {dt.method_id}: {dt.note}")
         return "\n".join(lines)
     rec = exploration.recommended_index
     lines = [f"我看出 {len(exploration.angles)} 个可能观点，推荐第 {rec}："]
@@ -285,8 +299,24 @@ def _render_exploration(exploration, job: "ContentJob | None") -> str:
         lines.append(f"      证据: {a.evidence_support}")
         if a.counterexample_or_limit:
             lines.append(f"      边界: {a.counterexample_or_limit}")
+        if a.method_id:
+            lines.append(f"      方法: {a.method_id}")
+            if a.fit_reason:
+                lines.append(f"      适配: {a.fit_reason}")
+            if a.missing_requirements:
+                lines.append("      缺材料: " + "；".join(a.missing_requirements))
     if exploration.recommendation_reason:
         lines.append(f"推荐理由: {exploration.recommendation_reason}")
+    if exploration.method_selections:
+        lines.append("方法匹配:")
+        for sel in exploration.method_selections:
+            lines.append(f"  - {sel.method_id} ({sel.use_as}): {sel.fit_reason}")
+            if sel.missing_requirements:
+                lines.append("    缺材料: " + "；".join(sel.missing_requirements))
+    if exploration.draft_techniques:
+        lines.append("草稿写法建议（非新 idea）:")
+        for dt in exploration.draft_techniques:
+            lines.append(f"  - {dt.method_id}: {dt.note}")
     if exploration.rejected_angles:
         lines.append("淘汰: " + "; ".join(
             f"[{r.index}] {r.core_point}（{r.reason}）" for r in exploration.rejected_angles
@@ -294,6 +324,8 @@ def _render_exploration(exploration, job: "ContentJob | None") -> str:
     if job is not None:
         lines.append("")
         lines.append(f"已建候选: {job.id} ({job.status.value})")
+        if job.method_id:
+            lines.append(f"方法引用: {job.method_id}")
         lines.append(f"uv run finch ideas confirm {job.id}")
         lines.append(f"改选: uv run finch ideas choose {exploration.id} <index>")
     return "\n".join(lines)
@@ -999,6 +1031,19 @@ def ideas_commit(
         None, "--repo", help="仓库（默认当前 checkout 的 origin，否则 settings.repositories[0]）"
     ),
     since: str = typer.Option("7d", "--since", help="起始时间（如 7d / 24h / ISO 时间）"),
+    method: list[str] = typer.Option(
+        [], "--method", help="表达方法 id（可重复；显式启用方法辅助发现）"
+    ),
+    methods_from_report: str | None = typer.Option(
+        None,
+        "--methods-from-report",
+        help="从 ArticleReport 引用已存方法；若无则用报告内方法作临时卡",
+    ),
+    use_method_library: bool = typer.Option(
+        False,
+        "--use-method-library",
+        help="启用方法库匹配（最多 10 条，按 updated_at 倒序）",
+    ),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
     """从最近 Commit 提炼 idea 候选并幂等落库（不生成草稿）。"""
@@ -1012,6 +1057,30 @@ def ideas_commit(
             "--repo is required (no current checkout origin and no repositories configured)"
         )
         raise typer.Exit(code=1)
+    methods_for_explore: list[ExpressionMethod] | None = None
+    method_svc: ExpressionMethodService | None = None
+    if method or methods_from_report or use_method_library:
+        method_svc = ExpressionMethodService(
+            ExpressionMethodRepository(ws),
+            ArticleReportRepository(ws),
+            cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner()),
+        )
+        try:
+            methods_for_explore = method_svc.resolve_methods_for_discovery(
+                method_ids=method or None,
+                report_id=methods_from_report,
+                use_library=use_method_library,
+            )
+        except KeyError as exc:
+            key = str(exc).strip("'")
+            if methods_from_report and key == methods_from_report:
+                typer.echo(f"report not found: {methods_from_report}")
+            else:
+                typer.echo(f"method not found: {key}")
+            raise typer.Exit(code=1) from None
+        if not methods_for_explore:
+            typer.echo("no methods resolved for discovery")
+            raise typer.Exit(code=1)
     details = load_commit_details(
         repo, gh, local_dirs=settings.paths.local_repos_dirs, since=_since_iso(since)
     )
@@ -1027,16 +1096,31 @@ def ideas_commit(
     )
     idea_service = IdeaService(ContentJobRepository(ws))
     exploration_repo = IdeaExplorationRepository(ws)
+    method_fp_by_id = {
+        m.id: m.content_fingerprint() for m in (methods_for_explore or [])
+    }
     results: list[tuple[IdeaExploration, ContentJob | None]] = []
     for bundle in bundles:
-        exploration = diverge.explore(bundle)
+        explore_methods = methods_for_explore
+        if explore_methods is not None and method_svc is not None:
+            explore_methods = (
+                method_svc.soft_filter_for_facts(explore_methods, bundle.facts)
+                or explore_methods
+            )
+        exploration = diverge.explore(bundle, methods=explore_methods)
         job: ContentJob | None = None
         if exploration.recommended_index is not None:
             angle = next(
                 a for a in exploration.angles if a.index == exploration.recommended_index
             )
+            version_hash = ""
+            if angle.method_id:
+                version_hash = method_fp_by_id.get(angle.method_id, "")
             job = idea_service.create_from_angle(
-                angle, bundle=bundle, generator=exploration.generator
+                angle,
+                bundle=bundle,
+                generator=exploration.generator,
+                method_version_hash=version_hash,
             )
             exploration.selections.append(
                 Selection(index=angle.index, job_id=job.id, at=datetime.now(UTC))
@@ -1049,6 +1133,12 @@ def ideas_commit(
                 "exploration_id": e.id,
                 "recommended_index": e.recommended_index,
                 "job_id": (job.id if job is not None else None),
+                "method_selections": [
+                    s.model_dump(mode="json") for s in e.method_selections
+                ],
+                "draft_techniques": [
+                    d.model_dump(mode="json") for d in e.draft_techniques
+                ],
             }
             for e, job in results
         ]
@@ -1125,8 +1215,16 @@ def ideas_choose(
         origin=exploration.origin,
         source_kind=exploration.source_kind or "commit",
     )
+    version_hash = ""
+    if angle.method_id:
+        stored = ExpressionMethodRepository(ws).get(angle.method_id)
+        if stored is not None:
+            version_hash = stored.content_fingerprint()
     job = IdeaService(ContentJobRepository(ws)).create_from_angle(
-        angle, bundle=bundle, generator=exploration.generator
+        angle,
+        bundle=bundle,
+        generator=exploration.generator,
+        method_version_hash=version_hash,
     )
     exploration.selections.append(
         Selection(index=angle.index, job_id=job.id, at=datetime.now(UTC))

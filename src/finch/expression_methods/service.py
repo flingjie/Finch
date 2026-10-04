@@ -1,4 +1,4 @@
-"""ExpressionMethodService：从报告选中方法、合并建议、练习反馈。"""
+"""ExpressionMethodService：从报告选中方法、合并建议、练习反馈、发现解析。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import cast
 from uuid import uuid4
 
-from finch.article.models import ArticleReport
+from finch.article.models import ArticleReport, TransferableMethod
 from finch.article.repository import ArticleReportRepository
 from finch.expression_methods.models import (
     ExpressionMethod,
@@ -34,6 +34,8 @@ boundaries: {boundaries}
 
 Respond with JSON matching the schema: candidates (list of {{method_id, reason}}).
 """
+
+_LIBRARY_CAP = 10
 
 
 class ExpressionMethodService:
@@ -68,11 +70,22 @@ class ExpressionMethodService:
                     method_index=index,
                     excerpt="",
                     source_ref=report.source_ref,
+                    why_effective_here=tm.why_effective_here,
+                    content_hash=report.content_hash,
                 )
             ],
             created_at=now,
             updated_at=now,
         )
+
+    def find_by_source(
+        self, report_id: str, method_index: int
+    ) -> ExpressionMethod | None:
+        for m in self.methods.list_all():
+            for s in m.sources:
+                if s.report_id == report_id and s.method_index == method_index:
+                    return m
+        return None
 
     def suggest_merges(self, candidate: ExpressionMethod) -> MergeSuggestion:
         existing = self.methods.list_all()
@@ -99,6 +112,9 @@ class ExpressionMethodService:
         )
 
     def save_as_new(self, report_id: str, index: int) -> ExpressionMethod:
+        existing = self.find_by_source(report_id, index)
+        if existing is not None:
+            return existing
         report = self._require_report(report_id)
         method = self.from_report(report, index)
         self.methods.upsert(method)
@@ -151,6 +167,99 @@ class ExpressionMethodService:
         )
         self.methods.upsert(method)
         return method
+
+    def resolve_methods_for_discovery(
+        self,
+        *,
+        method_ids: list[str] | None = None,
+        report_id: str | None = None,
+        use_library: bool = False,
+    ) -> list[ExpressionMethod]:
+        """Load methods for idea-discovery. Fail closed on missing explicit IDs.
+
+        Ephemeral cards from a report (when no saved methods cite it) get ids
+        ``emethod_ephemeral_<index>`` and are not persisted.
+        """
+        by_id: dict[str, ExpressionMethod] = {}
+
+        for mid in method_ids or []:
+            m = self.methods.get(mid)
+            if m is None:
+                raise KeyError(mid)
+            by_id[m.id] = m
+
+        if report_id is not None:
+            cited = [
+                m
+                for m in self.methods.list_all()
+                if any(s.report_id == report_id for s in m.sources)
+            ]
+            if cited:
+                for m in cited:
+                    by_id[m.id] = m
+            else:
+                report = self._require_report(report_id)
+                for i, tm in enumerate(report.transferable_methods, start=1):
+                    ephemeral = self._ephemeral_from_transferable(report, i, tm)
+                    by_id[ephemeral.id] = ephemeral
+
+        if use_library:
+            library = sorted(
+                self.methods.list_all(),
+                key=lambda m: m.updated_at,
+                reverse=True,
+            )[:_LIBRARY_CAP]
+            for m in library:
+                by_id[m.id] = m
+
+        return list(by_id.values())
+
+    def soft_filter_for_facts(
+        self, methods: list[ExpressionMethod], facts: list[str]
+    ) -> list[ExpressionMethod]:
+        """Prefer methods whose required_material keywords appear in facts.
+
+        Lenient: only drop when required_material is non-empty and no token
+        overlaps; empty required_material always kept.
+        """
+        if not methods:
+            return []
+        blob = "\n".join(facts).casefold()
+        kept: list[ExpressionMethod] = []
+        for m in methods:
+            req = (m.required_material or "").strip()
+            if not req:
+                kept.append(m)
+                continue
+            tokens = [t for t in req.replace("，", " ").replace(",", " ").split() if t]
+            if not tokens or any(t.casefold() in blob for t in tokens):
+                kept.append(m)
+        return kept if kept else list(methods)
+
+    def _ephemeral_from_transferable(
+        self, report: ArticleReport, index: int, tm: TransferableMethod
+    ) -> ExpressionMethod:
+        now = datetime.now(UTC)
+        return ExpressionMethod(
+            id=f"emethod_ephemeral_{index}",
+            title=tm.method,
+            why_effective=tm.why_effective_here,
+            when_to_use=tm.when_to_use,
+            boundaries="",
+            mini_exercise=tm.mini_exercise,
+            sources=[
+                MethodSource(
+                    report_id=report.id,
+                    method_index=index,
+                    excerpt="",
+                    source_ref=report.source_ref,
+                    why_effective_here=tm.why_effective_here,
+                    content_hash=report.content_hash,
+                )
+            ],
+            created_at=now,
+            updated_at=now,
+        )
 
     def _require_report(self, report_id: str) -> ArticleReport:
         report = self.reports.get(report_id)
