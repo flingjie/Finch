@@ -48,12 +48,13 @@ from .engagement.models import (
     ActionFeedbackValue,
     DiscoverySnapshot,
     InterestFeedbackValue,
+    OutcomeFeedbackValue,
     PresentationRecord,
     RecommendationEntry,
     RecommendationFeedback,
 )
 from .evidence.extractor import Extractor, build_cards
-from .expression_methods.models import ExpressionMethod, MethodVerdict
+from .expression_methods.models import ExpressionMethod, MethodVerdict, ReplyMethodVerdict
 from .expression_methods.repository import ExpressionMethodRepository
 from .expression_methods.service import ExpressionMethodService
 from .github.commit_reader import CommitReader, load_commit_details
@@ -2510,10 +2511,21 @@ def _render_preferred_opportunity(opp: PreferredOpportunity) -> list[str]:
     if source:
         lines.append(f"来源：{source}")
     lines.append(f"话题：{opp.topic or '（未给出）'}")
+    if opp.problem is not None:
+        status = opp.problem.evidence_status
+        refs = "；".join(opp.problem.source_refs)
+        lines.append(
+            f"问题：{opp.problem.statement}（{status}"
+            + (f"；来源 {refs}" if refs else "")
+            + "）"
+        )
     if opp.entry_kind is not None:
         lines.append(f"入口：{opp.entry_kind.value}")
     if opp.why_me:
         lines.append(f"为什么值得参与：{opp.why_me}")
+    if opp.fit is not None:
+        prac = "、".join(opp.fit.practice_refs) if opp.fit.practice_refs else "无"
+        lines.append(f"为什么与我有关：{opp.fit.reason}（实践 {prac}）")
     if opp.why_continue:
         lines.append(f"对方为什么可能接话：{opp.why_continue}")
     if opp.proposal is not None:
@@ -2529,6 +2541,8 @@ def _render_preferred_opportunity(opp: PreferredOpportunity) -> list[str]:
         lines.append(f"接续自：{opp.previous_opportunity_id}")
     if opp.open_questions:
         lines.append(f"待确认：{'；'.join(opp.open_questions)}")
+    if opp.next_action is not None:
+        lines.append(f"下一步：{opp.next_action.type} —— {opp.next_action.suggestion}")
     lines.append("")
     return lines
 
@@ -2569,12 +2583,15 @@ def _prepare_new_opportunity(
     opportunity_id: str,
     *,
     reaction: str | None = None,
+    style_note: str | None = None,
+    methods: list[ExpressionMethod] | None = None,
 ) -> PreparedContribution | None:
     """对首选机会（新聚合）执行 select → prepare_contribution → ready（幂等）。
 
     proposed → select → 生成正文 → 登记 Artifact → mark_ready；parked / closed 不可准备，
     返回 None。已 ready：无 ``reaction`` 直接返回现有成果；有 ``reaction`` 则 ready → selected
-    （合法的「调整贡献」转换）后重新生成。
+    （合法的「调整贡献」转换）后重新生成。``style_note`` 为本次风格指令；``methods`` 为回复
+    候选方法（可为空），透传 prepare。
     """
     service = OpportunityService(
         PreferredOpportunityRepository(ws), artifacts=PreferredArtifactRepository(ws)
@@ -2599,6 +2616,8 @@ def _prepare_new_opportunity(
         confirmed_jobs=ContentJobRepository(ws).list_jobs(),
         practice_profile=load_practice_profile(settings.paths.practice_profile_path),
         reaction=reaction,
+        style_note=style_note,
+        methods=methods,
     )
 
 
@@ -2622,6 +2641,11 @@ def _prepared_contribution_for(
                 body=art_repo.read_content(opp.id, ref) or "",
                 source_refs=list(art.source_refs),
                 execution_status=art.execution_status,
+                method_ref=art.method_ref,
+                method_version_hash=art.method_version_hash,
+                response_focus=art.response_focus,
+                fit_reason=art.fit_reason,
+                style_policy_version=art.style_policy_version,
             )
         )
     latest = opp.reactions[-1] if opp.reactions else None
@@ -2634,17 +2658,18 @@ def _prepared_contribution_for(
 
 
 def _render_prepared_contribution(pc: PreparedContribution) -> list[str]:
-    """渲染 prepare 结果：机会摘要 + 反应状态 + 可审阅正文。"""
-    lines = _render_preferred_opportunity(pc.opportunity)
-    if pc.reaction is not None:
-        lines.append(f"你的反应（第 {pc.reaction.seq} 条）：{pc.reaction.text}")
-    else:
-        lines.append("无反应：本次只准备澄清问题")
-    lines.append("")
+    """渲染 prepare 结果：默认只突出成果正文（可直接审阅），机会/方法细节经 --json 查看。"""
+    lines: list[str] = []
     for a in pc.artifacts:
         lines.append(f"成果（{a.kind.value}）：")
         lines.append(a.body)
         lines.append("")
+    lines.append(f"机会：{pc.opportunity.topic or pc.opportunity.id}")
+    if pc.reaction is not None:
+        lines.append(f"你的反应：{pc.reaction.text}")
+    else:
+        lines.append("无反应：本次只准备澄清问题")
+    lines.append("状态：待审，未运行；机会细节与方法见 --json")
     return lines
 
 
@@ -2664,6 +2689,11 @@ def _prepared_payload(pc: PreparedContribution) -> dict:
                 "body": a.body,
                 "source_refs": list(a.source_refs),
                 "execution_status": a.execution_status.value,
+                "method_ref": a.method_ref,
+                "method_version_hash": a.method_version_hash,
+                "response_focus": a.response_focus,
+                "fit_reason": a.fit_reason,
+                "style_policy_version": a.style_policy_version,
             }
             for a in pc.artifacts
         ],
@@ -3143,6 +3173,20 @@ def connect_prepare(
         "--reaction",
         help="用户对这条机会的原话（可选；不回答请不传。无反应时只准备澄清问题）",
     ),
+    style_note: str | None = typer.Option(
+        None,
+        "--style-note",
+        help="本次风格指令（可选，如「再短一点」；优先级高于默认策略与声音画像）",
+    ),
+    method_ids: list[str] | None = typer.Option(
+        None, "--method", help="回复候选方法 ID（可重复；指定后不筛 applicable_forms）"
+    ),
+    methods_from_report: str | None = typer.Option(
+        None, "--methods-from-report", help="从指定 ArticleReport 取回复候选方法"
+    ),
+    use_method_library: bool = typer.Option(
+        False, "--use-method-library", help="自动推荐 reply 适用的方法（最多 10）"
+    ),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
     """为选中的首选机会制作贡献（select → 生成正文 → 登记 Artifact → ready）。"""
@@ -3162,13 +3206,30 @@ def connect_prepare(
     if reaction is not None and len(ids) > 1:
         typer.echo("--reaction applies to exactly one --opportunity")
         raise typer.Exit(code=1)
+    methods: list[ExpressionMethod] | None = None
+    if method_ids or methods_from_report or use_method_library:
+        try:
+            methods = _methods_service(ws, settings).resolve_reply_methods(
+                method_ids=list(method_ids) if method_ids else None,
+                report_id=methods_from_report,
+                use_library=use_method_library,
+            )
+        except KeyError as exc:
+            key = str(exc).strip("'")
+            if methods_from_report and key == methods_from_report:
+                typer.echo(f"report not found: {methods_from_report}")
+            else:
+                typer.echo(f"method not found: {key}")
+            raise typer.Exit(code=1) from None
     cap = settings.discovery.daily_people.deep_prepare_limit
     over_cap = len(ids) > cap
     selected = ids[:cap]
     prepared: list[PreparedContribution] = []
     misses: list[str] = []
     for oid in selected:
-        pc = _prepare_new_opportunity(settings, ws, oid, reaction=reaction)
+        pc = _prepare_new_opportunity(
+            settings, ws, oid, reaction=reaction, style_note=style_note, methods=methods
+        )
         if pc is None:
             misses.append(oid)
         else:
@@ -3203,14 +3264,15 @@ def connect_feedback(
     path: str | None = typer.Option(None, "--file", help="feedback.json（批量）"),
     snapshot: str = typer.Option("", "--snapshot", help="快照 ID（轻量内联）"),
     opportunity: str = typer.Option("", "--opportunity", help="机会 ID（轻量内联）"),
-    dimension: str = typer.Option("", "--dimension", help="interest|action"),
-    value: str = typer.Option("", "--value", help="兴趣/行动值"),
+    dimension: str = typer.Option("", "--dimension", help="interest|action|outcome"),
+    value: str = typer.Option("", "--value", help="兴趣/行动/结果值"),
     reason: str = typer.Option("", "--reason", help="可选原因"),
 ) -> None:
-    """校验并记录推荐反馈（兴趣 / 行动维度）。
+    """校验并记录推荐反馈（兴趣 / 行动 / 结果维度）。
 
     轻量内联：--opportunity + --dimension + --value（如 --value no_time_today 表示今天没时间，
-    属瞬态跳过，不映射为长期排斥）；或用 --file 批量。
+    属瞬态跳过，不映射为长期排斥；--dimension outcome --value adopted_replied 表示采用建议并回复）；
+    或用 --file 批量。
     """
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
@@ -3241,6 +3303,7 @@ def connect_feedback(
     repo = RecommendationFeedbackRepository(ws)
     interest_values = {v.value for v in InterestFeedbackValue}
     action_values = {v.value for v in ActionFeedbackValue}
+    outcome_values = {v.value for v in OutcomeFeedbackValue}
     saved = 0
     for item in items:
         if "created_at" not in item:
@@ -3261,6 +3324,9 @@ def connect_feedback(
             raise typer.Exit(code=1)
         if feedback.dimension == "action" and feedback.value not in action_values:
             typer.echo(f"invalid action value: {feedback.value}")
+            raise typer.Exit(code=1)
+        if feedback.dimension == "outcome" and feedback.value not in outcome_values:
+            typer.echo(f"invalid outcome value: {feedback.value}")
             raise typer.Exit(code=1)
         repo.upsert(feedback)
         saved += 1
@@ -4986,8 +5052,46 @@ def methods_show(
         )
     for log in m.practice_logs:
         typer.echo(
-            f"practice: session={log.session_id} verdict={log.verdict} note={log.note}"
+            f"{log.form}: session={log.session_id} verdict={log.verdict} note={log.note}"
         )
+
+
+_REPLY_METHOD_VERDICTS = ("useful", "mixed", "not_fit")
+
+
+@methods_app.command("log-reply")
+def methods_log_reply(
+    method: str = typer.Option(..., "--method", help="方法 ID"),
+    artifact: str = typer.Option(..., "--artifact", help="回复草稿（Artifact）ID"),
+    verdict: str = typer.Option(
+        ..., "--verdict", help="回复方法反馈：useful|mixed|not_fit"
+    ),
+    note: str = typer.Option("", "--note", help="可选备注（如改了什么）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """记录一条回复复用反馈（form=reply + 草稿引用），写入方法 practice_logs。"""
+    if verdict not in _REPLY_METHOD_VERDICTS:
+        typer.echo(
+            f"invalid verdict: {verdict}. expected one of {', '.join(_REPLY_METHOD_VERDICTS)}"
+        )
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    try:
+        m = _methods_service(ws, settings).append_reply_log(
+            method,
+            draft_ref=artifact,
+            verdict=cast(ReplyMethodVerdict, verdict),
+            note=note,
+        )
+    except KeyError as exc:
+        typer.echo(f"method not found: {str(exc).strip(chr(39))}")
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(m.model_dump_json(indent=2))
+    else:
+        typer.echo(f"logged reply verdict for method {m.id}: {verdict}")
 
 
 def _render_article_report(report: ArticleReport) -> str:

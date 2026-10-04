@@ -2,6 +2,7 @@
 
 import pytest
 
+from finch.expression_methods.models import ExpressionMethod
 from finch.opportunities.models import (
     ArtifactKind,
     ContributionForm,
@@ -15,6 +16,7 @@ from finch.opportunities.models import (
     Reaction,
 )
 from finch.opportunities.prepare import (
+    REPLY_STYLE_POLICY_VERSION,
     ContributionBodyOutput,
     PreparedContribution,
     artifact_id_for,
@@ -22,6 +24,7 @@ from finch.opportunities.prepare import (
     effective_form,
     prepare_contribution,
     render_evidence_refs,
+    render_reply_style,
     write_contribution,
 )
 from finch.opportunities.repository import ArtifactRepository, OpportunityRepository
@@ -31,15 +34,29 @@ from finch.storage.workspace import Workspace
 
 
 class FakeRunner:
-    def __init__(self, body: str):
+    def __init__(
+        self,
+        body: str,
+        method_id: str | None = None,
+        fit_reason: str = "",
+        response_focus: str = "",
+    ):
         self.body = body
+        self.method_id = method_id
+        self.fit_reason = fit_reason
+        self.response_focus = response_focus
         self.calls = 0
         self.last_prompt: str | None = None
 
     def run(self, prompt, output_model, **kw):
         self.calls += 1
         self.last_prompt = prompt
-        return ContributionBodyOutput(body=self.body)
+        return ContributionBodyOutput(
+            body=self.body,
+            method_id=self.method_id,
+            fit_reason=self.fit_reason,
+            response_focus=self.response_focus,
+        )
 
 
 def _opportunity() -> Opportunity:
@@ -61,8 +78,8 @@ def _opportunity() -> Opportunity:
 
 def test_write_contribution_returns_body():
     runner = FakeRunner("适用处境：…")
-    body = write_contribution(runner, _opportunity())
-    assert body == "适用处境：…"
+    out = write_contribution(runner, _opportunity())
+    assert out.body == "适用处境：…"
     assert runner.calls == 1
 
 
@@ -305,7 +322,7 @@ def test_write_contribution_renders_reaction_slot_none_by_default():
     write_contribution(runner, _opportunity())
     p = runner.last_prompt or ""
     section = p.split("## User reaction to THIS opportunity")[1]
-    assert "\n\n(none)\n\n## Task" in section
+    assert "\n\n(none)\n\n## Reply style policy (default)" in section
 
 
 def test_write_contribution_renders_verbatim_reaction_and_form_override():
@@ -434,3 +451,130 @@ def test_prepare_blank_reaction_rejected_before_llm(tmp_path):
             opportunity=service.get("opp_1"), runner=runner, service=service, reaction="  "
         )
     assert runner.calls == 0
+
+
+# ---- 简洁风格（reply style policy，plan 第 2 步）----
+
+
+def test_render_reply_style_contains_concise_rules():
+    style = render_reply_style()
+    assert "40" in style and "120" in style  # 长度目标
+    assert "铺垫" in style  # 少铺垫
+    assert "问题" in style  # 问题可选
+
+
+def test_reply_style_policy_version_is_defined():
+    assert REPLY_STYLE_POLICY_VERSION
+
+
+def test_write_contribution_injects_reply_style_block():
+    runner = FakeRunner("x")
+    write_contribution(runner, _opportunity())
+    p = runner.last_prompt or ""
+    assert "## Reply style policy (default)" in p
+    assert "铺垫" in p
+
+
+def test_write_contribution_default_style_note_is_none():
+    runner = FakeRunner("x")
+    write_contribution(runner, _opportunity())
+    p = runner.last_prompt or ""
+    section = p.split("## This-time style instruction (highest priority)")[1]
+    assert section.startswith("\n\n(none)\n\n")
+
+
+def test_write_contribution_style_note_overrides_default():
+    runner = FakeRunner("x")
+    write_contribution(runner, _opportunity(), style_note="再短一点")
+    p = runner.last_prompt or ""
+    assert "再短一点" in p
+
+
+# ---- 方法复用（method reuse，plan 第 3 步）----
+
+
+def _reply_method() -> ExpressionMethod:
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC)
+    return ExpressionMethod(
+        id="emethod_reply_1",
+        title="补充具体案例",
+        why_effective="用真实案例补充结论适用范围",
+        when_to_use="对方提出一般判断",
+        applicable_forms=["reply"],
+        reply_usage="用一个真实案例补充结论的适用条件",
+        reply_boundaries="需要真实经历或可引用公开案例",
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def test_write_contribution_renders_methods_block():
+    runner = FakeRunner("x")
+    write_contribution(runner, _opportunity(), methods=[_reply_method()])
+    p = runner.last_prompt or ""
+    assert "emethod_reply_1" in p
+    assert "补充具体案例" in p
+    assert "用一个真实案例补充结论的适用条件" in p
+
+
+def test_write_contribution_renders_no_methods_as_none():
+    runner = FakeRunner("x")
+    write_contribution(runner, _opportunity())
+    p = runner.last_prompt or ""
+    section = p.split("## Available methods (optional)")[1]
+    assert section.startswith("\n\n(none)\n\n")
+
+
+def test_write_contribution_validates_method_id_in_candidates():
+    runner = FakeRunner("x", method_id="unknown_id")
+    with pytest.raises(ValueError, match="method_id"):
+        write_contribution(runner, _opportunity(), methods=[_reply_method()])
+
+
+def test_write_contribution_returns_method_selection():
+    runner = FakeRunner(
+        "正文",
+        method_id="emethod_reply_1",
+        fit_reason="贴合",
+        response_focus="重试的副作用",
+    )
+    out = write_contribution(runner, _opportunity(), methods=[_reply_method()])
+    assert out.body == "正文"
+    assert out.method_id == "emethod_reply_1"
+    assert out.fit_reason == "贴合"
+    assert out.response_focus == "重试的副作用"
+
+
+def test_prepare_records_method_metadata_on_artifact(tmp_path):
+    service, _repo, art_repo = _service(tmp_path)
+    service.create(
+        opportunity_id="opp_1",
+        topic="t",
+        proposal=Proposal(
+            contribution="c",
+            form=ContributionForm.REPLY_DRAFT,
+            expected_output="o",
+            scope="s",
+        ),
+    )
+    service.select("opp_1")
+    method = _reply_method()
+    runner = FakeRunner(
+        "正文", method_id=method.id, fit_reason="贴合", response_focus="重点"
+    )
+    prepare_contribution(
+        opportunity=service.get("opp_1"),
+        runner=runner,
+        service=service,
+        reaction="我遇到过类似情况",
+        methods=[method],
+    )
+    art = art_repo.get("opp_1", "art_opp_1_reply_draft_r1")
+    assert art is not None
+    assert art.method_ref == method.id
+    assert art.method_version_hash == method.content_fingerprint()
+    assert art.fit_reason == "贴合"
+    assert art.response_focus == "重点"
+    assert art.style_policy_version == REPLY_STYLE_POLICY_VERSION

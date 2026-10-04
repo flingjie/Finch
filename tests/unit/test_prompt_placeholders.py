@@ -29,6 +29,9 @@ EXPECTED: dict[str, set[str]] = {
         "user_positions",
         "user_practices",
         "user_reaction",
+        "reply_style",
+        "style_note",
+        "methods",
     },
     "prompts/practice-profile-draft.md": {"repo", "readme"},
     "prompts/clarity-revise.md": {

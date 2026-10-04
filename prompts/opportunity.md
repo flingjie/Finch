@@ -28,6 +28,18 @@ lists what the user has explicitly said they cannot speak to. `(none)` means not
 
 {user_practices}
 
+## Signals to look for
+
+Prefer opportunities that carry one of these three concrete signals. Heat/popularity is only a
+ranking hint, never the recommendation gate.
+
+1. help request / failure experience — in what task, and which step failed?
+2. temporary workaround — what scripts, spreadsheets, or manual operations did they use?
+3. new-capability attempt — what did they start doing, and what new obstacle appeared?
+
+A good recommendation needs a specific problem + a reason it fits the user + an entry point for
+participation. If none of the three signals yields a specific problem, prefer skip.
+
 ## Fields to produce
 
 1. topic: the concrete, continuable topic (one specific thread / claim / problem).
@@ -61,6 +73,19 @@ lists what the user has explicitly said they cannot speak to. `(none)` means not
       when the link is unclear. May be empty when there is no usable excerpt.
 13. recommend: true only if there is real value and a concrete contribution; false otherwise,
     with a one-line skip_reason.
+14. problem: a concrete problem distilled from the signals above.
+    - statement: one specific problem (task + failed step / workaround / new attempt).
+    - source_refs: the artifact_ids / URLs that support it (may be empty).
+    - evidence_status: "author_stated" when the post states it verbatim, "inferred" when you
+      derived it from context. Never present an inferred problem as author-stated.
+15. fit:
+    - reason: why this problem matters to the user. Anchor to one confirmed practice above and
+      put its id in practice_refs (e.g. ["agent-100-days"]); if no practice fits, state a current
+      question/curiosity and mark it as inference.
+    - practice_refs: list of confirmed practice ids (may be empty).
+16. next_action:
+    - type: one of ask / offer / try / observe. Default to "ask" when evidence is lacking.
+    - suggestion: one executable sentence (e.g. "问他现在如何保留失败输入和判断重跑结果").
 
 Do not fabricate the peer's difficulties or the user's personal experience. Do not invent
 statistics or claim the peer verified something the artifacts do not show. The peer and their

@@ -180,3 +180,67 @@ def test_soft_filter_keeps_when_required_material_matches(tmp_path):
     dropped = svc.soft_filter_for_facts([m], ["无关事实"])
     # lenient fallback: if all drop, return original list
     assert dropped == [m]
+
+
+# ---- 回复方法解析与反馈（plan 第 3/4 步）----
+
+
+def test_resolve_reply_methods_by_id_and_missing(tmp_path):
+    _report(tmp_path)
+    svc = _svc(tmp_path)
+    m = svc.save_as_new("article_x", 1)
+    got = svc.resolve_reply_methods(method_ids=[m.id])
+    assert [x.id for x in got] == [m.id]
+    try:
+        svc.resolve_reply_methods(method_ids=["nope"])
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("expected KeyError")
+
+
+def test_resolve_reply_methods_from_report_ephemeral_when_unsaved(tmp_path):
+    _report(tmp_path)
+    svc = _svc(tmp_path)
+    got = svc.resolve_reply_methods(report_id="article_x")
+    assert len(got) == 2
+    assert all(g.id.startswith("emethod_ephemeral_") for g in got)
+    assert ExpressionMethodRepository(Workspace(tmp_path)).list_all() == []
+
+
+def test_resolve_reply_methods_library_filters_reply_applicable(tmp_path):
+    _report(tmp_path)
+    svc = _svc(tmp_path)
+    m = svc.save_as_new("article_x", 1)
+    m = m.model_copy(update={"applicable_forms": ["reply"], "reply_usage": "补一个案例"})
+    ExpressionMethodRepository(Workspace(tmp_path)).upsert(m)
+    n = svc.save_as_new("article_x", 2)  # applicable_forms empty -> article only
+    got = svc.resolve_reply_methods(use_library=True)
+    ids = [x.id for x in got]
+    assert m.id in ids
+    assert n.id not in ids
+
+
+def test_append_reply_log(tmp_path):
+    _report(tmp_path)
+    svc = _svc(tmp_path)
+    m = svc.save_as_new("article_x", 1)
+    m = svc.append_reply_log(
+        m.id, draft_ref="art_opp_1_reply_draft", verdict="useful", note="改了半句"
+    )
+    log = m.practice_logs[-1]
+    assert log.form == "reply"
+    assert log.draft_ref == "art_opp_1_reply_draft"
+    assert log.verdict == "useful"
+    assert log.note == "改了半句"
+
+
+def test_append_reply_log_missing_method(tmp_path):
+    _report(tmp_path)
+    svc = _svc(tmp_path)
+    try:
+        svc.append_reply_log("nope", draft_ref="art_x", verdict="useful")
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("expected KeyError")

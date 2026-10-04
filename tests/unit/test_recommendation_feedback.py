@@ -72,3 +72,26 @@ def test_prepare_does_not_tighten_when_not_skipping():
     )
     assert all("raise min evidence" not in o["effect"] for o in out)
     assert any("boost connection_opportunity" in o["effect"] for o in out)
+
+
+def test_outcome_adopted_replied_suggests_connection_boost():
+    from finch.engagement.models import OutcomeFeedbackValue
+
+    out = explain_recommendation_adjustments(
+        [
+            _fb(
+                OutcomeFeedbackValue.ADOPTED_REPLIED.value, dimension="outcome", i=i
+            )
+            for i in range(2)
+        ]
+    )
+    assert any("boost connection" in o["effect"] for o in out)
+
+
+def test_outcome_reengaged_suggests_continuity_boost():
+    from finch.engagement.models import OutcomeFeedbackValue
+
+    out = explain_recommendation_adjustments(
+        [_fb(OutcomeFeedbackValue.REENGAGED.value, dimension="outcome", i=0)]
+    )
+    assert any("continuity" in o["effect"] for o in out)

@@ -92,13 +92,21 @@ class ActionFeedbackValue(StrEnum):
     NO_TIME_TODAY = "no_time_today"
 
 
+class OutcomeFeedbackValue(StrEnum):
+    """推荐后的轻量结果：是否采用并回复 / 得到补充信息 / 再次交流或共同实践。"""
+
+    ADOPTED_REPLIED = "adopted_replied"
+    GOT_MORE_INFO = "got_more_info"
+    REENGAGED = "reengaged"
+
+
 class RecommendationFeedback(BaseModel):
-    """推荐反馈（兴趣 / 行动维度分离；非 DecisionRecord）。"""
+    """推荐反馈（兴趣 / 行动 / 结果维度分离；非 DecisionRecord）。"""
 
     id: str
     opportunity_id: str
     snapshot_id: str
-    dimension: Literal["interest", "action"]
+    dimension: Literal["interest", "action", "outcome"]
     value: str
     reason: str = ""
     created_at: datetime

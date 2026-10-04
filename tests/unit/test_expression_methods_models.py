@@ -62,3 +62,23 @@ def test_content_fingerprint_stable_and_sensitive():
     b = a.model_copy(update={"title": "t2"})
     assert a.content_fingerprint() != b.content_fingerprint()
     assert a.content_fingerprint() == a.model_copy().content_fingerprint()
+
+
+def test_expression_method_reply_fields_default_and_fingerprint_sensitive():
+    now = datetime.now(UTC)
+    a = ExpressionMethod(
+        id="emethod_r",
+        title="t",
+        why_effective="w",
+        when_to_use="u",
+        mini_exercise="e",
+        created_at=now,
+        updated_at=now,
+    )
+    assert a.applicable_forms == []
+    assert a.reply_usage == ""
+    assert a.reply_boundaries == ""
+    b = a.model_copy(
+        update={"reply_usage": "补一个具体案例", "reply_boundaries": "需要真实经历"}
+    )
+    assert a.content_fingerprint() != b.content_fingerprint()

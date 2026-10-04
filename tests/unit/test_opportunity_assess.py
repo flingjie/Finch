@@ -148,4 +148,41 @@ def test_assess_opportunity_empty_practices_renders_none():
     assess_opportunity(runner, **_kwargs())
     p = runner.last_prompt or ""
     section = p.split("## User real practices (confirmed, citeable)")[1]
-    assert "\n\n(none)\n\n## Fields to produce" in section
+    assert "\n\n(none)\n\n## Signals to look for" in section
+
+
+def test_build_opportunity_carries_problem_fit_next_action():
+    from finch.opportunities.models import Fit, NextAction, Problem
+
+    draft = _draft(
+        problem=Problem(
+            statement="修改 prompt 后需手工重跑失败任务",
+            source_refs=["https://x.com/a/1"],
+            evidence_status="author_stated",
+        ),
+        fit=Fit(reason="与 failure replay 实践相关", practice_refs=["agent-100-days"]),
+        next_action=NextAction(type="ask", suggestion="问他如何保留失败输入"),
+    )
+    opp = build_opportunity(draft, opportunity_id="opp_1", person_ref="person_1")
+    assert opp.problem is not None
+    assert opp.problem.statement.startswith("修改 prompt")
+    assert opp.problem.evidence_status == "author_stated"
+    assert opp.fit is not None
+    assert opp.fit.practice_refs == ["agent-100-days"]
+    assert opp.next_action is not None
+    assert opp.next_action.type == "ask"
+
+
+def test_problem_and_next_action_defaults():
+    from finch.opportunities.models import NextAction, Problem
+
+    assert Problem(statement="x").evidence_status == "inferred"
+    assert NextAction().type == "ask"
+
+
+def test_build_opportunity_without_new_fields_still_works():
+    # 旧 draft（无 problem/fit/next_action）仍可构建，字段为 None（向后兼容）。
+    opp = build_opportunity(_draft(), opportunity_id="opp_1", person_ref="person_1")
+    assert opp.problem is None
+    assert opp.fit is None
+    assert opp.next_action is None

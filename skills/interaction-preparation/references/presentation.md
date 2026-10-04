@@ -23,6 +23,9 @@
 素材来自 `finch connect prepare --opportunity <id>`（正文 + `source_refs` + `execution_status`）。
 主文不贴 `opp_*` / `art_*` id。
 
+回复草稿默认只突出一条正文（一个重点）；选用的方法、聚焦点与风格版本经 `--json` 按需查看，
+不在主文里展开分析。
+
 ## 用户下一轮 → CLI
 
 - `采用` → 用户在原平台亲自发送，再 `uv run finch connections record --person <person_id>

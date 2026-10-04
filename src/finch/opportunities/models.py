@@ -7,6 +7,7 @@
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -68,6 +69,34 @@ class Proposal(BaseModel):
     cost_note: str = ""  # 粗略投入范围与未知（自然语言，不伪造精确耗时）
 
 
+ProblemEvidenceStatus = Literal["author_stated", "inferred"]
+
+
+class Problem(BaseModel):
+    """推荐参与机会的具体问题：原文明确（author_stated）与模型推测（inferred）分开。"""
+
+    statement: str
+    source_refs: list[str] = Field(default_factory=list)
+    evidence_status: ProblemEvidenceStatus = "inferred"
+
+
+class Fit(BaseModel):
+    """为什么与用户有关：reason + 已确认实践引用（结构化，取代 why_me 文本里的括号约定）。"""
+
+    reason: str
+    practice_refs: list[str] = Field(default_factory=list)
+
+
+NextActionType = Literal["ask", "offer", "try", "observe"]
+
+
+class NextAction(BaseModel):
+    """推荐的下一步动作：类型 + 一句可执行建议。缺少依据时默认 ask（提问优先）。"""
+
+    type: NextActionType = "ask"
+    suggestion: str = ""
+
+
 class Reaction(BaseModel):
     """用户对这条机会亲口说的话（原话，append-only）。
 
@@ -94,6 +123,10 @@ class Opportunity(BaseModel):
     proposal: Proposal | None = None
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
+    # 推荐参与机会的结构化三字段（面向推荐，与既有字段并存；None 表示未评估）。
+    problem: Problem | None = None
+    fit: Fit | None = None
+    next_action: NextAction | None = None
     status: OpportunityStatus = OpportunityStatus.PROPOSED
     decision: str | None = None
     artifact_refs: list[str] = Field(default_factory=list)
@@ -160,6 +193,13 @@ class Artifact(BaseModel):
     author_note: str = ""
     material_origin: MaterialOrigin = MaterialOrigin.SYNTHETIC
     execution_status: ExecutionStatus = ExecutionStatus.N_A
+    # 方法复用元数据（可选，默认安全）：方法出处与 contribution_refs 分开，永不进 source_refs。
+    method_ref: str | None = None
+    method_version_hash: str = ""
+    response_focus: str = ""
+    contribution_refs: list[str] = Field(default_factory=list)
+    fit_reason: str = ""
+    style_policy_version: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

@@ -14,6 +14,7 @@ from finch.expression_methods.models import (
     MethodPracticeLog,
     MethodSource,
     MethodVerdict,
+    ReplyMethodVerdict,
 )
 from finch.expression_methods.repository import ExpressionMethodRepository
 from finch.llm.base import StructuredInferenceRunner
@@ -36,6 +37,7 @@ Respond with JSON matching the schema: candidates (list of {{method_id, reason}}
 """
 
 _LIBRARY_CAP = 10
+_REPLY_FORM = "reply"
 
 
 class ExpressionMethodService:
@@ -168,6 +170,35 @@ class ExpressionMethodService:
         self.methods.upsert(method)
         return method
 
+    def append_reply_log(
+        self,
+        method_id: str,
+        *,
+        draft_ref: str,
+        verdict: ReplyMethodVerdict,
+        note: str = "",
+    ) -> ExpressionMethod:
+        """记录一条回复复用反馈（form=reply + 草稿引用），写入方法 practice_logs。"""
+        method = self.methods.get(method_id)
+        if method is None:
+            raise KeyError(method_id)
+        log = MethodPracticeLog(
+            session_id=draft_ref,
+            verdict=verdict,
+            note=note,
+            at=datetime.now(UTC),
+            form="reply",
+            draft_ref=draft_ref,
+        )
+        method = method.model_copy(
+            update={
+                "practice_logs": [*method.practice_logs, log],
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        self.methods.upsert(method)
+        return method
+
     def resolve_methods_for_discovery(
         self,
         *,
@@ -206,6 +237,52 @@ class ExpressionMethodService:
         if use_library:
             library = sorted(
                 self.methods.list_all(),
+                key=lambda m: m.updated_at,
+                reverse=True,
+            )[:_LIBRARY_CAP]
+            for m in library:
+                by_id[m.id] = m
+
+        return list(by_id.values())
+
+    def resolve_reply_methods(
+        self,
+        *,
+        method_ids: list[str] | None = None,
+        report_id: str | None = None,
+        use_library: bool = False,
+    ) -> list[ExpressionMethod]:
+        """Load reply-applicable methods for reply crafting. Fail closed on missing explicit IDs.
+
+        显式 ``method_ids`` / ``report_id`` 不筛 applicable_forms（用户明确指定）；仅
+        ``use_library`` 才筛 ``"reply" in applicable_forms`` 并取最近 ``_LIBRARY_CAP`` 个。
+        """
+        by_id: dict[str, ExpressionMethod] = {}
+
+        for mid in method_ids or []:
+            m = self.methods.get(mid)
+            if m is None:
+                raise KeyError(mid)
+            by_id[m.id] = m
+
+        if report_id is not None:
+            cited = [
+                m
+                for m in self.methods.list_all()
+                if any(s.report_id == report_id for s in m.sources)
+            ]
+            if cited:
+                for m in cited:
+                    by_id[m.id] = m
+            else:
+                report = self._require_report(report_id)
+                for i, tm in enumerate(report.transferable_methods, start=1):
+                    ephemeral = self._ephemeral_from_transferable(report, i, tm)
+                    by_id[ephemeral.id] = ephemeral
+
+        if use_library:
+            library = sorted(
+                [m for m in self.methods.list_all() if _REPLY_FORM in m.applicable_forms],
                 key=lambda m: m.updated_at,
                 reverse=True,
             )[:_LIBRARY_CAP]

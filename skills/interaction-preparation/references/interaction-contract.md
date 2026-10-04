@@ -6,6 +6,9 @@
 - 形式由机会的 `proposal.form` 决定：`reply_draft` / `method_card` / `clarifying_question` /
   `case` / `demo`（`clarifying_question` 落成 `reply_draft`）。
 - `source_refs` 来自机会的 `evidence_refs`，是正文的事实来源；正文只允许提问或明确标注推测。
+- 回复形正文（`reply_draft`/`clarifying_question`）默认简洁：一个重点、一条正文、中文 40–100 字
+  （软上限 120）、问题可选。可选方法元数据记在 `method_ref` / `response_focus` / `fit_reason` /
+  `style_policy_version` 上；`method_ref` 是方法出处，永不进入 `source_refs`。
 - `execution_status` 只描述是否运行：默认 `not_run`；真正跑过后由用户经
   `connect artifact-status --execution ran_ok|ran_failed` 回填，代码不得自行标为已运行。
   `--real-material` 可将 `material_origin` 升为 `real`（用户声明语义）。

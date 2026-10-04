@@ -106,3 +106,60 @@ def test_methods_save_missing_report(monkeypatch, tmp_path):
     )
     assert r.exit_code == 1
     assert "report not found" in r.output
+
+
+def _saved_method(tmp_path):
+    from finch.expression_methods.repository import ExpressionMethodRepository
+
+    return ExpressionMethodRepository(Workspace(tmp_path)).list_all()[0]
+
+
+def test_methods_log_reply_appends_reply_log(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    _seed_report(tmp_path)
+    monkeypatch.setattr(cli, "create_runner", lambda *a, **k: _FakeRunner())
+    monkeypatch.setattr(cli, "CodexRunner", _FakeRunner)
+    CliRunner().invoke(
+        app, ["methods", "save", "--report", "article_x", "--index", "1", "--as-new"]
+    )
+    method = _saved_method(tmp_path)
+    r = CliRunner().invoke(
+        app,
+        [
+            "methods", "log-reply", "--method", method.id,
+            "--artifact", "art_opp_1_reply_draft",
+            "--verdict", "useful", "--note", "改了半句",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    from finch.expression_methods.repository import ExpressionMethodRepository
+
+    updated = ExpressionMethodRepository(Workspace(tmp_path)).get(method.id)
+    log = updated.practice_logs[-1]
+    assert log.form == "reply"
+    assert log.draft_ref == "art_opp_1_reply_draft"
+    assert log.verdict == "useful"
+    assert log.note == "改了半句"
+
+
+def test_methods_log_reply_invalid_verdict(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    monkeypatch.setattr(cli, "create_runner", lambda *a, **k: _FakeRunner())
+    monkeypatch.setattr(cli, "CodexRunner", _FakeRunner)
+    r = CliRunner().invoke(
+        app, ["methods", "log-reply", "--method", "m", "--artifact", "a", "--verdict", "bad"]
+    )
+    assert r.exit_code == 1
+    assert "invalid verdict" in r.output
+
+
+def test_methods_log_reply_missing_method(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    monkeypatch.setattr(cli, "create_runner", lambda *a, **k: _FakeRunner())
+    monkeypatch.setattr(cli, "CodexRunner", _FakeRunner)
+    r = CliRunner().invoke(
+        app,
+        ["methods", "log-reply", "--method", "nope", "--artifact", "a", "--verdict", "useful"],
+    )
+    assert r.exit_code == 1
+    assert "method not found" in r.output

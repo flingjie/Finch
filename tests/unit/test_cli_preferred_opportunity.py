@@ -107,3 +107,28 @@ def test_render_preferred_skips_lists_other_candidates():
         ]
     )
     assert lines[0] == "其他候选未优先：主题过宽"
+
+
+def test_render_preferred_opportunity_shows_problem_fit_next_action():
+    from finch.opportunities.models import Fit, NextAction, Problem
+
+    opp = _opp(
+        problem=Problem(
+            statement="修改 prompt 后需手工重跑失败任务",
+            source_refs=["https://x.com/a/1"],
+            evidence_status="author_stated",
+        ),
+        fit=Fit(reason="与 failure replay 实践相关", practice_refs=["agent-100-days"]),
+        next_action=NextAction(type="ask", suggestion="问他如何保留失败输入"),
+    )
+    text = "\n".join(_render_preferred_opportunity(opp))
+    assert "问题：修改 prompt 后需手工重跑失败任务（author_stated" in text
+    assert "为什么与我有关：与 failure replay 实践相关（实践 agent-100-days）" in text
+    assert "下一步：ask —— 问他如何保留失败输入" in text
+
+
+def test_render_preferred_opportunity_omits_new_fields_when_absent():
+    text = "\n".join(_render_preferred_opportunity(_opp()))
+    assert "问题：" not in text
+    assert "为什么与我有关：" not in text
+    assert "下一步：" not in text

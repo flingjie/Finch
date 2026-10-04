@@ -127,3 +127,38 @@ def test_follow_up_is_idempotent_on_same_reply(tmp_path):
     assert second.reused_interaction is True
     assert second.interaction.id == first.interaction.id
     assert runner.calls == 1
+
+
+def test_follow_up_carries_problem_fit_next_action(tmp_path):
+    from finch.opportunities.models import Fit, NextAction, Problem
+
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    service = OpportunityService(OpportunityRepository(ws))
+    service.create_from(_previous())
+    draft = FollowUpDraft(
+        meaningful=True,
+        recommend=True,
+        topic="边界条件",
+        contribution="补一张时间依赖对照卡",
+        form=ContributionForm.METHOD_CARD,
+        expected_output="对照卡",
+        problem=Problem(statement="时间戳未固定", evidence_status="author_stated"),
+        fit=Fit(reason="与回归相关", practice_refs=["agent-100-days"]),
+        next_action=NextAction(type="ask", suggestion="问时间戳如何固定"),
+    )
+    result = follow_up_opportunity(
+        previous=service.get("opp_prev"),
+        reply_body="我们这边时间戳没固定，重跑确实漂",
+        reply_url="https://x.com/a/status/2",
+        peer_id="peer_1",
+        runner=FakeRunner(draft),
+        service=service,
+        interactions=InteractionRecordRepository(ws),
+        feedbacks=FeedbackSnapshotRepository(ws),
+    )
+    assert result.opportunity is not None
+    assert result.opportunity.problem is not None
+    assert result.opportunity.problem.evidence_status == "author_stated"
+    assert result.opportunity.next_action is not None
+    assert result.opportunity.next_action.type == "ask"

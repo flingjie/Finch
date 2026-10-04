@@ -132,9 +132,9 @@ def test_connect_prepare_with_opportunity(monkeypatch, tmp_path):
 
     r = CliRunner().invoke(app, ["connect", "prepare", "--opportunity", "opp_person_1"])
     assert r.exit_code == 0, r.output
-    assert "成果待审阅" in r.output
-    assert "状态：ready" in r.output
     assert "失败回放" in r.output
+    assert "无反应：本次只准备澄清问题" in r.output
+    assert "状态：待审" in r.output
 
 
 def test_connect_prepare_json_returns_reviewable_body(monkeypatch, tmp_path):
@@ -255,7 +255,7 @@ def test_connect_prepare_passes_reaction_through(monkeypatch, tmp_path):
     )
     assert r.exit_code == 0, r.output
     assert seen["reaction"] == "我当时最难的是不知道任务到底跑没跑"
-    assert "你的反应（第 1 条）：我当时最难的是不知道任务到底跑没跑" in r.output
+    assert "你的反应：我当时最难的是不知道任务到底跑没跑" in r.output
 
 
 def test_connect_prepare_without_reaction_says_clarifying_only(monkeypatch, tmp_path):
@@ -281,6 +281,33 @@ def test_connect_prepare_without_reaction_says_clarifying_only(monkeypatch, tmp_
     r = CliRunner().invoke(app, ["connect", "prepare", "--opportunity", "opp_person_1"])
     assert r.exit_code == 0, r.output
     assert "无反应：本次只准备澄清问题" in r.output
+
+
+def test_connect_prepare_passes_style_note_through(monkeypatch, tmp_path):
+    from finch.opportunities.models import OpportunityStatus
+    from finch.opportunities.prepare import PreparedContribution
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_new_opportunity(ws, "opp_person_1")
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    seen: dict = {}
+
+    def _fake_prepare(*, opportunity, runner, service, **kw):
+        seen["style_note"] = kw.get("style_note")
+        return PreparedContribution(
+            opportunity=opportunity.model_copy(update={"status": OpportunityStatus.READY}),
+            artifacts=[],
+        )
+
+    monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
+    r = CliRunner().invoke(
+        app,
+        ["connect", "prepare", "--opportunity", "opp_person_1", "--style-note", "再短一点"],
+    )
+    assert r.exit_code == 0, r.output
+    assert seen["style_note"] == "再短一点"
 
 
 def test_connect_prepare_json_includes_reaction_and_form_forced(monkeypatch, tmp_path):
@@ -310,6 +337,50 @@ def test_connect_prepare_json_includes_reaction_and_form_forced(monkeypatch, tmp
     opp = json.loads(r.output)["opportunities"][0]
     assert opp["reaction"] == {"seq": 2, "text": "第二句"}
     assert opp["form_forced"] is False
+
+
+def test_connect_prepare_passes_resolved_methods_through(monkeypatch, tmp_path):
+    from finch.expression_methods.models import ExpressionMethod
+    from finch.expression_methods.repository import ExpressionMethodRepository
+    from finch.opportunities.models import OpportunityStatus
+    from finch.opportunities.prepare import PreparedContribution
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_new_opportunity(ws, "opp_person_1")
+    now = datetime.now(UTC)
+    ExpressionMethodRepository(ws).upsert(
+        ExpressionMethod(
+            id="emethod_reply_1",
+            title="补充具体案例",
+            why_effective="w",
+            when_to_use="u",
+            applicable_forms=["reply"],
+            reply_usage="补一个案例",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "create_runner", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "CodexRunner", object)
+    seen = {}
+
+    def _fake_prepare(*, opportunity, runner, service, **kw):
+        seen["methods"] = kw.get("methods")
+        return PreparedContribution(
+            opportunity=opportunity.model_copy(update={"status": OpportunityStatus.READY}),
+            artifacts=[],
+        )
+
+    monkeypatch.setattr(cli, "prepare_contribution", _fake_prepare)
+    r = CliRunner().invoke(
+        app, ["connect", "prepare", "--opportunity", "opp_person_1", "--use-method-library"]
+    )
+    assert r.exit_code == 0, r.output
+    assert seen["methods"] is not None
+    assert [m.id for m in seen["methods"]] == ["emethod_reply_1"]
 
 
 def test_connect_prepare_rejects_blank_reaction(monkeypatch, tmp_path):
@@ -422,7 +493,7 @@ def test_connect_prepare_ready_reread_shows_only_current_artifact(monkeypatch, t
     assert r.exit_code == 0, r.output
     assert "带反应的新正文" in r.output
     assert "旧的澄清问题" not in r.output
-    assert "你的反应（第 1 条）：我当时靠人工对日志" in r.output
+    assert "你的反应：我当时靠人工对日志" in r.output
 
 
 def test_connect_prepare_ready_with_reaction_reselects_and_regenerates(monkeypatch, tmp_path):
@@ -1020,6 +1091,43 @@ def test_connect_feedback_inline_records_no_time_today(monkeypatch, tmp_path):
     assert len(fbs) == 1
     assert fbs[0].dimension == "action"
     assert fbs[0].value == "no_time_today"
+
+
+def test_connect_feedback_records_outcome(monkeypatch, tmp_path):
+    from finch.storage.repositories import RecommendationFeedbackRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, [
+        "connect", "feedback",
+        "--snapshot", "s1",
+        "--opportunity", "o1",
+        "--dimension", "outcome",
+        "--value", "adopted_replied",
+    ])
+    assert r.exit_code == 0, r.output
+    fbs = RecommendationFeedbackRepository(ws).list_all()
+    assert len(fbs) == 1
+    assert fbs[0].dimension == "outcome"
+    assert fbs[0].value == "adopted_replied"
+
+
+def test_connect_feedback_rejects_invalid_outcome_value(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, [
+        "connect", "feedback",
+        "--snapshot", "s1",
+        "--opportunity", "o1",
+        "--dimension", "outcome",
+        "--value", "bogus",
+    ])
+    assert r.exit_code == 1
+    assert "invalid outcome value" in r.output
 
 
 def test_connect_feedback_requires_source(monkeypatch, tmp_path):

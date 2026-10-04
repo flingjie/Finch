@@ -35,13 +35,38 @@ unless the material is explicitly marked real.
 
 {user_reaction}
 
+## Reply style policy (default)
+
+{reply_style}
+
+The style policy above applies to the reply-shaped forms (reply_draft / clarifying_question);
+longer forms (method_card / demo / case) keep their structure and ignore the length target.
+
+## This-time style instruction (highest priority)
+
+{style_note}
+
+When the instruction above is not `(none)`, it overrides both the reply style policy and the
+voice summary where they conflict. It never overrides the fact and attribution rules below.
+
+## Available methods (optional)
+
+{methods}
+
+Each line is a candidate method for reply-shaped forms (reply_draft / clarifying_question).
+Pick at most ONE method that truly matches the material you have; if none fits, write a plain
+direct reply and leave method_id null. Never use a method whose required material is absent, and
+never treat a method's provenance as factual evidence. Return the chosen method_id (exactly one
+of the ids above, or null), plus a one-line fit_reason and the single response_focus.
+
 ## Task
 
 Produce the contribution body for this form:
 
 - method_card: 适用处境 / 输入 / 步骤 / 输出与判断 / 例子与限制 (mark any example as synthetic
   if it is not drawn from real material).
-- reply_draft: 接住原问题 → 具体贡献 → 一个可继续的问题。
+- reply_draft: 围绕原帖的一个具体问题（problem）展开，一个具体贡献；缺少依据时优先提问，
+  不把交流变成产品推销。
 - demo / case / clarifying_question: an appropriate short structure.
 
 Ground concrete claims in the evidence above when possible; quote verbatim and attribute the

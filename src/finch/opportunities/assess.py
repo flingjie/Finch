@@ -16,7 +16,10 @@ from finch.opportunities.models import (
     ContributionForm,
     EntryKind,
     EvidenceRef,
+    Fit,
+    NextAction,
     Opportunity,
+    Problem,
     Proposal,
 )
 
@@ -38,6 +41,9 @@ class OpportunityDraft(BaseModel):
     cost_note: str = ""
     open_questions: list[str] = Field(default_factory=list)
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    problem: Problem | None = None
+    fit: Fit | None = None
+    next_action: NextAction | None = None
     recommend: bool = False
     skip_reason: str = ""
     eval_failed: bool = False
@@ -107,4 +113,7 @@ def build_opportunity(
         ),
         open_questions=list(draft.open_questions),
         evidence_refs=list(draft.evidence_refs),
+        problem=draft.problem,
+        fit=draft.fit,
+        next_action=draft.next_action,
     )

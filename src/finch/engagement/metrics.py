@@ -91,11 +91,13 @@ def explain_recommendation_adjustments(
     from finch.engagement.models import (
         ActionFeedbackValue,
         InterestFeedbackValue,
+        OutcomeFeedbackValue,
         RecommendationFeedback,
     )
 
     interests: dict[str, int] = {}
     actions: dict[str, int] = {}
+    outcomes: dict[str, int] = {}
     for item in feedback:
         if not isinstance(item, RecommendationFeedback):
             continue
@@ -103,6 +105,8 @@ def explain_recommendation_adjustments(
             interests[item.value] = interests.get(item.value, 0) + 1
         elif item.dimension == "action":
             actions[item.value] = actions.get(item.value, 0) + 1
+        elif item.dimension == "outcome":
+            outcomes[item.value] = outcomes.get(item.value, 0) + 1
 
     out: list[dict[str, str]] = []
     # 长期排斥只来自 unsuitable / no_opening；no_time_today（今天没时间）是瞬态信号，
@@ -127,6 +131,33 @@ def explain_recommendation_adjustments(
                 "signal": f"prepared={prepared}",
                 "effect": "boost connection_opportunity weight slightly",
                 "rationale": "用户实际准备过互动的类型更有连接价值",
+            }
+        )
+    adopted = outcomes.get(OutcomeFeedbackValue.ADOPTED_REPLIED.value, 0)
+    reengaged = outcomes.get(OutcomeFeedbackValue.REENGAGED.value, 0)
+    got_info = outcomes.get(OutcomeFeedbackValue.GOT_MORE_INFO.value, 0)
+    if adopted >= 1:
+        out.append(
+            {
+                "signal": f"adopted_replied={adopted}",
+                "effect": "boost connection_opportunity weight slightly",
+                "rationale": "用户采用建议并回复过，这类机会有真实参与价值",
+            }
+        )
+    if reengaged >= 1:
+        out.append(
+            {
+                "signal": f"reengaged={reengaged}",
+                "effect": "boost continuity_potential weight slightly",
+                "rationale": "发生过再次交流或共同实践，连续性更强",
+            }
+        )
+    if got_info >= 1 and adopted == 0 and reengaged == 0:
+        out.append(
+            {
+                "signal": f"got_more_info={got_info}",
+                "effect": "keep current weight",
+                "rationale": "得到补充信息但未回复，保持关注不主动加权重",
             }
         )
     if not out:

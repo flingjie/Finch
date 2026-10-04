@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 MethodVerdict = Literal["worth_reuse", "practice_again", "not_for_me"]
+ReplyMethodVerdict = Literal["useful", "mixed", "not_fit"]
 
 
 class MethodSource(BaseModel):
@@ -22,9 +23,12 @@ class MethodSource(BaseModel):
 
 class MethodPracticeLog(BaseModel):
     session_id: str
-    verdict: MethodVerdict
+    verdict: MethodVerdict | ReplyMethodVerdict
     note: str = ""
     at: datetime
+    # form 区分练习（practice）与回复（reply）两种复用场景；draft_ref 为回复草稿引用。
+    form: Literal["practice", "reply"] = "practice"
+    draft_ref: str | None = None
 
 
 class ExpressionMethod(BaseModel):
@@ -36,6 +40,10 @@ class ExpressionMethod(BaseModel):
     mini_exercise: str = ""
     purpose_tags: list[str] = Field(default_factory=list)
     required_material: str = ""
+    # 回复复用字段：applicable_forms 空 = 仅 article（旧卡向后兼容，不自动视为适合回复）。
+    applicable_forms: list[str] = Field(default_factory=list)
+    reply_usage: str = ""
+    reply_boundaries: str = ""
     sources: list[MethodSource] = Field(default_factory=list)
     practice_logs: list[MethodPracticeLog] = Field(default_factory=list)
     created_at: datetime
@@ -44,6 +52,7 @@ class ExpressionMethod(BaseModel):
     def content_fingerprint(self) -> str:
         """Deterministic hash of method body fields (for exploration cache)."""
         tags = ",".join(sorted(self.purpose_tags))
+        forms = ",".join(sorted(self.applicable_forms))
         payload = "\n".join(
             [
                 self.title,
@@ -51,6 +60,9 @@ class ExpressionMethod(BaseModel):
                 self.boundaries,
                 self.mini_exercise,
                 self.required_material,
+                self.reply_usage,
+                self.reply_boundaries,
+                forms,
                 tags,
             ]
         )

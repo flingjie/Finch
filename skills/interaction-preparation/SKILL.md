@@ -22,6 +22,12 @@ description: >
   deep_prepare_limit；`--reaction` 只配一条机会）。**无任何反应时代码只允许准备澄清问题**；有反应时沿用
   机会的 `proposal.form`，正文中来自用户的句子标 `[reaction]`。对已 ready 的机会再传新 `--reaction`
   会重新生成。
+- 本次风格指令：`--style-note "<如：再短一点>"`（优先级最高，覆盖默认简洁策略与声音画像）。
+- 方法复用（可选）：`--method <id>`（可重复）/ `--methods-from-report <id>` /
+  `--use-method-library`（只筛 `applicable_forms` 含 reply 的方法，最多 10；一次推理选中最多 1 个）。
+- 回复草稿默认一条正文，一个重点；默认展示只突出正文，方法与判断经 `--json` 查看。
+- 方法反馈：用户改完/发完后 `finch methods log-reply --method <id> --artifact <id>
+  --verdict useful|mixed|not_fit [--note …]`（内容/事实/风格修正写进 note）。
 - 查看机会：`finch connect daily`（首页 0-1 条首选）或 `finch connect daily --view browse`
   （50 人分层浏览）；选中前不要整表生成正文。
 - 指定帖子评估：`finch connect assess --url <url> [--question …]`（入口 2，跳过全平台发现）
@@ -41,6 +47,8 @@ description: >
   `finch connect artifact-status --execution ran_ok|ran_failed` 回填，
   代码不得把未运行标为已运行。可同时 `--real-material` 声明材料来自真实经历。
 - 默认展示：对方具体问题、我能补充什么、来源 refs、正文、一个下一步。
+- 机会若带 `problem`/`fit`/`next_action`（推荐参与机会的结构化字段），正文围绕 `problem`
+  那一个具体点展开；缺少依据时按 `next_action.type=ask` 提问，不把交流变成产品推销。
 - 正文中标 `[reaction]` 的句子只能复述用户对这条机会亲口说的话，不得外推；`[practice-id]` 句子只能来自
   confirmed practices。两者之外不得出现第一人称经历。
 - **允许零结果**：无具体观察/问题/贡献时输出「暂不回复」及原因，不强行生成空泛回复。
