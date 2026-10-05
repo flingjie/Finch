@@ -126,8 +126,10 @@ from .storage.repositories import (
     IdeaExplorationRepository,
     InteractionRecordRepository,
     PeerRepository,
+    PracticeAttemptRepository,
     PracticeSessionRepository,
     PresentationRecordRepository,
+    ProblemRepository,
     PublicationIntentRepository,
     RecommendationFeedbackRepository,
 )
@@ -197,6 +199,12 @@ app.add_typer(conversations_app, name="conversations")
 
 practice_app = typer.Typer(help="表达练习")
 app.add_typer(practice_app, name="practice")
+
+problems_app = typer.Typer(help="活跃问题（≤3 open；学习闭环的脊柱）")
+app.add_typer(problems_app, name="problems")
+
+attempts_app = typer.Typer(help="实践尝试原始素材（问题/尝试/观察/未知）")
+app.add_typer(attempts_app, name="attempts")
 
 
 article_app = typer.Typer(help="分析一篇文章的表达任务、读者变化与方法有效性")
@@ -4874,6 +4882,189 @@ def practice_show(
         typer.echo(f"revisions: {json.dumps(session.revisions, ensure_ascii=False)}")
         typer.echo(f"final_expression: {session.final_expression}")
         typer.echo(f"lesson: {session.lesson}")
+
+
+@problems_app.command("add")
+def problems_add(
+    title: str = typer.Option(..., "--title", help="一句话问题"),
+    why: str = typer.Option("", "--why", help="为什么值得追"),
+) -> None:
+    """新建活跃问题（open 数 ≤ 3）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.problems.service import ProblemService
+
+    try:
+        problem = ProblemService(ProblemRepository(ws)).add(title=title, why_it_matters=why)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"added problem {problem.id} ({problem.status}): {problem.title}")
+
+
+@problems_app.command("list")
+def problems_list(
+    status: str = typer.Option(None, "--status", help="open | closed | all"),
+) -> None:
+    """列出活跃问题（默认 open）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.problems.service import ProblemService
+
+    for p in ProblemService(ProblemRepository(ws)).list(status=status):
+        marker = f"[{p.status}]"
+        typer.echo(f"{p.id} {marker} {p.title}")
+
+
+@problems_app.command("show")
+def problems_show(problem_id: str = typer.Argument(...)) -> None:
+    """显示单条问题 + 其 attempt_ids。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.problems.service import ProblemService
+
+    try:
+        p = ProblemService(ProblemRepository(ws)).show(problem_id)
+    except KeyError as exc:
+        typer.echo(f"problem not found: {problem_id}")
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"{p.id} ({p.status}) {p.title}")
+    if p.why_it_matters:
+        typer.echo(f"why: {p.why_it_matters}")
+    if p.attempt_ids:
+        typer.echo("attempts: " + ", ".join(p.attempt_ids))
+
+
+@problems_app.command("close")
+def problems_close(
+    problem_id: str = typer.Argument(...),
+    reason: str = typer.Option("", "--reason", help="关闭原因"),
+) -> None:
+    """关闭一个活跃问题，释放 open 名额。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.problems.service import ProblemService
+
+    try:
+        p = ProblemService(ProblemRepository(ws)).close(problem_id, reason=reason)
+    except KeyError as exc:
+        typer.echo(f"problem not found: {problem_id}")
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"closed problem {p.id}")
+
+
+@attempts_app.command("add")
+def attempts_add(
+    problem_id: str = typer.Option(None, "--problem-id", help="回链的活跃问题 id（可选）"),
+    problem: str = typer.Option(..., "--problem", help="当前问题（一句话）"),
+    attempt: str = typer.Option(..., "--attempt", help="尝试了什么"),
+    observation: str = typer.Option(..., "--observation", help="实际观察到了什么"),
+    unknown: str = typer.Option("", "--unknown", help="未知/卡点"),
+    next_step: str = typer.Option("", "--next-step", help="下一步准备验证"),
+    ref: list[str] = typer.Option([], "--ref", help="溯源 URL（可重复）"),
+) -> None:
+    """新建实践尝试；给 --problem-id 时回链到对应问题。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.practice.attempts_service import PracticeAttemptService
+
+    svc = PracticeAttemptService(PracticeAttemptRepository(ws), ProblemRepository(ws))
+    try:
+        a = svc.add(
+            problem_id=problem_id,
+            problem=problem,
+            attempt=attempt,
+            observation=observation,
+            unknown=unknown,
+            next_step=next_step,
+            source_refs=list(ref),
+        )
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"added attempt {a.id} ({a.status}): {a.problem}")
+
+
+@attempts_app.command("list")
+def attempts_list(
+    status: str = typer.Option(None, "--status", help="open | verified | closed | all"),
+) -> None:
+    """列出实践尝试（默认 open）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.practice.attempts_service import PracticeAttemptService
+
+    svc = PracticeAttemptService(PracticeAttemptRepository(ws), ProblemRepository(ws))
+    for a in svc.list(status=status):
+        typer.echo(f"{a.id} [{a.status}] {a.problem} → {a.observation[:60]}")
+
+
+@attempts_app.command("show")
+def attempts_show(attempt_id: str = typer.Argument(...)) -> None:
+    """显示单条实践尝试。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.practice.attempts_service import PracticeAttemptService
+
+    svc = PracticeAttemptService(PracticeAttemptRepository(ws), ProblemRepository(ws))
+    try:
+        a = svc.show(attempt_id)
+    except KeyError as exc:
+        typer.echo(f"attempt not found: {attempt_id}")
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"{a.id} ({a.status}) problem: {a.problem}")
+    typer.echo(f"attempt: {a.attempt}")
+    typer.echo(f"observation: {a.observation}")
+    if a.unknown:
+        typer.echo(f"unknown: {a.unknown}")
+    if a.next_step:
+        typer.echo(f"next_step: {a.next_step}")
+    if a.result:
+        typer.echo(f"result: {a.result}")
+
+
+@attempts_app.command("verify")
+def attempts_verify(
+    attempt_id: str = typer.Argument(...),
+    result: str = typer.Option(..., "--result", help="验证结果"),
+) -> None:
+    """open → verified，回填结果。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.practice.attempts_service import PracticeAttemptService
+
+    svc = PracticeAttemptService(PracticeAttemptRepository(ws), ProblemRepository(ws))
+    try:
+        a = svc.verify(attempt_id, result=result)
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"verified attempt {a.id}")
+
+
+@attempts_app.command("close")
+def attempts_close(attempt_id: str = typer.Argument(...)) -> None:
+    """置 closed（弃置一条素材）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.practice.attempts_service import PracticeAttemptService
+
+    svc = PracticeAttemptService(PracticeAttemptRepository(ws), ProblemRepository(ws))
+    try:
+        a = svc.close(attempt_id)
+    except KeyError as exc:
+        typer.echo(f"attempt not found: {attempt_id}")
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"closed attempt {a.id}")
 
 
 @article_app.command("analyze")
