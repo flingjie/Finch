@@ -18,12 +18,13 @@ from finch.content.jobs import (
     IdeaOrigin,
     SourceKind,
 )
-from finch.content.models import RecommendedFormat
+from finch.content.models import ContentType, RecommendedFormat
 from finch.conversations.models import ConversationThread, ThreadStatus
 from finch.engagement.models import ConversationEvidence, InteractionRecord
 from finch.ideas.models import IdeaBoundaries, IdeaCandidate, IdeaGenerator, SourceRef
 from finch.llm.base import StructuredInferenceRunner
 from finch.peers.models import PeerProfile
+from finch.practice.attempts import PracticeAttempt
 
 _GENERATOR_SKILL = "idea-discovery"
 _GENERATOR_VERSION = "1.0.0"
@@ -119,6 +120,33 @@ intent / open_question / author_position / boundaries / recommended_format / com
 """
 
 
+_ATTEMPT_PROMPT = """\
+You turn a user's own practice attempt (problem → attempt → observation → unknown) into a
+single publishable Idea candidate, or decline.
+
+Rules:
+- The observation is the user's own lived practice: evidence_status must be "observed";
+  facts come from the observation (not judgments).
+- The unknown and next_step are NOT verified: put them in boundaries.unknown and open_question.
+- Never rewrite the unknown as a completed practice, and never invent a result the attempt
+  does not state.
+- intent is "stance" only when the observation supports a position; otherwise "exploration".
+- content_type is "judgment_shift" only when the attempt shows a prior belief that the
+  observation overturned or narrowed (e.g. "I assumed X, but observed Y"). Otherwise omit.
+- source_kind is "attempt".
+- recommended_format: reply | quote | short_post | thread | dm | do_not_publish.
+
+## Practice attempt
+
+{attempt}
+
+Return JSON matching the schema (core_point / observation / facts / interpretation /
+evidence_status / source_kind / limitations / reader_problem / why_worth_saying /
+intent / open_question / author_position / boundaries / recommended_format /
+communication_goal / content_type).
+"""
+
+
 def _to_candidate(
     out: "IdeaDraftOutput",
     *,
@@ -126,6 +154,8 @@ def _to_candidate(
     source_refs: list[SourceRef],
     source_kind: SourceKind | None = None,
     evidence_status: EvidenceStatus | None = None,
+    attempt_id: str | None = None,
+    problem_id: str | None = None,
 ) -> IdeaCandidate:
     # 注意：此处的 ``id`` 只是候选自带的展示性 id；真正的 ``ContentJob.id`` 由
     # ``IdeaService.create_candidate`` 按同一公式（sha256(core_point)）重算并落库，
@@ -156,6 +186,9 @@ def _to_candidate(
         interpretation=out.interpretation or "",
         evidence_status=status,
         limitations=out.limitations or "",
+        content_type=out.content_type,
+        attempt_id=attempt_id,
+        problem_id=problem_id,
     )
 
 
@@ -177,6 +210,7 @@ class IdeaDraftOutput(BaseModel):
     evidence_status: EvidenceStatus | None = None
     source_kind: SourceKind | None = None
     limitations: str = ""
+    content_type: ContentType | None = None
 
 class FragmentService:
     """把用户输入 / ConversationEvidence 提炼为 IdeaCandidate（纯领域逻辑）。"""
@@ -203,6 +237,58 @@ class FragmentService:
             source_refs=[],
             source_kind=out.source_kind or "note",
             evidence_status=status,
+        )
+
+    def from_attempt(self, attempt: PracticeAttempt) -> IdeaCandidate:
+        """实践尝试 → IdeaCandidate（origin=practice、source_kind=attempt、observed）。
+
+        观察进 facts；unknown/next_step 强制进 boundaries.unknown（即使模型软化了也兜底）。
+        """
+        import json
+
+        attempt_text = json.dumps(
+            {
+                "problem": attempt.problem,
+                "attempt": attempt.attempt,
+                "observation": attempt.observation,
+                "unknown": attempt.unknown,
+                "next_step": attempt.next_step,
+                "result": attempt.result,
+            },
+            ensure_ascii=False,
+        )
+        out = cast(
+            IdeaDraftOutput,
+            self.runner.run(_ATTEMPT_PROMPT.format(attempt=attempt_text), IdeaDraftOutput),
+        )
+        merged_unknown = list(
+            dict.fromkeys(
+                [attempt.unknown, attempt.next_step, *out.boundaries.unknown]
+            )
+        )
+        merged_unknown = [u for u in merged_unknown if u]
+        out = out.model_copy(
+            update={
+                "boundaries": IdeaBoundaries(
+                    known=out.boundaries.known,
+                    inferred=out.boundaries.inferred,
+                    unknown=merged_unknown,
+                )
+            }
+        )
+        source_refs = [SourceRef(type="attempt", ref=attempt.id, summary=attempt.problem)]
+        source_refs.extend(
+            SourceRef(type="attempt", ref=r, summary="attempt source")
+            for r in attempt.source_refs
+        )
+        return _to_candidate(
+            out,
+            origin="practice",
+            source_refs=source_refs,
+            source_kind="attempt",
+            evidence_status="observed",
+            attempt_id=attempt.id,
+            problem_id=attempt.problem_id,
         )
 
     def from_conversation(self, evidence: ConversationEvidence) -> IdeaCandidate:

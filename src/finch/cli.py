@@ -1165,12 +1165,13 @@ def ideas_commit(
 def ideas_create(
     text: str = typer.Option(None, "--text", help="用户输入的一句话/片段"),
     conversation: str = typer.Option(None, "--conversation", help="对话线索 id"),
+    attempt: str = typer.Option(None, "--attempt", help="实践尝试 id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """把用户片段 / 对话线索结构化为 idea 候选并落库。"""
-    provided = sum(x is not None for x in (text, conversation))
+    """把用户片段 / 对话线索 / 实践尝试结构化为 idea 候选并落库。"""
+    provided = sum(x is not None for x in (text, conversation, attempt))
     if provided != 1:
-        typer.echo("exactly one of --text / --conversation is required")
+        typer.echo("exactly one of --text / --conversation / --attempt is required")
         raise typer.Exit(code=1)
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
@@ -1180,13 +1181,19 @@ def ideas_create(
     try:
         if text is not None:
             idea = service.from_text(text)
-        else:
+        elif conversation is not None:
             thread = ConversationThreadRepository(ws).get(conversation)
             if thread is None:
                 typer.echo(f"conversation not found: {conversation}")
                 raise typer.Exit(code=1)
             interactions = InteractionRecordRepository(ws).list_by_peer(thread.peer_id)
             idea = service.from_thread(thread, interactions=interactions)
+        elif attempt is not None:
+            att = PracticeAttemptRepository(ws).get(attempt)
+            if att is None:
+                typer.echo(f"attempt not found: {attempt}")
+                raise typer.Exit(code=1)
+            idea = service.from_attempt(att)
         job = IdeaService(ContentJobRepository(ws)).create_candidate(idea)
     except (RuntimeError, StructuredOutputError, ValueError) as exc:
         typer.echo(str(exc))

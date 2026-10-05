@@ -1,10 +1,10 @@
 ---
 name: idea-discovery
 description: >
-  把个人证据（Commit/PR/测试）、零散思考（用户片段）、真实交流（已验证 ConversationEvidence）
-  或社区信号（同行共同主题 + 未解问题/分歧）提炼成一个值得继续发展的 Idea（IdeaCandidate）。
-  四种来源只是输入不同，判断同一件事：这里有没有「读者值得知道」的真实工程决策或问题。
-  用于「把我最近的提交 / 这个片段 / 这次交流 / 这些社区信号变成一个可写的想法」类请求。
+  把个人证据（Commit/PR/测试）、零散思考（用户片段）、真实交流（已验证 ConversationEvidence）、
+  实践尝试（PracticeAttempt）或社区信号（同行共同主题 + 未解问题/分歧）提炼成一个值得继续发展的 Idea（IdeaCandidate）。
+  五种来源只是输入不同，判断同一件事：这里有没有「读者值得知道」的真实工程决策或问题。
+  用于「把我最近的提交 / 这个片段 / 这次交流 / 这条尝试 / 这些社区信号变成一个可写的想法」类请求。
 ---
 
 # idea-discovery
@@ -16,7 +16,7 @@ fragment / conversation / signals 仍单候选。机械变化、新闻、纯情�
 本 Skill 只调用 Finch CLI（`finch ideas commit` / `finch ideas create`），不复制业务逻辑、
 不直接改数据库、不猜测状态。
 
-## 四种来源
+## 五种来源
 
 - **commit 来源**：`finch ideas commit [--since 7d]`。默认当前 checkout 的 origin、近 7 天；
   只有用户点名别的仓库才传 `--repo`。见 `references/commit-signals.md`。
@@ -34,6 +34,10 @@ fragment / conversation / signals 仍单候选。机械变化、新闻、纯情�
 - **conversation 来源**：`finch ideas create --conversation <thread_id>`，读取线索与
   `observation_notes`（problem / workaround / usage_feedback）作为**对方**报告，不得改写为
   作者亲历；本人实践须用户明确输入。见 `references/conversation-signals.md`。
+- **attempt 来源**：`finch ideas create --attempt <id>`，读一条 `PracticeAttempt`
+  （问题/尝试/观察/未知/下一步）。观察进 facts（`observed`），unknown/next_step 进
+  `boundaries.unknown`；有「原先以为 → 实际发现」对照时 `content_type=judgment_shift`。
+  见 `references/attempt-signals.md`。
 - **signals 来源**：`finch ideas signals`，见 `references/signals-signals.md`。
 
 ## 向用户呈现
@@ -67,6 +71,7 @@ fragment / conversation / signals 仍单候选。机械变化、新闻、纯情�
 - `references/fragment-signals.md` — 零散思考是否够格成为 Idea 的判据。
 - `references/conversation-signals.md` — 交流信号中性化提炼的判据。
 - `references/signals-signals.md` — 社区信号（同行主题 + 未解问题/分歧）综合的判据。
+- `references/attempt-signals.md` — 实践尝试是否够格成为 Idea 的判据。
 - `_shared/idea-contract.md` — IdeaCandidate 契约。
 - `_shared/evidence-policy.md` — 证据优先、外部帖 ≠ 个人证据。
 - `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话（共享原则）。
