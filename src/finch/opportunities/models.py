@@ -81,10 +81,11 @@ class Problem(BaseModel):
 
 
 class Fit(BaseModel):
-    """为什么与用户有关：reason + 已确认实践引用（结构化，取代 why_me 文本里的括号约定）。"""
+    """为什么与用户有关：reason + 已确认实践引用 + 活跃问题引用。"""
 
     reason: str
     practice_refs: list[str] = Field(default_factory=list)
+    problem_refs: list[str] = Field(default_factory=list)
 
 
 NextActionType = Literal["ask", "offer", "try", "observe"]
