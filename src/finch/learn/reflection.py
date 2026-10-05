@@ -59,6 +59,9 @@ Recommendation diagnosis order (do not invent a score):
 ## Idea position changes
 {idea_diffs}
 
+## Learning loop (attempts / judgment changes / repeat interactions)
+{learning_loop}
+
 ## Published feedback
 {feedbacks}
 
@@ -104,6 +107,7 @@ class WeeklyReflectionService:
         idea_diffs: list[str] | None = None,
         observation_notes: list[str] | None = None,
         open_commitments: list[str] | None = None,
+        learning_loop: list[str] | None = None,
     ) -> WeeklyReflection:
         metrics = {
             "reviewed_drafts": report.reviewed_drafts,
@@ -132,6 +136,7 @@ class WeeklyReflectionService:
                     threads=_render_threads(threads or []),
                     messages=_render_message_excerpts(message_excerpts or []),
                     idea_diffs=_render_idea_diffs(idea_diffs or []),
+                    learning_loop=_render_lines(learning_loop or []),
                     feedbacks=_render_feedbacks(feedbacks or []),
                     voice=profile.model_dump_json(),
                 ),
@@ -200,6 +205,42 @@ def idea_revision_diff_lines(jobs: list) -> list[str]:
             f"[{job.id}] before={before.claim!r} → after={after.claim!r} "
             f"(reason={after.change_reason or 'n/a'}; sources={after.source_refs})"
         )
+    return lines
+
+
+def learning_loop_lines(
+    *,
+    attempts: list,
+    jobs: list,
+    interactions: list,
+    since,
+) -> list[str]:
+    """渲染学习闭环三信号：验证的 attempt / 反馈驱动的判断改变 / 同人再交流。"""
+    from collections import Counter
+
+    lines: list[str] = []
+    verified = [
+        a for a in attempts
+        if getattr(a, "status", None) == "verified" and a.updated_at >= since
+    ]
+    lines.append(f"verified attempts (open→verified this week): {len(verified)}")
+    for a in verified:
+        lines.append(f"  - [{a.id}] {a.problem} → result: {(a.result or '')[:80]}")
+
+    changed: list[tuple] = []
+    for job in jobs:
+        for rev in getattr(job, "position_revisions", None) or []:
+            if rev.change_reason and rev.created_at >= since:
+                changed.append((job, rev))
+    lines.append(f"judgment changes (feedback-driven revise_position): {len(changed)}")
+    for job, rev in changed:
+        lines.append(f"  - [{job.id}] {rev.claim[:80]} (reason: {rev.change_reason[:80]})")
+
+    counts = Counter(i.peer_id for i in interactions)
+    repeats = {p: c for p, c in counts.items() if c >= 2}
+    lines.append(f"repeat interactions (same peer ≥2): {len(repeats)}")
+    for p, c in list(repeats.items())[:5]:
+        lines.append(f"  - {p}: {c} interactions")
     return lines
 
 

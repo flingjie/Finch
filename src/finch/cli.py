@@ -74,6 +74,7 @@ from .learn.models import Feedback, OutcomeAssessment
 from .learn.reflection import (
     WeeklyReflectionService,
     idea_revision_diff_lines,
+    learning_loop_lines,
     render_reflection,
 )
 from .learn.weekly import weekly_analysis
@@ -1763,6 +1764,12 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
         if (r.body or r.published_body)
     ]
     idea_diffs = idea_revision_diff_lines(ContentJobRepository(ws).list_jobs())
+    learning_loop = learning_loop_lines(
+        attempts=PracticeAttemptRepository(ws).list_all(),
+        jobs=ContentJobRepository(ws).list_jobs(),
+        interactions=InteractionRecordRepository(ws).list_all(),
+        since=since,
+    )
     from finch.conversations.service import active_observation_notes
 
     all_threads = ConversationThreadRepository(ws).list_all()
@@ -1786,6 +1793,7 @@ def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")
             voice_profile=load_voice_profile(settings.paths.voice_profile_path),
             message_excerpts=message_excerpts,
             idea_diffs=idea_diffs,
+            learning_loop=learning_loop,
             observation_notes=observation_lines,
             open_commitments=commitment_lines,
         )
