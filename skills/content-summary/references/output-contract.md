@@ -9,3 +9,6 @@ EvidencePoint：source + content。`source` 取值：`作者`（作者本人观�
 
 禁止 total / 数值评分字段。默认写入 Workspace `content_summaries`；`--no-save` 跳过落库。
 只做内容摘要，不产写法点评（那是 ArticleReport 的职责，两者共享 SourceResolver）。
+`main_point` / `key_points` / `evidence.content` / `conditions` 的摘要文字按
+ASD-STE100-inspired 规则保持清楚（CL01–CL08），但原文含义和限定优先，不得为了
+顺口或整齐改变事实。

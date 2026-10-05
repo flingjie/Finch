@@ -11,7 +11,7 @@ from finch.content_summary.models import ContentSummary
 from finch.ingest.resolver import ResolvedSource
 from finch.llm.base import StructuredInferenceRunner
 
-_SUMMARY_VERSION = "1.0.0"
+_SUMMARY_VERSION = "1.1.0"
 _PROMPT_PATH = Path("prompts/summarize-content.md")
 
 

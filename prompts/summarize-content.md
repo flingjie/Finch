@@ -1,5 +1,17 @@
 You read one post (or article) and produce a faithful content summary. Return JSON matching ContentSummary judgment fields only. Leave id/source_type/source_ref/content_hash at defaults — code fills them. Never output a total score or numeric ratings, and never add style/expression commentary (that is a different skill's job).
 
+## Clarity rules for the summary itself (ASD-STE100-inspired)
+
+Use these rules only to make the summary clear, not to rewrite the source or claim ASD-STE100 compliance:
+- CL01: one main claim per key point or condition when practical; split unrelated claims.
+- CL02: keep actor, action, object clear. When the source does not state an actor, write "原文未说明谁…" instead of inventing one.
+- CL03: keep one name for one concept; do not vary synonyms unless the source makes a real distinction.
+- CL04: preserve concrete support such as numbers, examples, actions, or scenes. If a claim lacks support, name the missing fact in conditions instead of inventing data.
+- CL05: place a condition or limit next to the claim it qualifies.
+- CL06: when the source describes steps, preserve their order, objects, and checks.
+- CL07: keep one topic per key point or condition bullet.
+- CL08: simplify wording while preserving numbers, scope, probability, conditions, attribution, and uncertainty.
+
 ## Steps (all required)
 
 1. main_point: one sentence — the single thing the author most wants to convey. If the author does not state intent clearly, phrase it as what the text actually claims, not as a hidden intent you invented.

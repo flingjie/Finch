@@ -5,7 +5,8 @@ description: >
   关键依据或例子（标注来源）、条件与限制。用于「这篇帖子主要讲了什么」
   「帮我快速读懂」「提取要点」「summarize this post」等请求。只做内容摘要，
   不做写法点评（→ article_analysis）、不改写（→ finch drafts revise）、
-  不判断观点对错、不重铸信息（→ sticky-message）。
+  不判断观点对错、不重铸信息（→ sticky-message）。摘要文字按
+  ASD-STE100-inspired 清晰表达规则组织。
 ---
 
 # content-summary
@@ -31,6 +32,20 @@ description: >
 **忠实、完整、简洁**。作者观点标为作者观点；回复与引用内容区分来源；
 提取原文时不额外扩写「对我的启发」；不做写法点评（那是 `article_analysis` 的职责）。
 
+## 清晰度约束（ASD-STE100-inspired）
+
+这些规则用于让**摘要本身**更清楚，不用于改写或润色原文，也不声称 ASD-STE100 合规。
+判据见 `skills/_shared/asd-ste100-inspired.md`（`finch-clarity-v1`，CL01–CL08）。
+
+- CL01：一个要点一句/一项主要判断；不要把无关判断塞进同一条。
+- CL02：主体、动作、对象清楚；原文没说主体时写「原文未说明谁……」，不要补造。
+- CL03：同一概念保持同一名称，不随意换同义词。
+- CL04：保留数字、例子、动作等具体依据；支撑不足时在「条件与限制」标缺口，不发明数据。
+- CL05：条件、适用范围放在相关结论附近。
+- CL07：一条核心要点/限制只讲一个主题。
+- CL08：简化措辞但保留数字、范围、概率、条件、归属和不确定性。
+- CL06：仅当原文是步骤/流程时适用；保留顺序、操作对象和检查点，不重排步骤。
+
 ## 边界
 
 - 不判断观点对错；不推断作者性格；不判断是否 AI 创作。
@@ -40,3 +55,4 @@ description: >
 ## 参考
 
 - `references/output-contract.md` — ContentSummary 契约（确定性字段 + 四内容字段 + 来源标注）。
+- `skills/_shared/asd-ste100-inspired.md` — 摘要清晰度约束的共享规则（CL01–CL08）。

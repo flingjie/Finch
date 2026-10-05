@@ -65,3 +65,11 @@ def test_summarize_prompt_includes_sample_size():
     ContentSummaryService(runner).summarize(src)
     prompt = runner.last_prompt or ""
     assert "Sample count\n3" in prompt
+
+
+def test_summarize_prompt_includes_clarity_rules():
+    runner = _Runner(_raw_summary())
+    ContentSummaryService(runner).summarize(_source())
+    prompt = runner.last_prompt or ""
+    assert "ASD-STE100-inspired" in prompt
+    assert "CL08" in prompt
