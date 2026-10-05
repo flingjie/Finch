@@ -1,4 +1,4 @@
-"""ArticleAnalysisService：结构化推理生成 ArticleReport。
+"""ContentSummaryService：结构化推理生成 ContentSummary。
 
 确定性字段由代码覆盖，不信任模型输出。
 """
@@ -7,33 +7,33 @@ import hashlib
 from pathlib import Path
 from typing import cast
 
-from finch.article.models import ArticleReport
+from finch.content_summary.models import ContentSummary
 from finch.ingest.resolver import ResolvedSource
 from finch.llm.base import StructuredInferenceRunner
 
-_ANALYZER_VERSION = "1.0.0"
-_PROMPT_PATH = Path("prompts/analyze-article.md")
+_SUMMARY_VERSION = "1.0.0"
+_PROMPT_PATH = Path("prompts/summarize-content.md")
 
 
-def _report_id(content_hash: str) -> str:
-    raw = hashlib.sha256(f"{content_hash}:{_ANALYZER_VERSION}".encode()).hexdigest()
-    return f"article_{raw[:16]}"
+def _summary_id(content_hash: str) -> str:
+    raw = hashlib.sha256(f"{content_hash}:{_SUMMARY_VERSION}".encode()).hexdigest()
+    return f"summary_{raw[:16]}"
 
 
-class ArticleAnalysisService:
-    """文章表达分析领域服务。"""
+class ContentSummaryService:
+    """帖子内容摘要领域服务。"""
 
     def __init__(self, runner: StructuredInferenceRunner) -> None:
         self.runner = runner
 
-    def analyze(self, source: ResolvedSource) -> ArticleReport:
+    def summarize(self, source: ResolvedSource) -> ContentSummary:
         prompt = _PROMPT_PATH.read_text().format(
             sample_size=source.sample_size, body=source.body
         )
-        raw = cast(ArticleReport, self.runner.run(prompt, ArticleReport))
+        raw = cast(ContentSummary, self.runner.run(prompt, ContentSummary))
         return raw.model_copy(
             update={
-                "id": _report_id(source.content_hash),
+                "id": _summary_id(source.content_hash),
                 "source_type": source.source_type,
                 "source_ref": source.source_ref,
                 "content_hash": source.content_hash,

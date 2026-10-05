@@ -14,7 +14,6 @@ from pydantic import ValidationError
 from .article.models import ArticleReport
 from .article.repository import ArticleReportRepository
 from .article.service import ArticleAnalysisService
-from .article.source_resolver import SourceResolver
 from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
 from .content.jobs import AuthorPosition, ContentJob, ContentJobStatus
@@ -27,6 +26,9 @@ from .content.voice import (
     save_voice_profile,
 )
 from .content.writer import rewrite_with_instruction
+from .content_summary.models import ContentSummary
+from .content_summary.repository import ContentSummaryRepository
+from .content_summary.service import ContentSummaryService
 from .conversations.models import ConversationThread
 from .conversations.service import (
     ConversationService,
@@ -67,6 +69,7 @@ from .ideas.models import FactBundle, IdeaExploration, Selection
 from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
 from .inbox.service import InboxDecisionService, list_items
+from .ingest.resolver import SourceResolver
 from .learn.models import Feedback, OutcomeAssessment
 from .learn.reflection import (
     WeeklyReflectionService,
@@ -4932,6 +4935,46 @@ def article_show(
         typer.echo(_render_article_report(report))
 
 
+@app.command("summarize")
+def summarize(
+    text: str = typer.Option(None, "--text", help="要摘要的文本"),
+    file: str = typer.Option(None, "--file", help="文本文件"),
+    url: str = typer.Option(None, "--url", help="要摘要的链接（X/Reddit/普通网页）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    no_save: bool = typer.Option(False, "--no-save", help="不落库摘要"),
+) -> None:
+    """读懂一篇帖子/文章：一句话主旨、核心要点、关键依据与条件限制。"""
+    provided = sum(x is not None for x in (text, file, url))
+    if provided != 1:
+        typer.echo("exactly one of --text / --file / --url is required")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    resolver = SourceResolver(OpenCliClient(), RedditOpenCliClient(), WebFetcher())
+    try:
+        if text is not None:
+            source = resolver.resolve_text(text)
+        elif file is not None:
+            source = resolver.resolve_file(file)
+        else:
+            source = resolver.resolve_url(url)
+        if not source.body.strip():
+            typer.echo("empty body after resolve")
+            raise typer.Exit(code=1)
+        runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+        summary = ContentSummaryService(runner).summarize(source)
+    except (RuntimeError, StructuredOutputError, OSError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if not no_save:
+        ContentSummaryRepository(ws).upsert(summary)
+    if as_json:
+        typer.echo(summary.model_dump_json(indent=2))
+    else:
+        typer.echo(_render_content_summary(summary))
+
+
 def _methods_service(ws: Workspace, settings: Settings) -> ExpressionMethodService:
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     return ExpressionMethodService(
@@ -5092,6 +5135,34 @@ def methods_log_reply(
         typer.echo(m.model_dump_json(indent=2))
     else:
         typer.echo(f"logged reply verdict for method {m.id}: {verdict}")
+
+
+def _render_content_summary(summary: ContentSummary) -> str:
+    lines = [
+        "# 内容摘要",
+        "",
+        f"id: {summary.id}",
+        "",
+        "## 一句话主旨",
+        summary.main_point,
+        "",
+        "## 核心要点",
+    ]
+    if summary.key_points:
+        lines += [f"- {p}" for p in summary.key_points]
+    else:
+        lines.append("- （无）")
+    lines += ["", "## 关键依据或例子"]
+    if summary.evidence:
+        lines += [f"- [{e.source}] {e.content}" for e in summary.evidence]
+    else:
+        lines.append("- （无）")
+    lines += ["", "## 条件与限制"]
+    if summary.conditions:
+        lines += [f"- {c}" for c in summary.conditions]
+    else:
+        lines.append("- （无）")
+    return "\n".join(lines)
 
 
 def _render_article_report(report: ArticleReport) -> str:

@@ -1,7 +1,8 @@
 """输入解析：text/file/url → 规范化正文 + content_hash + 样本数。
 
-多篇文本用 ``---``（整行）分隔；``--url`` 按域名路由到 X thread / Reddit post /
-webfetch，取不到由各 adapter 抛来源异常，不猜测内容。
+``article_analysis`` 与 ``content-summary`` 共用的抓取/清洗/提取入口；多篇文本用
+``---``（整行）分隔；``--url`` 按域名路由到 X thread / Reddit post / webfetch，
+取不到由各 adapter 抛来源异常，不猜测内容。
 """
 
 import hashlib

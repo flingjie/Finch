@@ -1,6 +1,6 @@
 """SourceResolver：text/file/url → 规范化正文 + hash + 样本数。"""
 
-from finch.article.source_resolver import SourceResolver
+from finch.ingest.resolver import SourceResolver
 
 
 class _T:

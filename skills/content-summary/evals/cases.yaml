@@ -1,0 +1,23 @@
+skill_name: content-summary
+cases:
+  - id: 1
+    name: 读帖意图路由到本 Skill
+    input:
+      user: "这篇帖子主要讲了什么？帮我快速读懂。"
+    expected_output:
+      skill: content-summary
+    assertions:
+      - name: 路由
+        description: 运行 finch summarize；一次调用含一句话主旨 / 核心要点 / 关键依据或例子 / 条件与限制
+      - name: 无写法点评
+        description: 人类输出不含「表达任务」「写作风格」「可借鉴方法」等 article_analysis 段落
+
+  - id: 2
+    name: 来源区分且忠实
+    input:
+      text: "作者说测试通过但问题没解决，并引用某回复称「记忆不是聊天记录」。"
+    expected_output:
+      sections: [一句话主旨, 核心要点, 关键依据或例子, 条件与限制]
+    assertions:
+      - name: 来源标注
+        description: 关键依据或例子标注来源（作者 / 引用 / 回复）；无「对我的启发」扩写
