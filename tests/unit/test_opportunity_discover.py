@@ -238,3 +238,40 @@ def test_context_fingerprint_none_marker_matches_empty():
     assert opportunity_context_fingerprint(**base) == opportunity_context_fingerprint(
         **{**base, "user_practices": "(none)"}
     )
+
+
+def test_context_fingerprint_changes_with_active_problems():
+    base = dict(
+        person_ref="person_1",
+        current_work="w",
+        why_relevant="r",
+        artifacts=[_artifact()],
+        user_context="",
+    )
+    a = opportunity_context_fingerprint(**base)
+    b = opportunity_context_fingerprint(**{**base, "active_problems": "- [p1] active problem"})
+    assert a != b
+    # 默认值不改变既有指纹（回归保护）
+    assert a == opportunity_context_fingerprint(**{**base, "active_problems": ""})
+
+
+def test_context_fingerprint_none_marker_matches_active_problems():
+    base = dict(
+        person_ref="person_1",
+        current_work="w",
+        why_relevant="r",
+        artifacts=[_artifact()],
+        user_context="",
+    )
+    assert opportunity_context_fingerprint(**base) == opportunity_context_fingerprint(
+        **{**base, "active_problems": "(none)"}
+    )
+
+
+def test_assess_opportunity_receives_active_problems_via_discover(tmp_path):
+    kwargs = _kwargs(tmp_path)
+    runner = FakeRunner(_draft())
+    kwargs["runner"] = runner
+    kwargs["active_problems"] = "- [p1] collaboration issue"
+    discover_preferred_opportunity(**kwargs)
+    assert "- [p1] collaboration issue" in (runner.last_prompt or "")

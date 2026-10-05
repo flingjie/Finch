@@ -115,3 +115,16 @@ def test_assess_from_url_passes_user_practices_to_prompt(tmp_path):
         user_practices="- [agent-100-days] (sourced) agent engineering: 100 天路径",
     )
     assert "[agent-100-days]" in (runner.last_prompt or "")
+
+
+def test_assess_from_url_passes_active_problems_to_prompt(tmp_path):
+    service = OpportunityService(OpportunityRepository(Workspace(tmp_path)))
+    runner = FakeRunner(_draft())
+    assess_from_url(
+        url="https://example.com/post",
+        runner=runner,
+        service=service,
+        fetcher=FakeFetcher("body text"),
+        active_problems="- [p1] collaboration issue",
+    )
+    assert "- [p1] collaboration issue" in (runner.last_prompt or "")

@@ -45,6 +45,7 @@ def assess_from_url(
     service: OpportunityService,
     user_context: str = "",
     user_practices: str = "",
+    active_problems: str = "",
     fetcher: WebFetcher | None = None,
     person_ref: str | None = None,
     display_name: str = "",
@@ -64,8 +65,11 @@ def assess_from_url(
         user_practices if user_practices and user_practices != NONE_MARKER else ""
     )
     practice_part = f"\n{practices_for_fp}" if practices_for_fp else ""
+    active_problems_part = (
+        f"\n{active_problems}" if active_problems and active_problems != NONE_MARKER else ""
+    )
     fingerprint = hashlib.sha256(
-        f"{url}\n{user_context}{practice_part}\n{body[:2000]}".encode()
+        f"{url}\n{user_context}{practice_part}{active_problems_part}\n{body[:2000]}".encode()
     ).hexdigest()[:16]
     person_key = person_ref or "unknown"
     opportunity_id = f"opp_url_{person_key}_{fingerprint}"
@@ -95,6 +99,7 @@ def assess_from_url(
         their_artifacts_json=artifacts_json,
         user_context=user_context,
         user_practices=user_practices,
+        active_problems=active_problems,
     )
     if draft.eval_failed:
         return UrlAssessResult(None, "eval_failed", draft.skip_reason, url=url)

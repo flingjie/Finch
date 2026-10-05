@@ -33,6 +33,7 @@ from finch.peers.recommendations import (
 )
 from finch.peers.scoring import score_person
 from finch.peers.shortlist import ShortlistCandidate
+from finch.problems.render import render_active_problems
 from finch.profile.models import load_practice_profile
 from finch.profile.render import render_user_practices
 from finch.settings import Settings
@@ -48,6 +49,7 @@ from finch.sources.store import ArtifactRepository
 from finch.storage.repositories import (
     DiscoverySnapshotRepository,
     PeerRepository,
+    ProblemRepository,
 )
 from finch.storage.workspace import Workspace
 
@@ -272,6 +274,7 @@ def run_daily_discovery(
     user_practices = render_user_practices(
         load_practice_profile(settings.paths.practice_profile_path)
     )
+    active_problems = render_active_problems(ProblemRepository(ws).list_all())
     result = DailyDiscoveryResult(run_id=run_id)
     metrics = RunMetrics()
 
@@ -388,6 +391,7 @@ def run_daily_discovery(
                 service=opp_service,
                 user_context=question or plan.ranking_question or "",
                 user_practices=user_practices,
+                active_problems=active_problems,
                 skips=skip_repo,
             )
             result.opportunity_assessments.append(
