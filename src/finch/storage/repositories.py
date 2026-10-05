@@ -30,6 +30,7 @@ from finch.ideas.models import IdeaExploration
 from finch.inbox.models import DecisionRecord
 from finch.learn.models import Feedback
 from finch.peers.models import PeerProfile
+from finch.practice.attempts import PracticeAttempt
 from finch.practice.models import PracticeSession
 from finch.problems.models import ActiveProblem
 from finch.storage.workspace import Workspace
@@ -391,6 +392,20 @@ class ProblemRepository:
 
     def list_all(self) -> list[ActiveProblem]:
         return _list_all(self.ws, "problems", ActiveProblem)
+
+
+class PracticeAttemptRepository:
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
+
+    def upsert(self, attempt: PracticeAttempt) -> None:
+        _write(self.ws, "attempts", attempt.id, attempt)
+
+    def get(self, attempt_id: str) -> PracticeAttempt | None:
+        return _read(self.ws, "attempts", attempt_id, PracticeAttempt)
+
+    def list_all(self) -> list[PracticeAttempt]:
+        return _list_all(self.ws, "attempts", PracticeAttempt)
 
 
 class PeerRepository:
