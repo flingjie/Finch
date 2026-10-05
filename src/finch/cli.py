@@ -4920,7 +4920,7 @@ def problems_add(
 
 @problems_app.command("list")
 def problems_list(
-    status: str = typer.Option(None, "--status", help="open | closed | all"),
+    status: str = typer.Option("open", "--status", help="open | closed | all"),
 ) -> None:
     """列出活跃问题（默认 open）。"""
     settings = load_settings()
@@ -5007,7 +5007,7 @@ def attempts_add(
 
 @attempts_app.command("list")
 def attempts_list(
-    status: str = typer.Option(None, "--status", help="open | verified | closed | all"),
+    status: str = typer.Option("open", "--status", help="open | verified | closed | all"),
 ) -> None:
     """列出实践尝试（默认 open）。"""
     settings = load_settings()

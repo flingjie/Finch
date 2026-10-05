@@ -17,6 +17,12 @@ def _attempt(status, updated_at):
     )
 
 
+class _Rec:
+    def __init__(self, peer_id, occurred_at):
+        self.peer_id = peer_id
+        self.occurred_at = occurred_at
+
+
 def test_counts_verified_attempts():
     lines = learning_loop_lines(
         attempts=[_attempt("verified", NOW), _attempt("open", NOW)],
@@ -36,13 +42,22 @@ def test_counts_judgment_changes_and_repeats():
             created_at=NOW,
         )],
     )
-
-    class _Rec:
-        peer_id = "p1"
-
     lines = learning_loop_lines(
-        attempts=[], jobs=[job], interactions=[_Rec(), _Rec()],
+        attempts=[], jobs=[job],
+        interactions=[_Rec("p1", NOW), _Rec("p1", NOW)],
         since=NOW - timedelta(days=7),
     )
     assert any("judgment changes" in line and "1" in line for line in lines)
     assert any("repeat interactions" in line and "1" in line for line in lines)
+
+
+def test_repeat_interactions_are_windowed_by_since():
+    # Two interactions with the same peer, but one is older than the window →
+    # not a repeat this week.
+    old = NOW - timedelta(days=30)
+    lines = learning_loop_lines(
+        attempts=[], jobs=[],
+        interactions=[_Rec("p1", NOW), _Rec("p1", old)],
+        since=NOW - timedelta(days=7),
+    )
+    assert any("repeat interactions" in line and "0" in line for line in lines)

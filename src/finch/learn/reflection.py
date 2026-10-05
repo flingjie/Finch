@@ -236,7 +236,7 @@ def learning_loop_lines(
     for job, rev in changed:
         lines.append(f"  - [{job.id}] {rev.claim[:80]} (reason: {rev.change_reason[:80]})")
 
-    counts = Counter(i.peer_id for i in interactions)
+    counts = Counter(i.peer_id for i in interactions if i.occurred_at >= since)
     repeats = {p: c for p, c in counts.items() if c >= 2}
     lines.append(f"repeat interactions (same peer ≥2): {len(repeats)}")
     for p, c in list(repeats.items())[:5]:

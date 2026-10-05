@@ -31,7 +31,7 @@ class PracticeAttemptService:
         """新建（幂等）；给 problem_id 时回链到 ActiveProblem.attempt_ids。"""
         if problem_id is not None and self.problems.get(problem_id) is None:
             raise ValueError(f"problem not found: {problem_id}")
-        aid = attempt_id_for(problem, attempt, observation)
+        aid = attempt_id_for(problem.strip(), attempt, observation)
         existing = self.attempts.get(aid)
         if existing is not None:
             return existing

@@ -51,3 +51,31 @@ def test_attempts_verify(tmp_path, monkeypatch):
     aid = r.output.strip().split()[2]
     r = CliRunner().invoke(app, ["attempts", "verify", aid, "--result", "有效"])
     assert r.exit_code == 0, r.output
+
+
+def test_problems_list_default_excludes_closed(tmp_path, monkeypatch):
+    _patch(monkeypatch, tmp_path)
+    r1 = CliRunner().invoke(app, ["problems", "add", "--title", "问题 A"])
+    pid_a = r1.output.strip().split()[2]
+    CliRunner().invoke(app, ["problems", "add", "--title", "问题 B"])
+    CliRunner().invoke(app, ["problems", "close", pid_a])
+    r = CliRunner().invoke(app, ["problems", "list"])
+    assert r.exit_code == 0, r.output
+    assert "问题 B" in r.output
+    assert "问题 A" not in r.output
+
+
+def test_attempts_list_default_excludes_closed(tmp_path, monkeypatch):
+    _patch(monkeypatch, tmp_path)
+    r1 = CliRunner().invoke(
+        app, ["attempts", "add", "--problem", "问题甲", "--attempt", "T", "--observation", "O"]
+    )
+    aid = r1.output.strip().split()[2]
+    CliRunner().invoke(app, ["attempts", "close", aid])
+    CliRunner().invoke(
+        app, ["attempts", "add", "--problem", "问题乙", "--attempt", "T2", "--observation", "O2"]
+    )
+    r = CliRunner().invoke(app, ["attempts", "list"])
+    assert r.exit_code == 0, r.output
+    assert "问题乙" in r.output
+    assert "问题甲" not in r.output
