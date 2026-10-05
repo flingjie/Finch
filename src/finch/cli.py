@@ -88,6 +88,7 @@ from .opportunities.prepare import (
     effective_form,
     prepare_contribution,
 )
+from .opportunities.render import render_opportunity_questions
 from .opportunities.repository import (
     ArtifactRepository as PreferredArtifactRepository,
 )
@@ -2536,7 +2537,7 @@ def _render_preferred_opportunity(opp: PreferredOpportunity) -> list[str]:
     )
     if source:
         lines.append(f"来源：{source}")
-    lines.append(f"话题：{opp.topic or '（未给出）'}")
+    lines.append(render_opportunity_questions(opp))
     if opp.problem is not None:
         status = opp.problem.evidence_status
         refs = "；".join(opp.problem.source_refs)
@@ -2551,7 +2552,8 @@ def _render_preferred_opportunity(opp: PreferredOpportunity) -> list[str]:
         lines.append(f"为什么值得参与：{opp.why_me}")
     if opp.fit is not None:
         prac = "、".join(opp.fit.practice_refs) if opp.fit.practice_refs else "无"
-        lines.append(f"为什么与我有关：{opp.fit.reason}（实践 {prac}）")
+        prob = "、".join(opp.fit.problem_refs) if opp.fit.problem_refs else "无"
+        lines.append(f"为什么与我有关：{opp.fit.reason}（实践 {prac}；问题 {prob}）")
     if opp.why_continue:
         lines.append(f"对方为什么可能接话：{opp.why_continue}")
     if opp.proposal is not None:
