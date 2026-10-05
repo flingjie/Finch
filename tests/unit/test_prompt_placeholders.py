@@ -13,6 +13,7 @@ EXPECTED: dict[str, set[str]] = {
         "their_artifacts",
         "user_context",
         "user_practices",
+        "active_problems",
     },
     "prompts/prepare-contribution.md": {
         "topic",

@@ -186,3 +186,15 @@ def test_build_opportunity_without_new_fields_still_works():
     assert opp.problem is None
     assert opp.fit is None
     assert opp.next_action is None
+
+
+def test_assess_opportunity_renders_active_problems_in_prompt():
+    runner = FakeRunner(_draft())
+    assess_opportunity(
+        runner, **_kwargs(),
+        active_problems="- [problem_abc] 重试何时值得",
+    )
+    p = runner.last_prompt or ""
+    assert "## User active problems" in p
+    assert "problem_abc" in p
+    assert "重试何时值得" in p

@@ -60,6 +60,7 @@ def assess_opportunity(
     their_artifacts_json: str,
     user_context: str = "",
     user_practices: str = "",
+    active_problems: str = "",
 ) -> OpportunityDraft:
     """LLM 判断一条首选机会；失败（超时 / 格式不合法）→ 不推荐 draft（fail-soft）。
 
@@ -75,6 +76,7 @@ def assess_opportunity(
         their_artifacts=their_artifacts_json,
         user_context=user_context or "(none)",
         user_practices=user_practices or "(none)",
+        active_problems=active_problems or "(none)",
     )
     try:
         return cast(OpportunityDraft, runner.run(prompt, OpportunityDraft))

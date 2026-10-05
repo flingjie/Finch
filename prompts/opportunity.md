@@ -20,6 +20,13 @@ deterministic recommendation gate lives in code.
 
 {user_context}
 
+## User active problems (≤3 open, the user is actively trying to solve)
+
+Each line is an open research problem the user is currently working on. It is a stronger
+fit signal than a generic topic match. `(none)` means no active problem is declared.
+
+{active_problems}
+
 ## User real practices (confirmed, citeable)
 
 Each line is a practice the user has personally confirmed. `(sourced)` items have public refs;
@@ -30,15 +37,17 @@ lists what the user has explicitly said they cannot speak to. `(none)` means not
 
 ## Signals to look for
 
-Prefer opportunities that carry one of these three concrete signals. Heat/popularity is only a
+Prefer opportunities that carry one of these four concrete signals. Heat/popularity is only a
 ranking hint, never the recommendation gate.
 
 1. help request / failure experience — in what task, and which step failed?
 2. temporary workaround — what scripts, spreadsheets, or manual operations did they use?
 3. new-capability attempt — what did they start doing, and what new obstacle appeared?
+4. problem-advance — the content explains, challenges, or verifies one of the user's
+   active problems above. This is a stronger fit than a generic topic overlap.
 
 A good recommendation needs a specific problem + a reason it fits the user + an entry point for
-participation. If none of the three signals yields a specific problem, prefer skip.
+participation. If none of the four signals yields a specific problem, prefer skip.
 
 ## Fields to produce
 
@@ -83,6 +92,8 @@ participation. If none of the three signals yields a specific problem, prefer sk
       put its id in practice_refs (e.g. ["agent-100-days"]); if no practice fits, state a current
       question/curiosity and mark it as inference.
     - practice_refs: list of confirmed practice ids (may be empty).
+    - problem_refs: list of the active-problem ids (e.g. ["problem_xxx"]) that this
+      opportunity advances, from the "User active problems" block. May be empty.
 16. next_action:
     - type: one of ask / offer / try / observe. Default to "ask" when evidence is lacking.
     - suggestion: one executable sentence (e.g. "问他现在如何保留失败输入和判断重跑结果").
