@@ -91,6 +91,25 @@ def _render_job_context(job: ContentJob | None) -> str:
         )
     else:
         blocks.append("- (no author position)")
+
+    # Observed facts vs interpretation (for judgment_shift and similar types)
+    blocks.append("## Observed facts vs interpretation")
+    blocks.append(f"- evidence_status: {job.evidence_status or '(none)'}")
+    blocks.append(
+        f"- facts: {json.dumps(job.facts, ensure_ascii=False) if job.facts else '(none)'}"
+    )
+    blocks.append(f"- interpretation: {job.interpretation or '(none)'}")
+    blocks.append(f"- limitations (适用边界): {job.limitations or '(none)'}")
+
+    # Position revision history (append-only)
+    if job.position_revisions:
+        blocks.append("## Position revision history (oldest → newest)")
+        for rev in job.position_revisions:
+            blocks.append(
+                f"- claim: {rev.claim} (reason={rev.change_reason or 'n/a'}; "
+                f"scope={rev.scope or 'n/a'}; counterexample={rev.counterexample or 'n/a'})"
+            )
+
     return "\n".join(blocks) + "\n\n"
 
 

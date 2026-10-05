@@ -146,3 +146,9 @@ def test_method_card_checker_flags_multiple_missing_sections():
     assert "步骤" in missing
     assert "输出" in missing
     assert "限制" in missing
+
+
+def test_judgment_shift_uses_structure_checker():
+    names = [c.__class__.__name__ for c in checker_suite_for(ContentType.JUDGMENT_SHIFT)]
+    assert "StructureChecker" in names
+    assert "SafetyChecker" in names
