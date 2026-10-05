@@ -168,10 +168,14 @@ writer 读 `position_revisions` + `facts` + `boundaries` 渲染（见 §6）。
 ### 6.2 writer 上下文补渲染
 
 `content/writer.py::_render_job_context` 现在只渲染 `observation / claim / decision / tradeoff`，
-**不渲染** `facts / interpretation / evidence_status / boundaries(known/inferred/unknown) /
-position_revisions`。补上这几列（对所有内容类型都受益，不只判断转变）：
-`facts`、`interpretation`、`evidence_status`、`boundaries.known/inferred/unknown`、
+**不渲染** `facts / interpretation / evidence_status / limitations / position_revisions`。
+补上这几列（对所有内容类型都受益，不只判断转变）：
+`facts`、`interpretation`、`evidence_status`、`limitations`（适用边界）、
 `position_revisions`（按序，含 `change_reason` / `counterexample` / `scope`）。
+
+注：`boundaries(known/inferred/unknown)` 只在 `IdeaCandidate`（落库前）存在，未持久化到 `ContentJob`；
+草稿期"区分观察 vs 猜想"由 `facts`（观察）+ `evidence_status` + `interpretation`（判断）+
+`limitations`（边界）承载，`position_revisions[].scope/counterexample` 补充"适用边界"。
 
 ### 6.3 骨架指令
 
