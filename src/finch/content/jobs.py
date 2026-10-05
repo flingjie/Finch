@@ -22,7 +22,7 @@ CommunicationGoal = Literal[
 IdeaOrigin = Literal["practice", "conversation", "synthesis"]
 
 # Material source kind (Build-in-Public): how the idea was captured.
-SourceKind = Literal["note", "commit", "log", "artifact", "post", "conversation"]
+SourceKind = Literal["note", "commit", "log", "artifact", "post", "conversation", "attempt"]
 
 # Evidence status for personal claims on an idea (facts vs attribution).
 EvidenceStatus = Literal["observed", "externally_reported", "unverified"]
@@ -114,6 +114,10 @@ class ContentJob(BaseModel):
     method_use_as: str | None = None
     method_fit_reason: str = ""
     method_version_hash: str = ""
+
+    # ---- Learning loop 回链 ----
+    attempt_id: str | None = None
+    problem_id: str | None = None
 
     @field_validator("origin", mode="before")
     @classmethod

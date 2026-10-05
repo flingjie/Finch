@@ -49,6 +49,7 @@ class ContentType(StrEnum):
     EXPERIENCE_RETROSPECTIVE = "experience_retrospective"
     DISCUSSION_REPLY = "discussion_reply"
     EXPLORATION_HYPOTHESIS = "exploration_hypothesis"
+    JUDGMENT_SHIFT = "judgment_shift"
 
 
 class ClaimRef(BaseModel):

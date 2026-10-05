@@ -23,13 +23,13 @@ from finch.content.jobs import (
     IdeaOrigin,
     SourceKind,
 )
-from finch.content.models import RecommendedFormat
+from finch.content.models import ContentType, RecommendedFormat
 
 
 class SourceRef(BaseModel):
     """来源引用：类型 + 引用标识 + 一句话摘要（保证可追溯）。"""
 
-    type: Literal["commit", "pr", "issue", "test", "post", "paper", "conversation"]
+    type: Literal["commit", "pr", "issue", "test", "post", "paper", "conversation", "attempt"]
     ref: str
     summary: str
 
@@ -166,3 +166,8 @@ class IdeaCandidate(BaseModel):
     method_use_as: MethodUseAs | None = None
     method_fit_reason: str = ""
     method_version_hash: str = ""
+
+    # ---- Learning loop 回链 ----
+    content_type: ContentType | None = None
+    attempt_id: str | None = None
+    problem_id: str | None = None

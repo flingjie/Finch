@@ -109,6 +109,9 @@ class IdeaService:
             method_use_as=idea.method_use_as,
             method_fit_reason=idea.method_fit_reason,
             method_version_hash=idea.method_version_hash,
+            content_type=idea.content_type,
+            attempt_id=idea.attempt_id,
+            problem_id=idea.problem_id,
         )
         self.jobs.upsert_job(job)
         return job

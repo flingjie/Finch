@@ -54,7 +54,8 @@ def checker_suite_for(
     SpecificityChecker（具体性）。类型专属：
     - concept_explanation / experience_retrospective / exploration_hypothesis → StructureChecker；
     - method_card → MethodCardChecker（输入 / 步骤 / 输出 / 限制完整）；
-    - discussion_reply → ResponsivenessChecker（为对方留接话空间）。
+    - discussion_reply → ResponsivenessChecker（为对方留接话空间）；
+    - judgment_shift → StructureChecker（判断边界调整需要结构完整性）。
     """
     profile = voice_profile if voice_profile is not None else VoiceProfile()
     common: list[Checker] = [
@@ -68,5 +69,6 @@ def checker_suite_for(
         ContentType.EXPERIENCE_RETROSPECTIVE: [StructureChecker(runner)],
         ContentType.DISCUSSION_REPLY: [ResponsivenessChecker()],
         ContentType.EXPLORATION_HYPOTHESIS: [StructureChecker(runner)],
+        ContentType.JUDGMENT_SHIFT: [StructureChecker(runner)],
     }
     return common + type_specific[content_type]
