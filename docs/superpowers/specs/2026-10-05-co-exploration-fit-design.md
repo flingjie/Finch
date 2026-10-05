@@ -94,7 +94,7 @@ def render_opportunity_questions(opp: Opportunity) -> str:
 
 | 问 | 优先字段 | 回退 |
 |---|---|---|
-| 他解决什么 | `problem.statement`（标 `evidence_status`：author_stated/inferred） | `topic` / `why_continue` |
+| 他解决什么 | `problem.statement`（标 `evidence_status`：author_stated/inferred） | `topic` |
 | 与你什么相关 | `fit.reason` + `practice_refs` / `problem_refs` | `why_me` |
 | 你能贡献什么 | `proposal.contribution` + `form` + `expected_output` | `(待准备)` |
 

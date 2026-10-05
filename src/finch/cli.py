@@ -99,6 +99,7 @@ from .opportunities.service import OpportunityService
 from .peers.models import PeerProfile
 from .peers.service import PeerService, profile_url_for
 from .practice.service import PracticeService
+from .problems.render import render_active_problems
 from .profile import bootstrap as profile_bootstrap
 from .profile.models import (
     PracticeEvidenceStatus,
@@ -2537,6 +2538,7 @@ def _render_preferred_opportunity(opp: PreferredOpportunity) -> list[str]:
     )
     if source:
         lines.append(f"来源：{source}")
+    lines.append(f"话题：{opp.topic or '（未给出）'}")
     lines.append(render_opportunity_questions(opp))
     if opp.problem is not None:
         status = opp.problem.evidence_status
@@ -3378,12 +3380,14 @@ def connect_assess(
     user_practices = render_user_practices(
         load_practice_profile(settings.paths.practice_profile_path)
     )
+    active_problems = render_active_problems(ProblemRepository(ws).list_all())
     result = assess_from_url(
         url=url,
         runner=runner,
         service=OpportunityService(PreferredOpportunityRepository(ws)),
         user_context=question,
         user_practices=user_practices,
+        active_problems=active_problems,
         person_ref=person or None,
     )
     if as_json:

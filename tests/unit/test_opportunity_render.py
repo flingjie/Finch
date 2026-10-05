@@ -37,6 +37,7 @@ def test_three_questions_rendered():
     assert "他解决什么" in out and "工具超时后误报成功" in out
     assert "与你什么相关" in out and "agent-100-days" in out and "problem_abc" in out
     assert "你能贡献什么" in out and "方法卡" in out
+    assert "method_card" in out and "决策表" in out
 
 
 def test_fallback_when_fields_missing():
