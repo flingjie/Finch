@@ -22,7 +22,7 @@ from finch.opportunities.service import OpportunityService
 from finch.profile.render import NONE_MARKER
 from finch.sources.models import RawArtifact
 
-_TEXT_LIMIT = 600
+_TEXT_LIMIT = 2000
 
 
 def _truncate(text: str, n: int = _TEXT_LIMIT) -> str:

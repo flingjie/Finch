@@ -202,6 +202,17 @@ def test_snapshot_persists_opportunity_assessments(tmp_path: Path):
 
     ws = Workspace(tmp_path)
     settings = _seed_priority_candidate_settings(tmp_path)
+    profile_path = tmp_path / "practice-profile.yaml"
+    profile_path.write_text(
+        "items:\n"
+        "  - id: agent-100-days\n"
+        "    domain: agent engineering\n"
+        "    claim: 100 天路径\n"
+        "    evidence_refs: [https://github.com/flingjie/Agent-100-Days]\n"
+        "    status: sourced\n"
+        "    confirmed: true\n"
+    )
+    settings.paths.practice_profile_path = profile_path
 
     def fake_run(argv, timeout):
         return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
@@ -255,6 +266,106 @@ def test_daily_discovery_passes_confirmed_practices_to_assessor(tmp_path: Path):
     )
 
 
+def test_empty_practice_profile_skips_opportunity_assessment_without_llm(
+    tmp_path: Path, monkeypatch
+):
+    """无已确认实践画像时，不调用机会评估 LLM，直接确定性跳过。"""
+    from finch.opportunities import discover as discover_mod
+
+    settings = _seed_priority_candidate_settings(tmp_path)
+    calls = {"n": 0}
+
+    def boom(*args, **kwargs):
+        calls["n"] += 1
+        raise AssertionError("should not assess without practice profile")
+
+    monkeypatch.setattr(
+        discover_mod, "discover_preferred_opportunity_outcome", boom
+    )
+
+    def fake_run(argv, timeout):
+        return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+    result = run_daily_discovery(
+        settings,
+        runner=_FakeRunner(),
+        gateway=OpenCliGateway(run_fn=fake_run),
+        skip_sync=True,
+    )
+    assert calls["n"] == 0
+    assert result.preferred_opportunity is None
+    assert result.opportunity_assessments
+    assert all(
+        a.outcome == "skipped"
+        and a.reason == "缺少已确认实践画像，无法判断可贡献点"
+        for a in result.opportunity_assessments
+    )
+
+
+def test_feedback_boost_map_and_reply_opening_helpers():
+    from finch.discovery.daily import _feedback_boost_map, _has_reply_opening
+    from finch.engagement.models import (
+        InterestFeedbackValue,
+        OutcomeFeedbackValue,
+        RecommendationFeedback,
+    )
+    from finch.opportunities.models import Opportunity
+    from finch.peers.person import CreatorEvidence, CreatorEvidenceKind
+
+    opps = [
+        Opportunity(id="opp_a", person_ref="person_a"),
+        Opportunity(id="opp_b", person_ref="person_b"),
+    ]
+    feedback = [
+        RecommendationFeedback(
+            id="f1",
+            opportunity_id="opp_a",
+            snapshot_id="s",
+            dimension="outcome",
+            value=OutcomeFeedbackValue.ADOPTED_REPLIED.value,
+            created_at=datetime.now(UTC),
+        ),
+        RecommendationFeedback(
+            id="f2",
+            opportunity_id="opp_b",
+            snapshot_id="s",
+            dimension="interest",
+            value=InterestFeedbackValue.UNSUITABLE.value,
+            created_at=datetime.now(UTC),
+        ),
+    ]
+    boost = _feedback_boost_map(feedback, opps)
+    assert boost["person_a"] == 0.08
+    assert boost["person_b"] == -0.06
+
+    opening = _has_reply_opening(
+        [
+            CreatorEvidence(
+                evidence_id="e",
+                person_id="p",
+                artifact_id="a",
+                kind=CreatorEvidenceKind.KNOWLEDGE_SHARING,
+                claim="why does retry fail?",
+            )
+        ]
+    )
+    assert opening is True
+    assert (
+        _has_reply_opening(
+            [
+                CreatorEvidence(
+                    evidence_id="e",
+                    person_id="p",
+                    artifact_id="a",
+                    kind=CreatorEvidenceKind.CREATION,
+                    claim="built a thing",
+                )
+            ]
+        )
+        is False
+    )
+
+
 def test_opportunity_assess_soft_stops_on_discovery_deadline(tmp_path: Path, monkeypatch):
     """评估时限耗尽时首选评估 soft-stop，不继续调 LLM。"""
     import time
@@ -283,6 +394,17 @@ def test_opportunity_assess_soft_stops_on_discovery_deadline(tmp_path: Path, mon
     settings.paths.var_dir = tmp_path
     settings.discovery.discovery_deadline_seconds = 1
     settings.discovery.daily_people.opportunity_assess_limit = 5
+    profile_path = tmp_path / "practice-profile.yaml"
+    profile_path.write_text(
+        "items:\n"
+        "  - id: agent-100-days\n"
+        "    domain: agent engineering\n"
+        "    claim: 100 天路径\n"
+        "    evidence_refs: [https://github.com/flingjie/Agent-100-Days]\n"
+        "    status: sourced\n"
+        "    confirmed: true\n"
+    )
+    settings.paths.practice_profile_path = profile_path
 
     # 评估循环内第 1 次 monotonic = assess_started；之后的检查一律超时。
     mono_calls = {"n": 0}

@@ -28,7 +28,7 @@ from finch.storage.workspace import Workspace
 _BATCH_PROMPT_PATH = Path("prompts/creator-evidence-batch.md")
 _MAX_PERSONS = 20
 _MAX_ARTIFACTS = 3
-_TEXT_LIMIT = 600
+_TEXT_LIMIT = 2000
 _BATCH_SIZE = 5
 _EVIDENCE_PROMPT_VERSION = "creator-evidence-batch-v1"
 
@@ -136,6 +136,7 @@ class CreatorEvidenceService:
         self,
         *,
         peer_ids: list[str] | None = None,
+        prefer_peer_ids: list[str] | None = None,
     ) -> EvidenceAssessResult:
         if self.runner is None:
             return EvidenceAssessResult(failures=["no runner configured"])
@@ -162,6 +163,13 @@ class CreatorEvidenceService:
                 continue
             take = (pending + [a for a in arts if a.artifact_id in known])[:_MAX_ARTIFACTS]
             candidates.append((peer, person, take))
+
+        # 让命中用户当前问题的 peer 优先进入语义评估上限，而不是按 peer id 平均截断。
+        if prefer_peer_ids:
+            order = {pid: i for i, pid in enumerate(prefer_peer_ids)}
+            candidates.sort(
+                key=lambda c: (order.get(c[0].id, len(order)), c[0].id)
+            )
 
         for batch in _chunks(candidates[: self.max_persons], self.batch_size):
             try:

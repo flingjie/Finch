@@ -8,12 +8,16 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from finch.codex.runner import CodexRunner
-from finch.discovery.candidate_pool import build_pool
+from finch.discovery.candidate_pool import build_pool, match_interests
 from finch.engagement.flow import EngagementRunResult, RankedPeer
 from finch.engagement.models import (
+    ActionFeedbackValue,
     DiscoverySnapshot,
+    InterestFeedbackValue,
     OpportunityAssessmentEntry,
+    OutcomeFeedbackValue,
     RecommendationEntry,
+    RecommendationFeedback,
 )
 from finch.engagement.relationship import PeerValue
 from finch.llm.base import StructuredInferenceRunner
@@ -36,7 +40,7 @@ from finch.peers.scoring import score_person
 from finch.peers.shortlist import ShortlistCandidate
 from finch.problems.render import render_active_problems
 from finch.profile.models import load_practice_profile
-from finch.profile.render import render_user_practices
+from finch.profile.render import NONE_MARKER, render_user_practices
 from finch.settings import Settings
 from finch.sources.models import RawArtifact
 from finch.sources.opencli_gateway import OpenCliGateway
@@ -51,6 +55,7 @@ from finch.storage.repositories import (
     DiscoverySnapshotRepository,
     PeerRepository,
     ProblemRepository,
+    RecommendationFeedbackRepository,
 )
 from finch.storage.workspace import Workspace
 
@@ -156,6 +161,72 @@ def _cross_domain_hook(evs: list[CreatorEvidence], fallback: str = "") -> str:
     return (fallback or "").strip()
 
 
+_REPLY_OPENING_SIGNALS = (
+    "?",
+    "？",
+    "如何",
+    "为什么",
+    "怎样",
+    "怎么",
+    "workaround",
+    "失败",
+    "踩坑",
+    "bug",
+    "disagreement",
+    "分歧",
+    "卡点",
+    "难题",
+)
+
+
+def _has_reply_opening(evs: list[CreatorEvidence]) -> bool:
+    """从证据判断是否有可回复的开放问题/失败/workaround。
+
+    这是与 ``_role_hint`` 同级的 best-effort 启发式；命中后通过 ``score_person`` 的
+    ``has_reply_opening`` 激活 joint_practice / connection_opportunity 两个维度。
+    """
+    for e in evs:
+        if e.kind == CreatorEvidenceKind.CONVERSATION_BEHAVIOR:
+            return True
+        blob = (e.claim or "").lower()
+        if any(signal in blob for signal in _REPLY_OPENING_SIGNALS):
+            return True
+    return False
+
+
+def _feedback_boost_map(
+    feedback: list[RecommendationFeedback],
+    opportunities: list[OppAggregate],
+) -> dict[str, float]:
+    """把推荐反馈折叠成 person_id -> 排序调整量。
+
+    正向反馈（值得了解 / 准备 / 采用回复 / 再次交流）小幅上浮；长期排斥（不合适 /
+    无切入点）小幅下浮。瞬态信号 no_time_today 不参与调节。
+    """
+    person_by_opp = {o.id: o.person_ref for o in opportunities if o.person_ref}
+    boost: dict[str, float] = {}
+    for fb in feedback:
+        person_id = person_by_opp.get(fb.opportunity_id)
+        if not person_id:
+            continue
+        delta = 0.0
+        if fb.value == InterestFeedbackValue.WORTH_FOLLOWING.value:
+            delta = 0.03
+        elif fb.value == ActionFeedbackValue.PREPARE.value:
+            delta = 0.05
+        elif fb.value in {
+            OutcomeFeedbackValue.ADOPTED_REPLIED.value,
+            OutcomeFeedbackValue.REENGAGED.value,
+        }:
+            delta = 0.08
+        elif fb.value in {
+            InterestFeedbackValue.UNSUITABLE.value,
+            ActionFeedbackValue.NO_OPENING.value,
+        }:
+            delta = -0.06
+        if delta:
+            boost[person_id] = boost.get(person_id, 0.0) + delta
+    return boost
 def build_shortlist_candidates(ws: Workspace) -> tuple[list[ShortlistCandidate], set[str]]:
     peers = PeerRepository(ws).list_all()
     person_svc = PersonService(PersonRepository(ws))
@@ -169,7 +240,7 @@ def build_shortlist_candidates(ws: Workspace) -> tuple[list[ShortlistCandidate],
             peer = peer.model_copy(update={"person_id": person.person_id})
             PeerRepository(ws).upsert(peer)
         evs = evidence_repo.list_for_person(person.person_id)
-        score = score_person(evs)
+        score = score_person(evs, has_reply_opening=_has_reply_opening(evs))
         platform = (
             peer.platform_identities[0].platform if peer.platform_identities else ""
         )
@@ -338,8 +409,18 @@ def run_daily_discovery(
         max_persons=settings.discovery.daily_people.semantic_assess_limit,
     )
     if runner is not None:
+        question_peer_ids = sorted(
+            {
+                peer.id
+                for peer in PeerRepository(ws).list_all()
+                if any(
+                    hit.category == "question"
+                    for hit in match_interests(peer, settings=settings)
+                )
+            }
+        )
         ev_started = time.perf_counter()
-        ev_result = evidence_svc.assess()
+        ev_result = evidence_svc.assess(prefer_peer_ids=question_peer_ids)
         metrics.llm_elapsed_seconds = round(time.perf_counter() - ev_started, 4)
         metrics.llm_calls += ev_result.assessed_persons + ev_result.skipped_persons
         metrics.llm_input_persons += ev_result.assessed_persons
@@ -362,7 +443,13 @@ def run_daily_discovery(
         settings=settings,
         max_size=settings.discovery.daily_people.candidate_pool_size,
     )
-    recs = select_daily_recommendations(pool.candidates, settings=settings)
+    feedback = RecommendationFeedbackRepository(ws).list_all()
+    feedback_boost = _feedback_boost_map(
+        feedback, OppAggregateRepository(ws).list_all()
+    )
+    recs = select_daily_recommendations(
+        pool.candidates, settings=settings, feedback_boost=feedback_boost
+    )
     result.recommendations = recs
 
     metrics.people_count = len(candidates)
@@ -380,52 +467,67 @@ def run_daily_discovery(
         )
         skip_repo = SkipAssessmentRepository(ws)
         opp_service = OpportunityService(OppAggregateRepository(ws))
-        assess_started = time.monotonic()
-        deadline_seconds = max(1, settings.discovery.discovery_deadline_seconds)
-        for rec in recs.priority[:assess_limit]:
-            if time.monotonic() - assess_started >= deadline_seconds:
+        if user_practices == NONE_MARKER:
+            # 无已确认实践画像时，机会评估必然没有贡献锚点；不浪费 LLM，直接确定性地跳过。
+            for rec in recs.priority[:assess_limit]:
                 result.opportunity_assessments.append(
                     OpportunityAssessment(
                         person_id=rec.candidate.person_id,
                         outcome="skipped",
-                        reason="发现运行时限已到，未继续评估",
+                        reason="缺少已确认实践画像，无法判断可贡献点",
                     )
                 )
-                result.detail = (
-                    (result.detail + "; " if result.detail else "")
-                    + f"opportunity assess soft-stopped at {deadline_seconds}s"
-                )
-                break
-            top = rec.candidate
-            arts = ArtifactRepository(ws).list_by_ids(top.artifact_ids)
-            outcome = discover_preferred_opportunity_outcome(
-                runner=runner,
-                peer_id=top.peer.id,
-                display_name=top.peer.display_name,
-                platform=top.platform,
-                current_work=top.peer.current_work,
-                why_relevant=top.peer.why_relevant,
-                person_ref=top.person_id,
-                artifacts=arts,
-                service=opp_service,
-                user_context=question or plan.ranking_question or "",
-                user_practices=user_practices,
-                active_problems=active_problems,
-                skips=skip_repo,
+            result.detail = (
+                (result.detail + "; " if result.detail else "")
+                + "skipped opportunity assessment: no confirmed practice profile"
             )
-            result.opportunity_assessments.append(
-                OpportunityAssessment(
-                    person_id=top.person_id,
-                    outcome=outcome.outcome,
-                    reason=outcome.reason,
-                    opportunity=outcome.opportunity,
-                    fingerprint=outcome.fingerprint,
-                    opportunity_id=outcome.opportunity_id,
+        else:
+            assess_started = time.monotonic()
+            deadline_seconds = max(1, settings.discovery.discovery_deadline_seconds)
+            for rec in recs.priority[:assess_limit]:
+                if time.monotonic() - assess_started >= deadline_seconds:
+                    result.opportunity_assessments.append(
+                        OpportunityAssessment(
+                            person_id=rec.candidate.person_id,
+                            outcome="skipped",
+                            reason="发现运行时限已到，未继续评估",
+                        )
+                    )
+                    result.detail = (
+                        (result.detail + "; " if result.detail else "")
+                        + f"opportunity assess soft-stopped at {deadline_seconds}s"
+                    )
+                    break
+                top = rec.candidate
+                arts = ArtifactRepository(ws).list_by_ids(top.artifact_ids)
+                outcome = discover_preferred_opportunity_outcome(
+                    runner=runner,
+                    peer_id=top.peer.id,
+                    display_name=top.peer.display_name,
+                    platform=top.platform,
+                    current_work=top.peer.current_work,
+                    why_relevant=top.peer.why_relevant,
+                    person_ref=top.person_id,
+                    artifacts=arts,
+                    service=opp_service,
+                    user_context=question or plan.ranking_question or "",
+                    user_practices=user_practices,
+                    active_problems=active_problems,
+                    skips=skip_repo,
                 )
-            )
-            if outcome.opportunity is not None:
-                result.preferred_opportunity = outcome.opportunity
-                break
+                result.opportunity_assessments.append(
+                    OpportunityAssessment(
+                        person_id=top.person_id,
+                        outcome=outcome.outcome,
+                        reason=outcome.reason,
+                        opportunity=outcome.opportunity,
+                        fingerprint=outcome.fingerprint,
+                        opportunity_id=outcome.opportunity_id,
+                    )
+                )
+                if outcome.opportunity is not None:
+                    result.preferred_opportunity = outcome.opportunity
+                    break
 
     peers_out: list[RankedPeer] = []
     for rec in recs.priority:

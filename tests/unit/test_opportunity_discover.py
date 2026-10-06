@@ -112,7 +112,7 @@ def test_renders_artifact_text_in_prompt(tmp_path):
 
 
 def test_render_artifacts_json_truncates_long_text():
-    out = render_artifacts_json([_artifact(text="x" * 1000)])
+    out = render_artifacts_json([_artifact(text="x" * 3000)])
     assert '"title": "failure replay"' in out
     assert "…" in out
 

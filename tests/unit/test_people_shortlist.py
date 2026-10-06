@@ -127,6 +127,27 @@ class TestScoring:
         ]
         assert score_person(dup).sustained_creation == score_person(base).sustained_creation
 
+    def test_has_reply_opening_activates_connection_dimensions(self):
+        evs = [
+            CreatorEvidence(
+                evidence_id="e1",
+                person_id="p1",
+                artifact_id="twitter:post:1",
+                kind=CreatorEvidenceKind.FIRST_HAND_EXPERIENCE,
+                claim="why does retry fail",
+                support=["artifact"],
+                first_hand=True,
+                confidence=0.8,
+            )
+        ]
+        without = score_person(evs)
+        with_opening = score_person(evs, has_reply_opening=True)
+        assert without.joint_practice == 0.0
+        assert without.connection_opportunity == 0.0
+        assert with_opening.joint_practice > 0.0
+        assert with_opening.connection_opportunity > 0.0
+        assert with_opening.total > without.total
+
 
 class TestShortlist:
     def test_single_artifact_is_eligible(self):

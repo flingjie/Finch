@@ -36,6 +36,9 @@ _ROLE_KEYWORDS = (
     "独立开发",
 )
 
+# 命中用户当前问题的候选，在排序时给一个确定性加分；基础分不变（显示仍用 score.total）。
+_QUESTION_BOOST = 0.1
+
 
 @dataclass
 class Recommendation:
@@ -86,6 +89,8 @@ def _role_hint(peer: PeerProfile) -> bool:
 
 def _direction_for(c: PersonCandidate) -> str:
     cats = c.hit_categories
+    if "question" in cats:
+        return "question"
     if "long_term" in cats:
         return "peer"
     if "adjacent" in cats:
@@ -96,6 +101,18 @@ def _direction_for(c: PersonCandidate) -> str:
         return "serendipity"
     return "serendipity"
 
+
+def _rank_score(
+    c: PersonCandidate, feedback_boost: dict[str, float] | None = None
+) -> float:
+    """排序分：基础分 + 当前问题命中加分 + 推荐反馈调节。
+
+    ``feedback_boost`` 是 person_id -> 调整量的确定性映射，由调用方从推荐反馈聚合。
+    """
+    boost = _QUESTION_BOOST if "question" in c.hit_categories else 0.0
+    if feedback_boost:
+        boost += feedback_boost.get(c.person_id, 0.0)
+    return c.score.total + boost
 
 def _practice_topics(c: PersonCandidate) -> frozenset[str]:
     """实践背景信号：主题/兴趣标签；空 = 未知（不强制多样）。"""
@@ -115,6 +132,7 @@ def select_daily_recommendations(
     *,
     settings: Settings,
     now: datetime | None = None,
+    feedback_boost: dict[str, float] | None = None,
 ) -> DailyRecommendationSet:
     """确定性分层推荐；同分按 person_id 稳定排序保证重放一致。"""
     dp = settings.discovery.daily_people
@@ -122,7 +140,7 @@ def select_daily_recommendations(
 
     active = [c for c in candidates if not _cooled(c, clock, dp.cooldown_days)]
     cooled_count = len(candidates) - len(active)
-    active.sort(key=lambda c: (-c.score.total, c.person_id))
+    active.sort(key=lambda c: (-_rank_score(c, feedback_boost), c.person_id))
 
     multi = [c for c in active if c.artifact_count >= dp.min_artifacts_priority]
 
@@ -157,7 +175,9 @@ def select_daily_recommendations(
         return True
 
     # 1) priority：评分排序 → 去重 → 尽量覆盖不同实践背景（D6）。
-    multi_sorted = sorted(multi, key=lambda c: (-c.score.total, c.person_id))
+    multi_sorted = sorted(
+        multi, key=lambda c: (-_rank_score(c, feedback_boost), c.person_id)
+    )
     picked_topics: set[str] = set()
     for c in multi_sorted:
         if len(result.priority) >= dp.priority_count:

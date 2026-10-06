@@ -223,3 +223,27 @@ def test_priority_prefers_practice_diversity():
     prio_ids = [r.person_id for r in recs.priority]
     assert "p4" in prio_ids  # 不同实践背景即使分低也进重点
     assert prio_ids.index("p4") < prio_ids.index("p2")  # 多样性优先于同背景高分
+
+
+def test_question_hit_gets_question_direction_and_rank_boost():
+    """命中当前问题 → direction=question，并在排序时获得确定性加分。"""
+    plain = _cand("plain", total=0.55, hit_categories={"long_term"})
+    question = _cand("question", total=0.5, hit_categories={"question"})
+    recs = select_daily_recommendations([plain, question], settings=Settings())
+    ordered = [r.person_id for r in recs.all]
+    # 0.5 + 0.1 > 0.55，问题命中者排在更前。
+    assert ordered[0] == "question"
+    by_id = {r.person_id: r for r in recs.all}
+    assert by_id["question"].direction == "question"
+
+
+def test_feedback_boost_reorders_candidates():
+    """推荐反馈调节量改变排序，但不改变持久化的基础分。"""
+    plain = _cand("plain", total=0.6)
+    boosted = _cand("boosted", total=0.55)
+    recs = select_daily_recommendations(
+        [plain, boosted], settings=Settings(), feedback_boost={"boosted": 0.1}
+    )
+    ordered = [r.person_id for r in recs.all]
+    assert ordered[0] == "boosted"
+    assert recs.all[0].candidate.score.total == 0.55  # 基础分未被改写

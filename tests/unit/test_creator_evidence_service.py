@@ -196,6 +196,28 @@ def test_batch_calls_capped_by_batch_size(tmp_path: Path):
     assert result.saved == 12
 
 
+def test_assess_prefers_question_peer_ids(tmp_path: Path):
+    """命中用户当前问题的 peer 优先进入语义评估上限。"""
+    from finch.peers.evidence_repo import CreatorEvidenceRepository
+    from finch.sources.projector import ArtifactProjector
+
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    _seed(ws, authors=["zz", "aa"])
+    peers = {
+        p.platform_identities[0].author_id: p
+        for p in ArtifactProjector(ws).peers.list_all()
+    }
+    preferred = peers["aa"]
+    other = peers["zz"]
+
+    svc = CreatorEvidenceService(ws, runner=_CountingRunner(), max_persons=1)
+    result = svc.assess(prefer_peer_ids=[preferred.id])
+    assert result.assessed_persons == 1
+    assert CreatorEvidenceRepository(ws).list_for_person(preferred.person_id or "")
+    assert CreatorEvidenceRepository(ws).list_for_person(other.person_id or "") == []
+
+
 def test_unknown_person_id_ignored(tmp_path: Path):
     ws = Workspace(tmp_path)
     ws.ensure()
