@@ -11,6 +11,9 @@ import typer
 import yaml
 from pydantic import ValidationError
 
+from .angle_discovery.models import AngleBrief
+from .angle_discovery.repository import AngleBriefRepository
+from .angle_discovery.service import AngleContext, AngleDiscoveryService
 from .article.models import ArticleReport
 from .article.repository import ArticleReportRepository
 from .article.service import ArticleAnalysisService
@@ -209,6 +212,9 @@ app.add_typer(problems_app, name="problems")
 attempts_app = typer.Typer(help="实践尝试原始素材（问题/尝试/观察/未知）")
 app.add_typer(attempts_app, name="attempts")
 
+
+angles_app = typer.Typer(help="文章选角：读一篇文章找出值得独立成文的角度（选题卡 / 写作 brief）")
+app.add_typer(angles_app, name="angles")
 
 article_app = typer.Typer(help="分析一篇文章的表达任务、读者变化与方法有效性")
 app.add_typer(article_app, name="article")
@@ -5239,6 +5245,99 @@ def summaries_list() -> None:
         typer.echo(sid)
 
 
+@angles_app.command("discover")
+def angles_discover(
+    text: str = typer.Option(None, "--text", help="要选角的文本"),
+    file: str = typer.Option(None, "--file", help="文本文件"),
+    url: str = typer.Option(None, "--url", help="要选角的链接（X/Reddit/普通网页）"),
+    reader: str = typer.Option(None, "--reader", help="目标读者"),
+    reader_problem: str = typer.Option(None, "--reader-problem", help="读者遇到的问题"),
+    author_context: str = typer.Option(None, "--author-context", help="作者背景/写作方向"),
+    practice_ref: list[str] = typer.Option(
+        [], "--practice-ref", help="实践记录引用（可重复，材料非证明）"
+    ),
+    platform: str = typer.Option(None, "--platform", help="发布平台"),
+    goal: str = typer.Option(None, "--goal", help="写作目标"),
+    prefer_angle: list[str] = typer.Option([], "--prefer-angle", help="偏好角度（可重复）"),
+    exclude_angle: list[str] = typer.Option([], "--exclude-angle", help="排除角度（可重复）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    no_save: bool = typer.Option(False, "--no-save", help="不落库报告"),
+) -> None:
+    """读一篇文章，找出值得独立成文的角度（选题卡 + 推荐方向）。"""
+    provided = sum(x is not None for x in (text, file, url))
+    if provided != 1:
+        typer.echo("exactly one of --text / --file / --url is required")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    resolver = SourceResolver(OpenCliClient(), RedditOpenCliClient(), WebFetcher())
+    try:
+        if text is not None:
+            source = resolver.resolve_text(text)
+        elif file is not None:
+            source = resolver.resolve_file(file)
+        else:
+            source = resolver.resolve_url(url)
+        if not source.body.strip():
+            typer.echo("empty body after resolve")
+            raise typer.Exit(code=1)
+        context = AngleContext(
+            reader=reader or "",
+            reader_problem=reader_problem or "",
+            author_context=author_context or "",
+            practice_refs=practice_ref,
+            platform=platform or "",
+            goal=goal or "",
+            preferred_angles=prefer_angle,
+            excluded_angles=exclude_angle,
+        )
+        runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+        brief = AngleDiscoveryService(runner).discover(source, context)
+    except (RuntimeError, StructuredOutputError, OSError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if not no_save:
+        AngleBriefRepository(ws).upsert(brief)
+    if as_json:
+        typer.echo(brief.model_dump_json(indent=2))
+    else:
+        typer.echo(_render_angle_brief(brief))
+
+
+@angles_app.command("show")
+def angles_show(
+    brief_id_arg: str = typer.Argument(..., help="brief id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """回看已落库的选角报告。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    brief = AngleBriefRepository(ws).get(brief_id_arg)
+    if brief is None:
+        typer.echo(f"brief not found: {brief_id_arg}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(brief.model_dump_json(indent=2))
+    else:
+        typer.echo(_render_angle_brief(brief))
+
+
+@angles_app.command("list")
+def angles_list() -> None:
+    """列出已保存的选角报告 id。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    ids = AngleBriefRepository(ws).list()
+    if not ids:
+        typer.echo("no angle briefs saved")
+        return
+    for bid in ids:
+        typer.echo(bid)
+
+
 def _methods_service(ws: Workspace, settings: Settings) -> ExpressionMethodService:
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     return ExpressionMethodService(
@@ -5527,6 +5626,68 @@ def _render_article_report(report: ArticleReport) -> str:
     if report.limitations:
         lines += ["", "## 局限"]
         lines += [f"- {x}" for x in report.limitations]
+    return "\n".join(lines)
+
+
+def _render_angle_brief(brief: AngleBrief) -> str:
+    lines = [
+        "# 文章选角",
+        "",
+        f"id: {brief.id}",
+        "",
+        "## 原文摘要",
+        f"主旨：{brief.source_summary.main_point}",
+    ]
+    if brief.source_summary.key_claims:
+        lines += ["", "关键主张："]
+        lines += [f"- {c}" for c in brief.source_summary.key_claims]
+    if brief.source_summary.author_advice:
+        lines += ["", "作者建议："]
+        lines += [f"- {a}" for a in brief.source_summary.author_advice]
+    if brief.source_summary.scope:
+        lines += ["", "限定："]
+        lines += [f"- {s}" for s in brief.source_summary.scope]
+    if brief.source_summary.gaps:
+        lines += ["", "原文未回答："]
+        lines += [f"- {g}" for g in brief.source_summary.gaps]
+    if brief.coverage:
+        lines += ["", "覆盖缺口："]
+        lines += [f"- {g}" for g in brief.coverage]
+    for i, card in enumerate(brief.angles):
+        rec = "（推荐）" if i == brief.recommended_index else ""
+        lines += [
+            "",
+            f"## 选题 {i + 1}{rec}",
+            card.title,
+            "",
+            f"- 主要角度：{'；'.join(card.main_angles) if card.main_angles else '（未标明）'}",
+            f"- 目标读者：{card.target_reader or '（未标明）'}",
+            f"- 中心主张：{card.thesis}",
+            f"- 相对原文增量：{card.incremental_value}",
+            f"- 证据性质：{card.increment_basis}",
+        ]
+        if card.opening_scene:
+            lines.append(f"- 开篇场景：{card.opening_scene}")
+        if card.evidence_gaps:
+            lines.append("- 需要补充的证据：")
+            lines += [f"  - {g}" for g in card.evidence_gaps]
+        if card.reader_action:
+            lines.append(f"- 读者行动：{card.reader_action}")
+        if card.writing_status:
+            lines.append(f"- 写作状态：{card.writing_status}")
+    lines += [
+        "",
+        "## 推荐方向",
+        brief.recommendation_reason or "（未说明）",
+    ]
+    if brief.outline:
+        lines += ["", "提纲："]
+        lines += [f"- {o}" for o in brief.outline]
+    if brief.evidence_gaps:
+        lines += ["", "需补充证据："]
+        lines += [f"- {g}" for g in brief.evidence_gaps]
+    if brief.smallest_validation_action:
+        lines += ["", f"最小验证行动：{brief.smallest_validation_action}"]
     return "\n".join(lines)
 
 
