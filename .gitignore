@@ -20,5 +20,8 @@ web-articles/
 # Local config (copy finch.example.yaml to finch.yaml)
 finch.yaml
 
+# Local personal data (confirmed practices; managed via `finch profile *`)
+practice-profile.yaml
+
 # Git worktrees (local isolation)
 .worktrees/
