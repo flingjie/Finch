@@ -58,6 +58,12 @@ def test_summarize_overrides_deterministic_fields():
     assert "测试通过" in (runner.last_prompt or "")
 
 
+def test_summarize_preserves_worth_asking():
+    runner = _Runner(_raw_summary(worth_asking="删掉某个自主决策步骤反而提高了可靠性"))
+    summary = ContentSummaryService(runner).summarize(_source())
+    assert summary.worth_asking == "删掉某个自主决策步骤反而提高了可靠性"
+
+
 def test_summarize_id_stable_for_same_hash():
     svc = ContentSummaryService(_Runner(_raw_summary()))
     a = svc.summarize(_source())
@@ -125,3 +131,4 @@ def test_empty_evidence_allowed():
     assert s.evidence == []
     assert s.conditions == []
     assert s.coverage_gaps == []
+    assert s.worth_asking == ""

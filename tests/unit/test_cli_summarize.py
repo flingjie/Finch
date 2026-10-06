@@ -60,6 +60,28 @@ def test_summarize_text_human(monkeypatch, tmp_path):
     assert "[作者]" in r.output
 
 
+def test_summarize_renders_worth_asking(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+
+    class _FakeWithHook:
+        def summarize(self, source):
+            from finch.content_summary.models import ContentSummary
+
+            return ContentSummary(
+                id="summary_x",
+                source_type=source.source_type,
+                content_hash=source.content_hash,
+                main_point="m",
+                worth_asking="删掉某个自主决策步骤反而提高了可靠性",
+            )
+
+    monkeypatch.setattr(cli, "ContentSummaryService", lambda runner: _FakeWithHook())
+    r = CliRunner().invoke(app, ["summarize", "--text", "hello"])
+    assert r.exit_code == 0, r.output
+    assert "最值得追问" in r.output
+    assert "删掉某个自主决策步骤" in r.output
+
+
 def test_summarize_persists_by_default(monkeypatch, tmp_path):
     _patch(monkeypatch, _settings(tmp_path))
     monkeypatch.setattr(cli, "ContentSummaryService", lambda runner: _FakeService())

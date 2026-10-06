@@ -129,6 +129,10 @@ def test_methods_log_reply_appends_reply_log(monkeypatch, tmp_path):
             "methods", "log-reply", "--method", method.id,
             "--artifact", "art_opp_1_reply_draft",
             "--verdict", "useful", "--note", "改了半句",
+            "--conditions", "对方是独立开发者",
+            "--question", "你最初为什么删掉自主决策步骤",
+            "--response", "他说删掉后返工少了",
+            "--follow-up", "把这一点记进对话笔记",
         ],
     )
     assert r.exit_code == 0, r.output
@@ -140,6 +144,10 @@ def test_methods_log_reply_appends_reply_log(monkeypatch, tmp_path):
     assert log.draft_ref == "art_opp_1_reply_draft"
     assert log.verdict == "useful"
     assert log.note == "改了半句"
+    assert log.conditions == "对方是独立开发者"
+    assert log.question_asked == "你最初为什么删掉自主决策步骤"
+    assert log.response == "他说删掉后返工少了"
+    assert log.follow_up_action == "把这一点记进对话笔记"
 
 
 def test_methods_log_reply_invalid_verdict(monkeypatch, tmp_path):

@@ -2396,6 +2396,7 @@ def _recommendations_payload(recs) -> dict | None:
             "score": c.score.total,
             "artifact_ids": list(c.artifact_ids),
             "hit_labels": list(c.hit_labels),
+            "hook": r.hook,
         }
 
     return {
@@ -2423,6 +2424,8 @@ def _render_recommendations(recs) -> list[str]:
                 f"{r.rank + 1}. {_name(c)} ({c.platform}) "
                 f"score={c.score.total:.2f} [{r.direction}]"
             )
+            if r.direction == "serendipity" and r.hook:
+                lines.append(f"   为什么值得追: {r.hook}")
             lines.append(f"   evidence: {', '.join(c.artifact_ids[:3])}")
             if c.hit_labels:
                 lines.append(f"   hit: {', '.join(c.hit_labels[:5])}")
@@ -2487,6 +2490,8 @@ def _render_recommendation_entries(
                     f"{e.rank + 1}. {_name(e)} ({e.platform}) "
                     f"score={e.score:.2f} [{e.direction}]"
                 )
+                if e.direction == "serendipity" and e.hook:
+                    lines.append(f"   为什么值得追: {e.hook}")
                 lines.append(f"   evidence: {', '.join(e.artifact_ids[:3])}")
                 if e.hit_labels:
                     lines.append(f"   hit: {', '.join(e.hit_labels[:5])}")
@@ -2518,6 +2523,8 @@ def _render_home_entries(
     for e in home:
         name = e.display_name or e.peer_id
         lines.append(f"{e.rank + 1}. {name} ({e.platform}) [{e.direction}]")
+        if e.direction == "serendipity" and e.hook:
+            lines.append(f"   为什么值得追: {e.hook}")
         if e.artifact_ids:
             lines.append(f"   evidence: {', '.join(e.artifact_ids[:3])}")
     lines.append("")
@@ -5367,6 +5374,10 @@ def methods_log_reply(
         ..., "--verdict", help="回复方法反馈：useful|mixed|not_fit"
     ),
     note: str = typer.Option("", "--note", help="可选备注（如改了什么）"),
+    conditions: str = typer.Option("", "--conditions", help="这次在什么条件下起作用"),
+    question: str = typer.Option("", "--question", help="具体问了什么"),
+    response: str = typer.Option("", "--response", help="对方回应"),
+    follow_up: str = typer.Option("", "--follow-up", help="后续行动"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
     """记录一条回复复用反馈（form=reply + 草稿引用），写入方法 practice_logs。"""
@@ -5384,6 +5395,10 @@ def methods_log_reply(
             draft_ref=artifact,
             verdict=cast(ReplyMethodVerdict, verdict),
             note=note,
+            conditions=conditions,
+            question_asked=question,
+            response=response,
+            follow_up_action=follow_up,
         )
     except KeyError as exc:
         typer.echo(f"method not found: {str(exc).strip(chr(39))}")
@@ -5415,6 +5430,9 @@ def _render_content_summary(summary: ContentSummary) -> str:
     if summary.coverage_gaps:
         lines += ["", "## 覆盖缺口"]
         lines += [f"- {g}" for g in summary.coverage_gaps]
+    if summary.worth_asking:
+        lines += ["", "## 最值得追问"]
+        lines.append(summary.worth_asking)
     return "\n".join(lines)
 
 

@@ -26,6 +26,7 @@ class ShortlistCandidate:
     platform: str = ""
     last_shown_at: datetime | None = None
     has_new_work: bool = False
+    hook: str = ""  # 意外/跨领域的具体吸引点（用于探索位说明「为什么值得追」）
 
 
 @dataclass

@@ -46,6 +46,7 @@ class Recommendation:
     tier: str  # priority | summary | browse
     rank: int
     direction: str
+    hook: str = ""  # 意外/跨领域的具体吸引点（探索位说明「为什么值得追」）
 
 
 @dataclass
@@ -144,6 +145,7 @@ def select_daily_recommendations(
             tier=tier,
             rank=rank,
             direction=_direction_for(c),
+            hook=c.hook,
         )
         rank += 1
         if tier == "priority":
@@ -202,16 +204,19 @@ def select_home_items(
     """从 priority 层选取首页重点（D7）：意外发现 ≤ surprise_limit，不足不凑数。
 
     priority 层已按方向 round-robin 多样化；这里按顺序取 home_limit 人，仅约束
-    ``serendipity``（意外发现）数量。返回按原 rank 有序。
+    ``serendipity``（意外发现）数量。意外位必须有具体 hook（说明为什么值得追），
+    没有 hook 的 serendipity 不占意外位（宁缺毋滥）。返回按原 rank 有序。
     """
     picks: list[Recommendation] = []
     surprise = 0
     for rec in recs.priority:
         if len(picks) >= home_limit:
             break
-        if rec.direction == "serendipity" and surprise >= surprise_limit:
-            continue
-        picks.append(rec)
         if rec.direction == "serendipity":
+            if surprise >= surprise_limit:
+                continue
+            if not rec.hook:
+                continue
             surprise += 1
+        picks.append(rec)
     return picks

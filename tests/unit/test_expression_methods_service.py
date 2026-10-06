@@ -226,13 +226,32 @@ def test_append_reply_log(tmp_path):
     svc = _svc(tmp_path)
     m = svc.save_as_new("article_x", 1)
     m = svc.append_reply_log(
-        m.id, draft_ref="art_opp_1_reply_draft", verdict="useful", note="改了半句"
+        m.id,
+        draft_ref="art_opp_1_reply_draft",
+        verdict="useful",
+        note="改了半句",
+        conditions="对方是独立开发者",
+        question_asked="你最初为什么删掉自主决策步骤",
+        response="他说删掉后返工少了",
+        follow_up_action="把这一点记进对话笔记",
     )
     log = m.practice_logs[-1]
     assert log.form == "reply"
     assert log.draft_ref == "art_opp_1_reply_draft"
     assert log.verdict == "useful"
     assert log.note == "改了半句"
+    assert log.conditions == "对方是独立开发者"
+    assert log.question_asked == "你最初为什么删掉自主决策步骤"
+    assert log.response == "他说删掉后返工少了"
+    assert log.follow_up_action == "把这一点记进对话笔记"
+
+
+def test_append_practice_log_records_conditions(tmp_path):
+    _report(tmp_path)
+    svc = _svc(tmp_path)
+    m = svc.save_as_new("article_x", 1)
+    m = svc.append_practice_log(m.id, "practice_1", "worth_reuse", conditions="短帖适用")
+    assert m.practice_logs[-1].conditions == "短帖适用"
 
 
 def test_append_reply_log_missing_method(tmp_path):

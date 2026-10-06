@@ -29,6 +29,11 @@ class MethodPracticeLog(BaseModel):
     # form 区分练习（practice）与回复（reply）两种复用场景；draft_ref 为回复草稿引用。
     form: Literal["practice", "reply"] = "practice"
     draft_ref: str | None = None
+    # 连接结果记录（增量）：方法在什么条件下起作用，及一次回复引发的具体交流。
+    conditions: str = ""  # 这次在什么条件下起作用/没起作用
+    question_asked: str = ""  # 具体问了什么
+    response: str = ""  # 对方回应
+    follow_up_action: str = ""  # 后续行动
 
 
 class ExpressionMethod(BaseModel):

@@ -33,3 +33,4 @@ class ContentSummary(BaseModel):
     evidence: list[EvidencePoint] = Field(default_factory=list)  # 关键依据或例子（可为空）
     conditions: list[str] = Field(default_factory=list)  # 作者明说的条件与限制
     coverage_gaps: list[str] = Field(default_factory=list)  # 材料缺失/覆盖缺口（媒体未读等）
+    worth_asking: str = ""  # 最值得追问的具体做法或结果（反常细节）；原文无则空

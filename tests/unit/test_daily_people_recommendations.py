@@ -43,6 +43,8 @@ def _cand(
     artifacts: int = 2,
     last_shown_at: datetime | None = None,
     has_new_work: bool = False,
+    hook: str = "",
+    hit_categories: set[str] | None = None,
 ) -> PersonCandidate:
     return PersonCandidate(
         person_id=person_id,
@@ -52,6 +54,8 @@ def _cand(
         platform=platform,
         last_shown_at=last_shown_at,
         has_new_work=has_new_work,
+        hook=hook,
+        hit_categories=hit_categories or set(),
     )
 
 
@@ -125,16 +129,69 @@ def test_select_home_items_limits_surprise():
     """D7：首页重点从 priority 取，意外发现（serendipity）受 surprise_limit 约束。"""
     from finch.peers.recommendations import select_home_items
 
-    cands = [_cand(f"p{i:03d}", total=0.9 - i * 0.01) for i in range(6)]
+    # 2 明确相关（long_term → peer）+ 4 意外（serendipity，均带 hook）。
+    cands = [
+        _cand("r1", total=0.9, hit_categories={"long_term"}),
+        _cand("r2", total=0.88, hit_categories={"long_term"}),
+        _cand("s1", total=0.87, hook="把 X 领域方法用于 Y"),
+        _cand("s2", total=0.86, hook="删掉某个自主决策步骤"),
+        _cand("s3", total=0.85, hook="跨领域桥接"),
+        _cand("s4", total=0.84, hook="另一条 hook"),
+    ]
     recs = select_daily_recommendations(cands, settings=Settings())
-    # 无 hit_categories → 方向为 serendipity；surprise_limit=1 只保留 1 个意外发现。
     home = select_home_items(recs, home_limit=3, surprise_limit=1)
-    assert len(home) == 1
-    assert home[0].direction == "serendipity"
+    # 2 相关 + 1 意外。
+    assert len(home) == 3
+    directions = [r.direction for r in home]
+    assert directions.count("peer") == 2
+    assert directions.count("serendipity") == 1
+    assert all(r.hook for r in home if r.direction == "serendipity")
 
     home2 = select_home_items(recs, home_limit=3, surprise_limit=3)
     assert len(home2) == 3
-    assert {r.person_id for r in home2} == {r.person_id for r in recs.priority[:3]}
+
+
+def test_select_home_items_skips_surprise_without_hook():
+    """D7：意外位必须有具体 hook，没有 hook 的 serendipity 不占意外位（宁缺毋滥）。"""
+    from finch.peers.recommendations import select_home_items
+
+    cands = [
+        _cand("r1", total=0.9, hit_categories={"long_term"}),
+        _cand("r2", total=0.88, hit_categories={"long_term"}),
+        _cand("s_no_hook", total=0.87, hook=""),  # 意外但无具体 hook
+    ]
+    recs = select_daily_recommendations(cands, settings=Settings())
+    home = select_home_items(recs, home_limit=3, surprise_limit=1)
+    ids = [r.person_id for r in home]
+    assert "s_no_hook" not in ids
+    assert len(home) == 2  # 只有 2 相关，无空泛意外占位
+
+
+def test_cross_domain_hook_prefers_bridge_evidence():
+    from finch.discovery.daily import _cross_domain_hook
+    from finch.peers.person import CreatorEvidence, CreatorEvidenceKind
+
+    evs = [
+        CreatorEvidence(
+            evidence_id="e1",
+            person_id="p",
+            artifact_id="a0",
+            kind=CreatorEvidenceKind.CREATION,
+            claim="普通创作",
+        ),
+        CreatorEvidence(
+            evidence_id="e2",
+            person_id="p",
+            artifact_id="a1",
+            kind=CreatorEvidenceKind.CROSS_DOMAIN_BRIDGE,
+            claim="把游戏化机制用于编程练习",
+            support=["删掉了自动判题步骤"],
+        ),
+    ]
+    assert _cross_domain_hook(evs) == "把游戏化机制用于编程练习：删掉了自动判题步骤"
+    assert _cross_domain_hook(evs, "fallback") == "把游戏化机制用于编程练习：删掉了自动判题步骤"
+    assert _cross_domain_hook([], "fallback") == "fallback"
+    assert _cross_domain_hook([], "") == ""
 
 
 def test_priority_prefers_practice_diversity():

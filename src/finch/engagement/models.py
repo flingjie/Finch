@@ -28,6 +28,7 @@ class RecommendationEntry(BaseModel):
     score: float = 0.0
     artifact_ids: list[str] = Field(default_factory=list)
     hit_labels: list[str] = Field(default_factory=list)
+    hook: str = ""  # 意外/跨领域的具体吸引点（探索位）
 
 
 class OpportunityAssessmentEntry(BaseModel):

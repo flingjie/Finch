@@ -151,6 +151,7 @@ class ExpressionMethodService:
         session_id: str,
         verdict: MethodVerdict,
         note: str = "",
+        conditions: str = "",
     ) -> ExpressionMethod:
         method = self.methods.get(method_id)
         if method is None:
@@ -160,6 +161,7 @@ class ExpressionMethodService:
             verdict=verdict,
             note=note,
             at=datetime.now(UTC),
+            conditions=conditions,
         )
         method = method.model_copy(
             update={
@@ -177,8 +179,17 @@ class ExpressionMethodService:
         draft_ref: str,
         verdict: ReplyMethodVerdict,
         note: str = "",
+        conditions: str = "",
+        question_asked: str = "",
+        response: str = "",
+        follow_up_action: str = "",
     ) -> ExpressionMethod:
-        """记录一条回复复用反馈（form=reply + 草稿引用），写入方法 practice_logs。"""
+        """记录一条回复复用反馈（form=reply + 草稿引用），写入方法 practice_logs。
+
+        ``conditions`` 记录这次在什么条件下起作用；``question_asked`` / ``response`` /
+        ``follow_up_action`` 记录一次回复引发的具体交流（问了什么、对方回应、后续行动），
+        不直接归因于某种措辞。
+        """
         method = self.methods.get(method_id)
         if method is None:
             raise KeyError(method_id)
@@ -189,6 +200,10 @@ class ExpressionMethodService:
             at=datetime.now(UTC),
             form="reply",
             draft_ref=draft_ref,
+            conditions=conditions,
+            question_asked=question_asked,
+            response=response,
+            follow_up_action=follow_up_action,
         )
         method = method.model_copy(
             update={

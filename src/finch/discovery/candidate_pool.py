@@ -50,6 +50,7 @@ class PersonCandidate:
     platform: str = ""
     last_shown_at: datetime | None = None
     has_new_work: bool = False
+    hook: str = ""  # 意外/跨领域的具体吸引点（穿透到推荐与渲染）
 
     @property
     def artifact_count(self) -> int:
@@ -120,6 +121,7 @@ def build_pool(
             platform=c.platform,
             last_shown_at=c.last_shown_at,
             has_new_work=c.has_new_work,
+            hook=c.hook,
         )
         existing = by_person.get(c.person_id)
         if existing is not None:

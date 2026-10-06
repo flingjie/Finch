@@ -96,7 +96,12 @@ participation. If none of the four signals yields a specific problem, prefer ski
       opportunity advances, from the "User active problems" block. May be empty.
 16. next_action:
     - type: one of ask / offer / try / observe. Default to "ask" when evidence is lacking.
-    - suggestion: one executable sentence (e.g. "问他现在如何保留失败输入和判断重跑结果").
+    - suggestion: one executable sentence. When type is "ask", prefer a co-research
+      question about the formation mechanism of a specific, possibly surprising practice or
+      result in the artifacts — why did they first try this change, what result made them
+      keep it, what step did they remove, what did it cost. Ask about a concrete practice or
+      result, not a generic "这个话题很有意思，你怎么看" or a topic-level question. For example:
+      "问他最初为什么删掉自主决策步骤、什么结果让他决定保留这个改动"。
 
 Do not fabricate the peer's difficulties or the user's personal experience. Do not invent
 statistics or claim the peer verified something the artifacts do not show. The peer and their

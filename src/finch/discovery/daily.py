@@ -24,6 +24,7 @@ from finch.opportunities.repository import SkipAssessmentRepository
 from finch.opportunities.service import OpportunityService
 from finch.peers.evidence_repo import CreatorEvidenceRepository
 from finch.peers.evidence_service import CreatorEvidenceService
+from finch.peers.person import CreatorEvidence, CreatorEvidenceKind
 from finch.peers.person_service import PersonRepository, PersonService
 from finch.peers.presentation import PersonPresentationRepository
 from finch.peers.recommendations import (
@@ -139,6 +140,22 @@ def _truncate(text: str, n: int = _TEXT_LIMIT) -> str:
     return text[: n - 1] + "…"
 
 
+def _cross_domain_hook(evs: list[CreatorEvidence], fallback: str = "") -> str:
+    """探索位 hook：优先跨领域桥接证据的 claim（拼首个 support），否则回退 why_relevant。
+
+    只为意外位提供「具体吸引点」，避免出现「只是领域不同」的空泛说明；两者都空则留空。
+    """
+    for e in evs:
+        if e.kind != CreatorEvidenceKind.CROSS_DOMAIN_BRIDGE:
+            continue
+        claim = (e.claim or "").strip()
+        if not claim:
+            continue
+        detail = (e.support[0] if e.support else "").strip()
+        return claim + (f"：{detail}" if detail else "")
+    return (fallback or "").strip()
+
+
 def build_shortlist_candidates(ws: Workspace) -> tuple[list[ShortlistCandidate], set[str]]:
     peers = PeerRepository(ws).list_all()
     person_svc = PersonService(PersonRepository(ws))
@@ -177,6 +194,7 @@ def build_shortlist_candidates(ws: Workspace) -> tuple[list[ShortlistCandidate],
                 platform=platform,
                 last_shown_at=last_shown,
                 has_new_work=has_new,
+                hook=_cross_domain_hook(evs, peer.why_relevant),
             )
         )
     return candidates, recent
@@ -248,6 +266,7 @@ def _recommendation_entries(recs: DailyRecommendationSet) -> list[Recommendation
                 score=c.score.total,
                 artifact_ids=list(c.artifact_ids),
                 hit_labels=list(c.hit_labels),
+                hook=r.hook,
             )
         )
     return out
