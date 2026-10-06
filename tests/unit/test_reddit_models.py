@@ -55,12 +55,12 @@ def test_content_title_only_when_selftext_empty():
     assert _post(title="A question", selftext="").content() == "A question"
 
 
-def test_content_title_plus_truncated_selftext():
+def test_content_title_plus_full_selftext():
     post = _post(title="A question", selftext="x" * 1000)
     content = post.content()
     assert content.startswith("A question\n\n")
     body = content.split("\n\n", 1)[1]
-    assert len(body) == 500
+    assert len(body) == 1000
 
 
 def test_command_blocked_error_code():

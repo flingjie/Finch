@@ -4,8 +4,6 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, field_validator
 
-_SELFTEXT_MAX_CHARS = 500
-
 
 class RedditPost(BaseModel):
     """opencli reddit search 原始 JSON 映射。
@@ -47,11 +45,11 @@ class RedditPost(BaseModel):
             return None
 
     def content(self) -> str:
-        """标题 + 截断正文；空 selftext 退化为仅标题（链接/图片帖常见）。"""
+        """标题 + 完整正文；空 selftext 退化为仅标题（链接/图片帖常见）。"""
         body = self.selftext.strip()
         if not body:
             return self.title
-        return f"{self.title}\n\n{body[:_SELFTEXT_MAX_CHARS]}"
+        return f"{self.title}\n\n{body}"
 
 
 class RedditError(RuntimeError):

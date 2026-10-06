@@ -28,7 +28,7 @@ from .content.voice import (
 from .content.writer import rewrite_with_instruction
 from .content_summary.models import ContentSummary
 from .content_summary.repository import ContentSummaryRepository
-from .content_summary.service import ContentSummaryService
+from .content_summary.service import ContentSummaryService, summary_id
 from .conversations.models import ConversationThread
 from .conversations.service import (
     ConversationService,
@@ -221,6 +221,9 @@ app.add_typer(community_app, name="community")
 
 dialogue_app = typer.Typer(help="讨论摘要记忆（薄持久化，可检索；命令由 Skill 使用）")
 app.add_typer(dialogue_app, name="dialogue")
+
+summaries_app = typer.Typer(help="回看已保存的内容摘要")
+app.add_typer(summaries_app, name="summaries")
 
 
 def _idea_meta_line(job: ContentJob) -> str:
@@ -5164,6 +5167,7 @@ def summarize(
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     resolver = SourceResolver(OpenCliClient(), RedditOpenCliClient(), WebFetcher())
+    repo = ContentSummaryRepository(ws)
     try:
         if text is not None:
             source = resolver.resolve_text(text)
@@ -5174,17 +5178,58 @@ def summarize(
         if not source.body.strip():
             typer.echo("empty body after resolve")
             raise typer.Exit(code=1)
-        runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
-        summary = ContentSummaryService(runner).summarize(source)
+        cached = repo.get(summary_id(source.content_hash))
+        if cached is not None:
+            # 命中缓存：合并新来源，不再调模型。
+            new_refs = [source.source_ref] if source.source_ref else []
+            summary = cached.model_copy(update={"source_refs": new_refs})
+            if not no_save:
+                summary = repo.upsert(summary)
+        else:
+            runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+            summary = ContentSummaryService(runner).summarize(source)
+            if not no_save:
+                summary = repo.upsert(summary)
     except (RuntimeError, StructuredOutputError, OSError) as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
-    if not no_save:
-        ContentSummaryRepository(ws).upsert(summary)
     if as_json:
         typer.echo(summary.model_dump_json(indent=2))
     else:
         typer.echo(_render_content_summary(summary))
+
+
+@summaries_app.command("show")
+def summaries_show(
+    summary_id_arg: str = typer.Argument(..., help="summary id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """回看已落库的内容摘要。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    summary = ContentSummaryRepository(ws).get(summary_id_arg)
+    if summary is None:
+        typer.echo(f"summary not found: {summary_id_arg}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(summary.model_dump_json(indent=2))
+    else:
+        typer.echo(_render_content_summary(summary))
+
+
+@summaries_app.command("list")
+def summaries_list() -> None:
+    """列出已保存的摘要 id。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    ids = ContentSummaryRepository(ws).list()
+    if not ids:
+        typer.echo("no summaries saved")
+        return
+    for sid in ids:
+        typer.echo(sid)
 
 
 def _methods_service(ws: Workspace, settings: Settings) -> ExpressionMethodService:
@@ -5360,20 +5405,16 @@ def _render_content_summary(summary: ContentSummary) -> str:
         "",
         "## 核心要点",
     ]
-    if summary.key_points:
-        lines += [f"- {p}" for p in summary.key_points]
-    else:
-        lines.append("- （无）")
-    lines += ["", "## 关键依据或例子"]
-    if summary.evidence:
-        lines += [f"- [{e.source}] {e.content}" for e in summary.evidence]
-    else:
-        lines.append("- （无）")
-    lines += ["", "## 条件与限制"]
+    lines += [f"- {p}" for p in summary.key_points]
     if summary.conditions:
+        lines += ["", "## 限定"]
         lines += [f"- {c}" for c in summary.conditions]
-    else:
-        lines.append("- （无）")
+    if summary.evidence:
+        lines += ["", "## 关键依据或例子"]
+        lines += [f"- [{e.source}] {e.content}" for e in summary.evidence]
+    if summary.coverage_gaps:
+        lines += ["", "## 覆盖缺口"]
+        lines += [f"- {g}" for g in summary.coverage_gaps]
     return "\n".join(lines)
 
 

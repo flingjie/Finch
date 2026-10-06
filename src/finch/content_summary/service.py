@@ -15,9 +15,21 @@ _SUMMARY_VERSION = "1.1.0"
 _PROMPT_PATH = Path("prompts/summarize-content.md")
 
 
-def _summary_id(content_hash: str) -> str:
+def summary_id(content_hash: str) -> str:
     raw = hashlib.sha256(f"{content_hash}:{_SUMMARY_VERSION}".encode()).hexdigest()
     return f"summary_{raw[:16]}"
+
+
+# 旧名保留，兼容可能的既有引用。
+_summary_id = summary_id
+
+
+def _dedup(items: list[str]) -> list[str]:
+    seen: list[str] = []
+    for it in items:
+        if it not in seen:
+            seen.append(it)
+    return seen
 
 
 class ContentSummaryService:
@@ -33,9 +45,10 @@ class ContentSummaryService:
         raw = cast(ContentSummary, self.runner.run(prompt, ContentSummary))
         return raw.model_copy(
             update={
-                "id": _summary_id(source.content_hash),
+                "id": summary_id(source.content_hash),
                 "source_type": source.source_type,
-                "source_ref": source.source_ref,
+                "source_refs": [source.source_ref] if source.source_ref else [],
                 "content_hash": source.content_hash,
+                "coverage_gaps": _dedup(raw.coverage_gaps + source.coverage),
             }
         )

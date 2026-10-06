@@ -1,7 +1,10 @@
-"""ContentSummaryService：summarize 覆盖确定性字段。"""
+"""ContentSummaryService：summarize 覆盖确定性字段 + 契约校验。"""
+
+import pytest
+from pydantic import ValidationError
 
 from finch.content_summary.models import ContentSummary, EvidencePoint
-from finch.content_summary.service import ContentSummaryService
+from finch.content_summary.service import ContentSummaryService, summary_id
 from finch.ingest.resolver import ResolvedSource
 
 
@@ -9,9 +12,11 @@ class _Runner:
     def __init__(self, ret):
         self.ret = ret
         self.last_prompt = None
+        self.calls = 0
 
     def run(self, prompt, output_model, **kw):
         self.last_prompt = prompt
+        self.calls += 1
         return self.ret
 
 
@@ -34,6 +39,7 @@ def _raw_summary(**overrides) -> ContentSummary:
         key_points=["测试通过只是必要条件", "记忆不是聊天记录"],
         evidence=[EvidencePoint(source="作者", content="测试通过，但问题没解决")],
         conditions=["原文未说明适用范围"],
+        coverage_gaps=[],
     )
     data.update(overrides)
     return ContentSummary(**data)
@@ -45,7 +51,7 @@ def test_summarize_overrides_deterministic_fields():
     assert summary.id != "model-set"
     assert summary.id.startswith("summary_")
     assert summary.source_type == "file"
-    assert summary.source_ref == "a.md"
+    assert summary.source_refs == ["a.md"]
     assert summary.content_hash == "abc123"
     assert summary.main_point == "测试通过不等于问题解决"
     assert summary.evidence[0].source == "作者"
@@ -73,3 +79,49 @@ def test_summarize_prompt_includes_clarity_rules():
     prompt = runner.last_prompt or ""
     assert "ASD-STE100-inspired" in prompt
     assert "CL08" in prompt
+
+
+def test_summarize_merges_deterministic_coverage():
+    gap = "该 X 线程包含媒体（图片/视频），本次未读取其内容"
+    src = _source().model_copy(update={"coverage": [gap]})
+    runner = _Runner(_raw_summary(coverage_gaps=["模型发现的缺口"]))
+    summary = ContentSummaryService(runner).summarize(src)
+    assert summary.coverage_gaps == ["模型发现的缺口", gap]
+
+
+def test_summarize_dedups_coverage():
+    gap = "该 X 线程包含媒体（图片/视频），本次未读取其内容"
+    src = _source().model_copy(update={"coverage": [gap]})
+    runner = _Runner(_raw_summary(coverage_gaps=[gap]))
+    summary = ContentSummaryService(runner).summarize(src)
+    assert summary.coverage_gaps == [gap]
+
+
+def test_summary_id_public_helper():
+    assert summary_id("abc123") == summary_id("abc123")
+    assert summary_id("abc123") != summary_id("other")
+
+
+# —— 契约校验 ——
+
+
+def test_rejects_empty_main_point():
+    with pytest.raises(ValidationError):
+        ContentSummary(main_point="")
+
+
+def test_rejects_unknown_evidence_source():
+    with pytest.raises(ValidationError):
+        EvidencePoint(source="瞎写", content="x")
+
+
+def test_rejects_extra_fields():
+    with pytest.raises(ValidationError):
+        ContentSummary(main_point="x", rating=5)
+
+
+def test_empty_evidence_allowed():
+    s = ContentSummary(main_point="只有观点，没有依据", key_points=[])
+    assert s.evidence == []
+    assert s.conditions == []
+    assert s.coverage_gaps == []

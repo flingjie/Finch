@@ -22,7 +22,7 @@ class _FakeService:
         return ContentSummary(
             id="summary_x",
             source_type=source.source_type,
-            source_ref=source.source_ref,
+            source_refs=[source.source_ref] if source.source_ref else [],
             content_hash=source.content_hash,
             main_point="测试通过不等于问题解决",
             key_points=["测试通过只是必要条件", "记忆不是聊天记录"],
@@ -55,7 +55,7 @@ def test_summarize_text_human(monkeypatch, tmp_path):
     assert "一句话主旨" in r.output
     assert "核心要点" in r.output
     assert "关键依据或例子" in r.output
-    assert "条件与限制" in r.output
+    assert "限定" in r.output
     assert "id: summary_x" in r.output
     assert "[作者]" in r.output
 
@@ -81,3 +81,42 @@ def test_summarize_no_save(monkeypatch, tmp_path):
     from finch.storage.workspace import Workspace
 
     assert ContentSummaryRepository(Workspace(tmp_path)).get("summary_x") is None
+
+
+def test_summarize_reuses_cache(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    from finch.content_summary.service import summary_id
+
+    calls = {"n": 0}
+
+    class CountingService:
+        def summarize(self, source):
+            calls["n"] += 1
+            from finch.content_summary.models import ContentSummary
+
+            return ContentSummary(
+                id=summary_id(source.content_hash),
+                source_type=source.source_type,
+                content_hash=source.content_hash,
+                main_point="m",
+            )
+
+    monkeypatch.setattr(cli, "ContentSummaryService", lambda runner: CountingService())
+    r1 = CliRunner().invoke(app, ["summarize", "--text", "hello"])
+    assert r1.exit_code == 0, r1.output
+    r2 = CliRunner().invoke(app, ["summarize", "--text", "hello"])
+    assert r2.exit_code == 0, r2.output
+    assert calls["n"] == 1
+
+
+def test_summaries_show_and_list(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    monkeypatch.setattr(cli, "ContentSummaryService", lambda runner: _FakeService())
+    r = CliRunner().invoke(app, ["summarize", "--text", "hello"])
+    assert r.exit_code == 0, r.output
+    shown = CliRunner().invoke(app, ["summaries", "show", "summary_x"])
+    assert shown.exit_code == 0, shown.output
+    assert "一句话主旨" in shown.output
+    listed = CliRunner().invoke(app, ["summaries", "list"])
+    assert listed.exit_code == 0, listed.output
+    assert "summary_x" in listed.output

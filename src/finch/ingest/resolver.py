@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from finch.reddit.opencli_client import RedditOpenCliClient
 from finch.twitter.models import Tweet
@@ -29,6 +29,7 @@ class ResolvedSource(BaseModel):
     sample_size: int
     source_type: Literal["text", "file", "url"]
     source_ref: str | None = None
+    coverage: list[str] = Field(default_factory=list)  # 确定性覆盖缺口（媒体未读等）
 
 
 def _hash(text: str) -> str:
@@ -73,25 +74,43 @@ class SourceResolver:
             url = "https://" + url
         host = (urlparse(url).hostname or "").lower()
         if host == "x.com" or host == "twitter.com" or host.endswith((".x.com", ".twitter.com")):
-            body = self._x_thread(url)
+            body, coverage = self._x_thread(url)
         elif host == "reddit.com" or host.endswith(".reddit.com"):
-            body = self._reddit_post(url)
+            body, coverage = self._reddit_post(url)
         else:
-            body = self.web.fetch(url)
+            body, coverage = self.web.fetch(url), []
         return ResolvedSource(
             body=body, content_hash=_hash(body), sample_size=1,
-            source_type="url", source_ref=url,
+            source_type="url", source_ref=url, coverage=coverage,
         )
 
-    def _x_thread(self, url: str) -> str:
+    def _x_thread(self, url: str) -> tuple[str, list[str]]:
         tweets: list[Tweet] = self.x.thread(url)
-        body = "\n\n".join(t.text for t in tweets).strip()
+        if not tweets:
+            raise RuntimeError("x source unavailable: empty thread")
+        parts: list[str] = []
+        has_media = False
+        for i, t in enumerate(tweets, start=1):
+            block = [f"[{i}] @{t.author} ({t.url})", t.text]
+            if t.quoted_tweet is not None:
+                q = t.quoted_tweet
+                block.append(f"[引用 @{q.author}] ({q.url})\n{q.text}")
+            if t.has_media or t.media_urls:
+                has_media = True
+            parts.append("\n".join(block))
+        body = "\n\n".join(parts).strip()
         if not body:
             raise RuntimeError("x source unavailable: empty thread")
-        return body
+        coverage = (
+            ["该 X 线程包含媒体（图片/视频），本次未读取其内容"] if has_media else []
+        )
+        return body, coverage
 
-    def _reddit_post(self, url: str) -> str:
+    def _reddit_post(self, url: str) -> tuple[str, list[str]]:
         post = self.reddit.post(url)
         if post is None:
             raise RuntimeError("reddit source unavailable: post not found")
-        return post.content()
+        coverage = (
+            ["该 Reddit 帖无正文（图片/链接帖），仅标题"] if not post.selftext.strip() else []
+        )
+        return post.content(), coverage
