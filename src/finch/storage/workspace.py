@@ -86,11 +86,11 @@ class Workspace:
         return meta, "\n".join(lines[close + 1 :])
 
     def append_jsonl(self, path: Path, obj: dict) -> None:
-        """追加一行 JSONL（读改写 + ``atomic_write`` 原子替换，保持写入原子性）。"""
+        """O(1) 追加一行 JSONL；单次 ``write`` 到追加模式文件，避免逐行全量重读重写。"""
         path.parent.mkdir(parents=True, exist_ok=True)
-        existing = path.read_text(encoding="utf-8") if path.exists() else ""
         line = json.dumps(obj, ensure_ascii=False, default=str) + "\n"
-        self.atomic_write(path, existing + line)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
 
     def read_jsonl(self, path: Path) -> list[dict]:
         """读全部 JSONL 行；缺文件返回空列表；跳过损坏的尾部行（防御手工/中断写入）。"""

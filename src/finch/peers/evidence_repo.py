@@ -22,6 +22,22 @@ class CreatorEvidenceRepository:
     def get(self, evidence_id: str) -> CreatorEvidence | None:
         return self.ws.read_yaml(self._path(evidence_id), CreatorEvidence)
 
+    def list_all(self) -> list[CreatorEvidence]:
+        """一次读取全部 evidence（供单次运行内的多次按人查找复用）。"""
+        out: list[CreatorEvidence] = []
+        for path in sorted(self._dir.glob("*.yaml")):
+            ev = self.ws.read_yaml(path, CreatorEvidence)
+            if ev is not None:
+                out.append(ev)
+        return out
+
+    def index_by_person(self) -> dict[str, list[CreatorEvidence]]:
+        """把全部 evidence 按 person_id 建内存索引，避免逐人重复扫描目录。"""
+        index: dict[str, list[CreatorEvidence]] = {}
+        for ev in self.list_all():
+            index.setdefault(ev.person_id, []).append(ev)
+        return index
+
     def list_for_person(self, person_id: str) -> list[CreatorEvidence]:
         out: list[CreatorEvidence] = []
         for path in sorted(Path(self._dir).glob("*.yaml")):

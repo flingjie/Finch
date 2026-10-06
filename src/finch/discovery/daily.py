@@ -231,6 +231,7 @@ def build_shortlist_candidates(ws: Workspace) -> tuple[list[ShortlistCandidate],
     peers = PeerRepository(ws).list_all()
     person_svc = PersonService(PersonRepository(ws))
     evidence_repo = CreatorEvidenceRepository(ws)
+    evidence_by_person = evidence_repo.index_by_person()
     presentations = PersonPresentationRepository(ws)
     recent = presentations.recent_platforms(within_days=14)
     candidates: list[ShortlistCandidate] = []
@@ -239,7 +240,7 @@ def build_shortlist_candidates(ws: Workspace) -> tuple[list[ShortlistCandidate],
         if peer.person_id != person.person_id:
             peer = peer.model_copy(update={"person_id": person.person_id})
             PeerRepository(ws).upsert(peer)
-        evs = evidence_repo.list_for_person(person.person_id)
+        evs = evidence_by_person.get(person.person_id, [])
         score = score_person(evs, has_reply_opening=_has_reply_opening(evs))
         platform = (
             peer.platform_identities[0].platform if peer.platform_identities else ""

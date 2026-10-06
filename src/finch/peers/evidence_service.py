@@ -147,6 +147,7 @@ class CreatorEvidenceService:
             wanted = set(peer_ids)
             peers = [p for p in peers if p.id in wanted]
 
+        evidence_by_person = self.evidence.index_by_person()
         candidates: list[tuple[PeerProfile, Person, list[RawArtifact]]] = []
         for peer in peers:
             if not peer.person_id:
@@ -154,7 +155,7 @@ class CreatorEvidenceService:
             person = self.people.get(peer.person_id)
             if person is None:
                 continue
-            existing = self.evidence.list_for_person(person.person_id)
+            existing = evidence_by_person.get(person.person_id, [])
             known = {e.artifact_id for e in existing}
             arts = self.artifacts.list_by_ids(peer.source_refs)
             pending = [a for a in arts if a.artifact_id not in known]

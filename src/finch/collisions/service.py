@@ -76,8 +76,10 @@ class CollisionService:
         # Prefer candidates with cross-domain evidence
         ordered = list(items)
         if prefer_cross_domain:
+            evidence_by_person = self.evidence.index_by_person()
+
             def _cross_score(item: ShortlistItem) -> int:
-                evs = self.evidence.list_for_person(item.candidate.person_id)
+                evs = evidence_by_person.get(item.candidate.person_id, [])
                 return sum(1 for e in evs if e.kind == CreatorEvidenceKind.CROSS_DOMAIN_BRIDGE)
 
             ordered.sort(key=_cross_score, reverse=True)
