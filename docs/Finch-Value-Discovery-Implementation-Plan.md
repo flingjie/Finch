@@ -1,5 +1,7 @@
 # Finch 实现 Plan v3：与真正的 Builder 建立持续连接
 
+> **口径已更新（superseded）**：本文的定位 / 受众 / 北极星口径已被 2026-10-08 跨领域改造取代；权威定义见 `docs/product-contract.md`。本文仅作历史记录。
+
 日期：2026-09-14  
 状态：P1–P4 已在本仓库落地（Problem-Led A/B 基线 `4765065`；本轮 Value Discovery 增量）。P5 四周真实试用待用户使用后评价。  
 版本关系：完整取代本文件 v2。以本轮十题推荐选项为最新决策，保留项目独立、Skill-first、文件 Workspace、真实来源及人工外发边界。

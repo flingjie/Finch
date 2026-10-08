@@ -23,7 +23,7 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 
 ## CLI
 
-- 首页：`finch connect daily`（默认读最新快照，展示 3 个重点 + 真实跟进；不因过期隐式抓取）
+- 首页：`finch connect daily`（默认读最新快照，展示 0–1 条首选机会 + 真实跟进；不因过期隐式抓取）
 - 刷新：`finch connect daily --refresh`（有界刷新后展示）
 - 浏览：`finch connect daily --view browse`（同一快照的 50 人分层列表）
 - 问题探索：`finch connect daily --question "其他行业如何处理责任交接？" --refresh`

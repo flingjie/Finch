@@ -1,5 +1,7 @@
 # Finch 主动对话与观点引导 — 设计规格
 
+> **口径已更新（superseded）**：本文的定位 / 受众 / 北极星口径已被 2026-10-08 跨领域改造取代；权威定义见 `docs/product-contract.md`。本文仅作历史记录。
+
 日期：2026-09-23
 状态：已确认，待进入 implementation plan。
 代码基线：`main` `9a7528e29fa359780b16a72e8046a3c85cbcd734`（实施时须比较最新 HEAD；本 spec 撰写时 HEAD 为 `80332a0`，比基线多一个与本功能无关的 `gh_client` URL 编码提交）。

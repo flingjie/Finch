@@ -4,7 +4,7 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 
 ## Project
 
-Finch is a cross-industry connection and inspiration assistant, not a content-generation tool. It finds people in other fields who keep creating and sharing first-hand experience, via `gh` (GitHub evidence) and read-only `opencli` (Twitter/X, Reddit, GitHub users, V2EX, WeChat, Xiaohongshu). It explains why a conversation is worth having, prepares a reviewable contribution, and threads real replies into relationship context. Inspiration notes capture new questions, viewpoints, and methods from observation, conversation, and practice. Public expression — forming the user's own viewpoint and writing in their voice — is an optional outlet; content production is the _result_ of connection, not the goal. Problem/workaround/usage feedback lives as conversation-thread notes, not a separate problem or payments domain. The north-star metric is how many "contextual, continuable" peer relationships are added or deepened each week. Canonical definition: `docs/product-contract.md`. Finch is fully standalone — no builderDNA dependency.
+Finch is a cross-domain learning, connection, and expression assistant, not a content-generation tool. It finds people in other fields who keep creating and sharing first-hand experience, via `gh` (GitHub evidence) and read-only `opencli` (Twitter/X, Reddit, GitHub users, V2EX, WeChat, Xiaohongshu). It explains why a conversation is worth having, prepares a reviewable contribution, and threads real replies into relationship context. Inspiration notes capture new questions, viewpoints, and methods from observation, conversation, and practice. Public expression — forming the user's own viewpoint and writing in their voice — is a peer outlet, not a result of connection. Content production is one result of learning, practice, and connection. It does not depend on connection. Problem/workaround/usage feedback lives as conversation-thread notes, not a separate problem or payments domain. The north-star metric is how many "contextual, continuable" peer relationships are added or deepened each week. Four weekly signals sit next to it: revised understanding, real action, own expression, and continued exchange. They stay separate. There is no combined growth score. Canonical definition: `docs/product-contract.md`. Finch is fully standalone — no builderDNA dependency.
 
 ## Commands
 
@@ -22,7 +22,7 @@ CLI surface (typer sub-apps / commands): `finch connect ...` (today / daily / pe
 
 ## Architecture
 
-Skill + domain services, not an LLM agent loop and not a graph runtime. Connection and expression skills run the default loops. Collision and experiment skills support cross-domain inspiration. Training tools never enter the default pipeline. Ordering, state, retries, and idempotency live in deterministic Python domain services. Codex (`codex exec`) is called as a subprocess only at specific "smart" steps (assess / write / critic).
+Skill + domain services, not an LLM agent loop and not a graph runtime. Connection, learning, practice, and expression skills run as peer paths. Collision and experiment skills support cross-domain inspiration. Training tools never enter the default pipeline. Ordering, state, retries, and idempotency live in deterministic Python domain services. Codex (`codex exec`) is called as a subprocess only at specific "smart" steps (assess / write / critic).
 
 ```
 skills/

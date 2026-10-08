@@ -71,9 +71,12 @@ sources:
     fetch_limit: 200
     recommendation_cap: 20
     queries:
-      - '"agent reliability" OR "agent evals"'
-      - '"agent harness" OR "context engineering"'
-      - '"durable execution" OR "failure replay"'
+      - '"agent reliability" OR "agent evals"'                 # Agent 工程（保留为一组）
+      - '("indie maker" OR bootstrapped) (lessons OR mistakes)'
+      - '("learning in public" OR "deliberate practice")'
+      - '("writing process" OR "clear writing")'
+      - '("decision making" OR "changed my mind")'
+      - '("creative process" OR "design process")'
     urls: []
   reddit:
     enabled: true
@@ -81,8 +84,10 @@ sources:
     fetch_limit: 100
     recommendation_cap: 8
     queries:
-      - "agent reliability production failure"
-      - "LLM agent evaluation real world"
+      - "agent reliability production failure"     # Agent 工程（保留为一组）
+      - "learning in public deliberate practice"
+      - "clear writing process"
+      - "decision making changed my mind"
     urls: []
   github:
     # Add logins under `users`, then set enabled: true.
@@ -97,8 +102,11 @@ sources:
     fetch_limit: 100
     recommendation_cap: 12
     queries:
-      - "AI Agent 实践"
-      - "大模型 应用 落地"
+      - "AI Agent 实践"          # Agent 工程（保留为一组）
+      - "独立创作 复盘"
+      - "学习方法 实践"
+      - "写作 修改过程"
+      - "决策 反思"
   weixin:
     # 搜狗微信搜索（opencli weixin search）；`mode: url` 则按文章链接导入。
     enabled: true
@@ -106,8 +114,10 @@ sources:
     fetch_limit: 50
     recommendation_cap: 8
     queries:
-      - "AI Agent 实践"
-      - "大模型 应用 落地"
+      - "AI Agent 实践"          # Agent 工程（保留为一组）
+      - "独立创作 复盘"
+      - "学习方法 实践"
+      - "写作 修改过程"
     urls: []
   xiaohongshu:
     enabled: true
@@ -115,8 +125,10 @@ sources:
     fetch_limit: 100
     recommendation_cap: 12
     queries:
-      - "AI Agent 开发实践"
-      - "AI 工作流 复盘"
+      - "AI Agent 开发实践"      # Agent 工程（保留为一组）
+      - "独立创作 复盘"
+      - "学习方法 实践"
+      - "决策 反思"
     urls: []
 
 # Daily 50-person discovery: 5 priority / 15 summary / 30 browse tiers.
@@ -160,6 +172,22 @@ twitter:
       text: '"tool calling" failure agent'
       filter: live
       priority: 4
+    - id: indie_maker_lessons
+      text: '("indie maker" OR bootstrapped) (lessons OR mistakes)'
+      filter: live
+      priority: 4
+    - id: learning_in_public
+      text: '"learning in public" OR "deliberate practice"'
+      filter: live
+      priority: 4
+    - id: writing_process
+      text: '"writing process" OR "clear writing"'
+      filter: live
+      priority: 3
+    - id: decision_review
+      text: '"decision making" OR "changed my mind"'
+      filter: live
+      priority: 3
   high_value_authors: []
   blocked_authors: []
 
@@ -186,27 +214,34 @@ engagement:
 
 interests:
   long_term_interests:
-    - agent reliability
+    - agent reliability        # Agent 工程（保留为一组）
     - agent evals
-    - graph engineering
-    - agent harness
+    - independent creation
+    - product practice
+    - learning methods
+    - clear writing
+    - decision review
+    - long-term collaboration
+    - attention and work style
   current_questions: []
   explore_directions:
-    - durable execution
+    - durable execution        # Agent 工程（保留为一组）
     - failure replay
-    - dynamic graph
-    - production agent failures
+    - independent creation
+    - learning in public
+    - clear writing
+    - decision review
   adjacent_queries:
-    - checkpoint
-    - compensation
-  usage_queries:
-    - "manual regression triage"
-    - "how do you currently reconcile exports"
-    - "workaround for flaky agent evals"
-    - "spent all day copying between tools"
+    - bootstrapping
+    - deliberate practice
+    - writing process
+    - changed my mind
+  # usage_queries 当前未接入任何代码（死配置），保留为空占位，勿依赖其效果。
+  usage_queries: []
+  # 按「形式」排除低价值内容，不按「主题」一刀切（Agent/AI 话题不再整体排除）。
   excluded_content:
-    - AI news
-    - funding and valuation
+    - 重复宣传
+    - 无新增信息
     - evidence-free model rankings
 
   # 存在非空 practice-profile.yaml 时忽略此项（community-scout 改读画像中 confirmed 条目的 evidence_refs）。

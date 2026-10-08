@@ -1,5 +1,7 @@
 # Finch 跨平台创作者网络：OpenCLI 实现计划
 
+> **口径已更新（superseded）**：本文的定位 / 受众 / 北极星口径已被 2026-10-08 跨领域改造取代；权威定义见 `docs/product-contract.md`。本文仅作历史记录。
+
 > 版本：v1.0  
 > 日期：2026-09-16  
 > 状态：Proposed  

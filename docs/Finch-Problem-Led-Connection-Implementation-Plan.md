@@ -1,5 +1,7 @@
 # Finch：扩大有效发现与持续交流的实现计划
 
+> **口径已更新（superseded）**：本文的定位 / 受众 / 北极星口径已被 2026-10-08 跨领域改造取代；权威定义见 `docs/product-contract.md`。本文仅作历史记录。
+
 版本：v3，第一性原理 review 后的完整替代方案  
 日期：2026-09-12  
 状态：A/B 已落地（`4765065` Opportunity 浏览 / snapshot / connect today·more·prepare）；C/D 与扩展路径见 [Value Discovery v3](Finch-Value-Discovery-Implementation-Plan.md)。  

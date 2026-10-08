@@ -4,7 +4,7 @@
 
 ## 核心原则
 
-- Finch 是跨行业连接与灵感助理。公开表达是可选出口。PeerProfile 不是 CRM lead；Opportunity 不是商业机会。
+- Finch 是跨领域学习、连接与表达伙伴。学习、实践、表达与连接是并列路径，公开表达是与连接并列的出口之一。Agent 是可持续深入的实践领域之一，不是内容、人物或表达资格的默认门槛。PeerProfile 不是 CRM lead；Opportunity 不是商业机会。
 - Evidence First：Commit → Engineering Event → Evidence Card → Draft，禁止 Commit 直接生成帖子。
 - Codex 是智能节点，不是工作流 Runtime；状态、顺序、重试、幂等由确定性 Python 领域服务负责。
 - 读取/写入权限分离：`gh` 仅读取；`opencli` 仅读取/搜索，禁止 twitter 写命令。

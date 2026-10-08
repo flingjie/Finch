@@ -1,6 +1,6 @@
 # Finch
 
-Finch 是一个**跨行业连接与灵感助理**。它帮你发现不同领域中持续创造、分享一手经验的人，理解值得了解或交流的原因，延续真实对话并积累关系上下文，保存由观察、交流和实践引发的新问题、新视角与方法；公开表达（形成自己的观点、写成像自己的内容）是可选出口。
+Finch 是一个**跨领域学习、连接与表达伙伴**。它帮你发现不同领域中持续创造、分享一手经验的人与思想，理解值得了解或交流的原因，通过讨论和小规模实践形成并修正自己的判断，把经验写成清晰、有价值的内容，并延续真实交流。学习、实践、表达与连接是并列的路径；公开表达（形成自己的观点、写成像自己的内容）是与连接并列的出口之一，而不是连接的下游。
 
 Finch 记录对话事实、明确承诺与线程内问题/使用反馈笔记；不做跨来源痛点聚类或产品机会评分（那是 builderDNA），也不做产业战略（Quinn）。工具收款权威记录属于具体工具项目。
 
@@ -8,12 +8,16 @@ Finch 记录对话事实、明确承诺与线程内问题/使用反馈笔记；�
 
 当前架构是 **Skill + 领域服务**（不是 Graph Runtime，也不是 LLM agent loop）：Skill 覆盖认知任务，状态机、存储、幂等、评分、Critic 门禁都留在确定性 Python 领域服务。`finch diagnose` 可分别报告 `gh` 与 `opencli` 状态。
 
-## 两条循环
+## 四条并列路径
 
-- **连接主循环**：发现同行/使用者 → 准备互动 → 记录关系 → 继续对话。这是 Finch 每天首先呈现的东西（`finch connect daily`）。
-- **表达复利循环**：从实践与对话形成观点 → 写成像自己的内容 → 吸引更多同行。它服从连接目标。
+- **学习**：从问题、文章/作品或个人经历进入，理解材料、形成并修正自己的判断。
+- **实践**：把判断落成小规模、可观察、有停止条件的尝试。
+- **表达**：从实践、阅读与对话形成观点 → 写成像自己的内容。
+- **连接**：发现同行/使用者 → 准备互动 → 记录关系 → 继续对话（`finch connect daily`）。
 
-北极星指标：**每周新增或加深多少个「有上下文、可继续」的同行关系**。粉丝数、发帖数、草稿数都不是核心指标。PeerProfile 不是 CRM lead；Opportunity 不是商业机会。
+四条路径并列，不串成强制流水线；出口可跳过或组合。
+
+北极星指标：**每周新增或加深多少个「有上下文、可继续」的同行关系**；关系之外每周同时观察判断修正、实际行动、自己的表达与持续交流（各自记录，不合成成长总分）。粉丝数、发帖数、草稿数都不是核心指标。PeerProfile 不是 CRM lead；Opportunity 不是商业机会。
 
 ## 安装
 
@@ -27,7 +31,7 @@ uv sync
 uv run finch init [--prune]             # 初始化 var/ 文件工作区
 uv run finch diagnose                    # 探测 gh / opencli 可用性
 
-# —— 连接主循环 ——
+# —— 连接 ——
 uv run finch connect daily [--refresh] [--view home|browse] [--question "…"]  # 首页 0–1 首选机会；browse 为 50 人分层（5/15/30）
 uv run finch connect today --limit 10    # 别名：connect daily 首页（纯读）
 uv run finch connect person <person_id>  # 查看某人完整证据与档案（只读）
@@ -49,7 +53,7 @@ uv run finch inspirations list / show <id> / note <id> --text "…" / archive <i
 uv run finch collisions generate / weekly
 uv run finch experiments start <collision_id> --action "…" --observe "…" --stop "…"
 
-# —— 表达复利循环 ——
+# —— 表达 ——
 uv run finch ideas commit / create / list / show / confirm / revise-position / skip
 uv run finch drafts write / create / show / revise
 uv run finch review list / show / approve / revise / skip
@@ -154,7 +158,7 @@ src/finch/
   content/         ContentJob、writer、critic 检查器、voice profile
   article/         article_analysis（ArticleReport + SourceResolver，只读）
   webfetch/        通用网页正文提取器（只读 adapter，fail-closed）
-  inbox/           连接主循环 + 表达复利循环的只读统一投影与决策
+  inbox/           连接与表达循环的只读统一投影与决策
   learn/           Feedback + 周复盘指标 + 定性复盘
   evidence/        Commit → EngineeringEvent → EvidenceCard
   github/ twitter/ reddit/  只读 adapter（gh / opencli）

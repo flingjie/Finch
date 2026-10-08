@@ -1,5 +1,7 @@
 # 互动反思事实录入设计（Interaction Reflection Fact-Entry）
 
+> **口径已更新（superseded）**：本文的定位 / 受众 / 北极星口径已被 2026-10-08 跨领域改造取代；权威定义见 `docs/product-contract.md`。本文仅作历史记录。
+
 日期：2026-09-09
 状态：待评审
 
