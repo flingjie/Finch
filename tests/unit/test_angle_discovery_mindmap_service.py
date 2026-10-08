@@ -5,6 +5,7 @@ import pytest
 from finch.angle_discovery.mindmap_models import (
     MindMap,
     MindMapBranch,
+    MindMapCombination,
     MindMapExpansion,
     MindMapNode,
     MindMapQuestion,
@@ -174,3 +175,37 @@ def test_expand_prompt_includes_path_and_move():
     assert "反例" in p
     assert "先预测" in p
     assert "它减少了哪种成本？" in p
+
+
+def _combination() -> MindMapCombination:
+    return MindMapCombination(
+        connection_rationale="两者都暴露理解缺口。",
+        incremental_value="比原文多了解释学习工具设计。",
+        applicable_boundary="纯记忆任务不适用。",
+        validation_gap="还需一个对照实验。",
+        angle_title="让学习工具增加适度挑战",
+        thesis="挑战暴露缺口，缺口驱动独立完成。",
+    )
+
+
+def test_connect_fills_node_ids_and_appends():
+    svc = MindMapService(_Runner(_combination()))
+    m = svc.connect(_map(), "n1", "n2")
+    assert len(m.combinations) == 1
+    c = m.combinations[0]
+    assert c.node_a == "n1" and c.node_b == "n2"
+    assert c.thesis == "挑战暴露缺口，缺口驱动独立完成。"
+
+
+def test_connect_prompt_includes_both_labels():
+    runner = _Runner(_combination())
+    MindMapService(runner).connect(_map(), "n1", "n2")
+    p = runner.last_prompt or ""
+    assert "机制" in p
+    assert "它减少了哪种成本？" in p
+
+
+def test_connect_unknown_node_raises():
+    svc = MindMapService(_Runner(_combination()))
+    with pytest.raises(RuntimeError):
+        svc.connect(_map(), "n1", "n99")

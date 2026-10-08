@@ -10,6 +10,7 @@ from typing import cast
 
 from finch.angle_discovery.mindmap_models import (
     MindMap,
+    MindMapCombination,
     MindMapExpansion,
     MindMapNode,
     MindMapSeed,
@@ -142,4 +143,18 @@ class MindMapService:
         for n in nodes:
             if n.id == node_id:
                 n.expanded = True
+        return updated
+
+    def connect(self, m: MindMap, node_a: str, node_b: str) -> MindMap:
+        a = _find_node(m, node_a)
+        b = _find_node(m, node_b)
+        prompt = _CONNECT_PROMPT.read_text().format(
+            root=m.root_label,
+            node_a=a.label,
+            node_b=b.label,
+        )
+        combo = cast(MindMapCombination, self.runner.run(prompt, MindMapCombination))
+        combo = combo.model_copy(update={"node_a": node_a, "node_b": node_b})
+        updated = m.model_copy(deep=True)
+        updated.combinations.append(combo)
         return updated
