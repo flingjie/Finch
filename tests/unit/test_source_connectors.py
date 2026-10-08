@@ -252,6 +252,41 @@ class TestCapabilityDrivenPlan:
         assert len(reqs) == 1
         assert reqs[0].command == "search"
 
+    def test_twitter_timeline_mode_emits_timeline(self):
+        from datetime import UTC, datetime
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.models import OpenCliCapabilities
+
+        caps = OpenCliCapabilities(
+            snapshot_id="c1",
+            captured_at=datetime.now(UTC),
+            surfaces={"twitter": ["timeline", "search"]},
+        )
+        reqs = TwitterConnector().plan(
+            DiscoveryContext(mode="timeline", limit=40), capabilities=caps
+        )
+        assert len(reqs) == 1
+        assert reqs[0].command == "timeline"
+        # 时间线无 per-query 参数，args 只有 limit + format。
+        assert reqs[0].args == ("--limit", "40", "-f", "json")
+
+    def test_twitter_timeline_unavailable_returns_empty_not_search(self):
+        from datetime import UTC, datetime
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.models import OpenCliCapabilities
+
+        caps = OpenCliCapabilities(
+            snapshot_id="c1",
+            captured_at=datetime.now(UTC),
+            surfaces={"twitter": ["search", "thread"]},
+        )
+        reqs = TwitterConnector().plan(
+            DiscoveryContext(mode="timeline"), capabilities=caps
+        )
+        assert reqs == []
+
     def test_v2ex_hot_when_no_queries(self):
         from datetime import UTC, datetime
 
@@ -380,3 +415,32 @@ class TestOrchestratorIsolation:
         by = {r.source: r for r in results}
         assert by[S.TWITTER].status.value == "AUTH_REQUIRED"
         assert by[S.REDDIT].normalized_count >= 1
+
+    def test_timeline_unavailable_reports_missing_not_silent(self, tmp_path: Path):
+        ws = Workspace(tmp_path)
+        ws.ensure()
+
+        def fake_run(argv, timeout):
+            if argv[:2] == ["opencli", "list"]:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": json.dumps([{"site": "twitter", "commands": ["search"]}]),
+                    "stderr": "",
+                }
+            return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.models import Source as S
+        from finch.sources.opencli_gateway import OpenCliGateway
+
+        orch = DiscoveryOrchestrator(ws, gateway=OpenCliGateway(run_fn=fake_run))
+        results = orch.sync_all(
+            sources=[S.TWITTER],
+            context_by_source={S.TWITTER: DiscoveryContext(mode="timeline")},
+        )
+        r = results[0]
+        # 时间线能力缺失 → 显式 DEGRADED + 缺失提示，不回退搜索、不静默零结果。
+        assert r.status.value == "DEGRADED"
+        assert "timeline unavailable" in r.detail
+        assert "not falling back to search" in r.detail

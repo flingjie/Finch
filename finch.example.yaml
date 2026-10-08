@@ -60,14 +60,15 @@ opencli:
   allow_write_commands: false
 
 # Per-source discovery queries for `connect daily --refresh` / `sources sync --all`.
-# Each source is explicit: `enabled` + `mode` (query | hot | url | disabled).
+# Each source is explicit: `enabled` + `mode` (query | hot | url | timeline | disabled).
 # An `enabled: true` source with `mode: query`/`url` but no queries/urls is a
 # CONFIG_ERROR (never silently skipped). Do NOT reuse one topic query for GitHub
 # (users are logins, not themes).
 sources:
   twitter:
     enabled: true
-    mode: query
+    # 默认输入为关注时间线；不可用时展示缺失，不回退搜索。改关键词搜索用 mode: query。
+    mode: timeline
     fetch_limit: 200
     queries:
       - '"agent reliability" OR "agent evals"'                 # Agent 工程（保留为一组）
@@ -133,6 +134,9 @@ discovery:
   lookback_hours: 720       # 证据窗口：30 天；--lookback 可临时覆盖
   freshness_boost_hours: 72  # 72 小时内加权
   nominate_limit: 10         # 确定性提名上限（P3 生效；本轮先作为计划字段）
+  # GitHub README 缓存：去重 + TTL 兜底 + 单次补读外部 README 上限。
+  readme_cache_ttl_hours: 168
+  max_external_readmes_per_run: 5
   daily_people:
     target: 50
     priority_count: 5

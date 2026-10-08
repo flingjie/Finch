@@ -38,6 +38,19 @@ class TwitterConnector:
         capabilities: OpenCliCapabilities | None = None,
     ) -> list[OpenCliRequest]:
         caps = capabilities or empty_capabilities()
+        # 时间线模式：关注时间线是独立输入，不回退到搜索。
+        if context.mode == "timeline":
+            timeline_cmd = resolve_command(caps, "twitter", ["timeline"])
+            if not timeline_cmd:
+                return []
+            return [
+                OpenCliRequest(
+                    surface="twitter",
+                    command=timeline_cmd,
+                    args=("--limit", str(context.limit), "-f", "json"),
+                    timeout_seconds=60,
+                )
+            ]
         reqs: list[OpenCliRequest] = []
         search_cmd = resolve_command(caps, "twitter", ["search"])
         thread_cmd = resolve_command(caps, "twitter", ["thread", "read"])

@@ -244,3 +244,45 @@ def test_build_discovery_plan_merges_topic_queries():
     plan = build_discovery_plan(settings)
     assert plan.source_queries[Source.TWITTER.value] == ["agent", "复盘"]
     assert plan.source_queries[Source.GITHUB.value] == ["jackwener", "octocat"]
+
+
+def test_timeline_mode_builds_context_without_queries():
+    settings = Settings(
+        sources=SourcesSettings(twitter=SourceTwitterPlan(enabled=True, mode="timeline"))
+    )
+    ctx = build_context_by_source(settings, all_sources=True)
+    assert Source.TWITTER in ctx
+    assert ctx[Source.TWITTER].mode == "timeline"
+    assert ctx[Source.TWITTER].queries == []
+    assert ctx[Source.TWITTER].config_error == ""
+
+
+def test_timeline_mode_not_config_error_and_not_topic_merged():
+    # 时间线不合并主题词，也不因无 queries 报 config_error。
+    topic = ExplorationTopic(
+        id="failure_learning", queries_by_source={"twitter": ["复盘"]}
+    )
+    settings = Settings(
+        sources=SourcesSettings(
+            twitter=SourceTwitterPlan(enabled=True, mode="timeline"),
+            exploration_topics=[topic],
+        )
+    )
+    ctx = build_context_by_source(settings, all_sources=True)
+    assert ctx[Source.TWITTER].mode == "timeline"
+    assert ctx[Source.TWITTER].queries == []
+
+
+def test_timeline_mode_discovery_plan_entry():
+    settings = Settings(
+        sources=SourcesSettings(twitter=SourceTwitterPlan(enabled=True, mode="timeline"))
+    )
+    plan = build_discovery_plan(settings)
+    assert plan.source_queries[Source.TWITTER.value] == []
+    assert plan.source_limits[Source.TWITTER.value] == settings.sources.twitter.fetch_limit
+
+
+def test_timeline_mode_infers_enabled_without_queries():
+    plan = SourceTwitterPlan(mode="timeline")
+    assert plan.enabled is True
+    assert plan.mode == "timeline"

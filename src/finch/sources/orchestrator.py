@@ -179,10 +179,15 @@ class DiscoveryOrchestrator:
         if (
             not requests
             and not normalized
-            and (ctx.queries or ctx.urls)
+            and (ctx.queries or ctx.urls or ctx.mode == "timeline")
             and status == SourceStatus.READY
         ):
-            detail = "no matching commands in capability snapshot"
+            detail = (
+                "timeline unavailable (no timeline command in capability snapshot); "
+                "not falling back to search"
+                if ctx.mode == "timeline"
+                else "no matching commands in capability snapshot"
+            )
             status = SourceStatus.DEGRADED
 
         for req in requests:

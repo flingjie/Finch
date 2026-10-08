@@ -178,7 +178,7 @@ class SourceDiscoverySettings(BaseModel):
     """每个采集源：是否启用、模式与抓取上限（显式可见，不再隐式回退）。"""
 
     enabled: bool = False
-    mode: Literal["query", "hot", "url", "disabled"] = "disabled"
+    mode: Literal["query", "hot", "url", "timeline", "disabled"] = "disabled"
     fetch_limit: int = 50
 
     @model_validator(mode="before")
@@ -191,7 +191,8 @@ class SourceDiscoverySettings(BaseModel):
         has_queries = bool(out.get("queries"))
         has_urls = bool(out.get("urls"))
         has_users = bool(out.get("users"))
-        has_payload = has_queries or has_urls or has_users
+        has_timeline = out.get("mode") == "timeline"
+        has_payload = has_queries or has_urls or has_users or has_timeline
         if "mode" not in out:
             if has_users or has_queries:
                 out["mode"] = "query"
@@ -410,6 +411,9 @@ class DiscoverySettings(BaseModel):
     freshness_boost_hours: int = 72
     nominate_limit: int = 10
     discovery_deadline_seconds: int = 180
+    # GitHub README 背景/按需读取：TTL 兜底 + 单次补读外部 README 上限。
+    readme_cache_ttl_hours: int = 168
+    max_external_readmes_per_run: int = 5
 
 
 class Settings(BaseModel):

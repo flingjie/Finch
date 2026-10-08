@@ -93,6 +93,12 @@ def build_context_by_source(
         plan = _plan(settings, src)
         if not plan.enabled or plan.mode == "disabled":
             continue
+        # 时间线模式：关注时间线是独立输入（无 queries/urls，不合并主题词，不回退搜索）。
+        if plan.mode == "timeline":
+            out[src] = DiscoveryContext(
+                queries=[], urls=[], limit=plan.fetch_limit, mode="timeline"
+            )
+            continue
         q, u = _payload(settings, src)
         # D9：合并当前主题组的查询（去重；用户固定查询优先，GitHub 用登录名）。
         if topic is not None:
@@ -161,6 +167,11 @@ def build_discovery_plan(
     for src in Source:
         plan = getattr(settings.sources, src.value, None)
         if plan is None or not plan.enabled or plan.mode == "disabled":
+            continue
+        # 时间线源计入计划（空 inputs 表达「时间线模式」，区别于禁用）。
+        if plan.mode == "timeline":
+            source_queries[src.value] = []
+            source_limits[src.value] = plan.fetch_limit
             continue
         q, u = _payload(settings, src)
         # D9：与 build_context_by_source 一致，合并当前主题组查询（GitHub 用登录名）。
