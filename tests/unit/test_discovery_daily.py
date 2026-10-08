@@ -180,6 +180,9 @@ def _seed_priority_candidate_settings(tmp_path: Path) -> Settings:
         interests={"practice_refs": ["practice:1"], "long_term_interests": ["agents"]},  # type: ignore[arg-type]
     )
     settings.paths.var_dir = tmp_path
+    # 隔离画像路径：不指向仓库根目录的本地 practice-profile.yaml（开发者真实画像），
+    # 否则「空画像」用例会误读到已确认条目。
+    settings.paths.practice_profile_path = tmp_path / "practice-profile.yaml"
     return settings
 
 

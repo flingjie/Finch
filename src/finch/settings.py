@@ -13,6 +13,8 @@ class Paths(BaseModel):
     outputs_dir: Path = Field(default_factory=lambda: Path("var/outputs"))
     inbox_dir: Path = Field(default_factory=lambda: Path("var/inbox"))
     cache_dir: Path = Field(default_factory=lambda: Path("var/cache"))
+    # 个人数据文件放在仓库根（与 finch.yaml 同级，gitignore），随 CWD 解析；
+    # 测试须显式隔离到 tmp_path。
     voice_profile_path: Path = Field(default_factory=lambda: Path("voice-profile.yaml"))
     practice_profile_path: Path = Field(
         default_factory=lambda: Path("practice-profile.yaml")
