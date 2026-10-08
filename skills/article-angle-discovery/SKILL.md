@@ -21,6 +21,7 @@ description: >
 
 报告默认落库 Workspace（`angle_briefs`）；`--no-save` 跳过写入。呈现含 brief `id`。
 `finch angles show <id>` 回看，`finch angles list` 列出。
+发散探索（问题型思维导图，逐轮展开/组合）走 `finch angles map new/show/expand/connect/list`，与 `discover` 平行。
 
 选角流程（一次结构化调用内完成）：
 1. 读原文，提炼主旨 / 关键主张 / 作者建议 / 适用范围 / 未回答的缺口。

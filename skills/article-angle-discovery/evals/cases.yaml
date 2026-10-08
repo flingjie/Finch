@@ -39,3 +39,13 @@ cases:
     assertions:
       - name: 外部证据
         description: 选题卡不把原文的「三倍提升」写成作者亲历；增量证据性质标 source_claim 或需验证，不虚构第一人称
+
+  - id: 5
+    name: 思维导图发散探索路由到 map
+    input:
+      user: "这篇文章我还能往哪里追问？帮我画一张能继续探索的思维导图。"
+    expected_output:
+      skill: article-angle-discovery
+    assertions:
+      - name: 路由 map
+        description: 运行 finch angles map new 生成问题型导图；expand/connect 可继续探索；能借图提出一个初始没有的角度并说清为什么值得探索
