@@ -5752,6 +5752,9 @@ def _render_angle_brief(brief: AngleBrief) -> str:
     if brief.coverage:
         lines += ["", "覆盖缺口："]
         lines += [f"- {g}" for g in brief.coverage]
+    if not brief.angles:
+        lines += ["", "本次没有值得独立成文的角度。"]
+        return "\n".join(lines)
     for i, card in enumerate(brief.angles):
         rec = "（推荐）" if i == brief.recommended_index else ""
         lines += [
@@ -5765,6 +5768,14 @@ def _render_angle_brief(brief: AngleBrief) -> str:
             f"- 相对原文增量：{card.incremental_value}",
             f"- 证据性质：{card.increment_basis}",
         ]
+        if card.combination_materials:
+            lines.append("- 组合材料：")
+            lines += [
+                f"  - [{m.role}] {m.content}（来源：{m.source}）"
+                for m in card.combination_materials
+            ]
+        if card.connection_rationale:
+            lines.append(f"- 连接理由：{card.connection_rationale}")
         if card.opening_scene:
             lines.append(f"- 开篇场景：{card.opening_scene}")
         if card.evidence_gaps:
@@ -5774,19 +5785,20 @@ def _render_angle_brief(brief: AngleBrief) -> str:
             lines.append(f"- 读者行动：{card.reader_action}")
         if card.writing_status:
             lines.append(f"- 写作状态：{card.writing_status}")
-    lines += [
-        "",
-        "## 推荐方向",
-        brief.recommendation_reason or "（未说明）",
-    ]
-    if brief.outline:
-        lines += ["", "提纲："]
-        lines += [f"- {o}" for o in brief.outline]
-    if brief.evidence_gaps:
-        lines += ["", "需补充证据："]
-        lines += [f"- {g}" for g in brief.evidence_gaps]
-    if brief.smallest_validation_action:
-        lines += ["", f"最小验证行动：{brief.smallest_validation_action}"]
+    if brief.recommended_index is not None:
+        lines += [
+            "",
+            "## 推荐方向",
+            brief.recommendation_reason or "（未说明）",
+        ]
+        if brief.outline:
+            lines += ["", "提纲："]
+            lines += [f"- {o}" for o in brief.outline]
+        if brief.evidence_gaps:
+            lines += ["", "需补充证据："]
+            lines += [f"- {g}" for g in brief.evidence_gaps]
+        if brief.smallest_validation_action:
+            lines += ["", f"最小验证行动：{brief.smallest_validation_action}"]
     return "\n".join(lines)
 
 

@@ -13,7 +13,7 @@ from finch.angle_discovery.models import AngleBrief
 from finch.ingest.resolver import ResolvedSource
 from finch.llm.base import StructuredInferenceRunner
 
-_ANGLE_VERSION = "1.0.0"
+_ANGLE_VERSION = "1.1.0"
 _PROMPT_PATH = Path("prompts/discover-angles.md")
 
 

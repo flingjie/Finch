@@ -11,16 +11,26 @@ cases:
         description: 运行 finch angles discover；输出含原文摘要 + 3 张选题卡 + 推荐方向提纲/证据缺口/最小验证行动
 
   - id: 2
-    name: 三个确实不同且各有增量
+    name: 论点不同且各有增量
     input:
       text: "作者说 AI 让写代码更快，但交付并没有变快，归因于审查瓶颈。"
     expected_output:
       sections: [原文摘要, 选题卡, 推荐方向]
     assertions:
       - name: 论点不同
-        description: 3 张选题卡论点彼此不同（不是三个标题同一主张）；每张都有相对原文的增量（理解/判断/行动/观察之一）
+        description: 1–3 张选题卡论点彼此不同（不硬凑 3 个、不是三个标题同一主张）；每张都有相对原文的增量（理解/判断/行动/观察之一）
 
   - id: 3
+    name: 组合材料与连接理由可见
+    input:
+      text: "作者说 AI 演示太顺滑，容易让人产生已经学会的错觉。"
+    expected_output:
+      sections: [原文摘要, 选题卡]
+    assertions:
+      - name: 组合过程
+        description: 每张选题卡含组合材料（原文观点 + 第二份材料，各带来源）与连接理由；不把类比当证据，不把外部案例写成作者亲历
+
+  - id: 4
     name: 不把原文写成亲历
     input:
       text: "作者提到用某工具把某指标提升了三倍。"

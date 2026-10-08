@@ -10,6 +10,22 @@ from pydantic import BaseModel, ConfigDict, Field
 
 IncrementBasis = Literal["source_claim", "verified_fact", "inference", "hypothetical_example"]
 
+CombinationRole = Literal["原文观点", "第二份材料"]
+
+
+class CombinationMaterial(BaseModel):
+    """一份组合材料：原文观点 或 第二份材料，各自带来源。
+
+    第二份材料可来自任何有出处的地方（实践/失败记录、其它文章、已有方法、领域通识、
+    读者问题），不限于实践记录；来源用于诚实标注，不冒充亲历。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: CombinationRole  # 原文观点 / 第二份材料
+    content: str = Field(min_length=1)  # 材料内容（观点本身）
+    source: str = Field(min_length=1)  # 来源（见 docstring）
+
 
 class SourceSummary(BaseModel):
     """原文摘要：只概括原文本身，为选题提供出发点，不点评写法。"""
@@ -32,6 +48,8 @@ class AngleCard(BaseModel):
     main_angles: list[str] = Field(default_factory=list)  # 主要角度（引用角度库名称）
     target_reader: str = ""  # 目标读者
     thesis: str = Field(min_length=1)  # 中心主张
+    combination_materials: list[CombinationMaterial] = Field(default_factory=list)  # 组合材料
+    connection_rationale: str = ""  # 连接理由：为什么两份材料能共同解释这个问题
     incremental_value: str = Field(min_length=1)  # 相对原文的增量（补上什么）
     increment_basis: IncrementBasis = "inference"  # 增量主张的证据性质
     opening_scene: str = ""  # 开篇场景（具体、可代入）
@@ -52,8 +70,8 @@ class AngleBrief(BaseModel):
     coverage: list[str] = Field(default_factory=list)  # 确定性覆盖缺口（媒体未读等，代码填）
 
     source_summary: SourceSummary
-    angles: list[AngleCard] = Field(min_length=1)  # shortlist（默认 3 个确实不同方向）
-    recommended_index: int = 0  # 指向 angles（0-based）
+    angles: list[AngleCard] = Field(default_factory=list)  # shortlist（1–3 个确实不同方向，可为空）
+    recommended_index: int | None = None  # 指向 angles（0-based）；空 angles 时为 None
     recommendation_reason: str = ""  # 为什么推荐这个方向
     outline: list[str] = Field(default_factory=list)  # 推荐方向的提纲
     evidence_gaps: list[str] = Field(default_factory=list)  # 推荐方向需补充的证据

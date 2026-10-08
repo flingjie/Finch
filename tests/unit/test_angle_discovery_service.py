@@ -63,6 +63,16 @@ def test_discover_prompt_includes_angle_library():
     assert "increment_basis" in prompt
 
 
+def test_discover_prompt_includes_combination_guidance():
+    runner = _Runner(_raw_brief())
+    AngleDiscoveryService(runner).discover(_source())
+    prompt = runner.last_prompt or ""
+    assert "组合材料" in prompt
+    assert "connection_rationale" in prompt
+    assert "第二份材料" in prompt
+    assert "独特性" in prompt
+
+
 def test_discover_prompt_includes_context():
     runner = _Runner(_raw_brief())
     ctx = AngleContext(reader="小团队", reader_problem="交付慢", preferred_angles=["系统瓶颈"])

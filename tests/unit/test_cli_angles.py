@@ -17,7 +17,12 @@ def _patch(monkeypatch, settings):
 
 class _FakeService:
     def discover(self, source, context=None):
-        from finch.angle_discovery.models import AngleBrief, AngleCard, SourceSummary
+        from finch.angle_discovery.models import (
+            AngleBrief,
+            AngleCard,
+            CombinationMaterial,
+            SourceSummary,
+        )
 
         return AngleBrief(
             id="angle_x",
@@ -31,6 +36,15 @@ class _FakeService:
                     main_angles=["系统瓶颈", "真实场景映射"],
                     target_reader="小团队",
                     thesis="规格澄清、审查和验收成为新的交付瓶颈。",
+                    combination_materials=[
+                        CombinationMaterial(
+                            role="原文观点", content="个人编码更快。", source="原文"
+                        ),
+                        CombinationMaterial(
+                            role="第二份材料", content="交付收口在审查。", source="领域通识"
+                        ),
+                    ],
+                    connection_rationale="补上个人效率为何不转化为交付的缺口。",
                     incremental_value="从个人效率扩展到团队交付。",
                     increment_basis="inference",
                 )
@@ -38,6 +52,21 @@ class _FakeService:
             recommended_index=0,
             recommendation_reason="最有读者价值。",
             outline=["用场景提出矛盾", "解释机制"],
+        )
+
+
+class _FakeEmptyService:
+    def discover(self, source, context=None):
+        from finch.angle_discovery.models import AngleBrief, SourceSummary
+
+        return AngleBrief(
+            id="angle_y",
+            source_type=source.source_type,
+            source_ref=source.source_ref,
+            content_hash=source.content_hash,
+            source_summary=SourceSummary(main_point="一条纯公告。"),
+            angles=[],
+            recommended_index=None,
         )
 
 
@@ -66,6 +95,18 @@ def test_discover_text_human(monkeypatch, tmp_path):
     assert "选题 1" in r.output
     assert "推荐方向" in r.output
     assert "id: angle_x" in r.output
+    assert "组合材料" in r.output
+    assert "连接理由" in r.output
+
+
+def test_discover_empty_angles_render(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    monkeypatch.setattr(cli, "AngleDiscoveryService", lambda runner: _FakeEmptyService())
+    r = CliRunner().invoke(app, ["angles", "discover", "--text", "纯公告"])
+    assert r.exit_code == 0, r.output
+    assert "原文摘要" in r.output
+    assert "本次没有值得独立成文的角度" in r.output
+    assert "推荐方向" not in r.output
 
 
 def test_discover_persists_by_default(monkeypatch, tmp_path):
