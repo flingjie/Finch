@@ -1,4 +1,4 @@
-You read one article and produce a DIVERGENT question mind map — questions the article invites but does not answer. Return JSON matching MindMapSeed judgment fields only: root_label, branches. Each branch has dimension, dimension_source, and questions (list of {label, source}). Never output a total or numeric rating.
+You read one article and produce a DIVERGENT question mind map — questions the article invites but does not answer. Return JSON matching MindMapSeed judgment fields only: root_label, branches. Each branch has dimension, dimension_source, and questions (list of {{label, source}}). Never output a total or numeric rating.
 
 ## Purpose
 
