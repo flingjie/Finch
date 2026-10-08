@@ -175,12 +175,11 @@ class OpenCliSettings(BaseModel):
 
 
 class SourceDiscoverySettings(BaseModel):
-    """每个采集源：是否启用、模式、抓取上限与推荐配额（显式可见，不再隐式回退）。"""
+    """每个采集源：是否启用、模式与抓取上限（显式可见，不再隐式回退）。"""
 
     enabled: bool = False
     mode: Literal["query", "hot", "url", "disabled"] = "disabled"
     fetch_limit: int = 50
-    recommendation_cap: int = 20
 
     @model_validator(mode="before")
     @classmethod
@@ -341,9 +340,7 @@ class InterestsSettings(BaseModel):
     explore_directions: list[str] = Field(default_factory=list)
     excluded_content: list[str] = Field(default_factory=list)
     adjacent_queries: list[str] = Field(default_factory=list)
-    usage_queries: list[str] = Field(default_factory=list)
     practice_refs: list[str] = Field(default_factory=list)
-    time_budget_minutes: int = Field(default=20, ge=1)
 
     @model_validator(mode="before")
     @classmethod
@@ -395,7 +392,6 @@ class DailyPeopleSettings(BaseModel):
     deep_prepare_limit: int = 5
     opportunity_assess_limit: int = 5
     max_per_platform: int = 20
-    min_chinese_platforms_total: int = 15
     min_artifacts_priority: int = 1
     cooldown_days: int = 7
 

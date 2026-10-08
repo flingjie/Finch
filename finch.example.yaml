@@ -69,7 +69,6 @@ sources:
     enabled: true
     mode: query
     fetch_limit: 200
-    recommendation_cap: 20
     queries:
       - '"agent reliability" OR "agent evals"'                 # Agent 工程（保留为一组）
       - '("indie maker" OR bootstrapped) (lessons OR mistakes)'
@@ -82,7 +81,6 @@ sources:
     enabled: true
     mode: query
     fetch_limit: 100
-    recommendation_cap: 8
     queries:
       - "agent reliability production failure"     # Agent 工程（保留为一组）
       - "learning in public deliberate practice"
@@ -94,13 +92,11 @@ sources:
     enabled: false
     mode: query
     fetch_limit: 100
-    recommendation_cap: 15
     users: []  # GitHub logins only, e.g. [jackwener, iFurySt]
   v2ex:
     enabled: true
     mode: query
     fetch_limit: 100
-    recommendation_cap: 12
     queries:
       - "AI Agent 实践"          # Agent 工程（保留为一组）
       - "独立创作 复盘"
@@ -112,7 +108,6 @@ sources:
     enabled: true
     mode: query
     fetch_limit: 50
-    recommendation_cap: 8
     queries:
       - "AI Agent 实践"          # Agent 工程（保留为一组）
       - "独立创作 复盘"
@@ -123,7 +118,6 @@ sources:
     enabled: true
     mode: query
     fetch_limit: 100
-    recommendation_cap: 12
     queries:
       - "AI Agent 开发实践"      # Agent 工程（保留为一组）
       - "独立创作 复盘"
@@ -148,7 +142,6 @@ discovery:
     semantic_assess_limit: 20
     deep_prepare_limit: 5
     max_per_platform: 20
-    min_chinese_platforms_total: 15
     min_artifacts_priority: 2
     cooldown_days: 7
 
@@ -236,8 +229,6 @@ interests:
     - deliberate practice
     - writing process
     - changed my mind
-  # usage_queries 当前未接入任何代码（死配置），保留为空占位，勿依赖其效果。
-  usage_queries: []
   # 按「形式」排除低价值内容，不按「主题」一刀切（Agent/AI 话题不再整体排除）。
   excluded_content:
     - 重复宣传

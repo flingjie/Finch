@@ -13,9 +13,6 @@ from finch.discovery.candidate_pool import PersonCandidate
 from finch.peers.models import PeerProfile
 from finch.settings import Settings
 
-# 中文平台（用于 min_chinese_platforms_total 下限）。
-_CHINESE_PLATFORMS = frozenset({"v2ex", "weixin", "xiaohongshu"})
-
 # 不同角色的关键词启发式（best-effort，不进入 LLM）。
 _ROLE_KEYWORDS = (
     "product manager",
