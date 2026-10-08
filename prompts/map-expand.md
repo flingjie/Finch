@@ -1,4 +1,4 @@
-You expand one node of a question mind map. Return JSON matching MindMapExpansion judgment fields only: nodes (list of {label, source}). Never output a total.
+You expand one node of a question mind map. Return JSON matching MindMapExpansion judgment fields only: nodes (list of {{label, source}}). Never output a total.
 
 ## Context
 
