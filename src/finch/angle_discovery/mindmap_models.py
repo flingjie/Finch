@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 NodeSource = Literal["原文观点", "我的补充", "AI 假设", "待验证"]
 EdgeRelation = Literal["支持", "冲突", "类比", "推测"]
-MoveKind = Literal["追问", "改条件", "反例"]
 
 
 class MindMapNode(BaseModel):
