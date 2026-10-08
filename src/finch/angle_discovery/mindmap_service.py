@@ -26,6 +26,7 @@ _CONNECT_PROMPT = Path("prompts/map-connect.md")
 
 
 def map_id(content_hash: str) -> str:
+    # 版本化哈希：同 content_hash 稳定；prompt/版本变化后得到新 id（与 brief_id 一致）。
     raw = hashlib.sha256(f"{content_hash}:{_MAP_VERSION}".encode()).hexdigest()
     return f"map_{raw[:16]}"
 
@@ -132,7 +133,11 @@ class MindMapService:
         target = node_id
         if predict.strip():
             p = MindMapNode(
-                id=_next_id(nodes), label=predict.strip(), source="我的补充", parent_id=node_id
+                id=_next_id(nodes),
+                label=predict.strip(),
+                source="我的补充",
+                parent_id=node_id,
+                expanded=True,
             )
             nodes.append(p)
             target = p.id

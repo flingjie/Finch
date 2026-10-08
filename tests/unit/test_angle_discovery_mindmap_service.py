@@ -158,6 +158,7 @@ def test_expand_with_predict_inserts_my_supplement():
     p = next(n for n in m.nodes if n.source == "我的补充")
     assert p.label == "我觉得会改变审查这一步"
     assert p.parent_id == "n2"
+    assert p.expanded is True
     kids = [n for n in m.nodes if n.parent_id == p.id]
     assert len(kids) == 2
 
