@@ -11,6 +11,10 @@ import typer
 import yaml
 from pydantic import ValidationError
 
+from .angle_discovery.mindmap_models import MindMap
+from .angle_discovery.mindmap_render import render_combination, render_mindmap
+from .angle_discovery.mindmap_repository import MindMapRepository
+from .angle_discovery.mindmap_service import MindMapService, map_id
 from .angle_discovery.models import AngleBrief
 from .angle_discovery.repository import AngleBriefRepository
 from .angle_discovery.service import AngleContext, AngleDiscoveryService
@@ -216,6 +220,9 @@ app.add_typer(attempts_app, name="attempts")
 
 angles_app = typer.Typer(help="文章选角：读一篇文章找出值得独立成文的角度（选题卡 / 写作 brief）")
 app.add_typer(angles_app, name="angles")
+
+map_app = typer.Typer(help="发散思维导图：读一篇文章生成可继续探索的问题导图")
+angles_app.add_typer(map_app, name="map")
 
 article_app = typer.Typer(help="分析一篇文章的表达任务、读者变化与方法有效性")
 app.add_typer(article_app, name="article")
@@ -5437,6 +5444,142 @@ def angles_list() -> None:
         typer.echo(bid)
 
 
+@map_app.command("new")
+def map_new(
+    text: str = typer.Option(None, "--text", help="要发散的文本"),
+    file: str = typer.Option(None, "--file", help="文本文件"),
+    url: str = typer.Option(None, "--url", help="链接（X/Reddit/普通网页）"),
+    reader: str = typer.Option(None, "--reader", help="目标读者"),
+    reader_problem: str = typer.Option(None, "--reader-problem", help="读者遇到的问题"),
+    author_context: str = typer.Option(None, "--author-context", help="作者背景/写作方向"),
+    practice_ref: list[str] = typer.Option([], "--practice-ref", help="引用实践记录（非证明）"),
+    goal: str = typer.Option(None, "--goal", help="写作目标"),
+    force: bool = typer.Option(False, "--force", help="覆盖同源已有导图"),
+) -> None:
+    """读一篇文章生成一张可继续探索的问题导图。"""
+    provided = sum(x is not None for x in (text, file, url))
+    if provided != 1:
+        typer.echo("exactly one of --text / --file / --url is required")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    resolver = SourceResolver(OpenCliClient(), RedditOpenCliClient(), WebFetcher())
+    try:
+        if text is not None:
+            source = resolver.resolve_text(text)
+        elif file is not None:
+            source = resolver.resolve_file(file)
+        else:
+            source = resolver.resolve_url(url)
+        if not source.body.strip():
+            typer.echo("empty body after resolve")
+            raise typer.Exit(code=1)
+        repo = MindMapRepository(ws)
+        if repo.get(map_id(source.content_hash)) is not None and not force:
+            typer.echo(f"mind map already exists: {map_id(source.content_hash)}（用 --force 覆盖）")
+            raise typer.Exit(code=1)
+        context = AngleContext(
+            reader=reader or "",
+            reader_problem=reader_problem or "",
+            author_context=author_context or "",
+            practice_refs=practice_ref,
+            goal=goal or "",
+        )
+        runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+        mmap = MindMapService(runner).seed(source, context)
+        repo.upsert(mmap)
+    except (RuntimeError, StructuredOutputError, OSError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    typer.echo(_render_mindmap_full(mmap))
+
+
+@map_app.command("show")
+def map_show(
+    map_id_arg: str = typer.Argument(..., help="导图 id"),
+    depth: int = typer.Option(None, "--depth", help="渲染到第几层（不传则全部）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """回看一张已存导图。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    mmap = MindMapRepository(ws).get(map_id_arg)
+    if mmap is None:
+        typer.echo(f"mind map not found: {map_id_arg}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(mmap.model_dump_json(indent=2))
+    else:
+        typer.echo(_render_mindmap_full(mmap, depth=depth))
+
+
+@map_app.command("expand")
+def map_expand(
+    map_id_arg: str = typer.Argument(..., help="导图 id"),
+    node_id: str = typer.Argument(..., help="要展开的节点 id（n0/n1/…）"),
+    move: str = typer.Option("追问", "--move", help="思考动作：追问/改条件/反例"),
+    predict: str = typer.Option(None, "--predict", help="先写下你的预测，再展开"),
+) -> None:
+    """沿一个节点展开下一层问题。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = MindMapRepository(ws)
+    mmap = repo.get(map_id_arg)
+    if mmap is None:
+        typer.echo(f"mind map not found: {map_id_arg}")
+        raise typer.Exit(code=1)
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    try:
+        mmap = MindMapService(runner).expand(mmap, node_id, move=move, predict=predict or "")
+    except (RuntimeError, StructuredOutputError, OSError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    repo.upsert(mmap)
+    typer.echo(_render_mindmap_full(mmap))
+
+
+@map_app.command("connect")
+def map_connect(
+    map_id_arg: str = typer.Argument(..., help="导图 id"),
+    node_a: str = typer.Argument(..., help="节点 A 的 id"),
+    node_b: str = typer.Argument(..., help="节点 B 的 id"),
+) -> None:
+    """组合两个节点成一个候选角度。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = MindMapRepository(ws)
+    mmap = repo.get(map_id_arg)
+    if mmap is None:
+        typer.echo(f"mind map not found: {map_id_arg}")
+        raise typer.Exit(code=1)
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    try:
+        mmap = MindMapService(runner).connect(mmap, node_a, node_b)
+    except (RuntimeError, StructuredOutputError, OSError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    repo.upsert(mmap)
+    typer.echo(_render_mindmap_full(mmap))
+
+
+@map_app.command("list")
+def map_list() -> None:
+    """列出已存导图 id。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    ids = MindMapRepository(ws).list()
+    if not ids:
+        typer.echo("no mind maps saved")
+        return
+    for mid in ids:
+        typer.echo(mid)
+
+
 def _methods_service(ws: Workspace, settings: Settings) -> ExpressionMethodService:
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     return ExpressionMethodService(
@@ -5799,6 +5942,23 @@ def _render_angle_brief(brief: AngleBrief) -> str:
             lines += [f"- {g}" for g in brief.evidence_gaps]
         if brief.smallest_validation_action:
             lines += ["", f"最小验证行动：{brief.smallest_validation_action}"]
+    return "\n".join(lines)
+
+
+def _render_mindmap_full(mmap: MindMap, depth: int | None = None) -> str:
+    lines = ["# 思维导图", "", f"id: {mmap.id}", "", render_mindmap(mmap, max_depth=depth)]
+    if mmap.combinations:
+        labels = {n.id: n.label for n in mmap.nodes}
+        for combo in mmap.combinations:
+            lines += ["", "## 组合角度", render_combination(combo, labels)]
+    lines += ["", "节点："]
+    for n in mmap.nodes:
+        lines.append(f"- {n.id} {n.label}〔{n.source}〕")
+    lines += [
+        "",
+        "继续：finch angles map expand <id> <node-id> 追问 · "
+        "finch angles map connect <id> <a> <b> 组合两个节点",
+    ]
     return "\n".join(lines)
 
 
