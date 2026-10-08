@@ -101,6 +101,7 @@ from .opportunities.repository import (
 from .opportunities.service import OpportunityService
 from .peers.models import PeerProfile
 from .peers.service import PeerService, profile_url_for
+from .practice.models import ExerciseLiteral, PracticeFeedback, ResponseKindLiteral
 from .practice.service import PracticeService
 from .problems.render import render_active_problems
 from .profile import bootstrap as profile_bootstrap
@@ -4741,9 +4742,11 @@ def practice_start(
     idea: str = typer.Option(None, "--idea", help="关联 idea id"),
     attempt: str = typer.Option(..., "--attempt", help="用户首稿"),
     method: str = typer.Option(None, "--method", help="练习的表达方法 id（finch methods）"),
+    audience: str = typer.Option("", "--audience", help="目标读者"),
+    goal: str = typer.Option("", "--goal", help="训练目的"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """开始一次表达练习（可选关联 idea / 表达方法 + 首稿）。"""
+    """开始一次表达练习（可选关联 idea / 表达方法 + 首稿 + 目标语境）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -4752,7 +4755,11 @@ def practice_start(
         raise typer.Exit(code=1)
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     session = PracticeService(PracticeSessionRepository(ws), runner).start(
-        idea_id=idea, initial_attempt=attempt, method_id=method
+        idea_id=idea,
+        initial_attempt=attempt,
+        method_id=method,
+        audience=audience,
+        goal=goal,
     )
     if as_json:
         typer.echo(session.model_dump_json(indent=2))
@@ -4776,16 +4783,45 @@ def _render_method_drill_card(method: ExpressionMethod) -> str:
     )
 
 
+def _feedback_lines(fb: PracticeFeedback) -> list[str]:
+    """按 action 渲染一条反馈（diagnose / show 共用）。"""
+    lines = [f"diagnosis: {fb.diagnosis}"]
+    if fb.evidence_quote:
+        lines.append(f"evidence: {fb.evidence_quote}")
+    if fb.action == "revise":
+        lines.append(f"question: {fb.task}")
+        lines.append("下一步：finch practice save --revision 或 respond")
+    elif fb.action == "predict":
+        lines.append(f"task: {fb.task}")
+        lines.append("下一步：finch practice respond --kind prediction")
+    elif fb.action == "hint":
+        lines.append(f"hint (level {fb.hint_level}): {fb.task}")
+        lines.append("下一步：finch practice save --revision")
+    elif fb.action == "transfer":
+        lines.append(f"task: {fb.task}")
+        lines.append("下一步：finch practice respond --kind transfer")
+    else:  # finish
+        lines.append("可以结束：finch practice finish --final \"...\"")
+    return lines
+
+
 @practice_app.command("diagnose")
 def practice_diagnose(
     session_id: str = typer.Argument(..., help="session id"),
     context: str = typer.Option("", "--context", help="可选 idea 语境"),
+    exercise: str = typer.Option(
+        "auto", "--exercise", help="练习类型：auto|revise|predict|hint|transfer"
+    ),
+    hint_level: int = typer.Option(0, "--hint-level", help="提示层级 0-3（仅 hint 用）"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """诊断最大问题 + 追问一个问题（LLM）。"""
+    """诊断最大问题 + 选定一个下一步动作（LLM）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
+    if exercise not in ("auto", "revise", "predict", "hint", "transfer"):
+        typer.echo(f"invalid exercise: {exercise}")
+        raise typer.Exit(code=1)
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     existing = PracticeSessionRepository(ws).get(session_id)
     if existing is not None and existing.method_id:
@@ -4795,7 +4831,10 @@ def practice_diagnose(
             context = card + ("\n\n" + context if context else "")
     try:
         session = PracticeService(PracticeSessionRepository(ws), runner).diagnose(
-            session_id, context=context
+            session_id,
+            context=context,
+            exercise=cast(ExerciseLiteral, exercise),
+            hint_level=hint_level,
         )
     except KeyError:
         typer.echo(f"session not found: {session_id}")
@@ -4806,9 +4845,12 @@ def practice_diagnose(
     if as_json:
         typer.echo(session.model_dump_json(indent=2))
     else:
-        typer.echo(f"diagnosis: {session.diagnosis}")
-        typer.echo(f"question: {session.questions_asked[-1]}")
-        typer.echo("下一步：保存最终版")
+        turn = next((t for t in reversed(session.turns) if t.responded_at is None), None)
+        if turn is None:
+            typer.echo(f"diagnosis: {session.diagnosis}")
+            return
+        for line in _feedback_lines(turn.feedback):
+            typer.echo(line)
 
 
 @practice_app.command("save")
@@ -4836,6 +4878,46 @@ def practice_save(
         typer.echo(session.model_dump_json(indent=2))
     else:
         typer.echo(f"revisions: {len(session.revisions)}")
+        typer.echo("下一步：诊断本次表达")
+
+
+@practice_app.command("respond")
+def practice_respond(
+    session_id: str = typer.Argument(..., help="session id"),
+    turn: str = typer.Option(..., "--turn", help="轮次 id"),
+    kind: str = typer.Option(None, "--kind", help="revision|prediction|transfer"),
+    text: str = typer.Option("", "--text", help="用户响应内容"),
+    skip: bool = typer.Option(False, "--skip", help="跳过该轮"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """对一轮反馈作出响应（修订 / 预测 / 迁移 / 跳过）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    if skip:
+        response_kind = "skipped"
+        response_text = ""
+    else:
+        if kind not in ("revision", "prediction", "transfer"):
+            typer.echo(f"invalid kind: {kind}. expected revision|prediction|transfer")
+            raise typer.Exit(code=1)
+        response_kind = kind
+        response_text = text
+    try:
+        session = PracticeService(PracticeSessionRepository(ws), runner).respond(
+            session_id, turn, response_text, cast(ResponseKindLiteral, response_kind)
+        )
+    except KeyError:
+        typer.echo(f"session not found: {session_id}")
+        raise typer.Exit(code=1) from None
+    except (ValueError, RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        typer.echo(f"responded to turn {turn}")
         typer.echo("下一步：诊断本次表达")
 
 
@@ -4895,7 +4977,7 @@ def practice_show(
     session_id: str = typer.Argument(..., help="session id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """展示会话（首稿 / 诊断 / 追问 / 修订 / 最终版 / lesson）。"""
+    """展示会话（首稿 / 逐轮历史 / 修订 / 最终版 / lesson）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -4913,9 +4995,26 @@ def practice_show(
         if session.method_verdict:
             typer.echo(f"method_verdict: {session.method_verdict}")
             typer.echo(f"method_verdict_note: {session.method_verdict_note}")
+        if session.context.audience:
+            typer.echo(f"audience: {session.context.audience}")
+        if session.context.goal:
+            typer.echo(f"goal: {session.context.goal}")
         typer.echo(f"initial_attempt: {session.initial_attempt}")
-        typer.echo(f"diagnosis: {session.diagnosis}")
-        typer.echo(f"questions_asked: {json.dumps(session.questions_asked, ensure_ascii=False)}")
+        if session.turns:
+            typer.echo("turns:")
+            for turn in session.turns:
+                typer.echo(f"  - turn {turn.id} [{turn.feedback.action}]")
+                typer.echo(f"      diagnosis: {turn.feedback.diagnosis}")
+                if turn.feedback.task:
+                    typer.echo(f"      task: {turn.feedback.task}")
+                if turn.response is not None:
+                    typer.echo(f"      response ({turn.response_kind}): {turn.response}")
+                else:
+                    typer.echo("      response: （未响应）")
+        else:
+            typer.echo(f"diagnosis: {session.diagnosis}")
+            questions = json.dumps(session.questions_asked, ensure_ascii=False)
+            typer.echo(f"questions_asked: {questions}")
         typer.echo(f"revisions: {json.dumps(session.revisions, ensure_ascii=False)}")
         typer.echo(f"final_expression: {session.final_expression}")
         typer.echo(f"lesson: {session.lesson}")
