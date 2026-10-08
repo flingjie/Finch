@@ -1,9 +1,11 @@
 """MindMapService：seed/expand/connect 覆盖确定性字段 + prompt 注入。"""
 
+import pytest
 
 from finch.angle_discovery.mindmap_models import (
     MindMap,
     MindMapBranch,
+    MindMapExpansion,
     MindMapNode,
     MindMapQuestion,
     MindMapSeed,
@@ -128,3 +130,47 @@ def test_seed_prompt_includes_context():
     assert "小团队" in p
     assert "交付慢" in p
     assert "找到自己的判断" in p
+
+
+def _expansion() -> MindMapExpansion:
+    return MindMapExpansion(
+        nodes=[
+            MindMapQuestion(label="换数据，还是换场景？", source="AI 假设"),
+            MindMapQuestion(label="原来的解释在哪个条件失效？", source="待验证"),
+        ]
+    )
+
+
+def test_expand_appends_children_and_marks_expanded():
+    svc = MindMapService(_Runner(_expansion()))
+    m = svc.expand(_map(), "n2")
+    n2 = next(n for n in m.nodes if n.id == "n2")
+    assert n2.expanded is True
+    kids = [n for n in m.nodes if n.parent_id == "n2"]
+    assert [n.label for n in kids] == ["换数据，还是换场景？", "原来的解释在哪个条件失效？"]
+    assert len(m.nodes) == 5
+
+
+def test_expand_with_predict_inserts_my_supplement():
+    svc = MindMapService(_Runner(_expansion()))
+    m = svc.expand(_map(), "n2", move="改条件", predict="我觉得会改变审查这一步")
+    p = next(n for n in m.nodes if n.source == "我的补充")
+    assert p.label == "我觉得会改变审查这一步"
+    assert p.parent_id == "n2"
+    kids = [n for n in m.nodes if n.parent_id == p.id]
+    assert len(kids) == 2
+
+
+def test_expand_unknown_node_raises():
+    svc = MindMapService(_Runner(_expansion()))
+    with pytest.raises(RuntimeError):
+        svc.expand(_map(), "n99")
+
+
+def test_expand_prompt_includes_path_and_move():
+    runner = _Runner(_expansion())
+    MindMapService(runner).expand(_map(), "n2", move="反例", predict="先预测")
+    p = runner.last_prompt or ""
+    assert "反例" in p
+    assert "先预测" in p
+    assert "它减少了哪种成本？" in p

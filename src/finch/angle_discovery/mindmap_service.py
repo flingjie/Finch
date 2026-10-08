@@ -10,6 +10,7 @@ from typing import cast
 
 from finch.angle_discovery.mindmap_models import (
     MindMap,
+    MindMapExpansion,
     MindMapNode,
     MindMapSeed,
 )
@@ -38,6 +39,23 @@ def _fmt(items: list[str]) -> str:
 
 def _next_id(nodes: list[MindMapNode]) -> str:
     return f"n{len(nodes)}"
+
+
+def _find_node(m: MindMap, node_id: str) -> MindMapNode:
+    for n in m.nodes:
+        if n.id == node_id:
+            return n
+    raise RuntimeError(f"node not found: {node_id}")
+
+
+def _path_labels(m: MindMap, node: MindMapNode) -> list[str]:
+    by_id = {n.id: n for n in m.nodes}
+    labels = [node.label]
+    cur = node
+    while cur.parent_id is not None and cur.parent_id in by_id:
+        cur = by_id[cur.parent_id]
+        labels.append(cur.label)
+    return list(reversed(labels))
 
 
 class MindMapService:
@@ -95,3 +113,33 @@ class MindMapService:
             root_label=seed.root_label,
             nodes=nodes,
         )
+
+    def expand(
+        self, m: MindMap, node_id: str, move: str = "追问", predict: str = ""
+    ) -> MindMap:
+        node = _find_node(m, node_id)
+        path = " → ".join(_path_labels(m, node))
+        prompt = _EXPAND_PROMPT.read_text().format(
+            root=m.root_label,
+            path=path,
+            move=move,
+            predict=predict or "（未提供）",
+        )
+        expansion = cast(MindMapExpansion, self.runner.run(prompt, MindMapExpansion))
+        updated = m.model_copy(deep=True)
+        nodes = updated.nodes
+        target = node_id
+        if predict.strip():
+            p = MindMapNode(
+                id=_next_id(nodes), label=predict.strip(), source="我的补充", parent_id=node_id
+            )
+            nodes.append(p)
+            target = p.id
+        for q in expansion.nodes:
+            nodes.append(
+                MindMapNode(id=_next_id(nodes), label=q.label, source=q.source, parent_id=target)
+            )
+        for n in nodes:
+            if n.id == node_id:
+                n.expanded = True
+        return updated
