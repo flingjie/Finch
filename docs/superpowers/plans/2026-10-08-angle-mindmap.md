@@ -1155,9 +1155,12 @@ git commit -m "feat(angle-discovery): render a mind map as terminal Mermaid"
 ```python
 """CLI tests for finch angles map。"""
 
+import hashlib
+
 from typer.testing import CliRunner
 
 from finch import cli
+from finch.angle_discovery.mindmap_service import map_id
 from finch.cli import app
 from finch.settings import Paths, Settings
 
@@ -1168,6 +1171,10 @@ def _settings(tmp_path):
 
 def _patch(monkeypatch, settings):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+
+def _text_id(text="hello") -> str:
+    return map_id(hashlib.sha256(text.encode("utf-8")).hexdigest())
 
 
 def _map():
@@ -1192,10 +1199,13 @@ class _FakeMapService:
         self.connected = None
 
     def seed(self, source, context=None):
-        m = _map()
-        m.content_hash = source.content_hash
-        m.source_type = source.source_type
-        return m
+        return _map().model_copy(
+            update={
+                "id": map_id(source.content_hash),
+                "content_hash": source.content_hash,
+                "source_type": source.source_type,
+            }
+        )
 
     def expand(self, m, node_id, move="追问", predict=""):
         self.expanded = node_id
@@ -1227,7 +1237,7 @@ def test_map_new_text(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["angles", "map", "new", "--text", "hello"])
     assert r.exit_code == 0, r.output
     assert "# 思维导图" in r.output
-    assert "id: map_x" in r.output
+    assert f"id: {_text_id()}" in r.output
     assert "mindmap" in r.output
     assert "机制" in r.output
     assert "节点：" in r.output
@@ -1247,12 +1257,12 @@ def test_map_show_and_list(monkeypatch, tmp_path):
     _patch(monkeypatch, _settings(tmp_path))
     monkeypatch.setattr(cli, "MindMapService", lambda runner: _FakeMapService())
     CliRunner().invoke(app, ["angles", "map", "new", "--text", "hello"])
-    shown = CliRunner().invoke(app, ["angles", "map", "show", "map_x"])
+    shown = CliRunner().invoke(app, ["angles", "map", "show", _text_id()])
     assert shown.exit_code == 0, shown.output
     assert "mindmap" in shown.output
     listed = CliRunner().invoke(app, ["angles", "map", "list"])
     assert listed.exit_code == 0
-    assert "map_x" in listed.output
+    assert _text_id() in listed.output
 
 
 def test_map_expand(monkeypatch, tmp_path):
@@ -1260,7 +1270,7 @@ def test_map_expand(monkeypatch, tmp_path):
     fake = _FakeMapService()
     monkeypatch.setattr(cli, "MindMapService", lambda runner: fake)
     CliRunner().invoke(app, ["angles", "map", "new", "--text", "hello"])
-    r = CliRunner().invoke(app, ["angles", "map", "expand", "map_x", "n2"])
+    r = CliRunner().invoke(app, ["angles", "map", "expand", _text_id(), "n2"])
     assert r.exit_code == 0, r.output
     assert fake.expanded == "n2"
     assert "换数据，还是换场景？" in r.output
@@ -1271,7 +1281,7 @@ def test_map_connect(monkeypatch, tmp_path):
     fake = _FakeMapService()
     monkeypatch.setattr(cli, "MindMapService", lambda runner: fake)
     CliRunner().invoke(app, ["angles", "map", "new", "--text", "hello"])
-    r = CliRunner().invoke(app, ["angles", "map", "connect", "map_x", "n1", "n2"])
+    r = CliRunner().invoke(app, ["angles", "map", "connect", _text_id(), "n1", "n2"])
     assert r.exit_code == 0, r.output
     assert fake.connected == ("n1", "n2")
     assert "组合角度" in r.output
