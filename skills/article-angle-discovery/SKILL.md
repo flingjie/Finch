@@ -31,6 +31,10 @@ description: >
 4. 筛出 1–3 个**论点确实不同**的方向（可零候选，不硬凑；独特性排最后）。
 5. 深入推荐 1 个方向：提纲 + 证据缺口 + 最小验证行动。
 
+## 输入回退（codex 触发）
+
+用户未提供帖子链接时的回退规则见 `_shared/url-fallback.md`。
+
 ## 价值判据
 
 相对原文必须至少给读者一种增量：理解增量（现象为什么发生）/ 判断增量（何时适用、如何选）/
@@ -61,3 +65,4 @@ description: >
 - `references/output-contract.md` — AngleBrief 契约（确定性字段 + 判断字段 + 证据性质标注）。
 - `_shared/evidence-policy.md` — 外部帖 ≠ 个人证据；不把推断写成已验证事实。
 - `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话。
+- `_shared/url-fallback.md` — 用户未提供帖子链接时，回退到当前对话中最近一次 URL（codex 触发）。

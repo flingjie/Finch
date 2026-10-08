@@ -26,6 +26,10 @@ description: >
 呈现固定段落：表达任务、读者与预期变化、表达特点、**写作风格**（七维 + 可迁移技巧等）、目标达成情况、可借鉴方法。
 `inferred=true` 时在表达任务标明「根据文章推断」。`--json` 时 `style` 为嵌套 `StyleBlock`。
 
+## 输入回退（codex 触发）
+
+用户未提供帖子链接时的回退规则见 `_shared/url-fallback.md`。
+
 ## 清晰表达透镜（可选）
 
 报告可含 `clarity_cost_reductions`：文章如何用结构、用词、步骤划分降低读者的理解成本。
@@ -42,3 +46,4 @@ description: >
 
 - `references/analysis-steps.md` — 任务与风格判据。
 - `references/output-contract.md` — ArticleReport 契约（含 `style`）。
+- `_shared/url-fallback.md` — 用户未提供帖子链接时，回退到当前对话中最近一次 URL（codex 触发）。

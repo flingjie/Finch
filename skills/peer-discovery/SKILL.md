@@ -36,6 +36,10 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 - 反馈：`finch connect feedback --file feedback.json`
 - 回应接续：`finch connections follow-up --opportunity <id> --reply-body "…"`
 
+## 输入回退（codex 触发）
+
+用户未提供帖子链接时的回退规则见 `_shared/url-fallback.md`。
+
 ## 产出契约
 
 - `Opportunity`（新聚合）：`why_me` / `why_continue` / `entry_kind` / `proposal`
@@ -83,3 +87,4 @@ LLM 不输出最终 `total`。不因商业线索挤掉所有普通同行。
 - `_shared/agent-presentation.md`
 - `references/presentation.md`
 - `_shared/dialogue-policy.md` — 任务后延伸点选择、授权边界与收束
+- `_shared/url-fallback.md` — 用户未提供帖子链接时，回退到当前对话中最近一次 URL（codex 触发）。

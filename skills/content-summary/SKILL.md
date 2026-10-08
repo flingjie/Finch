@@ -27,6 +27,10 @@ description: >
 3. **关键依据或例子**：保留支撑观点的重要信息，标注来源（作者 / 引用 / 回复 / 未标明）。
 4. **条件与限制**：保留原文的「可能」「仅适用于」等限定；缺少上下文时明确说明。
 
+## 输入回退（codex 触发）
+
+用户未提供帖子链接时的回退规则见 `_shared/url-fallback.md`。
+
 ## 质量标准
 
 **忠实、完整、简洁**。作者观点标为作者观点；回复与引用内容区分来源；
@@ -56,3 +60,4 @@ description: >
 
 - `references/output-contract.md` — ContentSummary 契约（确定性字段 + 四内容字段 + 来源标注）。
 - `skills/_shared/asd-ste100-inspired.md` — 摘要清晰度约束的共享规则（CL01–CL08）。
+- `_shared/url-fallback.md` — 用户未提供帖子链接时，回退到当前对话中最近一次 URL（codex 触发）。

@@ -40,6 +40,10 @@ description: >
 - 获知回应后接续：`finch connections follow-up --opportunity <id> --reply-body "…"
   [--reply-url …]`（实质回应可生成关联的新 proposed 机会）。
 
+## 输入回退（codex 触发）
+
+用户未提供帖子链接时的回退规则见 `_shared/url-fallback.md`。
+
 ## 产出契约（Artifact）
 
 - 正文是可审阅表达方案，不是作者已确认的立场；`source_refs` 回溯机会的证据引用。
@@ -83,3 +87,4 @@ description: >
 - `references/presentation.md` — 本 Skill 的形状与「采用 / 改 / 跳过」映射。
 - `_shared/evidence-policy.md` — 回复提纲 vs 原创草稿的证据要求。
 - `_shared/dialogue-policy.md` — 任务后延伸点选择、授权边界与收束
+- `_shared/url-fallback.md` — 用户未提供帖子链接时，回退到当前对话中最近一次 URL（codex 触发）。
