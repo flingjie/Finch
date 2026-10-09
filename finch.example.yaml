@@ -206,7 +206,7 @@ engagement:
   max_discovery_authors: 50
   max_semantic_authors: 20
   max_display_opportunities: 10
-  snapshot_ttl_hours: 24
+  snapshot_ttl_hours: 12
   public_expression_requires_approval: true
 
 interests:

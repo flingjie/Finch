@@ -28,3 +28,6 @@ voice-profile.yaml
 
 # Git worktrees (local isolation)
 .worktrees/
+
+# Local generated artifacts (angle/discovery briefs, diagrams)
+angle_brief_*

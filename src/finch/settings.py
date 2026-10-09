@@ -332,7 +332,7 @@ class EngagementSettings(BaseModel):
     # Legacy alias for max_semantic_authors (kept for old YAML / callers).
     max_peers_per_run: int = 20
     max_posts_per_peer: int = 3
-    snapshot_ttl_hours: int = 24
+    snapshot_ttl_hours: int = 12
     public_expression_requires_approval: bool = True
     weights: ScoringWeights = Field(default_factory=ScoringWeights)
     peer_value_weights: PeerValueWeights = Field(default_factory=PeerValueWeights)
