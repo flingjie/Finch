@@ -8,7 +8,13 @@ from finch import cli
 from finch.cli import app
 from finch.expression_methods.models import ExpressionMethod
 from finch.expression_methods.repository import ExpressionMethodRepository
-from finch.practice.models import PracticeFeedback, PracticeLesson
+from finch.practice.models import (
+    LocalFeedback,
+    PracticeFeedback,
+    PracticeLesson,
+    PracticeOption,
+    PracticeOptionsOutput,
+)
 from finch.practice.service import PracticeService
 from finch.settings import Paths, Settings
 from finch.storage.repositories import PracticeSessionRepository
@@ -299,3 +305,106 @@ def test_practice_show_legacy_session_no_turns(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["practice", "show", session_id])
     assert r.exit_code == 0, r.output
     assert "diagnosis:" in r.output
+
+
+# —— 写作伙伴流程 CLI ——
+
+
+class _PartnerRunner:
+    def run(self, prompt, output_model, **kw):
+        if output_model is PracticeOptionsOutput:
+            return PracticeOptionsOutput(
+                options=[
+                    PracticeOption(
+                        name="熟悉写法", familiarity="熟悉", entry_point="e", dimension="结构"
+                    ),
+                    PracticeOption(
+                        name="相邻写法", familiarity="相邻", entry_point="e2", dimension="结构"
+                    ),
+                    PracticeOption(
+                        name="陌生写法", familiarity="陌生", entry_point="e3", dimension="节奏"
+                    ),
+                ]
+            )
+        if output_model is LocalFeedback:
+            return LocalFeedback(
+                keep="保留这一句",
+                key_location="这里只是断言",
+                alternative_a="写法 A",
+                alternative_b="写法 B",
+                difference="A 稳、B 有现场感",
+                rewrite_task="请重写",
+            )
+        return PracticeLesson(lesson="一个经验")
+
+
+def _patch_partner_runner(monkeypatch):
+    monkeypatch.setattr(cli, "create_runner", lambda *a, **k: _PartnerRunner())
+    monkeypatch.setattr(cli, "CodexRunner", _PartnerRunner)
+
+
+def test_practice_start_with_material_only(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    _patch(monkeypatch, settings)
+    r = CliRunner().invoke(app, ["practice", "start", "--material", "一个想法"])
+    assert r.exit_code == 0, r.output
+    session_id = r.output.strip().splitlines()[0].removeprefix("id: ")
+    session = PracticeSessionRepository(ws).get(session_id)
+    assert session.initial_attempt == ""
+    assert session.source_material == "一个想法"
+    assert "explore" in r.output
+
+
+def test_practice_start_attempt_and_material_conflict(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    r = CliRunner().invoke(
+        app, ["practice", "start", "--attempt", "a", "--material", "m"]
+    )
+    assert r.exit_code == 1
+    assert "only one" in r.output
+
+
+def test_practice_explore_select_feedback(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    _patch(monkeypatch, settings)
+    _patch_partner_runner(monkeypatch)
+    session_id = _start_session(app, ["--material", "一个想法"])
+
+    ex = CliRunner().invoke(app, ["practice", "explore", session_id])
+    assert ex.exit_code == 0, ex.output
+    assert "[0]" in ex.output and "熟悉写法" in ex.output
+
+    sel = CliRunner().invoke(app, ["practice", "select", session_id, "--option", "0"])
+    assert sel.exit_code == 0, sel.output
+    assert "practice_dimension: 结构" in sel.output
+
+    save = CliRunner().invoke(app, ["practice", "save", session_id, "--revision", "我的首稿"])
+    assert save.exit_code == 0, save.output
+    session = PracticeSessionRepository(ws).get(session_id)
+    assert session.initial_attempt == "我的首稿"
+
+    fb = CliRunner().invoke(app, ["practice", "feedback", session_id])
+    assert fb.exit_code == 0, fb.output
+    assert "值得保留" in fb.output and "写法 A" in fb.output
+
+
+def test_practice_select_out_of_range(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    _patch_partner_runner(monkeypatch)
+    session_id = _start_session(app, ["--material", "一个想法"])
+    CliRunner().invoke(app, ["practice", "explore", session_id])
+    r = CliRunner().invoke(app, ["practice", "select", session_id, "--option", "9"])
+    assert r.exit_code == 1
+    assert "out of range" in r.output
+
+
+def test_practice_observe_list(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    _patch(monkeypatch, settings)
+    r = CliRunner().invoke(app, ["practice", "observe", "--list"])
+    assert r.exit_code == 0, r.output
+    r2 = CliRunner().invoke(app, ["practice", "observe"])
+    assert r2.exit_code == 0, r2.output
+    assert "proposed:" in r2.output

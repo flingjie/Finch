@@ -6,7 +6,7 @@ description: >
   「我有个想法还没想清楚，陪我讨论一下」「先别帮我写，挑战一下这个判断」
   「读完这个帖子后，我想和你讨论其中的观点」「从有线上实践经验的 Builder 角度跟我聊」。
   也可在业务 Skill 完成任务后沿延伸点衔接进入。核心结果是更清楚的判断，不是文章。
-  单纯解释概念 → feynman-practice；已有明确观点且直接要求写草稿 → idea-to-draft。
+  单纯解释概念 → feynman-practice；已有明确观点且直接要求写草稿 → finch drafts；想练表达 → expression-practice。
   讨论不得写入 InteractionRecord、ConversationThread、PeerProfile 或关系指标。
 ---
 
@@ -89,7 +89,7 @@ last_extension: 上轮延伸点
 | 用户说 | 转交 |
 |---|---|
 | 保存这个观点 / 形成观点候选 | `idea-discovery`（仍为 `proposed`；来源可标 `practice`） |
-| 生成草稿 / 帮我写 | 先确认判断，再 `idea-to-draft`；完成讨论 ≠ 立场已确认 |
+| 生成草稿 / 帮我写 | 先确认判断，再 `finch drafts`；完成讨论 ≠ 立场已确认 |
 | 准备回复这条真实帖子 | `interaction-preparation` |
 | 我好像没真正理解某个概念 | `feynman-practice` |
 | 判断清楚了，把核心信息讲清楚 | `sticky-message` |

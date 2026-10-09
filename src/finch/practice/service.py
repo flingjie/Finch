@@ -12,10 +12,13 @@ from finch.llm.base import StructuredInferenceRunner
 from finch.practice.models import (
     ActionLiteral,
     ExerciseLiteral,
+    FinalSourceLiteral,
+    LocalFeedback,
     MethodVerdictLiteral,
     PracticeContext,
     PracticeFeedback,
     PracticeLesson,
+    PracticeOptionsOutput,
     PracticeSession,
     PracticeTurn,
     ResponseKindLiteral,
@@ -93,6 +96,74 @@ Respond with JSON matching the schema: lesson (one specific lesson). If no trans
 was completed, do not claim transfer was verified.
 """
 
+_OPTIONS_PROMPT = """\
+You are a writing partner. Given the user's material, propose THREE distinct ways to develop
+it. They must be genuinely different approaches (not the same structure relabeled): one
+familiar to the user, one adjacent variation, one unfamiliar attempt. Each must still fit
+the material.
+
+For each option give:
+- name: a short approach name.
+- familiarity: one of 熟悉 / 相邻 / 陌生 / 暂定 (use 暂定 when no practice history is given).
+- entry_point: how this approach enters the material.
+- progression: 2-3 concrete steps.
+- effect: the reading effect this approach aims for.
+- cost: what the author or reader gives up.
+- facts_needed: facts or details the user must supply for this to work (empty if none).
+- dimension: the ONE main dimension this approach exercises (结构 / 节奏 / 手法 / 语气, or a
+  specific sub-dimension).
+
+Rules:
+- Change ONE main dimension per option so the user can see the effect clearly.
+- Do NOT write a full opening, full text, or a sentence-by-sentence outline.
+- Do NOT invent the user's experiences, effect numbers, dialogue, or certain conclusions.
+- Unfamiliar options must still fit the material; do not pad with irrelevant novelty.
+- Mark the user's familiarity honestly: with no history use 暂定, do not fabricate preferences.
+
+## Material
+{material}
+
+## Practice history (may be empty)
+{history}
+
+## Goal
+goal: {goal}
+audience: {audience}
+
+Respond with JSON matching the schema: options (list of exactly 3 items).
+"""
+
+_FEEDBACK_PROMPT = """\
+You are a writing partner. Review the user's current text and give ONE local comparison
+feedback, following a fixed structure. Use only facts already in the text; do not invent
+experiences, effect numbers, dialogue, or certain conclusions. "How readers will react" is a
+hypothesis, not real feedback.
+
+## Selected approach
+{option}
+
+## Main practice dimension
+{dimension}
+
+## User's current text
+{text}
+
+Fill each field:
+- keep: quote ONE phrase the user wrote and say why it works.
+- key_location: locate ONE sentence or short fragment and state its current effect.
+- alternative_a: a short alternative for that same location (do NOT expand the whole
+  paragraph).
+- alternative_b: a second short alternative for that same location.
+- difference: how A and B differ in rhythm / tone / technique / development, and what each
+  costs.
+- rewrite_task: invite the user to write their own version (A, B, or a third).
+
+Keep alternatives short; do not write the full text or a sentence-by-sentence outline.
+
+Respond with JSON matching the schema: keep, key_location, alternative_a, alternative_b,
+difference, rewrite_task.
+"""
+
 
 class PracticeService:
     """驱动一次表达练习会话。"""
@@ -116,21 +187,120 @@ class PracticeService:
         self,
         *,
         idea_id: str | None = None,
-        initial_attempt: str,
+        initial_attempt: str = "",
+        material: str = "",
         method_id: str | None = None,
         audience: str = "",
         goal: str = "",
     ) -> PracticeSession:
-        """创建会话，记 initial_attempt 与目标语境（audience / goal）。"""
+        """创建会话，记 initial_attempt（可空）与目标语境（audience / goal）。
+
+        新流程支持「先探索、用户再写首稿」：仅给 ``material`` 时 ``initial_attempt`` 留空，
+        首条 ``save_revision`` 再写入首稿。
+        """
         now = datetime.now(UTC)
         session = PracticeSession(
             id=f"practice_{uuid4().hex[:8]}",
             idea_id=idea_id,
             initial_attempt=initial_attempt,
+            source_material=material,
             method_id=method_id,
             context=PracticeContext(audience=audience, goal=goal),
             created_at=now,
             updated_at=now,
+        )
+        self.sessions.upsert(session)
+        return session
+
+    def explore(
+        self, session_id: str, *, material: str = "", history: str = ""
+    ) -> PracticeSession:
+        """生成三种写法方案，写入 options，置 phase=explore。幂等：已有方案则不重算。
+
+        仅当会话尚无首稿与方案时才接受 ``material``（作为原始素材落库）。
+        """
+        session = self._require_started(session_id)
+        if material and not session.source_material and not session.initial_attempt:
+            session = session.model_copy(
+                update={"source_material": material, "updated_at": datetime.now(UTC)}
+            )
+        if session.options:
+            return session
+        source = session.initial_attempt or session.source_material
+        out = cast(
+            PracticeOptionsOutput,
+            self.runner.run(
+                _OPTIONS_PROMPT.format(
+                    material=source or material,
+                    history=history,
+                    goal=session.context.goal,
+                    audience=session.context.audience,
+                ),
+                PracticeOptionsOutput,
+            ),
+        )
+        session = session.model_copy(
+            update={
+                "options": out.options,
+                "phase": "explore",
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        self.sessions.upsert(session)
+        return session
+
+    def select(
+        self, session_id: str, option_index: int, *, reason: str = ""
+    ) -> PracticeSession:
+        """记录用户选择的方案与理由，置 phase=drafting。"""
+        session = self._require_started(session_id)
+        if not session.options:
+            raise ValueError("no options to select from; run explore first")
+        if option_index < 0 or option_index >= len(session.options):
+            raise ValueError(
+                f"option index {option_index} out of range (0..{len(session.options) - 1})"
+            )
+        chosen = session.options[option_index]
+        session = session.model_copy(
+            update={
+                "selected_option": option_index,
+                "selection_reason": reason,
+                "practice_dimension": chosen.dimension,
+                "phase": "drafting",
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        self.sessions.upsert(session)
+        return session
+
+    def feedback(self, session_id: str) -> PracticeSession:
+        """针对用户当前文本生成一轮局部对比反馈，追加 feedback_rounds，置 phase=feedback。"""
+        session = self._require_started(session_id)
+        text = session.revisions[-1] if session.revisions else session.initial_attempt
+        if not text.strip():
+            raise ValueError("no text to give feedback on; write a first draft first")
+        chosen = ""
+        if session.selected_option is not None and 0 <= session.selected_option < len(
+            session.options
+        ):
+            chosen = session.options[session.selected_option].name
+        out = cast(
+            LocalFeedback,
+            self.runner.run(
+                _FEEDBACK_PROMPT.format(
+                    option=chosen or "（未选择）",
+                    dimension=session.practice_dimension,
+                    text=text,
+                ),
+                LocalFeedback,
+            ),
+        )
+        session = session.model_copy(
+            update={
+                "feedback_rounds": [*session.feedback_rounds, out],
+                "phase": "feedback",
+                "updated_at": datetime.now(UTC),
+            }
         )
         self.sessions.upsert(session)
         return session
@@ -216,13 +386,23 @@ class PracticeService:
         return session
 
     def save_revision(self, session_id: str, revision: str) -> PracticeSession:
-        """追加一次修订；有待处理 revise/hint 轮次时同时完成该轮。"""
+        """追加一次修订；有待处理 revise/hint 轮次时同时完成该轮。
+
+        尚无首稿时（新流程「先探索、再首写」），第一条修订写入 ``initial_attempt``，
+        后续才追加到 ``revisions``。
+        """
         session = self._require_started(session_id)
         pending = self._pending_turn(session)
-        update: dict = {
-            "revisions": [*session.revisions, revision],
-            "updated_at": datetime.now(UTC),
-        }
+        if not session.initial_attempt:
+            update: dict = {
+                "initial_attempt": revision,
+                "updated_at": datetime.now(UTC),
+            }
+        else:
+            update = {
+                "revisions": [*session.revisions, revision],
+                "updated_at": datetime.now(UTC),
+            }
         if pending is not None:
             if pending.feedback.action in ("revise", "hint"):
                 update["turns"] = self._complete_turn(
@@ -244,8 +424,14 @@ class PracticeService:
         *,
         method_verdict: MethodVerdictLiteral | None = None,
         method_verdict_note: str = "",
+        final_source: FinalSourceLiteral = "user_authored",
+        source_note: str = "",
     ) -> PracticeSession:
-        """记最终版 + LLM 生成 lesson，置 finished；方法练习必须给 verdict。"""
+        """记最终版 + LLM 生成 lesson，置 finished；方法练习必须给 verdict。
+
+        ``final_source`` 区分 user_authored / ai_example / mixed；``source_note`` 记混合
+        文本的来源片段。风格证据只引用可追溯的用户创作片段。
+        """
         session = self._require_started(session_id)
         if session.method_id and method_verdict is None:
             raise ValueError("method_verdict required when session has method_id")
@@ -265,8 +451,11 @@ class PracticeService:
                 "final_expression": final_expression,
                 "lesson": lesson.lesson,
                 "status": "finished",
+                "phase": "done",
                 "method_verdict": method_verdict,
                 "method_verdict_note": method_verdict_note,
+                "final_source": final_source,
+                "source_note": source_note,
                 "updated_at": datetime.now(UTC),
             }
         )

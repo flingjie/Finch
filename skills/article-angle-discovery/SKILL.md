@@ -4,7 +4,7 @@ description: >
   读一篇热门文章，结合读者问题与作者自己的实践，找出几个值得独立成文的角度（选题卡 / 写作 brief），
   并说清每个角度的相对原文增量、目标读者、中心主张、证据缺口与最小验证行动。用于「这篇文章我可以
   从哪里继续写」「帮我找选题」「这篇文章之后我还能写什么」类请求。只产出选角报告，不重述原文
-  （→ content-summary）、不点评写法（→ article_analysis）、不生成草稿（→ idea-to-draft / finch drafts）。
+  （→ content-summary）、不点评写法（→ article_analysis）、不生成草稿（→ finch drafts；想练表达 → expression-practice）。
   证据不足的新颖观点标为「需先验证」，不因独特而排第一。优先寻找有依据的组合：从原文取一个观点，
   与另一份有依据的材料连接，产生读者用得上的新判断。
 ---

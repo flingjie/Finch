@@ -52,5 +52,5 @@
 | 继续 / 再深入 | 继续讨论，不输出结束 YAML |
 | 总结一下 / 先到这里 | 输出结束 YAML |
 | 保存这个观点 | 确认判断文案后转 `idea-discovery` |
-| 生成草稿 | 确认后转 `idea-to-draft`（仍须立场确认流程） |
+| 生成草稿 | 确认后走 `finch drafts`（仍须立场确认流程） |
 | 准备回复这条帖子 | 转 `interaction-preparation`（须真实帖子） |

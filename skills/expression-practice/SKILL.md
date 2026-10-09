@@ -1,94 +1,88 @@
 ---
 name: expression-practice
 description: >
-  Finch 核心表达训练 Skill：通过实际表达提升能力。选择 Idea（或无需 Idea）→ 用户先表达
-  → 诊断一个最大问题 → 选一个下一步动作（revise / predict / hint / transfer）→ 用户响应
-  → 对比前后 → 保存最终版。可练预测读者理解、逐级提示、迁移到新受众或篇幅；正文已清楚时
-  允许零问题结束。绝不先给范文、一次只处理一个障碍、默认不自动 rewrite、保存用户原文和
-  每次修改。用于「帮我练一下这个想法的表达」「我想自己写、你来追问」「帮我练习清晰表达」
-  「按 ASD-STE100-inspired 练一句」类请求；清晰表达 / Simplified Technical English（简化
-  技术英语）判据见 `_shared/asd-ste100-inspired.md`，用户必须先写，Skill 只诊断与追问。
+  Finch 核心写作练习 Skill：写作伙伴，不是纠错工具。接收一个想法/事件或一段用户已写的
+  文字 → 先给三种展开思路（熟悉 / 相邻 / 陌生，各含切入点、推进路径、效果与代价）→
+  用户选一种自己写开头或关键段落 → 对一处关键位置做局部对比反馈（保留 / 关键位置 /
+  两种写法 / 差异 / 重写任务）→ 用户重写 → 保存前后版本与来源。用户完成主要创作；
+  AI 只给短示范并标注来源，不自动重写全文、不补造经历与数据；无练习历史时熟悉程度
+  写「暂定」，不虚构偏好。用于「帮我练一下这个想法的表达」「我有这个素材，有几种写法」
+  「这段怎么写更好」类请求。清晰表达 / Simplified Technical English 判据见
+  `_shared/asd-ste100-inspired.md`（按需工具，不把故事/幽默/留白压成技术说明口吻）。
 ---
 
 # expression-practice
 
-让用户通过实际表达提升能力。核心：用户先表达，Skill 只诊断 + 追问（或给出最小帮助），
-不代写。
+让用户通过实际写作探索多种写法、亲自练习、逐步发现个人特色。核心：**用户完成主要创作**；
+Skill 先探索、用户写、局部对比、用户重写。
 
 ## 流程
 
-**一轮训练（循环）**
+1. **输入与最小澄清** → `finch practice start`：
+   - 只有想法/事件 → `--material "..."`（`--attempt` 留空，先探索再写）。
+   - 已有段落 → `--attempt "..."`（直接作为首稿，不要求重写一遍）。
+   - 保留原始素材与用户原文。仅在缺信息会改变推荐时问一个问题（如目标读者 / 希望读者
+     理解什么）；主题不限于 Agent 或工程，读者由当次内容决定。
+2. **三种写法** → `finch practice explore <id>`（可选 `--history` 提供练习历史）。
+   每种方案只展示：写法名称与熟悉程度 / 与素材有关的切入点 / 两至三步推进路径 /
+   阅读效果与代价 / 需要用户补充的事实 / 本次主要练习维度。此阶段**不给完整开头、
+   全文或逐句提纲**。
+3. **用户选一种** → `finch practice select <id> --option <n> [--reason "..."]`。
+4. **用户写首稿** → `finch practice save <id> --revision "..."`（第一条写入首稿）。
+   给一个具体小任务（如「先写出反常现象与原先预期，暂不解释全部原因」），默认 5–10
+   分钟、不强制字数。
+5. **局部对比反馈** → `finch practice feedback <id>`（固定结构，见 `references/option-selection.md`）。
+6. **用户重写** → `finch practice save <id> --revision "..."`。
+7. **收束** → `finch practice finish <id> --final "..." [--source user_authored|ai_example|mixed]`。
+   默认一轮反馈、一轮重写；用户愿意时继续，不要求无限达标。对比前后实际改变了什么，
+   保存用户最终版与一条可再次尝试的方法。
 
-1. 用户先表达 → `finch practice start [--idea <id>] [--method <id>] [--audience "..."] [--goal "..."] --attempt "..."`。
-   **无 Idea 也可训练**，跳过选 Idea 步骤；有上下文时推断受众与目标，仅在缺信息会改变诊断时问一个必要问题。
-2. 诊断 → `finch practice diagnose <session-id> [--exercise auto|revise|predict|hint|transfer]`。
-   每次只挑「最大」的一个障碍；反馈引用用户一处原文，解释它为何妨碍当前读者，不列七维分数表。
-3. 用户响应：
-   - 修订 → `finch practice save <session-id> --revision "..."`（或 `respond --kind revision`）。
-   - 预测 → `finch practice respond <session-id> --turn <id> --kind prediction --text "..."`。
-   - 迁移 → `finch practice respond <session-id> --turn <id> --kind transfer --text "..."`。
-   - 跳过该轮 → `finch practice respond <session-id> --turn <id> --skip`。
-4. 重复 2-3，直到收尾。
+## 三方案要求（见 `references/option-selection.md`）
 
-**收尾**
+- 三种方案必须存在**可解释的差异**，不能换标题后重复相同结构。
+- 熟悉与陌生以用户历史为依据；没有历史时明确为「暂定」，不虚构偏好。
+- 陌生方案仍须适合素材；单次优先改变**一个**主要维度（结构 / 节奏 / 手法 / 语气）。
 
-- 用户说结束 / 目标已达 / 连续两轮无新信息 → 结束（正文已清楚时允许零问题结束）。
-- `finch practice finish <session-id> --final "..." [--verdict worth_reuse|practice_again|not_for_me --note "..."]`。
-- 收尾包含：最终表达 + 首稿到终稿的一处具体变化 + 一条可复用经验。没做迁移练习就写「迁移尚未检验」，不宣称已掌握。
+## 局部反馈规则（见 `references/diagnosis-rules.md`）
 
-**按表达方法练（可选分支）**
+- 值得保留：引用一句用户原话，说明其有效之处。
+- 关键位置：定位一句或短片段，说明当前效果。
+- 写法 A / B：针对同一位置给两种**短**示范，不扩写整段。
+- 差异：解释两种写法在节奏 / 语气 / 手法 / 展开上的不同，指出各自代价。
+- 重写任务：邀请用户自行写出选择或第三种表达。
+- 示范沿用已有事实，不补造经历、效果数据、人物对话或确定性结论；需要新素材时明确请
+  用户补充。「读者会怎样反应」作为推测呈现，不视作真实反馈。
 
-1. （可选）`finch methods list` / `show` 选一条已保存方法。
-2. 用户先表达 → `finch practice start --method <id> --attempt "..."`（可同时 `--idea <id>`）。
-3. 诊断 / 响应 / 修订与 Idea 流程相同。
-4. 结束并反馈方法 → `finch practice finish ... --verdict ... [--note "..."]`。
-5. 反馈优先问「这条方法是否值得再用」，不检查「有没有用上技巧」或代写达标范文。
+## 风格观察（见 `references/style-observation.md`）
 
-## 可选练习动作
-
-- **预测（predict）**：用户先预测「读者看完会认为你在建议什么」；AI 再比较意图与文本，
-  给一种**有文本依据**的可能误读（明确标注为模拟阅读，不是用户调研结果）。默认只给一种重要误读。
-- **提示（hint）**：仅用户卡住或明确求助时启用，逐级给最小帮助（见下）。
-- **迁移（transfer）**：正文已讲清楚后，改**一个**条件（受众 / 篇幅 / 例子）重新表达；
-  用户先写，AI 再比较是否保留核心意思与边界。练习可跳过。
-
-## 逐级帮助（仅按需）
-
-1. 问题提示（例：把「效率提高」换成谁少做了哪一步）。
-2. 局部骨架（例：原来需要___，现在___，但新增了___）。
-3. 局部参考：只示范一两句，标注为 AI 参考，不当作用户修订。
-
-不因回答慢或时间经过自动升级提示；用户要求完整代写时转 `idea-to-draft`。
-
-## 检查维度
-
-是否真正理解 / 有自己的判断 / 说明因果关系 / 与目标同行有关 / 具体 / 像用户自己 /
-留下值得回应的空间（见 `references/diagnosis-rules.md`）。
+多次练习后，`finch practice observe` 提出候选观察（≥3 次相似选择），附具体用户原句，
+等待用户确认；观察**不自动写入** voice-profile，用户认可后走现有 `finch voice` 流程。
 
 ## 强制规则
 
-- 不先给完整范文。
-- 一次只处理一个最大障碍，不列清单、不每轮检查所有维度。
-- 默认不自动 rewrite（只有用户明确要求代写才转 idea-to-draft）。
-- 保存用户原文和每次修改（PracticeSession）：首稿与每次修订不被覆盖；预测与迁移回复
-  不写入正文，只记在对应轮次里。
+- 不先给完整范文；不给完整开头或逐句提纲。
+- 默认不自动重写全文（用户明确要求直接成稿 → 普通写作流程 `finch drafts`，不伪装成练习）。
+- 保存用户原文与每次修改；AI 示例与用户作品分开记录（`final_source` + `source_note`）。
+- 用户采纳的 AI 句子不能因被确认就自动变成用户风格证据；混合文本需区分来源。
 
 ## 停止条件
 
 - 用户说「只给结果」「先不聊」「停」→ 遵循当轮指令，不追问。
 - 用户换任务 → 立即跟随。
-- 用户说「直接帮我写」→ 转 `idea-to-draft`，不继续训练。
-- 事实或理解不清 → 指出具体缺口，必要时建议 `feynman-practice` / `topic-dialogue`，不替用户补立场。
+- 用户说「直接帮我写」→ 走 `finch drafts`（普通写作流程），不继续当作练习，不把成稿当风格证据。
+- 理解漏洞阻碍当前表达 → 指出具体缺口，必要时建议 `feynman-practice`，不替用户补立场。
 
 ## 清晰表达（ASD-STE100-inspired）
 
-练习「句子是否够清楚、可操作」时，对照 `_shared/asd-ste100-inspired.md`（ASD-STE100-inspired，
-中文适配，非官方合规声明）。用户始终先写首稿与修订；本 Skill 不代写完整范文。已有 Draft 的
-句子级润色走 `finch drafts revise`，不走 practice 会话。
+练习「句子是否够清楚、可操作」时，对照 `_shared/asd-ste100-inspired.md`（按需工具，非官方
+合规声明）。用户始终先写；本 Skill 不代写完整范文。已有 Draft 的句子级润色走
+`finch drafts revise`，不走 practice 会话。
 
 ## 参考
 
-- `references/diagnosis-rules.md` — 诊断维度与逐轮规则。
-- `references/exercise-patterns.md` — predict / hint / transfer 的少量例子与不适用情形。
+- `references/option-selection.md` — 三方案选择与局部反馈规则。
+- `references/diagnosis-rules.md` — 当次效果与练习维度的反馈规则（原诊断维度）。
+- `references/exercise-patterns.md` — predict / hint / transfer 可选微工具（按需）。
+- `references/style-observation.md` — 风格观察：触发条件、确认状态、不自动写画像。
 - `references/session-output.md` — 会话输出 schema。
 - `_shared/asd-ste100-inspired.md` — 清晰表达 / 简化技术英语共享规则（与 drafts revise 共用）。

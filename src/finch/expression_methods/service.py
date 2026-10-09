@@ -17,6 +17,7 @@ from finch.expression_methods.models import (
     ReplyMethodVerdict,
 )
 from finch.expression_methods.repository import ExpressionMethodRepository
+from finch.expression_methods.seed_cw48 import CW48_SEED, SOURCE_NOTE
 from finch.llm.base import StructuredInferenceRunner
 
 _MERGE_PROMPT = """\
@@ -144,6 +145,77 @@ class ExpressionMethodService:
         )
         self.methods.upsert(target)
         return target
+
+    def seed_cw48(
+        self, *, force: bool = False
+    ) -> tuple[list[str], list[str], list[str]]:
+        """幂等导入《精简写作》48 条种子方法，返回 (created, merged, skipped)。
+
+        - ID 已存在且未 ``force`` → 跳过（多次导入无重复）。
+        - 与现有方法精确 ``title`` 重合且未 ``force`` → 把书籍来源写入该方法的
+          ``source_note``，不新建同义方法。
+        - 否则新建（或 ``force`` 覆盖）对应 EP-CW-xxx。
+        """
+        now = datetime.now(UTC)
+        existing = {m.id: m for m in self.methods.list_all()}
+        by_title: dict[str, ExpressionMethod] = {}
+        for m in existing.values():
+            by_title.setdefault(m.title, m)
+
+        created: list[str] = []
+        merged: list[str] = []
+        skipped: list[str] = []
+        for row in CW48_SEED:
+            mid = row["id"]
+            if mid in existing and not force:
+                skipped.append(mid)
+                continue
+            dup = by_title.get(row["title"])
+            if dup is not None and dup.id != mid and not force:
+                if self._has_book_source(dup, mid):
+                    skipped.append(mid)
+                else:
+                    self.methods.upsert(self._attach_book_source(dup, mid))
+                    merged.append(dup.id)
+                continue
+            self.methods.upsert(self._build_seed_method(row, now))
+            created.append(mid)
+
+        return created, merged, skipped
+
+    def _build_seed_method(self, row: dict, now: datetime) -> ExpressionMethod:
+        return ExpressionMethod(
+            id=row["id"],
+            title=row["title"],
+            why_effective=row["why_effective"],
+            when_to_use=row["when_to_use"],
+            boundaries=row["boundaries"],
+            mini_exercise=row["mini_exercise"],
+            method_type=row["method_type"],
+            dimension=row["dimension"],
+            chapter=row["chapter"],
+            evidence_status="user_supplied_toc_summary",
+            executable=row["executable"],
+            source_note=SOURCE_NOTE,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def _attach_book_source(
+        self, method: ExpressionMethod, seed_id: str
+    ) -> ExpressionMethod:
+        marker = f"《精简写作》目录（对应 {seed_id}）"
+        note = method.source_note
+        if marker in note:
+            return method
+        note = f"{note}\n{marker}；{SOURCE_NOTE}" if note else f"{marker}；{SOURCE_NOTE}"
+        return method.model_copy(
+            update={"source_note": note, "updated_at": datetime.now(UTC)}
+        )
+
+    def _has_book_source(self, method: ExpressionMethod, seed_id: str) -> bool:
+        marker = f"《精简写作》目录（对应 {seed_id}）"
+        return marker in method.source_note
 
     def append_practice_log(
         self,

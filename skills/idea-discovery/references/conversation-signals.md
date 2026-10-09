@@ -24,7 +24,7 @@
 - `communication_goal` 明确这次内容要把对话推进到哪里：
   `continue_discussion` / `invite_counterexample` / `summarize_practice` / `find_collaborators`。
 - `recommended_format` 只作建议（reply / quote / short post / thread / DM / do-not-publish）；
-  真正生成草稿仍走 `idea-to-draft` 并经人工审核。
+  真正生成草稿仍走 `finch drafts` 并经人工审核。
 
 ## 可追溯闭环
 

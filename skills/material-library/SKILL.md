@@ -5,7 +5,7 @@ description: >
   逐步形成观点。用于「记一下…」「保存这个素材」「看看最近的素材」「查一下素材」「聊聊这条素材」
   「把这条提炼成 idea」等请求。Notion 是权威来源，本地只存读取缓存、待同步队列与讨论工作状态；
   Finch 只追加正文，不重写用户内容。只做素材的记录/读取/讨论/提炼；不点评写法（→ article_analysis）、
-  不改写成草稿（→ idea-to-draft，须先确认判断）、不自动发布。
+  不改写成草稿（明确直接成稿 → finch drafts，须先确认判断；想练表达 → expression-practice）、不自动发布。
 ---
 
 # material-library
@@ -68,7 +68,7 @@ finch materials usage <block_id> [--json]
 |---|---|
 | 先跟我讨论这条素材 | `topic-dialogue`（讨论后 `finch materials record-discussion`） |
 | 保存这个观点 / 形成观点候选 | `idea-discovery` 或 `finch materials promote`（结果 `proposed`） |
-| 生成草稿 / 帮我写 | `idea-to-draft`（先确认判断） |
+| 生成草稿 / 帮我写 | 明确直接成稿走 `finch drafts`（先确认判断）；想练表达走 `expression-practice` |
 | 这篇文章讲了什么 | `content-summary`（`finch summaries`） |
 | 这条还能写什么角度 | `article-angle-discovery`（`finch angles`） |
 | 分析写法 | `article_analysis`（`finch article analyze`） |

@@ -62,7 +62,7 @@ fragment / conversation / signals 仍单候选。机械变化、新闻、纯情�
 
 - 观点尚未成形、需要先讨论判断时 → `topic-dialogue`；用户说「保存这个观点」后再接收讨论结果，来源可标 `practice`，状态仍为 `proposed`。
 - 外部帖子不能直接变成个人观点（见 `_shared/evidence-policy.md`）。
-- 不生成草稿（→ `idea-to-draft` / `expression-practice`）。
+- 不生成草稿（明确直接成稿 → `finch drafts`；想练表达 → `expression-practice`）。
 - 不负责搜索交流对象（→ `peer-discovery`）。
 
 ## 参考

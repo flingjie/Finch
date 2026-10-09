@@ -1,4 +1,4 @@
-"""Tests for DraftService (Skill 架构 Step 4：idea-to-draft 完整流程)。"""
+"""Tests for DraftService（把已确认 idea 生成 Draft 的完整流程）。"""
 
 import pytest
 

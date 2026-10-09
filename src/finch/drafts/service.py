@@ -1,4 +1,4 @@
-"""DraftService：idea-to-draft 领域服务（Skill 架构 Step 4）。
+"""DraftService：把已确认 idea 生成统一 Draft 的领域服务。
 
 把已确认的 ``ContentJob``（idea 候选）生成统一 ``Draft``：加载 job → ``require_confirmed``
 语义 → ``draft_generation_key`` 幂等命中 → 生成正文（只依据 job 语境，不搜索新来源、
@@ -10,7 +10,7 @@
 去掉强制绑定个人项目的 PortabilityChecker 与强制 decision/tradeoff 的 DecisionChecker，
 安全 hard-fail（SafetyChecker）对所有类型恒开。
 
-幂等：``draft_generation_key`` 由 (idea 指纹, idea-to-draft 版本, 格式, voice 版本)
+幂等：``draft_generation_key`` 由 (idea 指纹, 生成器版本 idea_to_draft_version, 格式, voice 版本)
 的 sha256 决定，同一 idea + 同一生成配置重复创建时命中同一 ``draft_id``，返回已存在的
 Draft，不重复调用 LLM。
 """
@@ -86,7 +86,8 @@ def draft_generation_key(
 ) -> str:
     """由 idea 指纹 + 生成器版本 + 格式 + voice 版本确定幂等键（sha256 hex digest）。
 
-    同一 (idea, idea-to-draft 版本, 格式, voice 版本) 的草稿重复产出时命中同一 key。
+    参数 ``idea_to_draft_version`` 是生成器版本号（历史命名，非技能引用），保留以维持
+    幂等键稳定。同一 (idea, 生成器版本, 格式, voice 版本) 的草稿重复产出时命中同一 key。
     """
     raw = _SEP.join(
         [idea_fingerprint, idea_to_draft_version, format, voice_profile_version]
@@ -131,7 +132,7 @@ def _failed_issues(checks: list[CheckResult]) -> str:
 
 
 class DraftService:
-    """idea-to-draft 领域服务：从已确认 idea 生成 Draft 并落库 Critic 报告。"""
+    """从已确认 idea 生成 Draft 并落库 Critic 报告。"""
 
     def __init__(
         self,

@@ -60,7 +60,9 @@ uv run finch review list / show / approve / revise / skip
 uv run finch voice show / approve-example / reject-example / revoke-example / propose
 uv run finch weekly
 uv run finch learn <draft_id>            # 记录发布反馈
-uv run finch practice start --idea <id> --attempt "<首稿>"
+uv run finch practice start --material "<想法>" --attempt "<已有段落>"  # 二选一：只有想法用 --material，已有段落用 --attempt
+uv run finch practice explore / select / save / feedback / finish / show / observe  # 写作伙伴：三方案 → 用户写 → 局部对比 → 重写
+uv run finch methods seed / list / show  # 表达方法库（seed 幂等导入《精简写作》48 条种子）
 uv run finch article analyze --text "<文本>" | --file posts.md | --url "<链接>"  # 含写作风格七维
 uv run finch community context / list / run
 uv run finch dialogue save / search / show / forget
@@ -123,14 +125,13 @@ skills/
   conversation-follow-up/  按真实触发信号恢复对话并提出下一步
   relationship-review/     由互动记录判断关系阶段与是否联系
   idea-discovery/          Commit/用户片段/已验证对话 → ContentJob
-  idea-to-draft/           已确认观点 → Draft + CriticReport
   voice-profile/           个人表达画像（只从用户认可样本更新）
   weekly-reflection/       关系质量/观点形成/表达反馈复盘
   collision-lab/           跨领域结构碰撞 → CollisionCard
   micro-experiment/        CollisionCard → 一周内小实验
   # —— 独立训练工具（不进入默认流水线）——
   community-scout/         围绕问题发现并持续参与社区（三入口 + 观察/可参与分层，验证中）
-  expression-practice/     表达训练
+  expression-practice/     写作伙伴：三方案探索 → 用户写 → 局部对比 → 用户重写
   article_analysis/        文章表达 + 写作风格分析（只读，不写画像）
   feynman-practice/        费曼技巧
   sticky-message/          检查想法是否清晰易记

@@ -24,5 +24,5 @@ conversation 共用同一份「读者值得知道」的判断。
 ## 边界
 
 - 外部信号 ≠ 个人证据：`ContentJob.status` 一律 `proposed`，不得写成亲历。
-- 不生成草稿（→ `idea-to-draft` / `expression-practice`）。
+- 不生成草稿（明确直接成稿 → `finch drafts`；想练表达 → `expression-practice`）。
 - 只读，不自动发布。

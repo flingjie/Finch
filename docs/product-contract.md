@@ -101,6 +101,6 @@ Finch 是一个**跨领域学习、连接与表达伙伴**：帮你发现不同�
 
 ## Skill 边界
 
-**核心 Skill**：`peer-discovery`、`interaction-preparation`、`conversation-follow-up`、`idea-discovery`、`idea-to-draft`、`voice-profile`、`weekly-reflection`。学习、实践与表达 Skill 与连接 Skill 并列，不串成强制流水线。不新增 monetization / problem-discovery 核心 Skill。
+**核心 Skill**：`peer-discovery`、`interaction-preparation`、`conversation-follow-up`、`idea-discovery`、`voice-profile`、`weekly-reflection`。学习、实践与表达 Skill 与连接 Skill 并列，不串成强制流水线。不新增 monetization / problem-discovery 核心 Skill。
 
-**独立训练工具**（不进入默认流水线）：`expression-practice`、`article_analysis`、`feynman-practice`、`sticky-message`、`topic-dialogue`。其中 `article_analysis` 产出表达任务 + 写作风格七维报告，默认落库；用户可从报告选中可迁移方法写入表达方法库（`expression_methods`），供 `expression-practice` 按方法练习并记录 `worth_reuse|practice_again|not_for_me` 结论。分析他人风格仍不得自动写入 `VoiceProfile`；表达方法库 ≠ `PracticeProfile`（已确认真实实践）。`topic-dialogue` 帮助用户通过讨论形成或修正判断（「我怎么看、为什么、边界在哪里」）；模拟讨论不得写入关系记录，只有用户明确确认的判断才能进入观点/内容链路。主动邀请讨论（任务后延伸、连续讨论）是当前会话内的行为约定，不自动执行任何领域流程（不自动外发、不自动确认立场、不写关系事实）。
+**独立训练工具**（不进入默认流水线）：`expression-practice`、`article_analysis`、`feynman-practice`、`sticky-message`、`topic-dialogue`。其中 `article_analysis` 产出表达任务 + 写作风格七维报告，默认落库；用户可从报告选中可迁移方法写入表达方法库（`expression_methods`），供 `expression-practice` 作为写作伙伴使用（三方案探索 → 用户写 → 局部对比 → 用户重写；按方法练习时记录 `worth_reuse|practice_again|not_for_me` 结论）。分析他人风格仍不得自动写入 `VoiceProfile`；表达方法库 ≠ `PracticeProfile`（已确认真实实践）。`topic-dialogue` 帮助用户通过讨论形成或修正判断（「我怎么看、为什么、边界在哪里」）；模拟讨论不得写入关系记录，只有用户明确确认的判断才能进入观点/内容链路。主动邀请讨论（任务后延伸、连续讨论）是当前会话内的行为约定，不自动执行任何领域流程（不自动外发、不自动确认立场、不写关系事实）。

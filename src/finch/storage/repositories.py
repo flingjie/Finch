@@ -31,7 +31,7 @@ from finch.inbox.models import DecisionRecord
 from finch.learn.models import Feedback
 from finch.peers.models import PeerProfile
 from finch.practice.attempts import PracticeAttempt
-from finch.practice.models import PracticeSession
+from finch.practice.models import PracticeSession, StyleObservation
 from finch.problems.models import ActiveProblem
 from finch.storage.workspace import Workspace
 
@@ -378,6 +378,23 @@ class PracticeSessionRepository:
 
     def get(self, session_id: str) -> PracticeSession | None:
         return _read(self.ws, "practice", session_id, PracticeSession)
+
+    def list_all(self) -> list[PracticeSession]:
+        return _list_all(self.ws, "practice", PracticeSession)
+
+
+class StyleObservationRepository:
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
+
+    def upsert(self, observation: StyleObservation) -> None:
+        _write(self.ws, "style_observations", observation.id, observation)
+
+    def get(self, obs_id: str) -> StyleObservation | None:
+        return _read(self.ws, "style_observations", obs_id, StyleObservation)
+
+    def list_all(self) -> list[StyleObservation]:
+        return _list_all(self.ws, "style_observations", StyleObservation)
 
 
 class ProblemRepository:

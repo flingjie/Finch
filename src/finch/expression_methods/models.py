@@ -51,6 +51,15 @@ class ExpressionMethod(BaseModel):
     reply_boundaries: str = ""
     sources: list[MethodSource] = Field(default_factory=list)
     practice_logs: list[MethodPracticeLog] = Field(default_factory=list)
+    # 种子/参考方法字段：分类、维度、章节、证据状态、可执行性、非文章来源。
+    # method_type 决定在 expression-practice 里如何用：technique（三方案/局部反馈）、
+    # training（卡点训练任务）、scenario（仅在相应场景激活）。
+    method_type: Literal["technique", "training", "scenario"] = "technique"
+    dimension: str = ""
+    chapter: str = ""
+    evidence_status: str = ""  # 知识依据状态（如 user_supplied_toc_summary），与可执行性分开
+    executable: bool = True  # 是否可作为练习任务推荐（「待补充」条目 = False）
+    source_note: str = ""  # 非文章来源说明 + 链接；书籍来源不用 MethodSource
     created_at: datetime
     updated_at: datetime
 
@@ -69,6 +78,9 @@ class ExpressionMethod(BaseModel):
                 self.reply_boundaries,
                 forms,
                 tags,
+                self.method_type,
+                self.dimension,
+                "1" if self.executable else "0",
             ]
         )
         return hashlib.sha256(payload.encode()).hexdigest()

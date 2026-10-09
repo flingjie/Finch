@@ -108,7 +108,13 @@ from .opportunities.repository import (
 from .opportunities.service import OpportunityService
 from .peers.models import PeerProfile
 from .peers.service import PeerService, profile_url_for
-from .practice.models import ExerciseLiteral, PracticeFeedback, ResponseKindLiteral
+from .practice.models import (
+    ExerciseLiteral,
+    FinalSourceLiteral,
+    PracticeFeedback,
+    ResponseKindLiteral,
+)
+from .practice.observations import StyleObservationService
 from .practice.service import PracticeService
 from .problems.render import render_active_problems
 from .profile import bootstrap as profile_bootstrap
@@ -146,6 +152,7 @@ from .storage.repositories import (
     ProblemRepository,
     PublicationIntentRepository,
     RecommendationFeedbackRepository,
+    StyleObservationRepository,
 )
 from .storage.workspace import Workspace
 from .twitter.normalizer import normalize_tweets
@@ -4756,16 +4763,23 @@ def conversations_close(
 @practice_app.command("start")
 def practice_start(
     idea: str = typer.Option(None, "--idea", help="关联 idea id"),
-    attempt: str = typer.Option(..., "--attempt", help="用户首稿"),
+    attempt: str = typer.Option("", "--attempt", help="用户首稿（已有段落时直接作为首稿）"),
+    material: str = typer.Option("", "--material", help="原始素材（想法/事件；先探索再写时用）"),
     method: str = typer.Option(None, "--method", help="练习的表达方法 id（finch methods）"),
     audience: str = typer.Option("", "--audience", help="目标读者"),
     goal: str = typer.Option("", "--goal", help="训练目的"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """开始一次表达练习（可选关联 idea / 表达方法 + 首稿 + 目标语境）。"""
+    """开始一次表达练习（可选关联 idea / 表达方法 + 首稿 + 目标语境）。
+
+    --attempt 与 --material 二选一：有已有段落用 --attempt，只有想法先探索用 --material。
+    """
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
+    if attempt and material:
+        typer.echo("use only one of --attempt / --material")
+        raise typer.Exit(code=1)
     if method is not None and ExpressionMethodRepository(ws).get(method) is None:
         typer.echo(f"method not found: {method}")
         raise typer.Exit(code=1)
@@ -4773,6 +4787,7 @@ def practice_start(
     session = PracticeService(PracticeSessionRepository(ws), runner).start(
         idea_id=idea,
         initial_attempt=attempt,
+        material=material,
         method_id=method,
         audience=audience,
         goal=goal,
@@ -4781,7 +4796,108 @@ def practice_start(
         typer.echo(session.model_dump_json(indent=2))
     else:
         typer.echo(f"id: {session.id}")
-        typer.echo("下一步：诊断本次表达")
+        if material and not attempt:
+            typer.echo("下一步：finch practice explore <id> 探索三种写法")
+        else:
+            typer.echo("下一步：诊断本次表达")
+
+
+@practice_app.command("explore")
+def practice_explore(
+    session_id: str = typer.Argument(..., help="session id"),
+    material: str = typer.Option("", "--material", help="补充原始素材（可选）"),
+    history: str = typer.Option("", "--history", help="练习历史线索（决定熟悉/陌生）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """生成三种写法方案（熟悉 / 相邻 / 陌生；LLM）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    try:
+        session = PracticeService(PracticeSessionRepository(ws), runner).explore(
+            session_id, material=material, history=history
+        )
+    except KeyError:
+        typer.echo(f"session not found: {session_id}")
+        raise typer.Exit(code=1) from None
+    except (ValueError, RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        for i, opt in enumerate(session.options):
+            typer.echo(f"[{i}] {opt.name}（{opt.familiarity}）")
+            typer.echo(f"    切入点: {opt.entry_point}")
+            typer.echo(f"    路径: {' → '.join(opt.progression)}")
+            typer.echo(f"    效果: {opt.effect}")
+            typer.echo(f"    代价: {opt.cost}")
+            if opt.facts_needed:
+                typer.echo(f"    需要补充: {opt.facts_needed}")
+            typer.echo(f"    练习维度: {opt.dimension}")
+        typer.echo("下一步：finch practice select <id> --option <n>")
+
+
+@practice_app.command("select")
+def practice_select(
+    session_id: str = typer.Argument(..., help="session id"),
+    option: int = typer.Option(..., "--option", help="方案下标（0/1/2）"),
+    reason: str = typer.Option("", "--reason", help="选择理由"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """选择一种写法方案，记录理由与练习维度。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    try:
+        session = PracticeService(PracticeSessionRepository(ws), runner).select(
+            session_id, option, reason=reason
+        )
+    except KeyError:
+        typer.echo(f"session not found: {session_id}")
+        raise typer.Exit(code=1) from None
+    except (ValueError, RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        typer.echo(f"selected: {session.options[option].name}")
+        typer.echo(f"practice_dimension: {session.practice_dimension}")
+        typer.echo("下一步：写出开头或关键段落，然后 finch practice save --revision")
+
+
+@practice_app.command("feedback")
+def practice_feedback(
+    session_id: str = typer.Argument(..., help="session id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """给出一轮局部对比反馈（值得保留 / 关键位置 / 两种写法 / 差异 / 重写任务）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    try:
+        session = PracticeService(PracticeSessionRepository(ws), runner).feedback(session_id)
+    except KeyError:
+        typer.echo(f"session not found: {session_id}")
+        raise typer.Exit(code=1) from None
+    except (ValueError, RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        fb = session.feedback_rounds[-1]
+        typer.echo(f"值得保留: {fb.keep}")
+        typer.echo(f"关键位置: {fb.key_location}")
+        typer.echo(f"写法 A: {fb.alternative_a}")
+        typer.echo(f"写法 B: {fb.alternative_b}")
+        typer.echo(f"差异: {fb.difference}")
+        typer.echo(f"重写任务: {fb.rewrite_task}")
+        typer.echo("下一步：finch practice save --revision 或 finish")
 
 
 def _render_method_drill_card(method: ExpressionMethod) -> str:
@@ -4948,6 +5064,10 @@ def practice_finish(
         None, "--verdict", help="方法练习结论：worth_reuse|practice_again|not_for_me"
     ),
     note: str = typer.Option("", "--note", help="方法练习备注"),
+    source: str = typer.Option(
+        "user_authored", "--source", help="最终版来源：user_authored|ai_example|mixed"
+    ),
+    source_note: str = typer.Option("", "--source-note", help="混合文本的来源片段说明"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
     """记最终版 + LLM 经验总结，置 finished。"""
@@ -4957,6 +5077,9 @@ def practice_finish(
     if verdict is not None and verdict not in _METHOD_VERDICTS:
         typer.echo(f"invalid verdict: {verdict}. expected one of {', '.join(_METHOD_VERDICTS)}")
         raise typer.Exit(code=1)
+    if source not in ("user_authored", "ai_example", "mixed"):
+        typer.echo(f"invalid source: {source}. expected user_authored|ai_example|mixed")
+        raise typer.Exit(code=1)
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     try:
         session = PracticeService(PracticeSessionRepository(ws), runner).finish(
@@ -4964,6 +5087,8 @@ def practice_finish(
             final,
             method_verdict=cast(MethodVerdict | None, verdict),
             method_verdict_note=note,
+            final_source=cast(FinalSourceLiteral, source),
+            source_note=source_note,
         )
         if session.method_id and session.method_verdict:
             ExpressionMethodService(
@@ -5006,6 +5131,8 @@ def practice_show(
     else:
         typer.echo(f"id: {session.id}")
         typer.echo(f"status: {session.status}")
+        if session.phase:
+            typer.echo(f"phase: {session.phase}")
         if session.method_id:
             typer.echo(f"method_id: {session.method_id}")
         if session.method_verdict:
@@ -5015,7 +5142,18 @@ def practice_show(
             typer.echo(f"audience: {session.context.audience}")
         if session.context.goal:
             typer.echo(f"goal: {session.context.goal}")
+        if session.source_material:
+            typer.echo(f"source_material: {session.source_material}")
         typer.echo(f"initial_attempt: {session.initial_attempt}")
+        if session.options:
+            typer.echo("options:")
+            for i, opt in enumerate(session.options):
+                marker = " *" if i == session.selected_option else ""
+                typer.echo(f"  [{i}]{marker} {opt.name}（{opt.familiarity}）→ {opt.dimension}")
+        if session.selection_reason:
+            typer.echo(f"selection_reason: {session.selection_reason}")
+        if session.practice_dimension:
+            typer.echo(f"practice_dimension: {session.practice_dimension}")
         if session.turns:
             typer.echo("turns:")
             for turn in session.turns:
@@ -5031,9 +5169,89 @@ def practice_show(
             typer.echo(f"diagnosis: {session.diagnosis}")
             questions = json.dumps(session.questions_asked, ensure_ascii=False)
             typer.echo(f"questions_asked: {questions}")
+        if session.feedback_rounds:
+            typer.echo("feedback_rounds:")
+            for i, fb in enumerate(session.feedback_rounds):
+                typer.echo(f"  - round {i}: keep={fb.keep!r}")
+                typer.echo(f"      key_location: {fb.key_location}")
+                typer.echo(f"      A: {fb.alternative_a}")
+                typer.echo(f"      B: {fb.alternative_b}")
+                if fb.user_rewrite:
+                    typer.echo(f"      user_rewrite: {fb.user_rewrite}")
         typer.echo(f"revisions: {json.dumps(session.revisions, ensure_ascii=False)}")
         typer.echo(f"final_expression: {session.final_expression}")
+        if session.final_source != "user_authored" or session.source_note:
+            typer.echo(f"final_source: {session.final_source}")
+            typer.echo(f"source_note: {session.source_note}")
         typer.echo(f"lesson: {session.lesson}")
+
+
+@practice_app.command("observe")
+def practice_observe(
+    list_only: bool = typer.Option(False, "--list", help="列出已有观察"),
+    accept: str = typer.Option(None, "--accept", help="认可观察 id"),
+    reject: str = typer.Option(None, "--reject", help="否定观察 id"),
+    correct: str = typer.Option(None, "--correct", help="修正观察 id"),
+    note: str = typer.Option("", "--note", help="修正备注"),
+    force: bool = typer.Option(False, "--force", help="重新提出（覆盖已有）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """风格观察：提出候选（≥3 次相似练习）/ 列出 / 认可 / 否定 / 修正。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    svc = StyleObservationService(
+        PracticeSessionRepository(ws), StyleObservationRepository(ws)
+    )
+    actions = [x for x in (accept, reject, correct) if x is not None]
+    if len(actions) > 1:
+        typer.echo("use at most one of --accept / --reject / --correct")
+        raise typer.Exit(code=1)
+    try:
+        if accept:
+            obs = svc.accept(accept)
+        elif reject:
+            obs = svc.reject(reject)
+        elif correct:
+            obs = svc.correct(correct, note)
+        elif list_only:
+            rows = svc.list_all()
+            if as_json:
+                typer.echo(
+                    json.dumps(
+                        [r.model_dump(mode="json") for r in rows],
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                if not rows:
+                    typer.echo("(empty)")
+                for r in rows:
+                    typer.echo(f"{r.id}\t{r.status}\t{r.characteristic}")
+            return
+        else:
+            proposed = svc.propose(force=force)
+            if as_json:
+                typer.echo(
+                    json.dumps(
+                        [p.model_dump(mode="json") for p in proposed],
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                typer.echo(f"proposed: {len(proposed)}")
+                for p in proposed:
+                    typer.echo(f"  + {p.id} ({p.status}): {p.characteristic}")
+            return
+    except KeyError as exc:
+        typer.echo(f"observation not found: {str(exc).strip(chr(39))}")
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(obs.model_dump_json(indent=2))
+    else:
+        typer.echo(f"{obs.id} -> {obs.status}: {obs.characteristic}")
 
 
 @problems_app.command("add")
@@ -5656,6 +5874,41 @@ def methods_save(
         typer.echo(f"id: {method.id}")
         typer.echo(f"title: {method.title}")
         typer.echo(f"sources: {len(method.sources)}")
+
+
+@methods_app.command("seed")
+def methods_seed(
+    force: bool = typer.Option(False, "--force", help="覆盖已有同 ID 条目"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """幂等导入《精简写作》48 条种子方法（EP-CW-001..048）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    created, merged, skipped = _methods_service(ws, settings).seed_cw48(force=force)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "created": created,
+                    "merged": merged,
+                    "skipped": skipped,
+                    "counts": {
+                        "created": len(created),
+                        "merged": len(merged),
+                        "skipped": len(skipped),
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    typer.echo(f"created: {len(created)}  merged: {len(merged)}  skipped: {len(skipped)}")
+    for mid in created:
+        typer.echo(f"  + {mid}")
+    for mid in merged:
+        typer.echo(f"  ~ {mid} (attached book source)")
 
 
 @methods_app.command("list")

@@ -1,4 +1,4 @@
-"""从实验记录生成表达候选输入（复用 idea-to-draft / VoiceProfile 路径）。"""
+"""从实验记录生成表达候选输入（复用 drafts / VoiceProfile 路径）。"""
 
 from __future__ import annotations
 
