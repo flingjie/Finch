@@ -6,7 +6,7 @@ from _notion_fake import FakeNotionClient
 
 from finch.materials.field_map import (
     blocks_for_discussion,
-    material_toggle_block,
+    material_body_children,
     paragraph_block,
 )
 from finch.materials.models import (
@@ -34,7 +34,7 @@ def _append_material_op(title="标题", body="正文"):
         operation_id=op_id,
         type="append_material",
         target_block="pg-1",
-        payload={"children": [material_toggle_block(title, body, None)]},
+        payload={"title": title, "body_children": material_body_children(body, None)},
     )
 
 
@@ -80,19 +80,17 @@ def test_append_material_dedup_recovers_without_reappend(tmp_path):
     client = FakeNotionClient()
     client.set_page("pg-1")
     # 模拟：第一次 append 已落地但响应丢失（toggle 已在页面里）。
-    toggle = material_toggle_block("标题", "正文", None)
-    toggle["id"] = "existing-blk"
-    client.seed_toggle("pg-1", toggle, "existing-blk")
+    client.seed_toggle("pg-1", "existing-blk", "标题", [])
     client.raise_on_append = NotionError("timeout", status_code=None)
     queue = _queue(tmp_path, client)
     queue.enqueue(_append_material_op())
     queue.drain()  # 第一次：超时 → retryable_failed
     client.raise_on_append = None
-    queue.drain()  # 第二次：按标题去重命中 → succeeded，不重复追加
+    queue.drain()  # 第二次：按标题去重命中 → 复用该 toggle，只补正文
     op = queue.log.get(append_material_operation_id_for("标题", "正文"))
     assert op.status == SyncOperationStatus.SUCCEEDED
-    assert (op.remote_result or {}).get("already_appended") is True
-    assert len(client.blocks["pg-1"]) == 1  # 没有重复追加
+    assert (op.remote_result or {}).get("block_id") == "existing-blk"
+    assert len(client.blocks["pg-1"]) == 1  # 没有重复追加 toggle
 
 
 def test_append_discussion_when_marker_absent_appends_full(tmp_path):

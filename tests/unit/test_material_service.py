@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from _notion_fake import FakeNotionClient
 
-from finch.materials.field_map import material_toggle_block
+from finch.materials.field_map import material_body_children, toggle_summary_block
 from finch.materials.models import SyncOperationStatus
 from finch.materials.service import MaterialService
 from finch.storage.workspace import Workspace
@@ -18,8 +18,12 @@ def _seed_material(
     fake: FakeNotionClient, title: str = "标题A", body: str = "发生了什么", reflection=None
 ) -> str:
     fake.set_page("pg-1")
-    created = fake.append_block_children("pg-1", [material_toggle_block(title, body, reflection)])
-    return created["results"][0]["id"]
+    resp = fake.append_block_children("pg-1", [toggle_summary_block(title)])
+    toggle_id = resp["results"][0]["id"]
+    body_children = material_body_children(body, reflection)
+    if body_children:
+        fake.append_block_children(toggle_id, body_children)
+    return toggle_id
 
 
 def test_capture_enqueues_append_material(tmp_path):
@@ -29,7 +33,8 @@ def test_capture_enqueues_append_material(tmp_path):
     op = service.capture(title="标题", body_text="正文")
     assert op.type == "append_material"
     assert op.status == SyncOperationStatus.PENDING
-    assert op.payload["children"][0]["type"] == "toggle"
+    assert op.payload["title"] == "标题"
+    assert op.payload["body_children"][0]["type"] == "paragraph"
     again = service.capture(title="标题", body_text="正文")
     assert again.operation_id == op.operation_id  # 幂等
 

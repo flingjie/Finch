@@ -5,7 +5,7 @@ from __future__ import annotations
 from _notion_fake import FakeNotionClient
 
 from finch.content.jobs import ContentJobStatus
-from finch.materials.field_map import material_toggle_block
+from finch.materials.field_map import material_body_children, toggle_summary_block
 from finch.materials.models import MaterialSnapshot
 from finch.materials.promotion import MaterialPromotionService
 from finch.materials.service import MaterialService
@@ -40,10 +40,9 @@ def test_from_material_maps_contract_fields():
 def test_promote_is_idempotent(tmp_path):
     fake = FakeNotionClient()
     fake.set_page("pg-1")
-    created = fake.append_block_children(
-        "pg-1", [material_toggle_block("标题A", "发生了什么", "我的感触")]
-    )
-    block_id = created["results"][0]["id"]
+    resp = fake.append_block_children("pg-1", [toggle_summary_block("标题A")])
+    block_id = resp["results"][0]["id"]
+    fake.append_block_children(block_id, material_body_children("发生了什么", "我的感触"))
     service = MaterialService(Workspace(tmp_path), fake, "pg-1")
     first = service.promote(block_id, core_point="核心主张")
     second = service.promote(block_id, core_point="核心主张")

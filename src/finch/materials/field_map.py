@@ -26,6 +26,27 @@ def paragraph_block(text: str) -> dict:
     return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": text_rich(text)}}
 
 
+def heading_3_block(text: str) -> dict:
+    """一个 heading_3 块。"""
+    return {"object": "block", "type": "heading_3", "heading_3": {"rich_text": text_rich(text)}}
+
+
+def toggle_summary_block(title: str) -> dict:
+    """一条素材的 toggle 块（仅 summary；children 由 append 第二步追加）。"""
+    return {"object": "block", "type": "toggle", "toggle": {"rich_text": text_rich(title)}}
+
+
+def material_body_children(body_text: str, reflection: str | None) -> list[dict]:
+    """素材 toggle 的正文 children：正文 + 可选「我的感触」。"""
+    children: list[dict] = []
+    if body_text.strip():
+        children.append(paragraph_block(body_text))
+    if reflection and reflection.strip():
+        children.append(heading_3_block(REGION_REFLECTION))
+        children.append(paragraph_block(reflection))
+    return children
+
+
 def block_plain_text(block: dict) -> str:
     """取块内纯文本（heading/paragraph/toggle/bulleted/… 的 rich_text）。
 
@@ -59,37 +80,9 @@ def user_region_text(raw: str, reflection: str | None) -> str:
     return "\n".join(part for part in parts if part)
 
 
-def material_toggle_block(title: str, body_text: str, reflection: str | None) -> dict:
-    """构造一条素材的 toggle 块：summary=标题，children=正文 + 可选「我的感触」。"""
-    children: list[dict] = []
-    if body_text.strip():
-        children.append(paragraph_block(body_text))
-    if reflection and reflection.strip():
-        children.append(
-            {
-                "object": "block",
-                "type": "heading_3",
-                "heading_3": {"rich_text": text_rich(REGION_REFLECTION)},
-            }
-        )
-        children.append(paragraph_block(reflection))
-    return {
-        "object": "block",
-        "type": "toggle",
-        "toggle": {"rich_text": text_rich(title)},
-        "children": children,
-    }
-
-
 def blocks_for_discussion(discussion_id: str, record: DiscussionRecord) -> list[dict]:
     """讨论回写块：块 0 是标记标题，其后是判断 / AI 提议 / 未解决 / 行动段落。"""
-    blocks: list[dict] = [
-        {
-            "object": "block",
-            "type": "heading_3",
-            "heading_3": {"rich_text": text_rich(f"{REGION_FINCH} #{discussion_id}")},
-        }
-    ]
+    blocks: list[dict] = [heading_3_block(f"{REGION_FINCH} #{discussion_id}")]
     if record.user_judgment.strip():
         blocks.append(paragraph_block(f"判断：{record.user_judgment}"))
     for proposal in record.ai_proposals:

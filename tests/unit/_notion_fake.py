@@ -1,7 +1,7 @@
 """Shared fake NotionClient for materials tests (in-memory, deterministic).
 
-模拟「页面 + toggle 块 + 嵌套 children」结构：append 时给块赋 id，嵌套 children 存入
-``blocks[toggle_id]``。用于测试 service / queue，不涉及真实网络。
+模拟「页面 + toggle 块 + children」结构：append 时给块赋 id（平面，不嵌套）。
+用于测试 service / queue，不涉及真实网络。
 """
 
 from __future__ import annotations
@@ -42,22 +42,21 @@ class FakeNotionClient:
     def append_block_children(self, block_id: str, children: list[dict]) -> dict:
         if self.raise_on_append is not None:
             raise self.raise_on_append
-        created = [self._materialize(child) for child in children]
+        created = []
+        for child in children:
+            materialized = dict(child)
+            materialized["id"] = self._next_id()
+            created.append(materialized)
         self.blocks.setdefault(block_id, []).extend(created)
         self.appended.append((block_id, children))
         return {"results": created}
 
-    def _materialize(self, block: dict) -> dict:
-        """给块赋 id；嵌套 children 存入 ``blocks[id]``。"""
-        materialized = dict(block)
-        materialized["id"] = self._next_id()
-        nested = materialized.pop("children", None)
-        if nested:
-            self.blocks[materialized["id"]] = [self._materialize(c) for c in nested]
-        return materialized
-
-    def seed_toggle(self, page_id: str, toggle_block: dict, toggle_id: str) -> None:
-        """把一条已存在的 toggle（含 children）放进页面，供去重/部分写入测试用。"""
-        self.blocks.setdefault(page_id, []).append(toggle_block)
-        children = toggle_block.get("children", [])
-        self.blocks[toggle_id] = list(children)
+    def seed_toggle(self, page_id: str, toggle_id: str, title: str, body_children=None) -> None:
+        """把一条已存在的 toggle（summary + children）放进页面，供去重/部分写入测试用。"""
+        toggle = {
+            "id": toggle_id,
+            "type": "toggle",
+            "toggle": {"rich_text": [{"type": "text", "text": {"content": title}}]},
+        }
+        self.blocks.setdefault(page_id, []).append(toggle)
+        self.blocks[toggle_id] = list(body_children or [])

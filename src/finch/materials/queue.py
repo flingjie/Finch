@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
-from finch.materials.field_map import block_plain_text
+from finch.materials.field_map import block_plain_text, toggle_summary_block
 from finch.materials.models import SyncOperation, SyncOperationStatus
 from finch.materials.repository import SyncOperationLog
 from finch.notion.client import NotionClient, NotionError
@@ -84,24 +84,25 @@ class WriteQueue:
         return finished
 
     def _execute_append_material(self, op: SyncOperation) -> SyncOperation:
-        children: list[dict] = op.payload.get("children", [])
-        if not children:
-            return self._transition(op, SyncOperationStatus.SUCCEEDED)
-        toggle = children[0]
-        title = block_plain_text(toggle)
+        title = op.payload.get("title", "")
+        body: list[dict] = op.payload.get("body_children", [])
         page_id = op.target_block or self.parent_page_id
-        # 重试前先查：响应丢失但块已落地 → 按 toggle 标题去重恢复，不重复追加。
+        toggle_id: str | None = None
+        # 重试先去重：标题已存在 → 复用该 toggle，不重复追加。
         if op.attempts > 1:
             for block in self.client.list_all_block_children(page_id):
                 if block.get("type") == "toggle" and block_plain_text(block) == title:
-                    return self._transition(
-                        op, SyncOperationStatus.SUCCEEDED,
-                        remote_result={"already_appended": True, "block_id": block["id"]},
-                    )
-        resp = self.client.append_block_children(page_id, children)
-        created = (resp.get("results") or [{}])[0]
+                    toggle_id = block["id"]
+                    break
+        if toggle_id is None:
+            resp = self.client.append_block_children(page_id, [toggle_summary_block(title)])
+            toggle_id = (resp.get("results") or [{}])[0].get("id")
+        # 第二步：正文 children（Notion 不支持 append 时带嵌套 children，分两次写）。
+        if body and toggle_id:
+            if not self.client.list_all_block_children(toggle_id):
+                self.client.append_block_children(toggle_id, body)
         return self._transition(
-            op, SyncOperationStatus.SUCCEEDED, remote_result={"block_id": created.get("id")}
+            op, SyncOperationStatus.SUCCEEDED, remote_result={"block_id": toggle_id}
         )
 
     def _execute_append_discussion(self, op: SyncOperation) -> SyncOperation:

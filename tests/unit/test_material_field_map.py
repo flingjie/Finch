@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from finch.materials.field_map import (
     blocks_for_discussion,
-    material_toggle_block,
+    material_body_children,
+    toggle_summary_block,
     toggle_to_snapshot,
 )
 from finch.materials.models import DiscussionRecord
@@ -21,16 +22,16 @@ def _page(page_id: str = "pg-1") -> dict:
 def _toggle_with_id(
     title: str, body: str, reflection: str | None = None
 ) -> tuple[dict, list[dict]]:
-    block = material_toggle_block(title, body, reflection)
+    block = toggle_summary_block(title)
     block["id"] = "blk-1"
-    return block, block["children"]
+    return block, material_body_children(body, reflection)
 
 
-def test_material_toggle_block_shape():
-    block = material_toggle_block("标题", "发生了什么", "很有共鸣")
+def test_toggle_summary_and_body_children_shape():
+    block = toggle_summary_block("标题")
     assert block["type"] == "toggle"
     assert block["toggle"]["rich_text"][0]["text"]["content"] == "标题"
-    children = block["children"]
+    children = material_body_children("发生了什么", "很有共鸣")
     assert children[0]["type"] == "paragraph"
     assert children[1]["type"] == "heading_3"  # 我的感触标记
 

@@ -16,7 +16,7 @@ from finch.content.jobs import ContentJob
 from finch.ideas.service import IdeaService
 from finch.materials.field_map import (
     blocks_for_discussion,
-    material_toggle_block,
+    material_body_children,
     toggle_to_snapshot,
     user_region_text,
 )
@@ -69,7 +69,6 @@ class MaterialService:
         self, *, title: str, body_text: str, reflection: str | None = None
     ) -> SyncOperation:
         """保存一条素材：生成操作 ID、落队列，再（由 queue 追加 toggle 块到父页面）。"""
-        toggle = material_toggle_block(title, body_text, reflection)
         extractable = user_region_text(body_text, reflection)
         source_hash = source_hash_for(extractable)
         operation_id = append_material_operation_id_for(title, body_text)
@@ -77,7 +76,10 @@ class MaterialService:
             operation_id=operation_id,
             type="append_material",
             target_block=self.parent_page_id,
-            payload={"children": [toggle]},
+            payload={
+                "title": title,
+                "body_children": material_body_children(body_text, reflection),
+            },
             expected_material_version=source_hash,
         )
         return self.queue.enqueue(op)
