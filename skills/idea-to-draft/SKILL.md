@@ -31,11 +31,12 @@ description: >
 
 ## 声音
 
-写作前读 `voice-profile.yaml`。`preferred_patterns` 是表达顺序，`approved_examples` 是
-腔调参照，`avoid_phrases` 命中的表达不写，`rhythm_rules` 是节奏约束；画像为空则退回
-`references/draft-patterns.md` 的默认口吻。`finch drafts write/create` 已把画像交给生成
-与 Critic；若返回正文仍与画像腔调明显不符，先 `finch drafts revise <id> --instruction "..."`
-对齐再呈现，不把「不像我」的稿子当最终交付。
+写作前读 `voice-profile.yaml`。`preferred_patterns` 与 `approved_examples` 是腔调参照，
+`avoid_phrases` 命中的表达不写，`rhythm_rules` 是节奏约束；本 Skill 的结构顺序固定为
+「先发现，后结论」，冲突时以本 Skill 为准。画像为空则退回 `references/draft-patterns.md`
+的默认口吻。`finch drafts write/create` 已把画像交给生成与 Critic；若返回正文仍与画像腔调
+明显不符，先 `finch drafts revise <id> --instruction "..."` 对齐再呈现，不把「不像我」的稿子
+当最终交付。
 
 ## 向用户呈现
 

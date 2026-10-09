@@ -19,9 +19,11 @@ idea-to-draft 只依据 Content Job 语境写正文。下面是把「已确认�
 
 ## 口吻与篇幅
 
-- 默认腔调来自作者声音画像（`voice-profile.yaml`）：先读它，把 `preferred_patterns` 当表达
-  顺序、`approved_examples` 当参照、`avoid_phrases` 命中的不写；画像为空时用下面这套默认。
-- 先给一个判断或概念，再展开关键区分或可执行做法；不用「值得注意 / 随着 AI 发展」这类空开场。
+- 默认腔调来自作者声音画像（`voice-profile.yaml`）：先读它，把 `preferred_patterns` 与
+  `approved_examples` 当腔调参照、`avoid_phrases` 命中的不写；本 Skill 的结构顺序固定为
+  「先发现，后结论」，冲突时以本 Skill 为准。画像为空时用下面这套默认。
+- 第一段直接写具体发现、反例或失败现象，再落到判断或可执行做法；不以总判断或价值陈述开场，
+  也不空开场。
 - 用「不是…而是…」或「A 而非 B」的对照收紧判断，把概念落到一个可观察的区别上。
 - 原创日记（original）：第一人称、实践者口吻，记录「我做了什么、为什么、结果如何、学到什么」；
   但第一人称亲历必须有对应证据（见 `_shared/evidence-policy.md`），没有就不写。
