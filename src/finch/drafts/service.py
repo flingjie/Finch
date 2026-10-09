@@ -223,7 +223,7 @@ class DraftService:
 
     def _generate(self, job: ContentJob, draft_id: str) -> Draft:
         """生成首稿：只依据 job 语境写正文，并把幂等键确定性写入 ``id``。"""
-        draft = write_original_from_job(self.runner, job)
+        draft = write_original_from_job(self.runner, job, self.voice_profile)
         return draft.model_copy(update={"id": draft_id, "run_id": "idea"})
 
     def _critic_loop(self, draft: Draft, job: ContentJob, draft_id: str) -> Draft:
@@ -249,7 +249,7 @@ class DraftService:
             if round_no == self.max_rewrite_rounds:
                 break
             failed = [check for check in checks if not check.passed]
-            current = rewrite_idea(self.runner, current, failed, job)
+            current = rewrite_idea(self.runner, current, failed, job, self.voice_profile)
 
         # rewrite 用尽仍不 pass：保留最后一版（人工审核仍可见 Critic 报告）。
         self.drafts.upsert_draft(current)

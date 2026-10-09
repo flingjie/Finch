@@ -76,6 +76,22 @@ def save_voice_profile(profile: VoiceProfile, path: Path | str) -> None:
     )
 
 
+def render_voice_context(profile: VoiceProfile | None) -> str:
+    """把作者声音画像渲染成写作参照块（风格线索，非事实）；空画像返回 ``(none)``。"""
+    if profile is None or profile.is_empty():
+        return "(none)"
+    lines: list[str] = []
+    if profile.preferred_patterns:
+        lines.append("偏好: " + "；".join(profile.preferred_patterns))
+    if profile.avoid_phrases:
+        lines.append("避免: " + "；".join(profile.avoid_phrases))
+    if profile.rhythm_rules:
+        lines.append("节奏: " + "；".join(profile.rhythm_rules))
+    for example in profile.approved_examples:
+        lines.append(f"参考样例 {example.id}: {example.text}")
+    return "\n".join(lines)
+
+
 class VoiceUpdateProposal(BaseModel):
     """从样例 diff 提取的稳定偏好候选（只读，不写画像；由用户确认后才写入）。"""
 

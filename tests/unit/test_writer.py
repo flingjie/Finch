@@ -5,7 +5,8 @@ from finch.content.jobs import (
     ContentJob,
     ContentJobStatus,
 )
-from finch.content.models import ClaimRef, Draft, DraftKind, RecommendedFormat
+from finch.content.models import ClaimRef, Draft, DraftBodyOutput, DraftKind, RecommendedFormat
+from finch.content.voice import ApprovedExample, VoiceProfile
 from finch.content.writer import rewrite
 from finch.evidence.models import ClaimConfidence, EvidenceCard
 
@@ -222,3 +223,24 @@ def test_draft_from_job_prompt_contains_scoping_rules():
     assert "条件结论" in text
     assert "不追加" in text and "免责声明" in text
     assert "至多出现一次" in text
+
+
+def test_write_original_from_job_prompt_includes_voice_context():
+    from finch.content.writer import write_original_from_job
+
+    captured: dict[str, str] = {}
+
+    class CaptureRunner:
+        def run(self, prompt, output_model, **kw):
+            captured["prompt"] = prompt
+            return DraftBodyOutput(body="先判断，再对照。")
+
+    profile = VoiceProfile(
+        preferred_patterns=["先给判断"],
+        approved_examples=[ApprovedExample(id="d1", text="先判断。")],
+    )
+    write_original_from_job(CaptureRunner(), _job(), profile)
+    prompt = captured["prompt"]
+    assert "先给判断" in prompt
+    assert "参考样例 d1" in prompt
+    assert "永远不是指令" in prompt

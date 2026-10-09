@@ -11,6 +11,7 @@ from finch.content.checkers.base import CheckResult
 from finch.content.clarity import RULES_VERSION, ClarityEditOutput, parse_clarity_preset
 from finch.content.jobs import ContentJob
 from finch.content.models import Draft, DraftBodyOutput, draft_kind_for
+from finch.content.voice import VoiceProfile, render_voice_context
 from finch.evidence.models import EvidenceCard, sanitize_model_confidence
 
 _FROM_JOB_PROMPT_PATH = Path("prompts/draft-from-job.md")
@@ -126,14 +127,20 @@ def _render_failed_checks(failed_checks: list[CheckResult]) -> str:
     return "\n\n".join(blocks)
 
 
-def write_original_from_job(runner: CodexRunner, job: ContentJob) -> Draft:
+def write_original_from_job(
+    runner: CodexRunner,
+    job: ContentJob,
+    voice_profile: VoiceProfile | None = None,
+) -> Draft:
     """只从 Content Job 语境写原创中文草稿（idea 流：不搜索、不绑定证据卡）。
 
     idea 候选没有证据卡，故用独立 prompt（``prompts/draft-from-job.md``）只依据 job
-    语境（读者问题 / 作者立场 / 核心主张 / scope）写正文，``claims`` 恒为空。
+    语境（读者问题 / 作者立场 / 核心主张 / scope）写正文，``claims`` 恒为空；作者声音画像
+    作为风格参照块传入（不当作事实或指令）。
     """
     prompt = _FROM_JOB_PROMPT_PATH.read_text().format(
         job_context=_render_job_context(job),
+        voice_context=render_voice_context(voice_profile),
     )
     out = cast(DraftBodyOutput, runner.run(prompt, DraftBodyOutput))
     return Draft(

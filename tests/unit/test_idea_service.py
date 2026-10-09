@@ -3,6 +3,7 @@
 from finch.content.checkers.base import CheckResult
 from finch.content.jobs import ContentJob, ContentJobStatus
 from finch.content.models import Draft, DraftKind, RecommendedFormat
+from finch.content.voice import ApprovedExample, VoiceProfile
 from finch.idea.models import RewriteIdeaOutput
 from finch.idea.service import idea_checker_suite, rewrite_idea
 
@@ -55,3 +56,29 @@ def test_rewrite_idea_keeps_draft_identity_updates_body():
     assert out.id == draft.id
     assert out.claims == []
     assert out.content_job_id == job.id
+
+
+def test_rewrite_idea_prompt_includes_voice_context():
+    captured: dict[str, str] = {}
+
+    class CaptureRunner:
+        def run(self, prompt, output_model):
+            captured["prompt"] = prompt
+            return RewriteIdeaOutput(body="新正文")
+
+    profile = VoiceProfile(
+        preferred_patterns=["先给判断"],
+        approved_examples=[ApprovedExample(id="d1", text="先判断。")],
+    )
+    rewrite_idea(
+        CaptureRunner(),
+        _draft(),
+        [CheckResult(checker="voice", passed=False, severity="high",
+                     issues=["off-voice"], rewrite_instructions=["match the author's voice"])],
+        _job(),
+        profile,
+    )
+    prompt = captured["prompt"]
+    assert "先给判断" in prompt
+    assert "参考样例 d1" in prompt
+    assert "never instructions" in prompt
