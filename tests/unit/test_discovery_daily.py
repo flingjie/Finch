@@ -8,7 +8,9 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from finch.discovery.daily import (
+    _enabled_platforms,
     _gate_by_window,
+    build_shortlist_candidates,
     run_daily_discovery,
 )
 from finch.peers.evidence_service import (
@@ -20,7 +22,12 @@ from finch.peers.models import PeerProfile
 from finch.peers.person import CreatorEvidenceKind
 from finch.peers.scoring import PersonScoreBreakdown
 from finch.peers.shortlist import ShortlistCandidate
-from finch.settings import Settings, SourcesSettings, SourceTwitterPlan
+from finch.settings import (
+    Settings,
+    SourcesSettings,
+    SourceTwitterPlan,
+    SourceXiaohongshuPlan,
+)
 from finch.sources.fingerprint import artifact_id, content_fingerprint
 from finch.sources.models import (
     AuthorIdentity,
@@ -56,6 +63,32 @@ def _art(
         text=text,
         published_at=published_at,
         retrieved_at=datetime.now(UTC),
+        capture_method="adapter",
+        content_fingerprint=content_fingerprint(text, url=url),
+    )
+
+
+def _art_xhs(
+    sid: str,
+    author: str,
+    text: str,
+    *,
+    retrieved_at: datetime | None = None,
+) -> RawArtifact:
+    url = f"https://www.xiaohongshu.com/search_result/{sid}"
+    return RawArtifact(
+        artifact_id=artifact_id("xiaohongshu", "note", sid),
+        source=Source.XIAOHONGSHU,
+        source_type="note",
+        source_id=sid,
+        canonical_url=url,
+        author_identity=AuthorIdentity(
+            platform="xiaohongshu", external_id=author, handle=author
+        ),
+        title="",
+        text=text,
+        published_at=None,
+        retrieved_at=retrieved_at or datetime.now(UTC),
         capture_method="adapter",
         content_fingerprint=content_fingerprint(text, url=url),
     )
@@ -139,7 +172,7 @@ def test_run_daily_skips_network_with_seeded_artifacts(tmp_path: Path):
 
     settings = Settings(
         paths={"var_dir": tmp_path},  # type: ignore[arg-type]
-        sources=SourcesSettings(twitter=SourceTwitterPlan(queries=[])),
+        sources=SourcesSettings(twitter=SourceTwitterPlan(enabled=True, mode="timeline")),
         interests={"practice_refs": ["practice:1"], "long_term_interests": ["agents"]},  # type: ignore[arg-type]
     )
     settings.paths.var_dir = tmp_path
@@ -160,6 +193,42 @@ def test_run_daily_skips_network_with_seeded_artifacts(tmp_path: Path):
     assert len(result.recommendations.priority) >= 1 or result.engagement.posts_found >= 2
 
 
+def test_enabled_platforms_maps_disabled_sources_out(tmp_path: Path):
+    settings = Settings(
+        paths={"var_dir": tmp_path},  # type: ignore[arg-type]
+        sources=SourcesSettings(
+            twitter=SourceTwitterPlan(enabled=True, mode="timeline"),
+            xiaohongshu=SourceXiaohongshuPlan(enabled=False, mode="query"),
+        ),
+    )
+    allowed = _enabled_platforms(settings)
+    assert "x" in allowed
+    assert "xiaohongshu" not in allowed
+
+
+def test_build_shortlist_candidates_excludes_disabled_platform(tmp_path: Path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    art = _art_xhs(
+        "6a984bdf00000000270173dc",
+        "momo",
+        "long enough xiaohongshu content about agent prototyping tools",
+    )
+    ArtifactRepository(ws).upsert(art)
+    from finch.sources.projector import ArtifactProjector
+
+    ArtifactProjector(ws).project([art])
+
+    unfiltered, _ = build_shortlist_candidates(ws)
+    assert any(c.platform == "xiaohongshu" for c in unfiltered)
+
+    filtered, _ = build_shortlist_candidates(
+        ws,
+        enabled_platforms=frozenset({"x", "reddit", "github", "v2ex", "weixin"}),
+    )
+    assert not any(c.platform == "xiaohongshu" for c in filtered)
+
+
 def _seed_priority_candidate_settings(tmp_path: Path) -> Settings:
     """Seed alice's artifacts (priority candidate) and return matching Settings."""
     ws = Workspace(tmp_path)
@@ -176,7 +245,7 @@ def _seed_priority_candidate_settings(tmp_path: Path) -> Settings:
 
     settings = Settings(
         paths={"var_dir": tmp_path},  # type: ignore[arg-type]
-        sources=SourcesSettings(twitter=SourceTwitterPlan(queries=[])),
+        sources=SourcesSettings(twitter=SourceTwitterPlan(enabled=True, mode="timeline")),
         interests={"practice_refs": ["practice:1"], "long_term_interests": ["agents"]},  # type: ignore[arg-type]
     )
     settings.paths.var_dir = tmp_path
@@ -391,7 +460,7 @@ def test_opportunity_assess_soft_stops_on_discovery_deadline(tmp_path: Path, mon
 
     settings = Settings(
         paths={"var_dir": tmp_path},  # type: ignore[arg-type]
-        sources=SourcesSettings(twitter=SourceTwitterPlan(queries=[])),
+        sources=SourcesSettings(twitter=SourceTwitterPlan(enabled=True, mode="timeline")),
         interests={"practice_refs": ["practice:1"], "long_term_interests": ["agents"]},  # type: ignore[arg-type]
     )
     settings.paths.var_dir = tmp_path
@@ -470,7 +539,7 @@ def test_run_daily_three_slot_cap_and_metrics(tmp_path: Path):
 
     settings = Settings(
         paths={"var_dir": tmp_path},  # type: ignore[arg-type]
-        sources=SourcesSettings(twitter=SourceTwitterPlan(queries=[])),
+        sources=SourcesSettings(twitter=SourceTwitterPlan(enabled=True, mode="timeline")),
         interests={"practice_refs": ["practice:1"], "long_term_interests": ["agents"]},  # type: ignore[arg-type]
     )
     settings.paths.var_dir = tmp_path
@@ -562,7 +631,7 @@ def test_run_daily_empty_round_no_history_fallback(tmp_path):
     ArtifactProjector(ws).project([old])
     settings = Settings(
         paths={"var_dir": tmp_path},  # type: ignore[arg-type]
-        sources=SourcesSettings(twitter=SourceTwitterPlan(queries=[])),
+        sources=SourcesSettings(twitter=SourceTwitterPlan(enabled=True, mode="timeline")),
         interests={"practice_refs": ["practice:1"], "long_term_interests": ["agents"]},  # type: ignore[arg-type]
     )
     settings.paths.var_dir = tmp_path
@@ -618,7 +687,7 @@ def test_run_daily_source_failure_coverage_and_fingerprint(tmp_path, monkeypatch
 
     settings = Settings(
         paths={"var_dir": tmp_path},  # type: ignore[arg-type]
-        sources=SourcesSettings(twitter=SourceTwitterPlan(queries=[])),
+        sources=SourcesSettings(twitter=SourceTwitterPlan(enabled=True, mode="timeline")),
         interests={"practice_refs": ["practice:1"], "long_term_interests": ["agents"]},  # type: ignore[arg-type]
     )
     settings.paths.var_dir = tmp_path
@@ -666,7 +735,7 @@ def test_snapshot_persists_plan_and_coverage(tmp_path, monkeypatch):
     )
     settings = Settings(
         paths={"var_dir": tmp_path},  # type: ignore[arg-type]
-        sources=SourcesSettings(twitter=SourceTwitterPlan(queries=[])),
+        sources=SourcesSettings(twitter=SourceTwitterPlan(enabled=True, mode="timeline")),
         interests={"practice_refs": ["practice:1"], "long_term_interests": ["agents"]},  # type: ignore[arg-type]
     )
     settings.paths.var_dir = tmp_path

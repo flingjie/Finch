@@ -107,6 +107,10 @@ def _seed(ws: Workspace, n_people: int = 60) -> list[RawArtifact]:
 def _settings(tmp_path: Path) -> Settings:
     s = Settings(paths={"var_dir": tmp_path})  # type: ignore[arg-type]
     s.paths.var_dir = tmp_path
+    for source in ("twitter", "reddit", "github", "v2ex", "weixin", "xiaohongshu"):
+        plan = getattr(s.sources, source)
+        plan.enabled = True
+        plan.mode = "query"
     return s
 
 

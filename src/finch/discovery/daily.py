@@ -42,7 +42,7 @@ from finch.problems.render import render_active_problems
 from finch.profile.models import load_practice_profile
 from finch.profile.render import NONE_MARKER, render_user_practices
 from finch.settings import Settings
-from finch.sources.models import RawArtifact
+from finch.sources.models import RawArtifact, Source
 from finch.sources.opencli_gateway import OpenCliGateway
 from finch.sources.orchestrator import DiscoveryOrchestrator, SyncResult
 from finch.sources.query_plan import (
@@ -63,6 +63,14 @@ _TEXT_LIMIT = 600
 _VALID_PLATFORMS = frozenset(
     {"x", "reddit", "github", "v2ex", "weixin", "xiaohongshu"}
 )
+_SOURCE_PLATFORM = {
+    Source.TWITTER: "x",
+    Source.REDDIT: "reddit",
+    Source.GITHUB: "github",
+    Source.V2EX: "v2ex",
+    Source.WEIXIN: "weixin",
+    Source.XIAOHONGSHU: "xiaohongshu",
+}
 
 
 @dataclass
@@ -227,7 +235,21 @@ def _feedback_boost_map(
         if delta:
             boost[person_id] = boost.get(person_id, 0.0) + delta
     return boost
-def build_shortlist_candidates(ws: Workspace) -> tuple[list[ShortlistCandidate], set[str]]:
+def _enabled_platforms(settings: Settings) -> frozenset[str]:
+    """把 sources.* 中启用的采集源映射为推荐侧的平台名。"""
+    allowed: set[str] = set()
+    for src, platform in _SOURCE_PLATFORM.items():
+        plan = getattr(settings.sources, src.value)
+        if plan.enabled and plan.mode != "disabled":
+            allowed.add(platform)
+    return frozenset(allowed)
+
+
+def build_shortlist_candidates(
+    ws: Workspace,
+    *,
+    enabled_platforms: frozenset[str] | None = None,
+) -> tuple[list[ShortlistCandidate], set[str]]:
     peers = PeerRepository(ws).list_all()
     person_svc = PersonService(PersonRepository(ws))
     evidence_repo = CreatorEvidenceRepository(ws)
@@ -245,6 +267,8 @@ def build_shortlist_candidates(ws: Workspace) -> tuple[list[ShortlistCandidate],
         platform = (
             peer.platform_identities[0].platform if peer.platform_identities else ""
         )
+        if enabled_platforms is not None and platform and platform not in enabled_platforms:
+            continue
         artifact_ids = [e.artifact_id for e in evs]
         if len(artifact_ids) < 2:
             artifact_ids = list(
@@ -429,7 +453,9 @@ def run_daily_discovery(
         if ev_result.failures:
             result.detail = "; ".join(ev_result.failures[:3])
 
-    candidates, _ = build_shortlist_candidates(ws)
+    candidates, _ = build_shortlist_candidates(
+        ws, enabled_platforms=_enabled_platforms(settings)
+    )
     candidates, stale_count = _gate_by_window(
         candidates,
         ws=ws,
