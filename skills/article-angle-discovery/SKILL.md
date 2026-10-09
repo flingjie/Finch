@@ -31,6 +31,16 @@ description: >
 4. 筛出 1–3 个**论点确实不同**的方向（可零候选，不硬凑；独特性排最后）。
 5. 深入推荐 1 个方向：提纲 + 证据缺口 + 最小验证行动。
 
+## 可视化呈现
+
+一张图不同时承担探索、组合与决策。方向卡片负责探索，局部关系图负责组合，选题卡负责决策。
+默认只呈现核心问题与 3–5 个探索方向；用户选择后展开该方向的 2–3 个完整问题。静态图采用纵向
+布局（Mermaid 优先 `flowchart TD`），过宽时拆成总览图与分支图，不通过缩小字体容纳更多节点。
+方向使用短标签，具体问题保留完整问句；选题细节使用卡片。交互式 HTML 在实际显示尺寸下保持正文
+至少 16px，并适配窄屏。输出前检查正常窗口下的可读性，不以全屏放大作为解决方案。
+
+完整规则见 `references/presentation.md`。
+
 ## 输入回退（codex 触发）
 
 用户未提供帖子链接时的回退规则见 `_shared/url-fallback.md`。
@@ -63,6 +73,7 @@ description: >
 - `references/angle-library.md` — 22 角度四类 + 核心追问 + 适用信号 + 两条约束。
 - `references/combination-patterns.md` — 组合方式表 + 桥问题 + 试金石 + 工作示例。
 - `references/output-contract.md` — AngleBrief 契约（确定性字段 + 判断字段 + 证据性质标注）。
+- `references/presentation.md` — 可视化布局、字号与交互式呈现规则。
 - `_shared/evidence-policy.md` — 外部帖 ≠ 个人证据；不把推断写成已验证事实。
 - `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话。
 - `_shared/url-fallback.md` — 用户未提供帖子链接时，回退到当前对话中最近一次 URL（codex 触发）。
