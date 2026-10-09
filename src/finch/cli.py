@@ -1039,9 +1039,12 @@ def repos_export(
 
 
 @github_app.command("reflect")
-def github_reflect(repo: str = typer.Option("flingjie/FDE-Gym"),
+def github_reflect(repo: str = typer.Option("", help="GitHub 仓库（owner/name）"),
                    since: str = typer.Option("7d")) -> None:
     """读取最近 Commit，提取工程事件并输出证据卡。"""
+    if not repo:
+        typer.echo("请通过 --repo 指定 owner/name")
+        raise typer.Exit(code=2)
     gh = GhClient()
     settings = load_settings()
     details = load_commit_details(
@@ -6090,6 +6093,8 @@ def _require_notion(settings: Settings) -> tuple[NotionClient, str]:
             base_url=settings.notion.base_url,
             version=settings.notion.version,
             timeout=settings.notion.timeout_seconds,
+            max_attempts=settings.notion.max_attempts,
+            backoff_seconds=settings.notion.backoff_seconds,
         ),
         parent_page_id,
     )
@@ -6099,7 +6104,10 @@ def _materials_service(settings: Settings) -> tuple[MaterialService, Workspace]:
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     client, parent_page_id = _require_notion(settings)
-    return MaterialService(ws, client, parent_page_id), ws
+    service = MaterialService(
+        ws, client, parent_page_id, notes_page_id=settings.notion.notes_page_id
+    )
+    return service, ws
 
 
 @materials_app.command("doctor")

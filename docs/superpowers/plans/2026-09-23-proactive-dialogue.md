@@ -692,7 +692,7 @@ git commit -m "feat(dialogue): wire extension-check into second batch + README u
 - [ ] **Step 1: 仓库内相对路径可达性**
 
 ```bash
-cd /Users/lingjiefan/underway/Finch && for f in skills/_shared/dialogue-policy.md skills/_shared/agent-presentation.md; do test -f "$f" && echo "ok: $f" || echo "MISSING: $f"; done
+cd ~/underway/Finch && for f in skills/_shared/dialogue-policy.md skills/_shared/agent-presentation.md; do test -f "$f" && echo "ok: $f" || echo "MISSING: $f"; done
 ```
 
 预期：两行 `ok:`。

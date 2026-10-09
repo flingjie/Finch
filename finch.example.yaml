@@ -6,8 +6,8 @@
 # List explicit repositories as `owner/name`. Leave empty to use repository_discovery.
 # repositories:
 #   - your-org/your-repo
-#   - flingjie/Agent-100-Days
-#   - flingjie/InvestAI
+#   - octocat/Hello-World
+#   - octocat/Spoon-Knife
 repositories: []
 
 repository_discovery:
@@ -93,7 +93,7 @@ sources:
     enabled: false
     mode: query
     fetch_limit: 100
-    users: []  # GitHub logins only, e.g. [jackwener, iFurySt]
+    users: []  # GitHub logins only, e.g. [octocat]
   v2ex:
     enabled: true
     mode: query
@@ -240,11 +240,7 @@ interests:
     - evidence-free model rankings
 
   # 存在非空 practice-profile.yaml 时忽略此项（community-scout 改读画像中 confirmed 条目的 evidence_refs）。
-  practice_refs:
-    - flingjie/Finch
-    - flingjie/FDE-Gym
-    - flingjie/builderDNA
-    - flingjie/skills
+  practice_refs: []
 
 # api_key is read from LLM_API_KEY in .env; do not commit secrets here.
 llm:
@@ -268,6 +264,7 @@ extraction:
 # Notion 素材库（api_key 读自 .env 的 NOTION_API_KEY，不写入仓库）。
 notion:
   parent_page_id: ""   # 素材存放的父页面（月度页）id
+  notes_page_id: ""    # 月度页所在的 Notes 容器页 id；为空时仅同步 parent_page_id 单页
   base_url: https://api.notion.com/v1
   version: "2022-06-28"
   timeout_seconds: 30.0

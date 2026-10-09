@@ -25,7 +25,7 @@ def _load(name: str) -> dict:
 def test_parse_repo_view():
     r = parse_repo_view(_load("repo-view.json"))
     assert isinstance(r, RepoInfo)
-    assert r.name_with_owner == "flingjie/FDE-Gym"
+    assert r.name_with_owner == "octocat/example-repo"
     assert r.is_private is False
     assert r.default_branch == "main"
 
@@ -33,7 +33,7 @@ def test_parse_repo_view():
 def test_parse_repo_summary():
     r = parse_repo_summary(
         {
-            "full_name": "flingjie/FDE-Gym",
+            "full_name": "octocat/example-repo",
             "private": False,
             "fork": False,
             "archived": False,
@@ -43,7 +43,7 @@ def test_parse_repo_summary():
         }
     )
     assert isinstance(r, RepoSummary)
-    assert r.name_with_owner == "flingjie/FDE-Gym"
+    assert r.name_with_owner == "octocat/example-repo"
     assert r.is_private is False
     assert r.pushed_at is not None
     assert r.size == 468

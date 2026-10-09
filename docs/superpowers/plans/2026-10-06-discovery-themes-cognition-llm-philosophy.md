@@ -15,7 +15,7 @@
 - 不新增 `excluded_content`、不改 `exploration_topics`/`github`/`v2ex`/`xiaohongshu`/`usage_queries`。
 - `interests` 关键词须 ≥3 字符（`match_interests` 跳过 `<3` 字符的词）。
 - 查询语法按适配器能力：twitter 支持引号 OR 组 + 圆括号过滤；reddit 是**纯短语直传**（不写引号/布尔）；weixin 是平铺关键词。
-- 全部命令从仓库根 `/Users/lingjiefan/underway/Finch` 运行。
+- 全部命令从仓库根 `~/underway/Finch` 运行。
 
 ---
 

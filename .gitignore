@@ -23,5 +23,8 @@ finch.yaml
 # Local personal data (confirmed practices; managed via `finch profile *`)
 practice-profile.yaml
 
+# Local personal writing profile (managed via `finch voice *`)
+voice-profile.yaml
+
 # Git worktrees (local isolation)
 .worktrees/

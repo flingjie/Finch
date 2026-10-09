@@ -2,7 +2,7 @@
 
 > **口径已更新（superseded）**：本文的定位 / 受众 / 北极星口径已被 2026-10-08 跨领域改造取代；权威定义见 `docs/product-contract.md`。本文仅作历史记录。
 
-> 来源 spec：`/Users/lingjiefan/Downloads/Finch-Connection-First-Refactor-Plan.md`（本文将其 8 阶段分解为可执行的 TDD 任务）。
+> 来源 spec：`~/Downloads/Finch-Connection-First-Refactor-Plan.md`（本文将其 8 阶段分解为可执行的 TDD 任务）。
 > 分支：`refactor/connection-first`。每个 Task 结束都跑测试并 commit。
 
 **Goal:** 将 Finch 从「证据驱动内容生成」重定位为「同行连接与个人表达系统」，以 `finch connect daily` 为主入口。
