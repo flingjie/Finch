@@ -91,7 +91,7 @@ class NotionSettings(BaseModel):
     """
 
     api_key: str = ""
-    database_id: str = ""  # 素材库 database id
+    parent_page_id: str = ""  # 素材存放的父页面（月度页）id
     base_url: str = "https://api.notion.com/v1"
     version: str = "2022-06-28"
     timeout_seconds: float = 30.0

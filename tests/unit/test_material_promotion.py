@@ -5,7 +5,7 @@ from __future__ import annotations
 from _notion_fake import FakeNotionClient
 
 from finch.content.jobs import ContentJobStatus
-from finch.materials.field_map import blocks_for_create
+from finch.materials.field_map import material_toggle_block
 from finch.materials.models import MaterialSnapshot
 from finch.materials.promotion import MaterialPromotionService
 from finch.materials.service import MaterialService
@@ -14,7 +14,8 @@ from finch.storage.workspace import Workspace
 
 def _snapshot() -> MaterialSnapshot:
     return MaterialSnapshot(
-        notion_page_id="pg-1",
+        block_id="blk-1",
+        page_id="pg-1",
         page_url="https://www.notion.so/pg-1",
         title="标题A",
         extractable_text="发生了什么",
@@ -38,22 +39,15 @@ def test_from_material_maps_contract_fields():
 
 def test_promote_is_idempotent(tmp_path):
     fake = FakeNotionClient()
-    fake.pages["pg-1"] = {
-        "id": "pg-1",
-        "url": "https://www.notion.so/pg-1",
-        "properties": {
-            "标题": {"type": "title", "title": [{"plain_text": "标题A"}]},
-            "主题标签": {"type": "multi_select", "multi_select": []},
-            "已讨论": {"type": "checkbox", "checkbox": False},
-        },
-        "last_edited_time": "2026-10-09T00:00:00.000Z",
-    }
-    fake.blocks["pg-1"] = blocks_for_create("发生了什么", "我的感触")
-    service = MaterialService(Workspace(tmp_path), fake, "db-1")
-    first = service.promote("pg-1", core_point="核心主张")
-    second = service.promote("pg-1", core_point="核心主张")
+    fake.set_page("pg-1")
+    created = fake.append_block_children(
+        "pg-1", [material_toggle_block("标题A", "发生了什么", "我的感触")]
+    )
+    block_id = created["results"][0]["id"]
+    service = MaterialService(Workspace(tmp_path), fake, "pg-1")
+    first = service.promote(block_id, core_point="核心主张")
+    second = service.promote(block_id, core_point="核心主张")
     assert first.id == second.id
     assert first.status == ContentJobStatus.PROPOSED
-    # 不同主张 → 不同 job（素材可提炼多个观点）。
-    third = service.promote("pg-1", core_point="另一个主张")
-    assert third.id != first.id
+    third = service.promote(block_id, core_point="另一个主张")
+    assert third.id != first.id  # 不同主张 → 不同 job

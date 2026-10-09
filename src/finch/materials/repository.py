@@ -29,17 +29,17 @@ class MaterialRepository:
         self._discussions = workspace.dir("materials/discussions")
         self._sync_state = workspace.dir("materials") / "sync-state.yaml"
 
-    def _snapshot_path(self, notion_page_id: str) -> Path:
-        return self._snapshots / f"{Workspace.safe_filename(material_id_for(notion_page_id))}.yaml"
+    def _snapshot_path(self, block_id: str) -> Path:
+        return self._snapshots / f"{Workspace.safe_filename(material_id_for(block_id))}.yaml"
 
     def _discussion_path(self, discussion_id: str) -> Path:
         return self._discussions / f"{Workspace.safe_filename(discussion_id)}.yaml"
 
     def save_snapshot(self, snapshot: MaterialSnapshot) -> None:
-        self.ws.write_yaml(self._snapshot_path(snapshot.notion_page_id), snapshot)
+        self.ws.write_yaml(self._snapshot_path(snapshot.block_id), snapshot)
 
-    def get_snapshot(self, notion_page_id: str) -> MaterialSnapshot | None:
-        return self.ws.read_yaml(self._snapshot_path(notion_page_id), MaterialSnapshot)
+    def get_snapshot(self, block_id: str) -> MaterialSnapshot | None:
+        return self.ws.read_yaml(self._snapshot_path(block_id), MaterialSnapshot)
 
     def list_snapshots(self) -> list[MaterialSnapshot]:
         out: list[MaterialSnapshot] = []
@@ -55,8 +55,8 @@ class MaterialRepository:
     def get_discussion(self, discussion_id: str) -> DiscussionRecord | None:
         return self.ws.read_yaml(self._discussion_path(discussion_id), DiscussionRecord)
 
-    def list_discussions(self, notion_page_id: str) -> list[DiscussionRecord]:
-        return [d for d in self._list_discussions() if d.notion_page_id == notion_page_id]
+    def list_discussions(self, block_id: str) -> list[DiscussionRecord]:
+        return [d for d in self._list_discussions() if d.block_id == block_id]
 
     def _list_discussions(self) -> list[DiscussionRecord]:
         out: list[DiscussionRecord] = []
@@ -124,8 +124,8 @@ class MaterialUseLinkRepository:
     def append(self, link: MaterialUseLink) -> None:
         self.ws.append_jsonl(self._path, link.model_dump(mode="json"))
 
-    def list_for_page(self, notion_page_id: str) -> list[MaterialUseLink]:
-        return [link for link in self.list_all() if link.notion_page_id == notion_page_id]
+    def list_for_block(self, block_id: str) -> list[MaterialUseLink]:
+        return [link for link in self.list_all() if link.block_id == block_id]
 
     def list_all(self) -> list[MaterialUseLink]:
         out: list[MaterialUseLink] = []

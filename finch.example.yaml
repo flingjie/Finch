@@ -267,7 +267,7 @@ extraction:
 
 # Notion 素材库（api_key 读自 .env 的 NOTION_API_KEY，不写入仓库）。
 notion:
-  database_id: ""   # 素材库 database id（Notion 页面 URL 中那段 32 位 id）
+  parent_page_id: ""   # 素材存放的父页面（月度页）id
   base_url: https://api.notion.com/v1
   version: "2022-06-28"
   timeout_seconds: 30.0

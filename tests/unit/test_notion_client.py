@@ -19,18 +19,28 @@ def _resp(payload: dict):
     return _Resp()
 
 
-def test_request_sets_headers_and_body():
+def test_list_children_sets_headers_and_url():
     client = NotionClient(api_key="secret", version="2022-06-28")
     with patch("urllib.request.urlopen") as mock:
         mock.return_value.__enter__.return_value = _resp({"results": [], "has_more": False})
-        client.query_database("db-1", page_size=100)
+        client.list_block_children("blk-1", page_size=100)
         request = mock.call_args[0][0]
-        assert request.full_url == "https://api.notion.com/v1/databases/db-1/query"
+        assert request.full_url == "https://api.notion.com/v1/blocks/blk-1/children?page_size=100"
         assert request.get_header("Authorization") == "Bearer secret"
         # urllib 将头名规范化为首字母大写（Notion-Version → Notion-version）。
         assert request.get_header("Notion-version") == "2022-06-28"
         assert request.get_header("Content-type") == "application/json"
-        assert json.loads(request.data)["page_size"] == 100
+
+
+def test_append_block_children_sends_children_body():
+    client = NotionClient(api_key="k")
+    block = {"object": "block", "type": "paragraph", "paragraph": {"rich_text": []}}
+    with patch("urllib.request.urlopen") as mock:
+        mock.return_value.__enter__.return_value = _resp({"results": []})
+        client.append_block_children("blk-1", [block])
+        request = mock.call_args[0][0]
+        assert request.full_url == "https://api.notion.com/v1/blocks/blk-1/children"
+        assert json.loads(request.data)["children"] == [block]
 
 
 def test_http_error_maps_to_notion_error():

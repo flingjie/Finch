@@ -3,6 +3,7 @@
 镜像 ``llm/openai_compatible.py`` 的做法：不引入第三方 HTTP 依赖；每次调用带超时；
 把 ``HTTPError`` / 超时 / 网络错误统一映射为带状态的 ``NotionError``。适配层只做
 传输与 JSON 往返，不承载领域规则（字段映射在 ``materials/field_map.py``）。
+素材库只读写页面与其块（page / block children），不涉及数据库（database）。
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ class NotionError(RuntimeError):
 
 
 class NotionClient:
-    """Notion REST 客户端：query / create / read / patch / append 的薄封装。"""
+    """Notion REST 客户端：读页 / 读块 / 追加块的薄封装（页面即块）。"""
 
     def __init__(
         self,
@@ -43,8 +44,6 @@ class NotionClient:
         self.base_url = base_url.rstrip("/")
         self.version = version
         self.timeout = timeout
-
-    # ---- transport ----
 
     def _request(self, method: str, path: str, payload: dict | None = None) -> dict:
         url = f"{self.base_url}{path}"
@@ -72,8 +71,6 @@ class NotionClient:
                 notion_code=notion_code,
             ) from exc
         except TimeoutError as exc:
-            # urlopen 只把 request() 的 OSError 包成 URLError；getresponse()/read()
-            # 超时会直接抛 TimeoutError（CPython http.client），必须单独接住。
             raise NotionError(
                 f"Notion {method} {path} timed out after {self.timeout:g}s", status_code=None
             ) from exc
@@ -81,65 +78,6 @@ class NotionClient:
             raise NotionError(
                 f"Notion {method} {path} network error: {exc.reason}", status_code=None
             ) from exc
-
-    # ---- database / page ----
-
-    def get_database(self, database_id: str) -> dict:
-        return self._request("GET", f"/databases/{database_id}")
-
-    def query_database(
-        self,
-        database_id: str,
-        *,
-        filter: dict | None = None,
-        start_cursor: str | None = None,
-        page_size: int = 100,
-        sorts: list[dict] | None = None,
-    ) -> dict:
-        payload: dict = {"page_size": page_size}
-        if filter is not None:
-            payload["filter"] = filter
-        if start_cursor:
-            payload["start_cursor"] = start_cursor
-        if sorts is not None:
-            payload["sorts"] = sorts
-        return self._request("POST", f"/databases/{database_id}/query", payload)
-
-    def query_all(
-        self,
-        database_id: str,
-        *,
-        filter: dict | None = None,
-        sorts: list[dict] | None = None,
-        page_size: int = 100,
-    ) -> list[dict]:
-        """分页读完整个查询结果（纯传输循环，无领域规则）。"""
-        pages: list[dict] = []
-        cursor: str | None = None
-        while True:
-            resp = self.query_database(
-                database_id,
-                filter=filter,
-                start_cursor=cursor,
-                page_size=page_size,
-                sorts=sorts,
-            )
-            pages.extend(resp.get("results", []))
-            if not resp.get("has_more"):
-                break
-            cursor = resp.get("next_cursor")
-        return pages
-
-    def create_page(
-        self,
-        database_id: str,
-        properties: dict,
-        children: list[dict] | None = None,
-    ) -> dict:
-        payload: dict = {"parent": {"database_id": database_id}, "properties": properties}
-        if children:
-            payload["children"] = children
-        return self._request("POST", "/pages", payload)
 
     def get_page(self, page_id: str) -> dict:
         return self._request("GET", f"/pages/{page_id}")
@@ -162,9 +100,6 @@ class NotionClient:
                 break
             cursor = resp.get("next_cursor")
         return blocks
-
-    def patch_page_properties(self, page_id: str, properties: dict) -> dict:
-        return self._request("PATCH", f"/pages/{page_id}", {"properties": properties})
 
     def append_block_children(self, block_id: str, children: list[dict]) -> dict:
         return self._request("PATCH", f"/blocks/{block_id}/children", {"children": children})
