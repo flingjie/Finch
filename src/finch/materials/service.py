@@ -38,7 +38,7 @@ from finch.materials.repository import (
     MaterialUseLinkRepository,
     SyncOperationLog,
 )
-from finch.notion.client import NotionClient
+from finch.notion.client import NotionClient, NotionError
 from finch.storage.repositories import ContentJobRepository
 from finch.storage.workspace import Workspace
 
@@ -54,14 +54,62 @@ class SyncResult(BaseModel):
 
 
 class MaterialService:
-    def __init__(self, workspace: Workspace, client: NotionClient, parent_page_id: str) -> None:
+    def __init__(
+        self,
+        workspace: Workspace,
+        client: NotionClient,
+        parent_page_id: str,
+        notes_page_id: str = "",
+    ) -> None:
         self.ws = workspace
         self.client = client
         self.parent_page_id = parent_page_id
+        self.notes_page_id = notes_page_id
         self.repo = MaterialRepository(workspace)
         self.log = SyncOperationLog(workspace)
         self.usage = MaterialUseLinkRepository(workspace)
         self.queue = WriteQueue(self.log, client, parent_page_id)
+
+    def _discover_page_ids(self) -> list[str]:
+        """素材所在页面 id 列表：未配置容器时退化为单页；否则递归收集子页面。"""
+        if not self.notes_page_id:
+            return [self.parent_page_id]
+        seen: set[str] = set()
+        queue: list[str] = [self.notes_page_id]
+        pages: list[str] = []
+        while queue:
+            page_id = queue.pop(0)
+            if page_id in seen:
+                continue
+            seen.add(page_id)
+            for block in self.client.list_all_block_children(page_id):
+                if block.get("type") != "child_page":
+                    continue
+                child_id = block.get("id")
+                if child_id and child_id not in seen:
+                    pages.append(child_id)
+                    queue.append(child_id)
+        return pages
+
+    def _capture_page_id(self) -> str:
+        """写入口目标页：配置了 Notes 容器则按当前年月定位/创建，否则退回静态父页。"""
+        if not self.notes_page_id:
+            return self.parent_page_id
+        title = f"{datetime.now().year}.{datetime.now().month}"
+        try:
+            blocks = self.client.list_all_block_children(self.notes_page_id)
+        except NotionError:
+            return self.parent_page_id
+        for block in blocks:
+            if block.get("type") == "child_page" and (
+                (block.get("child_page") or {}).get("title") == title
+            ):
+                return block["id"]
+        try:
+            page = self.client.create_page(self.notes_page_id, title)
+        except NotionError:
+            return self.parent_page_id
+        return page["id"]
 
     # ---- P1：记录与读取 ----
 
@@ -75,7 +123,7 @@ class MaterialService:
         op = SyncOperation(
             operation_id=operation_id,
             type="append_material",
-            target_block=self.parent_page_id,
+            target_block=self._capture_page_id(),
             payload={
                 "title": title,
                 "body_children": material_body_children(body_text, reflection),
@@ -86,25 +134,28 @@ class MaterialService:
 
     def read(self, block_id: str) -> MaterialSnapshot:
         """读一条素材（toggle 块 + children）→ 缓存，并记一条 read 用途。"""
-        page = self.client.get_page(self.parent_page_id)
-        blocks = self.client.list_all_block_children(self.parent_page_id)
-        block = next(
-            (b for b in blocks if b.get("id") == block_id and b.get("type") == "toggle"), None
-        )
-        if block is None:
-            raise ValueError(f"material block {block_id} not found in page {self.parent_page_id}")
-        children = self.client.list_all_block_children(block_id)
-        snapshot = toggle_to_snapshot(page, block, children)
-        self.repo.save_snapshot(snapshot)
-        self.usage.append(
-            MaterialUseLink(
-                block_id=block_id,
-                page_id=snapshot.page_id,
-                source_hash=snapshot.source_hash,
-                usage="read",
+        for page_id in self._discover_page_ids():
+            blocks = self.client.list_all_block_children(page_id)
+            block = next(
+                (b for b in blocks if b.get("id") == block_id and b.get("type") == "toggle"),
+                None,
             )
-        )
-        return snapshot
+            if block is None:
+                continue
+            page = self.client.get_page(page_id)
+            children = self.client.list_all_block_children(block_id)
+            snapshot = toggle_to_snapshot(page, block, children)
+            self.repo.save_snapshot(snapshot)
+            self.usage.append(
+                MaterialUseLink(
+                    block_id=block_id,
+                    page_id=snapshot.page_id,
+                    source_hash=snapshot.source_hash,
+                    usage="read",
+                )
+            )
+            return snapshot
+        raise ValueError(f"material block {block_id} not found in any synced page")
 
     def list_materials(self, *, discussed: bool | None = None) -> list[MaterialSnapshot]:
         """本地缓存列表（可按已讨论过滤），按远端修改时间倒序。"""
@@ -135,31 +186,37 @@ class MaterialService:
         return [snapshot for _, snapshot in scored[:limit]]
 
     def sync(self, *, full: bool = False) -> SyncResult:
-        """重读父页面、按内容哈希去重后重建缓存（单页，无分页游标）。"""
+        """重读全部素材页面、按内容哈希去重后重建缓存。"""
         state = self.repo.get_sync_state()
         result = SyncResult(mode="full" if full else "incremental")
         try:
-            page = self.client.get_page(self.parent_page_id)
-            top_blocks = self.client.list_all_block_children(self.parent_page_id)
+            page_ids = self._discover_page_ids()
         except Exception as exc:  # 远端不可用：保留缓存，如实报错。
             result.errors.append(str(exc))
             return result
-        for block in top_blocks:
-            if block.get("type") != "toggle":
-                continue
-            result.scanned += 1
+        for page_id in page_ids:
             try:
-                children = self.client.list_all_block_children(block["id"])
-                snapshot = toggle_to_snapshot(page, block, children)
+                page = self.client.get_page(page_id)
+                top_blocks = self.client.list_all_block_children(page_id)
             except Exception as exc:
-                result.errors.append(f"{block['id']}: {exc}")
+                result.errors.append(f"{page_id}: {exc}")
                 continue
-            existing = self.repo.get_snapshot(block["id"])
-            if existing is not None and existing.source_hash == snapshot.source_hash:
-                result.unchanged += 1
-                continue
-            self.repo.save_snapshot(snapshot)
-            result.updated += 1
+            for block in top_blocks:
+                if block.get("type") != "toggle":
+                    continue
+                result.scanned += 1
+                try:
+                    children = self.client.list_all_block_children(block["id"])
+                    snapshot = toggle_to_snapshot(page, block, children)
+                except Exception as exc:
+                    result.errors.append(f"{block['id']}: {exc}")
+                    continue
+                existing = self.repo.get_snapshot(block["id"])
+                if existing is not None and existing.source_hash == snapshot.source_hash:
+                    result.unchanged += 1
+                    continue
+                self.repo.save_snapshot(snapshot)
+                result.updated += 1
         if not result.errors:
             now = datetime.now(UTC)
             state = SyncState(committed_scan_boundary=now, last_full_sync_at=now)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -68,3 +68,35 @@ def test_network_error_maps_to_notion_error_without_status():
         with pytest.raises(NotionError) as exc_info:
             client.get_page("p1")
     assert exc_info.value.status_code is None
+
+
+def test_retries_transient_error_then_fails():
+    client = NotionClient(api_key="k", max_attempts=3, backoff_seconds=0)
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("boom")) as mock, patch(
+        "time.sleep"
+    ) as sleep:
+        with pytest.raises(NotionError):
+            client.get_page("p1")
+    assert mock.call_count == 3
+    assert sleep.call_count == 2
+
+
+def test_retries_transient_error_then_succeeds():
+    client = NotionClient(api_key="k", max_attempts=2, backoff_seconds=0)
+    calls = {"n": 0}
+
+    def _side_effect(*_args, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.URLError("boom")
+        context = MagicMock()
+        context.__enter__.return_value = _resp({"id": "p1"})
+        return context
+
+    with patch("urllib.request.urlopen", side_effect=_side_effect) as mock, patch(
+        "time.sleep"
+    ) as sleep:
+        result = client.get_page("p1")
+    assert result["id"] == "p1"
+    assert mock.call_count == 2
+    assert sleep.call_count == 1

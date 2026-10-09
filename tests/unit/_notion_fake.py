@@ -60,3 +60,24 @@ class FakeNotionClient:
         }
         self.blocks.setdefault(page_id, []).append(toggle)
         self.blocks[toggle_id] = list(body_children or [])
+
+    def seed_child_page(self, parent_id: str, child_id: str, title: str = "") -> None:
+        """把一张子页面（child_page 块）放进父页面，供多页发现测试用。"""
+        self.blocks.setdefault(parent_id, []).append(
+            {"id": child_id, "type": "child_page", "child_page": {"title": title}}
+        )
+
+    def create_page(self, parent_page_id: str, title: str) -> dict:
+        """创建一张子页面，并在父页面登记 child_page 块（供写入定位测试用）。"""
+        page_id = self._next_id()
+        self.pages[page_id] = {
+            "id": page_id,
+            "url": f"https://www.notion.so/{page_id}",
+            "properties": {"title": {"title": [{"plain_text": title}]}},
+            "last_edited_time": "2026-10-09T00:00:00.000Z",
+        }
+        self.blocks.setdefault(page_id, [])
+        self.blocks.setdefault(parent_page_id, []).append(
+            {"id": page_id, "type": "child_page", "child_page": {"title": title}}
+        )
+        return self.pages[page_id]

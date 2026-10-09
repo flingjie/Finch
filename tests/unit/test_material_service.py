@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from _notion_fake import FakeNotionClient
 
 from finch.materials.field_map import material_body_children, toggle_summary_block
@@ -15,10 +17,14 @@ def _service(tmp_path, fake) -> MaterialService:
 
 
 def _seed_material(
-    fake: FakeNotionClient, title: str = "标题A", body: str = "发生了什么", reflection=None
+    fake: FakeNotionClient,
+    title: str = "标题A",
+    body: str = "发生了什么",
+    reflection=None,
+    page_id: str = "pg-1",
 ) -> str:
-    fake.set_page("pg-1")
-    resp = fake.append_block_children("pg-1", [toggle_summary_block(title)])
+    fake.set_page(page_id)
+    resp = fake.append_block_children(page_id, [toggle_summary_block(title)])
     toggle_id = resp["results"][0]["id"]
     body_children = material_body_children(body, reflection)
     if body_children:
@@ -37,6 +43,30 @@ def test_capture_enqueues_append_material(tmp_path):
     assert op.payload["body_children"][0]["type"] == "paragraph"
     again = service.capture(title="标题", body_text="正文")
     assert again.operation_id == op.operation_id  # 幂等
+
+
+def test_capture_resolves_existing_month_page(tmp_path):
+    fake = FakeNotionClient()
+    fake.set_page("notes", "Notes")
+    title = f"{datetime.now().year}.{datetime.now().month}"
+    fake.seed_child_page("notes", "pg-current", title)
+    service = MaterialService(Workspace(tmp_path), fake, "pg-1", notes_page_id="notes")
+    op = service.capture(title="标题", body_text="正文")
+    assert op.target_block == "pg-current"
+
+
+def test_capture_creates_missing_month_page(tmp_path):
+    fake = FakeNotionClient()
+    fake.set_page("notes", "Notes")
+    title = f"{datetime.now().year}.{datetime.now().month}"
+    service = MaterialService(Workspace(tmp_path), fake, "pg-1", notes_page_id="notes")
+    op = service.capture(title="标题", body_text="正文")
+    assert op.target_block in fake.pages
+    assert fake.pages[op.target_block]["properties"]["title"]["title"][0]["plain_text"] == title
+    child_titles = [
+        b.get("child_page", {}).get("title") for b in fake.list_all_block_children("notes")
+    ]
+    assert title in child_titles
 
 
 def test_read_caches_and_records_usage(tmp_path):
@@ -68,6 +98,19 @@ def test_sync_skips_unchanged(tmp_path):
     service.sync(full=True)
     result = service.sync()
     assert result.updated == 0
+
+
+def test_sync_discovers_multiple_pages(tmp_path):
+    fake = FakeNotionClient()
+    fake.seed_child_page("notes", "pg-1", "2026.9")
+    fake.seed_child_page("notes", "pg-2", "2026.10")
+    _seed_material(fake, "标题A", "正文A", page_id="pg-1")
+    _seed_material(fake, "标题B", "正文B", page_id="pg-2")
+    service = MaterialService(Workspace(tmp_path), fake, "pg-2", notes_page_id="notes")
+    result = service.sync(full=True)
+    assert result.scanned == 2
+    assert result.updated == 2
+    assert {s.page_id for s in service.repo.list_snapshots()} == {"pg-1", "pg-2"}
 
 
 def test_sync_detects_remote_edit(tmp_path):

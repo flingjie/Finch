@@ -92,6 +92,7 @@ class NotionSettings(BaseModel):
 
     api_key: str = ""
     parent_page_id: str = ""  # 素材存放的父页面（月度页）id
+    notes_page_id: str = ""  # 月度页所在的 Notes 容器页 id；为空时仅同步 parent_page_id 单页
     base_url: str = "https://api.notion.com/v1"
     version: str = "2022-06-28"
     timeout_seconds: float = 30.0

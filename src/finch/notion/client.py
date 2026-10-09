@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import quote
@@ -39,11 +40,15 @@ class NotionClient:
         base_url: str = "https://api.notion.com/v1",
         version: str = "2022-06-28",
         timeout: float = 30.0,
+        max_attempts: int = 1,
+        backoff_seconds: float = 0.0,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.version = version
         self.timeout = timeout
+        self.max_attempts = max_attempts
+        self.backoff_seconds = backoff_seconds
 
     def _request(self, method: str, path: str, payload: dict | None = None) -> dict:
         url = f"{self.base_url}{path}"
@@ -53,31 +58,45 @@ class NotionClient:
             "Content-Type": "application/json",
         }
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        request = urllib.request.Request(url, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", "replace")
-            notion_code: str | None = None
+        for attempt in range(self.max_attempts):
+            request = urllib.request.Request(url, data=data, headers=headers, method=method)
             try:
-                parsed = json.loads(body)
-                notion_code = parsed.get("code") if isinstance(parsed, dict) else None
-            except json.JSONDecodeError:
-                notion_code = None
-            raise NotionError(
-                f"Notion {method} {path} failed ({exc.code}): {body[:200]}",
-                status_code=exc.code,
-                notion_code=notion_code,
-            ) from exc
-        except TimeoutError as exc:
-            raise NotionError(
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                raise self._http_error(method, path, exc) from exc
+            except (TimeoutError, urllib.error.URLError) as exc:
+                if attempt >= self.max_attempts - 1:
+                    raise self._network_error(method, path, exc) from exc
+                time.sleep(self.backoff_seconds)
+        raise NotionError(f"Notion {method} {path} failed after {self.max_attempts} attempts")
+
+    def _http_error(
+        self, method: str, path: str, exc: urllib.error.HTTPError
+    ) -> NotionError:
+        body = exc.read().decode("utf-8", "replace")
+        notion_code: str | None = None
+        try:
+            parsed = json.loads(body)
+            notion_code = parsed.get("code") if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            notion_code = None
+        return NotionError(
+            f"Notion {method} {path} failed ({exc.code}): {body[:200]}",
+            status_code=exc.code,
+            notion_code=notion_code,
+        )
+
+    def _network_error(
+        self, method: str, path: str, exc: TimeoutError | urllib.error.URLError
+    ) -> NotionError:
+        if isinstance(exc, TimeoutError):
+            return NotionError(
                 f"Notion {method} {path} timed out after {self.timeout:g}s", status_code=None
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise NotionError(
-                f"Notion {method} {path} network error: {exc.reason}", status_code=None
-            ) from exc
+            )
+        return NotionError(
+            f"Notion {method} {path} network error: {exc.reason}", status_code=None
+        )
 
     def get_page(self, page_id: str) -> dict:
         return self._request("GET", f"/pages/{page_id}")
@@ -103,3 +122,11 @@ class NotionClient:
 
     def append_block_children(self, block_id: str, children: list[dict]) -> dict:
         return self._request("PATCH", f"/blocks/{block_id}/children", {"children": children})
+
+    def create_page(self, parent_page_id: str, title: str) -> dict:
+        """在指定页面下创建一张标题为 ``title`` 的子页面。"""
+        payload = {
+            "parent": {"type": "page_id", "page_id": parent_page_id},
+            "properties": {"title": {"title": [{"type": "text", "text": {"content": title}}]}},
+        }
+        return self._request("POST", "/pages", payload)
