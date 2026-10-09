@@ -25,6 +25,7 @@ def test_request_sets_headers_and_body():
         mock.return_value.__enter__.return_value = _resp({"results": [], "has_more": False})
         client.query_database("db-1", page_size=100)
         request = mock.call_args[0][0]
+        assert request.full_url == "https://api.notion.com/v1/databases/db-1/query"
         assert request.get_header("Authorization") == "Bearer secret"
         # urllib 将头名规范化为首字母大写（Notion-Version → Notion-version）。
         assert request.get_header("Notion-version") == "2022-06-28"

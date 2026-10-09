@@ -85,7 +85,7 @@ class NotionClient:
     # ---- database / page ----
 
     def get_database(self, database_id: str) -> dict:
-        return self._request("GET", f"/v1/databases/{database_id}")
+        return self._request("GET", f"/databases/{database_id}")
 
     def query_database(
         self,
@@ -103,7 +103,7 @@ class NotionClient:
             payload["start_cursor"] = start_cursor
         if sorts is not None:
             payload["sorts"] = sorts
-        return self._request("POST", f"/v1/databases/{database_id}/query", payload)
+        return self._request("POST", f"/databases/{database_id}/query", payload)
 
     def query_all(
         self,
@@ -139,10 +139,10 @@ class NotionClient:
         payload: dict = {"parent": {"database_id": database_id}, "properties": properties}
         if children:
             payload["children"] = children
-        return self._request("POST", "/v1/pages", payload)
+        return self._request("POST", "/pages", payload)
 
     def get_page(self, page_id: str) -> dict:
-        return self._request("GET", f"/v1/pages/{page_id}")
+        return self._request("GET", f"/pages/{page_id}")
 
     def list_block_children(
         self, block_id: str, *, start_cursor: str | None = None, page_size: int = 100
@@ -150,7 +150,7 @@ class NotionClient:
         query = f"?page_size={page_size}"
         if start_cursor:
             query += f"&start_cursor={quote(start_cursor)}"
-        return self._request("GET", f"/v1/blocks/{block_id}/children{query}")
+        return self._request("GET", f"/blocks/{block_id}/children{query}")
 
     def list_all_block_children(self, block_id: str) -> list[dict]:
         blocks: list[dict] = []
@@ -164,7 +164,7 @@ class NotionClient:
         return blocks
 
     def patch_page_properties(self, page_id: str, properties: dict) -> dict:
-        return self._request("PATCH", f"/v1/pages/{page_id}", {"properties": properties})
+        return self._request("PATCH", f"/pages/{page_id}", {"properties": properties})
 
     def append_block_children(self, block_id: str, children: list[dict]) -> dict:
-        return self._request("PATCH", f"/v1/blocks/{block_id}/children", {"children": children})
+        return self._request("PATCH", f"/blocks/{block_id}/children", {"children": children})
