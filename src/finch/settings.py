@@ -83,6 +83,23 @@ class CommunityScoutSettings(BaseModel):
     search_urls: list[str] = Field(default_factory=list)
 
 
+class NotionSettings(BaseModel):
+    """Notion 素材库接入（直连 REST API）。
+
+    ``api_key`` 优先读环境变量 ``NOTION_API_KEY``（``.env``，不写仓库），
+    未设置时回退 ``finch.yaml`` 的 ``notion.api_key``。
+    """
+
+    api_key: str = ""
+    database_id: str = ""  # 素材库 database id
+    base_url: str = "https://api.notion.com/v1"
+    version: str = "2022-06-28"
+    timeout_seconds: float = 30.0
+    page_size: int = 100
+    max_attempts: int = Field(default=3, ge=1)
+    backoff_seconds: float = 2.0
+
+
 class QualityGates(BaseModel):
     """内容质量门禁：Critic 通过阈值 + 有限重写轮数。
 
@@ -431,6 +448,7 @@ class Settings(BaseModel):
     discovery: DiscoverySettings = Field(default_factory=DiscoverySettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
+    notion: NotionSettings = Field(default_factory=NotionSettings)
 
 
 def _warn_legacy_sources(data: dict) -> None:

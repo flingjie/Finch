@@ -3,6 +3,7 @@
 import difflib
 import hashlib
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal, cast
@@ -86,6 +87,8 @@ from .learn.reflection import (
 )
 from .learn.weekly import weekly_analysis
 from .llm.openai_compatible import create_runner
+from .materials.service import MaterialService
+from .notion.client import NotionClient, NotionError
 from .opportunities.models import Opportunity as PreferredOpportunity
 from .opportunities.models import OpportunityStatus
 from .opportunities.prepare import (
@@ -238,6 +241,9 @@ app.add_typer(dialogue_app, name="dialogue")
 
 summaries_app = typer.Typer(help="回看已保存的内容摘要")
 app.add_typer(summaries_app, name="summaries")
+
+materials_app = typer.Typer(help="素材库（Notion 权威来源；记录/读取/同步/讨论/提炼）")
+app.add_typer(materials_app, name="materials")
 
 
 def _idea_meta_line(job: ContentJob) -> str:
@@ -6067,6 +6073,307 @@ def dialogue_forget(
         typer.echo("deleted" if ok else "not found")
     if not ok:
         raise typer.Exit(code=1)
+
+
+def _require_notion(settings: Settings) -> tuple[NotionClient, str]:
+    """解析 Notion 凭据与 database id，未配置时报错退出。"""
+    api_key = os.environ.get("NOTION_API_KEY") or settings.notion.api_key
+    database_id = settings.notion.database_id
+    if not api_key or not database_id:
+        typer.echo(
+            "Notion 未配置：请设置 NOTION_API_KEY（.env）与 finch.yaml 的 notion.database_id"
+        )
+        raise typer.Exit(code=1)
+    return (
+        NotionClient(
+            api_key=api_key,
+            base_url=settings.notion.base_url,
+            version=settings.notion.version,
+            timeout=settings.notion.timeout_seconds,
+        ),
+        database_id,
+    )
+
+
+def _materials_service(settings: Settings) -> tuple[MaterialService, Workspace]:
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    client, database_id = _require_notion(settings)
+    return MaterialService(ws, client, database_id), ws
+
+
+@materials_app.command("doctor")
+def materials_doctor(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """核对 Notion 素材库的权限与属性名（只读）。"""
+    from .materials.field_map import WRITABLE_PROPERTIES
+
+    settings = load_settings()
+    client, database_id = _require_notion(settings)
+    try:
+        db = client.get_database(database_id)
+    except NotionError as exc:
+        typer.echo(f"Notion 连接失败: {exc}")
+        raise typer.Exit(code=1) from None
+    props = db.get("properties", {})
+    missing = [p for p in WRITABLE_PROPERTIES if p not in props]
+    title = "".join((t.get("plain_text") or "") for t in (db.get("title") or []))
+    result = {
+        "ok": not missing,
+        "database_id": database_id,
+        "database_title": title,
+        "properties": list(props.keys()),
+        "missing": missing,
+    }
+    if as_json:
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"database: {title}")
+        for name in sorted(props):
+            mark = "ok" if name not in missing else "MISSING"
+            typer.echo(f"  {mark}\t{name}")
+    if missing:
+        raise typer.Exit(code=1)
+
+
+@materials_app.command("capture")
+def materials_capture(
+    title: str = typer.Option(..., "--title", help="素材标题（手机可直接写一句话）"),
+    body_text: str = typer.Option(..., "--body-text", help="素材正文（用户原话）"),
+    url: str | None = typer.Option(None, "--url", help="来源链接（可空）"),
+    tag: Annotated[
+        list[str] | None, typer.Option("--tag", help="主题标签（可重复）")
+    ] = None,
+    reflection: str | None = typer.Option(None, "--reflection", help="我的感触（可空）"),
+    drain: bool = typer.Option(False, "--drain", help="立即执行写队列"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """保存一条素材（先落队列再写 Notion；--drain 立即同步）。"""
+    settings = load_settings()
+    service, _ws = _materials_service(settings)
+    op = service.capture(
+        title=title,
+        body_text=body_text,
+        source_urls=[url] if url else None,
+        tags=tag,
+        reflection=reflection,
+    )
+    if drain:
+        service.queue.drain()
+        op = service.log.get(op.operation_id) or op
+    if as_json:
+        typer.echo(json.dumps(op.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        tail = f" -> {op.target_page}" if op.target_page else ""
+        typer.echo(f"operation {op.operation_id}: {op.status.value}{tail}")
+
+
+@materials_app.command("read")
+def materials_read(
+    page_id: str = typer.Argument(..., help="Notion 页 id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """读取素材页并缓存（读页 + 正文块）。"""
+    settings = load_settings()
+    service, _ws = _materials_service(settings)
+    try:
+        snapshot = service.read(page_id)
+    except NotionError as exc:
+        typer.echo(f"读取失败: {exc}")
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(json.dumps(snapshot.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"title: {snapshot.title}")
+        typer.echo(f"page: {snapshot.page_url}")
+        if snapshot.tags:
+            typer.echo("tags: " + ", ".join(snapshot.tags))
+        if snapshot.extractable_text:
+            typer.echo(snapshot.extractable_text)
+        if snapshot.user_reflection:
+            typer.echo(f"感触: {snapshot.user_reflection}")
+
+
+@materials_app.command("list")
+def materials_list(
+    tag: Annotated[
+        list[str] | None, typer.Option("--tag", help="按标签过滤（可重复）")
+    ] = None,
+    discussed: bool | None = typer.Option(None, "--discussed/--no-discussed", help="按已讨论过滤"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """列出本地缓存的素材（按修改时间倒序）。"""
+    settings = load_settings()
+    service, _ws = _materials_service(settings)
+    rows = service.list_materials(tags=tag, discussed=discussed)
+    if as_json:
+        typer.echo(
+            json.dumps([r.model_dump(mode="json") for r in rows], ensure_ascii=False, indent=2)
+        )
+        return
+    if not rows:
+        typer.echo("(no materials; run `finch materials sync` first)")
+        return
+    for r in rows:
+        edited = r.remote_edited_at.strftime("%Y-%m-%d") if r.remote_edited_at else "-"
+        typer.echo(f"{r.notion_page_id[:8]}\t{edited}\t{r.title}")
+
+
+@materials_app.command("search")
+def materials_search(
+    query: str = typer.Argument(..., help="检索关键词"),
+    limit: int = typer.Option(3, "--limit", help="返回条数上限"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """按关键词召回素材（标题/正文/感触/标签）。"""
+    settings = load_settings()
+    service, _ws = _materials_service(settings)
+    rows = service.search(query, limit=limit)
+    if as_json:
+        typer.echo(
+            json.dumps([r.model_dump(mode="json") for r in rows], ensure_ascii=False, indent=2)
+        )
+        return
+    if not rows:
+        typer.echo("(no matches)")
+        return
+    for r in rows:
+        typer.echo(f"{r.notion_page_id[:8]}\t{r.title}")
+
+
+@materials_app.command("sync")
+def materials_sync(
+    full: bool = typer.Option(False, "--full", help="全量拉取（默认增量）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """同步 Notion 素材库到本地缓存（增量；满轮才推进水位线）。"""
+    settings = load_settings()
+    service, _ws = _materials_service(settings)
+    result = service.sync(full=full)
+    if as_json:
+        typer.echo(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(
+            f"{result.mode}: scanned={result.scanned} updated={result.updated} "
+            f"unchanged={result.unchanged} errors={len(result.errors)}"
+        )
+
+
+@materials_app.command("queue")
+def materials_queue(
+    drain: bool = typer.Option(False, "--drain", help="执行待同步操作"),
+    all_rows: bool = typer.Option(False, "--all", help="列出全部操作（含已成功/阻塞）"),
+    limit: int | None = typer.Option(None, "--limit", help="执行条数上限"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """查看或执行待同步写队列。"""
+    settings = load_settings()
+    service, _ws = _materials_service(settings)
+    if drain:
+        result = service.queue.drain(limit=limit)
+        if as_json:
+            typer.echo(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        else:
+            typer.echo(
+                f"processed={result.processed} succeeded={result.succeeded} "
+                f"retryable_failed={result.retryable_failed} blocked={result.blocked}"
+            )
+        return
+    ops = service.log.list_all() if all_rows else service.log.list_pending()
+    if as_json:
+        typer.echo(
+            json.dumps([o.model_dump(mode="json") for o in ops], ensure_ascii=False, indent=2)
+        )
+        return
+    if not ops:
+        typer.echo("(queue empty)")
+        return
+    for o in ops:
+        typer.echo(f"{o.operation_id}\t{o.type}\t{o.status.value}\tattempts={o.attempts}")
+
+
+@materials_app.command("record-discussion")
+def materials_record_discussion(
+    page_id: str = typer.Option(..., "--page-id", help="Notion 页 id"),
+    judgment: str = typer.Option(..., "--judgment", help="用户最终判断"),
+    proposal: Annotated[
+        list[str] | None, typer.Option("--proposal", help="AI 提议（可重复）")
+    ] = None,
+    question: Annotated[
+        list[str] | None, typer.Option("--question", help="未解决问题（可重复）")
+    ] = None,
+    action: str = typer.Option("", "--action", help="可选下一步行动"),
+    drain: bool = typer.Option(False, "--drain", help="立即执行写队列"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """保存讨论记录并排队回写（追加讨论块 + 已讨论标记）。"""
+    settings = load_settings()
+    service, _ws = _materials_service(settings)
+    record = service.record_discussion(
+        notion_page_id=page_id,
+        user_judgment=judgment,
+        ai_proposals=proposal,
+        open_questions=question,
+        action=action,
+    )
+    if drain:
+        service.queue.drain()
+        record = service.repo.get_discussion(record.discussion_id) or record
+    if as_json:
+        typer.echo(json.dumps(record.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"discussion {record.discussion_id} saved; writeback queued")
+
+
+@materials_app.command("promote")
+def materials_promote(
+    page_id: str = typer.Argument(..., help="Notion 页 id"),
+    core_point: str = typer.Option(..., "--core-point", help="单一中心主张"),
+    reader_problem: str = typer.Option("", "--reader-problem", help="读者问题/痛点"),
+    why: str = typer.Option("", "--why", help="为什么值得现在说"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """把素材提炼为 idea 候选（幂等；落为 proposed ContentJob）。"""
+    settings = load_settings()
+    service, _ws = _materials_service(settings)
+    job = service.promote(
+        page_id, core_point=core_point, reader_problem=reader_problem, why_worth_saying=why
+    )
+    result = {
+        "job_id": job.id,
+        "status": job.status.value,
+        "source_kind": job.source_kind,
+        "core_message": job.core_message,
+    }
+    if as_json:
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"job {job.id}: {job.status.value} (source_kind={job.source_kind})")
+
+
+@materials_app.command("usage")
+def materials_usage(
+    page_id: str = typer.Argument(..., help="Notion 页 id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """列出某素材的用途追溯（read/discussion/promoted）。"""
+    settings = load_settings()
+    service, _ws = _materials_service(settings)
+    links = service.usage.list_for_page(page_id)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                [link.model_dump(mode="json") for link in links], ensure_ascii=False, indent=2
+            )
+        )
+        return
+    if not links:
+        typer.echo("(no usage)")
+        return
+    for link in links:
+        ref = link.candidate_ref or link.discussion_ref or ""
+        typer.echo(f"{link.usage}\t{link.created_at:%Y-%m-%d %H:%M}\t{ref}")
 
 
 if __name__ == "__main__":

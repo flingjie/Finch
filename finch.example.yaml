@@ -264,3 +264,13 @@ extraction:
   timeout_seconds: 180
   max_commits_per_group_prompt: 15
   max_group_prompt_bytes: 25000
+
+# Notion 素材库（api_key 读自 .env 的 NOTION_API_KEY，不写入仓库）。
+notion:
+  database_id: ""   # 素材库 database id（Notion 页面 URL 中那段 32 位 id）
+  base_url: https://api.notion.com/v1
+  version: "2022-06-28"
+  timeout_seconds: 30.0
+  page_size: 100
+  max_attempts: 3
+  backoff_seconds: 2.0

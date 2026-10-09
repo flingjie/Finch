@@ -29,7 +29,9 @@ from finch.content.models import ContentType, RecommendedFormat
 class SourceRef(BaseModel):
     """来源引用：类型 + 引用标识 + 一句话摘要（保证可追溯）。"""
 
-    type: Literal["commit", "pr", "issue", "test", "post", "paper", "conversation", "attempt"]
+    type: Literal[
+        "commit", "pr", "issue", "test", "post", "paper", "conversation", "attempt", "notion"
+    ]
     ref: str
     summary: str
 
