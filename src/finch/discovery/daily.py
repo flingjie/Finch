@@ -9,10 +9,12 @@ from typing import Literal
 
 from finch.codex.runner import CodexRunner
 from finch.discovery.candidate_pool import build_pool, match_interests
+from finch.discovery.hot_posts import select_hot_posts
 from finch.engagement.flow import EngagementRunResult, RankedPeer
 from finch.engagement.models import (
     ActionFeedbackValue,
     DiscoverySnapshot,
+    HotPostEntry,
     InterestFeedbackValue,
     OpportunityAssessmentEntry,
     OutcomeFeedbackValue,
@@ -80,6 +82,7 @@ class DailyDiscoveryResult:
     run_id: str
     sync_results: list[SyncResult] = field(default_factory=list)
     recommendations: DailyRecommendationSet | None = None
+    hot_posts: list[HotPostEntry] = field(default_factory=list)
     preferred_opportunity: OppAggregate | None = None
     opportunity_assessments: list[OpportunityAssessment] = field(default_factory=list)
     engagement: EngagementRunResult | None = None
@@ -426,6 +429,11 @@ def run_daily_discovery(
         lookback_hours=plan.lookback_hours,
         as_of=now,
     )
+    result.hot_posts = select_hot_posts(
+        filtered,
+        settings=settings,
+        question=(question or plan.intent),
+    )
 
     # Creator evidence via Codex (fail-soft per person)
     evidence_svc = CreatorEvidenceService(
@@ -634,6 +642,7 @@ def run_daily_discovery(
         recommendations=_recommendation_entries(recs),
         recommendation_shortfall=dict(recs.shortfall),
         home_person_ids=[r.person_id for r in select_home_items(recs)],
+        hot_posts=result.hot_posts,
         preferred_opportunity_id=(
             result.preferred_opportunity.id if result.preferred_opportunity else ""
         ),

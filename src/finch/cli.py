@@ -57,6 +57,7 @@ from .engagement.metrics import (
 from .engagement.models import (
     ActionFeedbackValue,
     DiscoverySnapshot,
+    HotPostEntry,
     InterestFeedbackValue,
     OutcomeFeedbackValue,
     PresentationRecord,
@@ -2493,6 +2494,32 @@ def _entries_payload(entries: list[RecommendationEntry], shortfall: dict[str, in
     return result
 
 
+def _hot_posts_payload(hot_posts: list[HotPostEntry]) -> list[dict]:
+    """把相关热门帖子序列化为 JSON（与快照条目同构）。"""
+    return [p.model_dump(mode="json") for p in hot_posts]
+
+
+def _render_hot_posts(hot_posts: list[HotPostEntry]) -> list[str]:
+    """文本模式渲染相关热门帖子；最多 5 条，不足不凑数。"""
+    if not hot_posts:
+        return []
+    lines = [f"## 相关热门帖子 ({len(hot_posts)})"]
+    for p in hot_posts:
+        title = p.title or p.artifact_id
+        lines.append(f"- {title}")
+        if p.url:
+            lines.append(f"  {p.url}")
+        meta = p.platform or ""
+        if p.author:
+            meta = f"{p.platform} @{p.author}" if p.platform else p.author
+        if p.matched_terms:
+            meta += f" · 相关: {', '.join(p.matched_terms[:3])}"
+        if meta:
+            lines.append(f"  {meta}")
+    lines.append("")
+    return lines
+
+
 def _render_recommendation_entries(
     entries: list[RecommendationEntry], shortfall: dict[str, int]
 ) -> list[str]:
@@ -2793,6 +2820,7 @@ def _persist_discovery(
         latest.recommendation_shortfall if latest is not None else {}
     )
     home_person_ids = latest.home_person_ids if latest is not None else []
+    hot_posts = list(latest.hot_posts) if latest is not None else []
     preferred_opportunity_id = (
         latest.preferred_opportunity_id if latest is not None else ""
     )
@@ -2823,6 +2851,7 @@ def _persist_discovery(
         recommendations=recommendations,
         recommendation_shortfall=recommendation_shortfall,
         home_person_ids=home_person_ids,
+        hot_posts=hot_posts,
         preferred_opportunity_id=preferred_opportunity_id,
         opportunity_assessments=opportunity_assessments,
     )
@@ -2998,6 +3027,11 @@ def connect_daily(
     rec_entries = snapshot.recommendations if snapshot is not None else []
     rec_shortfall = snapshot.recommendation_shortfall if snapshot is not None else {}
     home_ids = snapshot.home_person_ids if snapshot is not None else []
+    hot_posts = (
+        list(daily.hot_posts)
+        if daily is not None
+        else (list(snapshot.hot_posts) if snapshot is not None else [])
+    )
 
     preferred: PreferredOpportunity | None = None
     assessments: list = []
@@ -3048,6 +3082,7 @@ def connect_daily(
                 if (daily is not None and daily.recommendations is not None)
                 else _entries_payload(rec_entries, rec_shortfall)
             ),
+            "hot_posts": _hot_posts_payload(hot_posts),
             "conversations_needing_follow_up": [
                 t.model_dump(mode="json") for t in focus["conversations"]["items"]
             ],
@@ -3097,6 +3132,9 @@ def connect_daily(
     else:
         typer.echo("(run with --refresh for daily recommendations)")
         typer.echo("")
+    hot_lines = _render_hot_posts(hot_posts)
+    if hot_lines:
+        typer.echo("\n".join(hot_lines))
     typer.echo(_render_daily(focus))
 
 

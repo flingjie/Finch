@@ -567,6 +567,8 @@ def test_connect_daily_json(monkeypatch, tmp_path):
     payload = json.loads(r.output)
     assert payload["schema_version"] == 2
     assert payload["snapshot_id"] == "daily_test"
+    assert "hot_posts" in payload
+    assert payload["hot_posts"] == []
     assert "preferred_opportunity" in payload
     assert payload["preferred_opportunity"] is None
     assert "opportunity_assessments" in payload
@@ -590,7 +592,7 @@ def test_connect_daily_json_includes_freshness(monkeypatch, tmp_path):
 
 def test_persist_discovery_preserves_recommendations(tmp_path):
     """F1：_persist_discovery 不得覆盖 run_daily_discovery 已写入的完整 50 人推荐。"""
-    from finch.engagement.models import DiscoverySnapshot, RecommendationEntry
+    from finch.engagement.models import DiscoverySnapshot, HotPostEntry, RecommendationEntry
     from finch.storage.repositories import DiscoverySnapshotRepository
 
     settings = _settings(tmp_path)
@@ -619,6 +621,15 @@ def test_persist_discovery_preserves_recommendations(tmp_path):
                 )
             ],
             recommendation_shortfall={"insufficient_eligible": 2},
+            hot_posts=[
+                HotPostEntry(
+                    artifact_id="a_hot",
+                    title="agent reliability failure replay",
+                    url="https://x.example/post",
+                    platform="x",
+                    author="alice",
+                )
+            ],
         )
     )
 
@@ -626,6 +637,7 @@ def test_persist_discovery_preserves_recommendations(tmp_path):
     assert snap is not None
     assert [r.person_id for r in snap.recommendations] == ["p1"]
     assert snap.recommendation_shortfall == {"insufficient_eligible": 2}
+    assert [p.artifact_id for p in snap.hot_posts] == ["a_hot"]
 
 
 def test_connect_person_not_found(monkeypatch, tmp_path):

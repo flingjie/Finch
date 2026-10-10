@@ -31,6 +31,20 @@ class RecommendationEntry(BaseModel):
     hook: str = ""  # 意外/跨领域的具体吸引点（探索位）
 
 
+class HotPostEntry(BaseModel):
+    """快照持久化的一条相关热门帖子（连接主循环的补充发现）。"""
+
+    artifact_id: str
+    title: str = ""
+    url: str = ""
+    platform: str = ""
+    author: str = ""
+    published_at: datetime | None = None
+    relevance_score: float = 0.0
+    heat_score: float = 0.0
+    matched_terms: list[str] = Field(default_factory=list)
+
+
 class OpportunityAssessmentEntry(BaseModel):
     """快照持久化的一条首选机会评估结果（非刷新可读；含 skip 原因）。"""
 
@@ -60,6 +74,8 @@ class DiscoverySnapshot(BaseModel):
     recommendation_shortfall: dict[str, int] = Field(default_factory=dict)
     # 首页 3 个重点发现（D7：与 50 人浏览来自同一快照，按序持久化）
     home_person_ids: list[str] = Field(default_factory=list)
+    # 首页/浏览补充的 5 条相关热门帖子（与同一快照重放，不足 5 条如实显示）
+    hot_posts: list[HotPostEntry] = Field(default_factory=list)
     # 首选机会（新聚合）id：首页 0-1 条首选；空表示本轮无值得优先投入的机会。
     preferred_opportunity_id: str = ""
     # 本轮评估覆盖（含跳过原因）：非刷新读取可重放「为何无首选 / 为何优先」。
