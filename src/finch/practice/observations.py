@@ -41,6 +41,8 @@ class StyleObservationService:
         for s in self.sessions.list_all():
             if s.status != "finished":
                 continue
+            if s.final_source == "ai_example":
+                continue
             key = self._group_key(s)
             if key is None:
                 continue
@@ -123,10 +125,15 @@ class StyleObservationService:
         return f"反复选择以「{dim}」维度、用「{label}」写法展开"
 
     def _quote(self, session: PracticeSession) -> str:
-        """风格证据只引用可追溯的用户创作片段：混合/AI 示例时退回首稿。"""
+        """风格证据只引用可追溯的用户创作片段：mixed 优先取用户 edit 片段。"""
         if session.final_source == "user_authored":
             return session.final_expression or session.initial_attempt
-        return session.initial_attempt
+        if session.final_source == "mixed":
+            for action in session.user_actions:
+                if action.action == "edit" and action.text.strip():
+                    return action.text
+            return session.initial_attempt
+        return ""  # ai_example：无用户创作证据
 
     @staticmethod
     def _id_for(dimension: str, label: str) -> str:

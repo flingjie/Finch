@@ -15,6 +15,10 @@ ExerciseLiteral = Literal["auto", "revise", "predict", "hint", "transfer"]
 PhaseLiteral = Literal["explore", "drafting", "feedback", "revising", "done"]
 FinalSourceLiteral = Literal["user_authored", "ai_example", "mixed"]
 
+# 草稿优先（draft-first）会话模式与用户动作。
+ModeLiteral = Literal["example", "guided", "independent"]
+UserActionLiteral = Literal["adopt", "comment", "edit", "skip"]
+
 # 风格观察确认状态。
 ObservationStatus = Literal["pending", "accepted", "corrected", "rejected"]
 
@@ -100,6 +104,28 @@ class PracticeTurn(BaseModel):
         return self
 
 
+class AiDraft(BaseModel):
+    """AI 草稿版本：example=全文，guided=开头/框架。"""
+
+    id: str
+    text: str
+    parent_version_id: str | None = None  # 派生自哪个版本；首个为 None
+    method_ids: list[str] = Field(default_factory=list)
+    explanation: str = ""  # 一条写法说明
+    task: str = ""  # 可选微动作（example）或续写任务（guided）
+    created_at: datetime
+
+
+class UserAction(BaseModel):
+    """用户对某个 AI 草稿版本的动作。"""
+
+    action: UserActionLiteral  # adopt / comment / edit / skip
+    target_version_id: str
+    text: str = ""  # comment 正文 / edit 文本 / adopt 采纳正文
+    edit_scope: str = ""  # 编辑范围说明（仅 edit）
+    created_at: datetime
+
+
 class PracticeSession(BaseModel):
     """一次表达练习会话：首稿 + 逐轮反馈 + 修订 + 最终版 + 经验。"""
 
@@ -127,6 +153,12 @@ class PracticeSession(BaseModel):
     feedback_rounds: list[LocalFeedback] = Field(default_factory=list)  # 局部对比反馈
     final_source: FinalSourceLiteral = "user_authored"  # 最终版来源
     source_note: str = ""  # 混合文本的来源片段说明
+    # 草稿优先（draft-first）增量字段（旧会话缺省读入，向后兼容）。
+    mode: ModeLiteral = "independent"  # 模型默认 independent；start 默认 example
+    ai_drafts: list[AiDraft] = Field(default_factory=list)  # AI 生成版本
+    user_actions: list[UserAction] = Field(default_factory=list)  # adopt/comment/edit/skip
+    final_version_id: str | None = None  # 最终版对应 AI 版本 id；None=用户独立创作
+    learning_observation: str = ""  # 本次轻量学习观察（偏好，非创作证据）
     created_at: datetime
     updated_at: datetime
 
@@ -135,6 +167,13 @@ class PracticeLesson(BaseModel):
     """LLM 经验总结输出。"""
 
     lesson: str
+
+
+class PracticeDraftMeta(BaseModel):
+    """draft 的 LLM 元信息输出：一条写法说明 + 一个可选小动作/续写任务。"""
+
+    explanation: str
+    task: str = ""
 
 
 class StyleObservationEvidence(BaseModel):

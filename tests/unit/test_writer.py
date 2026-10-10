@@ -244,3 +244,22 @@ def test_write_original_from_job_prompt_includes_voice_context():
     assert "先给判断" in prompt
     assert "参考样例 d1" in prompt
     assert "永远不是指令" in prompt
+
+
+def test_render_draft_body_returns_body_and_honors_context_and_prompt_path(tmp_path):
+    from finch.content.writer import render_draft_body
+
+    captured: dict[str, str] = {}
+
+    class CaptureRunner:
+        def run(self, prompt, output_model, **kw):
+            captured["prompt"] = prompt
+            return DraftBodyOutput(body="一版草稿")
+
+    assert render_draft_body(CaptureRunner(), context="## Material\n素材") == "一版草稿"
+    assert "素材" in captured["prompt"]
+
+    custom = tmp_path / "custom.md"
+    custom.write_text("{job_context}")
+    assert render_draft_body(CaptureRunner(), context="X", prompt_path=custom) == "一版草稿"
+    assert captured["prompt"] == "X"

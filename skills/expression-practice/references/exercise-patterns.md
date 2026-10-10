@@ -1,8 +1,9 @@
 # 练习动作示例与不适用情形
 
-predict / hint / transfer 是**可选**微工具，不再是唯一训练路径。主路径是「三种写法 →
-用户写 → 局部对比 → 用户重写」（见 `option-selection.md` / `diagnosis-rules.md`）。三个可选
-动作只给少量例子与「何时不该用」，不堆大而全的方法目录。
+predict / hint / transfer 是 **independent 模式**的**可选**微工具，不再是唯一训练路径。independent
+主路径是「三种写法 → 用户写 → 局部对比 → 用户重写」（见 `option-selection.md` /
+`diagnosis-rules.md`）。example 模式用「一个可选小动作」、guided 模式用「一个续写任务」替代
+这些微工具（见 SKILL.md 三种模式）。三个可选动作只给少量例子与「何时不该用」，不堆大而全的方法目录。
 
 ## 预测（predict）
 
@@ -20,8 +21,8 @@ predict / hint / transfer 是**可选**微工具，不再是唯一训练路径�
 2. 局部骨架：「原来需要___，现在___，但新增了___。」
 3. 局部参考：只示范一两句，标注为 AI 参考，不当作用户修订。
 
-- 不适用：用户没求助就不给；不因回答慢或时间经过自动升级；用户要求完整代写 → 走
-  `finch drafts`（普通写作流程），不继续当作练习。
+- 不适用：用户没求助就不给；不因回答慢或时间经过自动升级；用户要求完整代写 → 若只是要成稿走
+  `finch drafts`，若愿意看例子学写法切 `example` 模式（`finch practice mode <id> --set example`）。
 
 ## 迁移（transfer）
 

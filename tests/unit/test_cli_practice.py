@@ -1,15 +1,18 @@
 """CLI tests for finch practice（start 的落库与校验；LLM 命令由 service 测试覆盖）。"""
 
+import json
 from datetime import UTC, datetime
 
 from typer.testing import CliRunner
 
 from finch import cli
 from finch.cli import app
+from finch.content.models import DraftBodyOutput
 from finch.expression_methods.models import ExpressionMethod
 from finch.expression_methods.repository import ExpressionMethodRepository
 from finch.practice.models import (
     LocalFeedback,
+    PracticeDraftMeta,
     PracticeFeedback,
     PracticeLesson,
     PracticeOption,
@@ -353,7 +356,7 @@ def test_practice_start_with_material_only(monkeypatch, tmp_path):
     session = PracticeSessionRepository(ws).get(session_id)
     assert session.initial_attempt == ""
     assert session.source_material == "一个想法"
-    assert "explore" in r.output
+    assert "draft" in r.output  # 默认 example 模式：下一步生成草稿
 
 
 def test_practice_start_attempt_and_material_conflict(monkeypatch, tmp_path):
@@ -408,3 +411,93 @@ def test_practice_observe_list(monkeypatch, tmp_path):
     r2 = CliRunner().invoke(app, ["practice", "observe"])
     assert r2.exit_code == 0, r2.output
     assert "proposed:" in r2.output
+
+
+# —— 草稿优先 CLI ——
+
+
+class _DraftCliRunner:
+    def run(self, prompt, output_model, **kw):
+        if output_model is DraftBodyOutput:
+            return DraftBodyOutput(body="一版草稿")
+        if output_model is PracticeDraftMeta:
+            return PracticeDraftMeta(explanation="先写反差", task="看看最后一句")
+        return PracticeLesson(lesson="一个经验")
+
+
+def _patch_draft_runner(monkeypatch):
+    monkeypatch.setattr(cli, "create_runner", lambda *a, **k: _DraftCliRunner())
+    monkeypatch.setattr(cli, "CodexRunner", _DraftCliRunner)
+
+
+def test_practice_start_with_mode(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    _patch(monkeypatch, settings)
+    r = CliRunner().invoke(app, ["practice", "start", "--material", "素材", "--mode", "guided"])
+    assert r.exit_code == 0, r.output
+    sid = r.output.strip().splitlines()[0].removeprefix("id: ")
+    assert PracticeSessionRepository(ws).get(sid).mode == "guided"
+
+
+def test_practice_start_invalid_mode(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    r = CliRunner().invoke(app, ["practice", "start", "--material", "素材", "--mode", "bogus"])
+    assert r.exit_code == 1
+    assert "invalid mode" in r.output
+
+
+def test_practice_draft_and_react_adopt(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    _patch(monkeypatch, settings)
+    _patch_draft_runner(monkeypatch)
+    sid = _start_session(app, ["--material", "素材"])
+    d = CliRunner().invoke(app, ["practice", "draft", sid, "--json"])
+    assert d.exit_code == 0, d.output
+    data = json.loads(d.output)
+    assert len(data["ai_drafts"]) == 1
+    vid = data["ai_drafts"][0]["id"]
+    r = CliRunner().invoke(app, ["practice", "react", sid, "--version", vid, "--action", "adopt"])
+    assert r.exit_code == 0, r.output
+    assert "final_source: ai_example" in r.output
+    assert PracticeSessionRepository(ws).get(sid).status == "finished"
+
+
+def test_practice_mode_set(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    _patch(monkeypatch, settings)
+    sid = _start_session(app, ["--material", "素材"])
+    r = CliRunner().invoke(app, ["practice", "mode", sid, "--set", "independent"])
+    assert r.exit_code == 0, r.output
+    assert PracticeSessionRepository(ws).get(sid).mode == "independent"
+
+
+def test_practice_save_based_on(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    _patch(monkeypatch, settings)
+    _patch_draft_runner(monkeypatch)
+    sid = _start_session(app, ["--material", "素材"])
+    d = CliRunner().invoke(app, ["practice", "draft", sid, "--json"])
+    vid = json.loads(d.output)["ai_drafts"][0]["id"]
+    r = CliRunner().invoke(
+        app, ["practice", "save", sid, "--revision", "我的修改", "--based-on", vid]
+    )
+    assert r.exit_code == 0, r.output
+    assert PracticeSessionRepository(ws).get(sid).final_version_id == vid
+
+
+def test_practice_draft_on_finished_session_clean_exit(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    _patch(monkeypatch, settings)
+    _patch_draft_runner(monkeypatch)
+    sid = _start_session(app, ["--material", "素材"])
+    d = CliRunner().invoke(app, ["practice", "draft", sid, "--json"])
+    vid = json.loads(d.output)["ai_drafts"][0]["id"]
+    CliRunner().invoke(app, ["practice", "react", sid, "--version", vid, "--action", "adopt"])
+    r = CliRunner().invoke(app, ["practice", "draft", sid])
+    assert r.exit_code == 1
+    assert "illegal transition" in r.output
+    assert "Traceback" not in r.output

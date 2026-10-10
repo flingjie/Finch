@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from finch.practice.models import PracticeOption, PracticeSession
+from finch.practice.models import PracticeOption, PracticeSession, UserAction
 from finch.practice.observations import StyleObservationService
 from finch.storage.repositories import PracticeSessionRepository, StyleObservationRepository
 from finch.storage.workspace import Workspace
@@ -115,3 +115,32 @@ def test_observation_repository_missing_raises(tmp_path):
 
     with pytest.raises(KeyError):
         svc.accept("sobs_none")
+
+
+def test_ai_example_sessions_excluded(tmp_path):
+    ws, svc = _service(tmp_path)
+    _upsert(
+        ws,
+        _session("x1", dimension="结构", optname="A", final="AI 稿", final_source="ai_example"),
+        _session("x2", dimension="结构", optname="A", final="AI 稿", final_source="ai_example"),
+        _session("x3", dimension="结构", optname="A", final="AI 稿", final_source="ai_example"),
+    )
+    assert svc.propose() == []
+
+
+def test_mixed_prefers_user_edit_fragment(tmp_path):
+    ws, svc = _service(tmp_path)
+    now = datetime.now(UTC)
+    for uid, text in (("m1", "用户改的句1"), ("m2", "用户改的句2"), ("m3", "用户改的句3")):
+        s = _session(uid, dimension="语气", optname="C", final="AI 终稿", final_source="mixed")
+        s = s.model_copy(
+            update={
+                "user_actions": [
+                    UserAction(action="edit", target_version_id="v1", text=text, created_at=now)
+                ]
+            }
+        )
+        PracticeSessionRepository(ws).upsert(s)
+    proposed = svc.propose()
+    assert len(proposed) == 1
+    assert {e.quote for e in proposed[0].evidence} == {"用户改的句1", "用户改的句2", "用户改的句3"}

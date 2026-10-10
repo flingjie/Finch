@@ -112,8 +112,10 @@ from .peers.service import PeerService, profile_url_for
 from .practice.models import (
     ExerciseLiteral,
     FinalSourceLiteral,
+    ModeLiteral,
     PracticeFeedback,
     ResponseKindLiteral,
+    UserActionLiteral,
 )
 from .practice.observations import StyleObservationService
 from .practice.service import PracticeService
@@ -4806,6 +4808,7 @@ def practice_start(
     method: str = typer.Option(None, "--method", help="练习的表达方法 id（finch methods）"),
     audience: str = typer.Option("", "--audience", help="目标读者"),
     goal: str = typer.Option("", "--goal", help="训练目的"),
+    mode: str = typer.Option("example", "--mode", help="example|guided|independent"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
     """开始一次表达练习（可选关联 idea / 表达方法 + 首稿 + 目标语境）。
@@ -4818,6 +4821,9 @@ def practice_start(
     if attempt and material:
         typer.echo("use only one of --attempt / --material")
         raise typer.Exit(code=1)
+    if mode not in ("example", "guided", "independent"):
+        typer.echo(f"invalid mode: {mode}. expected example|guided|independent")
+        raise typer.Exit(code=1)
     if method is not None and ExpressionMethodRepository(ws).get(method) is None:
         typer.echo(f"method not found: {method}")
         raise typer.Exit(code=1)
@@ -4829,15 +4835,20 @@ def practice_start(
         method_id=method,
         audience=audience,
         goal=goal,
+        mode=cast(ModeLiteral, mode),
     )
     if as_json:
         typer.echo(session.model_dump_json(indent=2))
     else:
         typer.echo(f"id: {session.id}")
-        if material and not attempt:
-            typer.echo("下一步：finch practice explore <id> 探索三种写法")
+        if mode == "independent":
+            if material and not attempt:
+                nxt = "finch practice explore <id> 探索三种写法"
+            else:
+                nxt = "诊断本次表达"
         else:
-            typer.echo("下一步：诊断本次表达")
+            nxt = "finch practice draft <id> 生成草稿"
+        typer.echo(f"下一步：{nxt}")
 
 
 @practice_app.command("explore")
@@ -4938,6 +4949,125 @@ def practice_feedback(
         typer.echo("下一步：finch practice save --revision 或 finish")
 
 
+@practice_app.command("draft")
+def practice_draft(
+    session_id: str = typer.Argument(..., help="session id"),
+    instruction: str = typer.Option("", "--instruction", help="再生成时的修改指令"),
+    regenerate: bool = typer.Option(False, "--regenerate", help="显式生成新版本（保留旧版）"),
+    method: list[str] = typer.Option([], "--method", help="引用的表达方法 id（可多个）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """生成一版 AI 草稿 + 一条写法说明 + 一个可选小动作。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    methods: list[ExpressionMethod] = []
+    if method:
+        try:
+            methods = ExpressionMethodService(
+                ExpressionMethodRepository(ws), ArticleReportRepository(ws), runner
+            ).resolve_methods_for_discovery(method_ids=method)
+        except KeyError as exc:
+            typer.echo(f"method not found: {str(exc).strip(chr(39))}")
+            raise typer.Exit(code=1) from None
+    try:
+        session = PracticeService(PracticeSessionRepository(ws), runner).draft(
+            session_id,
+            instruction=instruction,
+            regenerate=regenerate,
+            methods=methods,
+            voice_profile=load_voice_profile(settings.paths.voice_profile_path),
+        )
+    except KeyError:
+        typer.echo(f"session not found: {session_id}")
+        raise typer.Exit(code=1) from None
+    except (ValueError, RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        latest = session.ai_drafts[-1]
+        typer.echo(f"id: {latest.id}")
+        typer.echo(f"text: {latest.text}")
+        if latest.explanation:
+            typer.echo(f"explanation: {latest.explanation}")
+        if latest.task:
+            typer.echo(f"task: {latest.task}")
+        typer.echo("下一步：finch practice react <id> --version <v> --action adopt|comment|edit")
+
+
+@practice_app.command("react")
+def practice_react(
+    session_id: str = typer.Argument(..., help="session id"),
+    version: str = typer.Option(..., "--version", help="AI 版本 id"),
+    action: str = typer.Option(..., "--action", help="adopt|comment|edit|skip"),
+    text: str = typer.Option("", "--text", help="comment/edit 正文"),
+    edit_scope: str = typer.Option("", "--edit-scope", help="编辑范围说明（仅 edit）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """记录用户对某 AI 版本的动作；adopt 收尾。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    if action not in ("adopt", "comment", "edit", "skip"):
+        typer.echo(f"invalid action: {action}. expected adopt|comment|edit|skip")
+        raise typer.Exit(code=1)
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    try:
+        session = PracticeService(PracticeSessionRepository(ws), runner).react(
+            session_id,
+            version,
+            cast(UserActionLiteral, action),
+            text=text,
+            edit_scope=edit_scope,
+        )
+    except KeyError:
+        typer.echo(f"session not found: {session_id}")
+        raise typer.Exit(code=1) from None
+    except (ValueError, RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        typer.echo(f"action: {action} on {version}")
+        if action == "adopt":
+            typer.echo(f"status: {session.status}")
+            typer.echo(f"final_source: {session.final_source}")
+
+
+@practice_app.command("mode")
+def practice_mode(
+    session_id: str = typer.Argument(..., help="session id"),
+    mode: str = typer.Option(..., "--set", help="example|guided|independent"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """切换会话模式（不清空已保存文本）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    if mode not in ("example", "guided", "independent"):
+        typer.echo(f"invalid mode: {mode}. expected example|guided|independent")
+        raise typer.Exit(code=1)
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    try:
+        session = PracticeService(PracticeSessionRepository(ws), runner).set_mode(
+            session_id, cast(ModeLiteral, mode)
+        )
+    except KeyError:
+        typer.echo(f"session not found: {session_id}")
+        raise typer.Exit(code=1) from None
+    except (ValueError, RuntimeError, StructuredOutputError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        typer.echo(f"mode: {session.mode}")
+
+
 def _render_method_drill_card(method: ExpressionMethod) -> str:
     """方法卡仅作诊断语境；不要求评分技巧是否被使用。"""
     return (
@@ -5027,16 +5157,18 @@ def practice_diagnose(
 def practice_save(
     session_id: str = typer.Argument(..., help="session id"),
     revision: str = typer.Option(..., "--revision", help="修订后的表达"),
+    based_on: str = typer.Option(None, "--based-on", help="基于哪个 AI 版本修改"),
+    feedback_round: int = typer.Option(None, "--feedback-round", help="关联的反馈轮下标"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """追加一次修订。"""
+    """追加一次修订；可选关联 AI 版本（--based-on）或反馈轮（--feedback-round）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     try:
         session = PracticeService(PracticeSessionRepository(ws), runner).save_revision(
-            session_id, revision
+            session_id, revision, based_on=based_on, feedback_round=feedback_round
         )
     except KeyError:
         typer.echo(f"session not found: {session_id}")
@@ -5103,19 +5235,21 @@ def practice_finish(
     ),
     note: str = typer.Option("", "--note", help="方法练习备注"),
     source: str = typer.Option(
-        "user_authored", "--source", help="最终版来源：user_authored|ai_example|mixed"
+        None, "--source", help="最终版来源：user_authored|ai_example|mixed（缺省自动推导）"
     ),
     source_note: str = typer.Option("", "--source-note", help="混合文本的来源片段说明"),
+    final_version_id: str = typer.Option(None, "--final-version-id", help="最终版对应 AI 版本 id"),
+    observation: str = typer.Option("", "--observation", help="本次轻量学习观察"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """记最终版 + LLM 经验总结，置 finished。"""
+    """记最终版，置 finished；有用户创作时跑 lesson，仅 AI 稿时不跑。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     if verdict is not None and verdict not in _METHOD_VERDICTS:
         typer.echo(f"invalid verdict: {verdict}. expected one of {', '.join(_METHOD_VERDICTS)}")
         raise typer.Exit(code=1)
-    if source not in ("user_authored", "ai_example", "mixed"):
+    if source is not None and source not in ("user_authored", "ai_example", "mixed"):
         typer.echo(f"invalid source: {source}. expected user_authored|ai_example|mixed")
         raise typer.Exit(code=1)
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
@@ -5125,8 +5259,10 @@ def practice_finish(
             final,
             method_verdict=cast(MethodVerdict | None, verdict),
             method_verdict_note=note,
-            final_source=cast(FinalSourceLiteral, source),
+            final_source=cast(FinalSourceLiteral, source) if source else None,
             source_note=source_note,
+            final_version_id=final_version_id,
+            learning_observation=observation,
         )
         if session.method_id and session.method_verdict:
             ExpressionMethodService(
@@ -5147,7 +5283,10 @@ def practice_finish(
     if as_json:
         typer.echo(session.model_dump_json(indent=2))
     else:
-        typer.echo(f"lesson: {session.lesson}")
+        if session.lesson:
+            typer.echo(f"lesson: {session.lesson}")
+        if session.learning_observation:
+            typer.echo(f"observation: {session.learning_observation}")
         typer.echo("下一步：查看会话")
 
 
@@ -5169,6 +5308,7 @@ def practice_show(
     else:
         typer.echo(f"id: {session.id}")
         typer.echo(f"status: {session.status}")
+        typer.echo(f"mode: {session.mode}")
         if session.phase:
             typer.echo(f"phase: {session.phase}")
         if session.method_id:
@@ -5183,6 +5323,16 @@ def practice_show(
         if session.source_material:
             typer.echo(f"source_material: {session.source_material}")
         typer.echo(f"initial_attempt: {session.initial_attempt}")
+        if session.ai_drafts:
+            typer.echo("ai_drafts:")
+            for d in session.ai_drafts:
+                parent = f" (from {d.parent_version_id})" if d.parent_version_id else ""
+                typer.echo(f"  - {d.id}{parent}")
+                typer.echo(f"      text: {d.text}")
+                if d.explanation:
+                    typer.echo(f"      explanation: {d.explanation}")
+                if d.task:
+                    typer.echo(f"      task: {d.task}")
         if session.options:
             typer.echo("options:")
             for i, opt in enumerate(session.options):
@@ -5221,6 +5371,15 @@ def practice_show(
         if session.final_source != "user_authored" or session.source_note:
             typer.echo(f"final_source: {session.final_source}")
             typer.echo(f"source_note: {session.source_note}")
+        if session.final_version_id:
+            typer.echo(f"final_version_id: {session.final_version_id}")
+        if session.user_actions:
+            typer.echo("user_actions:")
+            for a in session.user_actions:
+                scope = f" (scope={a.edit_scope})" if a.edit_scope else ""
+                typer.echo(f"  - {a.action} {a.target_version_id}{scope}: {a.text}")
+        if session.learning_observation:
+            typer.echo(f"learning_observation: {session.learning_observation}")
         typer.echo(f"lesson: {session.lesson}")
 
 

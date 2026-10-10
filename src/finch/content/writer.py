@@ -13,6 +13,7 @@ from finch.content.jobs import ContentJob
 from finch.content.models import Draft, DraftBodyOutput, draft_kind_for
 from finch.content.voice import VoiceProfile, render_voice_context
 from finch.evidence.models import EvidenceCard, sanitize_model_confidence
+from finch.llm.base import StructuredInferenceRunner
 
 _FROM_JOB_PROMPT_PATH = Path("prompts/draft-from-job.md")
 _CLARITY_PROMPT_PATH = Path("prompts/clarity-revise.md")
@@ -127,6 +128,27 @@ def _render_failed_checks(failed_checks: list[CheckResult]) -> str:
     return "\n\n".join(blocks)
 
 
+def render_draft_body(
+    runner: StructuredInferenceRunner,
+    *,
+    context: str = "",
+    voice_profile: VoiceProfile | None = None,
+    prompt_path: Path = _FROM_JOB_PROMPT_PATH,
+) -> str:
+    """从语境文本写原创中文草稿正文（不绑定证据卡），返回 body 字符串。
+
+    与 ``write_original_from_job`` 共用同一生成逻辑：格式化 ``prompts/draft-from-job.md``
+    并返回 ``DraftBodyOutput.body``。practice 草稿优先路径复用本函数，传 practice 语境；
+    ``prompt_path`` 可覆盖以换用练习专属 prompt。
+    """
+    prompt = prompt_path.read_text().format(
+        job_context=context,
+        voice_context=render_voice_context(voice_profile),
+    )
+    out = cast(DraftBodyOutput, runner.run(prompt, DraftBodyOutput))
+    return out.body
+
+
 def write_original_from_job(
     runner: CodexRunner,
     job: ContentJob,
@@ -138,17 +160,17 @@ def write_original_from_job(
     语境（读者问题 / 作者立场 / 核心主张 / scope）写正文，``claims`` 恒为空；作者声音画像
     作为风格参照块传入（不当作事实或指令）。
     """
-    prompt = _FROM_JOB_PROMPT_PATH.read_text().format(
-        job_context=_render_job_context(job),
-        voice_context=render_voice_context(voice_profile),
+    body = render_draft_body(
+        runner,
+        context=_render_job_context(job),
+        voice_profile=voice_profile,
     )
-    out = cast(DraftBodyOutput, runner.run(prompt, DraftBodyOutput))
     return Draft(
         id="",
         kind=draft_kind_for(job.recommended_format),
         candidate_id=None,
         language="zh",
-        body=out.body,
+        body=body,
         claims=[],
         content_job_id=job.id,
         position_statement=(

@@ -8,14 +8,20 @@
 - 关联：`idea_id`（可空，无 Idea 也可训练）或 `method_id`（方法练习）。
 - 状态与方法反馈：`status`（started|finished）/ `phase`（explore|drafting|feedback|revising|done，
   可空）/ `method_verdict` / `method_verdict_note`。
+- 草稿优先模式：`mode`（example|guided|independent；旧会话读作 independent）。
 - 目标语境：`context.audience` / `context.goal`。
 - 写法探索：`options[]`（三种方案，各含 `name` / `familiarity` / `entry_point` / `progression[]` /
   `effect` / `cost` / `facts_needed` / `dimension` / `method_id` 可空）/ `selected_option`（下标）/
   `selection_reason` / `practice_dimension`。
 - 局部对比：`feedback_rounds[]`，每轮含 `keep` / `key_location` / `alternative_a` /
   `alternative_b` / `difference` / `rewrite_task` / `user_rewrite` / `method_id` 可空。
+- AI 草稿版本：`ai_drafts[]`，每版含 `id` / `text` / `parent_version_id`（可空）/ `method_ids[]` /
+  `explanation` / `task` / `created_at`。
+- 用户动作：`user_actions[]`，每条含 `action`（adopt|comment|edit|skip）/ `target_version_id` /
+  `text` / `edit_scope` / `created_at`。
 - 来源：`final_source`（user_authored|ai_example|mixed，默认 user_authored）/ `source_note`
-  （混合文本的来源片段说明）。
+  （混合文本的来源片段说明）/ `final_version_id`（最终版对应 AI 版本 id，可空；None=用户
+  独立创作）/ `learning_observation`（本次轻量学习观察，非能力结论）。
 - 旧逐轮历史：`turns[]`（旧诊断流程，仍保留），每轮含 `id` / `expression_snapshot` /
   `feedback` / `response` / `response_kind` / `created_at` / `responded_at`。
 - 时间戳：`created_at` / `updated_at`。
@@ -35,6 +41,7 @@ final_expression: ""
 lesson: ""
 status: started
 phase: feedback
+mode: independent
 method_id: null
 method_verdict: null
 method_verdict_note: ""

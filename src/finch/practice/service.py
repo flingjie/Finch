@@ -4,24 +4,33 @@
 （``PracticeSessionRepository.upsert``）。诊断与经验总结是 LLM 开放性判断；其余是确定性状态。
 """
 
+import hashlib
 from datetime import UTC, datetime
 from typing import cast
 from uuid import uuid4
 
+from finch.content.voice import VoiceProfile
+from finch.content.writer import render_draft_body
+from finch.expression_methods.models import ExpressionMethod
 from finch.llm.base import StructuredInferenceRunner
 from finch.practice.models import (
     ActionLiteral,
+    AiDraft,
     ExerciseLiteral,
     FinalSourceLiteral,
     LocalFeedback,
     MethodVerdictLiteral,
+    ModeLiteral,
     PracticeContext,
+    PracticeDraftMeta,
     PracticeFeedback,
     PracticeLesson,
     PracticeOptionsOutput,
     PracticeSession,
     PracticeTurn,
     ResponseKindLiteral,
+    UserAction,
+    UserActionLiteral,
 )
 from finch.storage.repositories import PracticeSessionRepository
 
@@ -164,6 +173,45 @@ Respond with JSON matching the schema: keep, key_location, alternative_a, altern
 difference, rewrite_task.
 """
 
+_PRACTICE_META_PROMPT = """\
+You are a writing partner. Given the draft you just produced and the material, explain ONE
+specific writing choice the draft makes and its trade-off, then propose ONE optional micro-action
+for the user (leave task empty if none fits).
+
+Do not write a general writing lesson. Explain a concrete choice in THIS draft (structure,
+opening, detail, or wording) and what it costs or gains. The micro-action, when present, invites
+the user to change or judge ONE small thing (for example: whether the last sentence states what
+they actually intend), not multiple tasks.
+
+## Draft
+{text}
+
+## Material / target context
+{context}
+
+Respond with JSON matching the schema: explanation (one specific choice + its cost), task
+(one optional micro-action, or empty).
+"""
+
+
+def derive_final_source(
+    *,
+    final_version_id: str | None,
+    user_actions: list[UserAction],
+) -> FinalSourceLiteral:
+    """从版本与用户动作推导最终版来源（纯函数，测试可直接调用）。
+
+    规则：无版本 → user_authored；有 edit 指向该版本 → mixed；有 adopt 且无 edit →
+    ai_example；只有 comment/skip → ai_example。片段无法确定来源时由风格观察层排除，
+    不在此判定。
+    """
+    if final_version_id is None:
+        return "user_authored"
+    for action in user_actions:
+        if action.action == "edit" and action.target_version_id == final_version_id:
+            return "mixed"
+    return "ai_example"
+
 
 class PracticeService:
     """驱动一次表达练习会话。"""
@@ -192,11 +240,13 @@ class PracticeService:
         method_id: str | None = None,
         audience: str = "",
         goal: str = "",
+        mode: ModeLiteral = "example",
     ) -> PracticeSession:
         """创建会话，记 initial_attempt（可空）与目标语境（audience / goal）。
 
         新流程支持「先探索、用户再写首稿」：仅给 ``material`` 时 ``initial_attempt`` 留空，
-        首条 ``save_revision`` 再写入首稿。
+        首条 ``save_revision`` 再写入首稿。新会话默认 ``mode=example``（草稿优先），
+        旧 YAML 缺省读作 independent。
         """
         now = datetime.now(UTC)
         session = PracticeSession(
@@ -206,6 +256,7 @@ class PracticeService:
             source_material=material,
             method_id=method_id,
             context=PracticeContext(audience=audience, goal=goal),
+            mode=mode,
             created_at=now,
             updated_at=now,
         )
@@ -305,6 +356,137 @@ class PracticeService:
         self.sessions.upsert(session)
         return session
 
+    def draft(
+        self,
+        session_id: str,
+        *,
+        instruction: str = "",
+        regenerate: bool = False,
+        methods: list[ExpressionMethod] | None = None,
+        voice_profile: VoiceProfile | None = None,
+    ) -> PracticeSession:
+        """生成一版 AI 草稿 + 一条写法说明 + 一个可选小动作，追加 ai_drafts。
+
+        independent 模式不给范文；``draft`` 幂等（同输入同 request key 复用同一版本），
+        ``regenerate`` 显式创建新版本（旧版保留、parent_version_id 指向上一个 head）。
+        """
+        session = self._require_started(session_id)
+        if session.mode == "independent":
+            raise ValueError("draft is not available in independent mode")
+        methods = methods or []
+        head = session.ai_drafts[-1] if session.ai_drafts else None
+        method_ids = sorted(m.id for m in methods)
+        request_key = "\x1f".join(
+            [
+                session.id,
+                instruction,
+                session.mode,
+                ",".join(method_ids),
+                self._material_snapshot(session),
+            ]
+        )
+        if regenerate:
+            draft_id = f"aid_{uuid4().hex[:12]}"
+        else:
+            draft_id = "aid_" + hashlib.sha256(request_key.encode()).hexdigest()[:12]
+            for existing in session.ai_drafts:
+                if existing.id == draft_id:
+                    return session
+        body = render_draft_body(
+            self.runner,
+            context=self._render_practice_context(session, methods),
+            voice_profile=voice_profile,
+        )
+        meta = cast(
+            PracticeDraftMeta,
+            self.runner.run(
+                _PRACTICE_META_PROMPT.format(
+                    text=body,
+                    context=self._render_practice_context(session, methods),
+                ),
+                PracticeDraftMeta,
+            ),
+        )
+        draft = AiDraft(
+            id=draft_id,
+            text=body,
+            parent_version_id=head.id if head else None,
+            method_ids=method_ids,
+            explanation=meta.explanation,
+            task=meta.task,
+            created_at=datetime.now(UTC),
+        )
+        session = session.model_copy(
+            update={
+                "ai_drafts": [*session.ai_drafts, draft],
+                "phase": "drafting",
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        self.sessions.upsert(session)
+        return session
+
+    def react(
+        self,
+        session_id: str,
+        version_id: str,
+        action: UserActionLiteral,
+        *,
+        text: str = "",
+        edit_scope: str = "",
+    ) -> PracticeSession:
+        """记录用户对某 AI 版本的动作；adopt 收尾（不跑 lesson、不宣称学习）。"""
+        session = self._require_started(session_id)
+        draft = self._find_draft(session, version_id)
+        if action in ("comment", "edit") and not text.strip():
+            raise ValueError(f"{action} action requires non-empty text")
+        if action == "skip" and text:
+            raise ValueError("skip action must not carry text")
+        if edit_scope and action != "edit":
+            raise ValueError("edit_scope is only allowed for edit action")
+        user_action = UserAction(
+            action=action,
+            target_version_id=version_id,
+            text=text,
+            edit_scope=edit_scope,
+            created_at=datetime.now(UTC),
+        )
+        if action == "adopt":
+            session = session.model_copy(
+                update={
+                    "user_actions": [*session.user_actions, user_action],
+                    "final_version_id": version_id,
+                    "final_expression": draft.text,
+                    "final_source": "ai_example",
+                    "source_note": f"adopted ai draft {version_id} verbatim",
+                    "status": "finished",
+                    "phase": "done",
+                    "lesson": "",
+                    "learning_observation": "adopted AI draft; no user-authored creation",
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+        else:
+            update: dict = {
+                "user_actions": [*session.user_actions, user_action],
+                "updated_at": datetime.now(UTC),
+            }
+            if action == "edit":
+                update["phase"] = "revising"
+                update["final_version_id"] = version_id
+            session = session.model_copy(update=update)
+        self.sessions.upsert(session)
+        return session
+
+    def set_mode(self, session_id: str, mode: ModeLiteral) -> PracticeSession:
+        """切换会话模式（不清空已保存文本）。"""
+        session = self._require_started(session_id)
+        session = session.model_copy(
+            update={"mode": mode, "updated_at": datetime.now(UTC)}
+        )
+        self.sessions.upsert(session)
+        return session
+
     def diagnose(
         self,
         session_id: str,
@@ -385,11 +567,19 @@ class PracticeService:
         self.sessions.upsert(session)
         return session
 
-    def save_revision(self, session_id: str, revision: str) -> PracticeSession:
+    def save_revision(
+        self,
+        session_id: str,
+        revision: str,
+        *,
+        based_on: str | None = None,
+        feedback_round: int | None = None,
+    ) -> PracticeSession:
         """追加一次修订；有待处理 revise/hint 轮次时同时完成该轮。
 
         尚无首稿时（新流程「先探索、再首写」），第一条修订写入 ``initial_attempt``，
-        后续才追加到 ``revisions``。
+        后续才追加到 ``revisions``。``based_on`` 关联 AI 版本（记录 edit 动作）；
+        ``feedback_round`` 关联明确的反馈轮（写 ``LocalFeedback.user_rewrite``）。
         """
         session = self._require_started(session_id)
         pending = self._pending_turn(session)
@@ -403,6 +593,38 @@ class PracticeService:
                 "revisions": [*session.revisions, revision],
                 "updated_at": datetime.now(UTC),
             }
+        if based_on is not None:
+            self._find_draft(session, based_on)
+            update["user_actions"] = [
+                *session.user_actions,
+                UserAction(
+                    action="edit",
+                    target_version_id=based_on,
+                    text=revision,
+                    created_at=datetime.now(UTC),
+                ),
+            ]
+            update["final_version_id"] = based_on
+            update["phase"] = "revising"
+        if feedback_round is not None:
+            rounds = session.feedback_rounds
+            if feedback_round < 0 or feedback_round >= len(rounds):
+                raise ValueError(
+                    f"feedback_round {feedback_round} out of range (0..{len(rounds) - 1})"
+                )
+            current = rounds[feedback_round].user_rewrite
+            if current and current != revision:
+                raise ValueError(
+                    f"feedback_round {feedback_round} already has a different user_rewrite"
+                )
+            if not current:
+                rounds = [
+                    r.model_copy(update={"user_rewrite": revision})
+                    if i == feedback_round
+                    else r
+                    for i, r in enumerate(rounds)
+                ]
+                update["feedback_rounds"] = rounds
         if pending is not None:
             if pending.feedback.action in ("revise", "hint"):
                 update["turns"] = self._complete_turn(
@@ -424,43 +646,119 @@ class PracticeService:
         *,
         method_verdict: MethodVerdictLiteral | None = None,
         method_verdict_note: str = "",
-        final_source: FinalSourceLiteral = "user_authored",
+        final_source: FinalSourceLiteral | None = None,
         source_note: str = "",
+        final_version_id: str | None = None,
+        learning_observation: str = "",
     ) -> PracticeSession:
-        """记最终版 + LLM 生成 lesson，置 finished；方法练习必须给 verdict。
+        """记最终版，置 finished；有用户创作时跑 lesson，仅 AI 稿时不跑。
 
-        ``final_source`` 区分 user_authored / ai_example / mixed；``source_note`` 记混合
-        文本的来源片段。风格证据只引用可追溯的用户创作片段。
+        ``final_source`` 缺省时由版本与用户动作推导；推导为 ai_example 时禁止传
+        user_authored。风格证据只引用可追溯的用户创作片段。
         """
         session = self._require_started(session_id)
         if session.method_id and method_verdict is None:
             raise ValueError("method_verdict required when session has method_id")
-        lesson = cast(
-            PracticeLesson,
-            self.runner.run(
-                _LESSON_PROMPT.format(
-                    initial=session.initial_attempt,
-                    final=final_expression,
-                    transfers=self._render_transfers(session),
-                ),
+        effective_version_id = (
+            final_version_id if final_version_id is not None else session.final_version_id
+        )
+        derived = derive_final_source(
+            final_version_id=effective_version_id,
+            user_actions=session.user_actions,
+        )
+        if final_source is None:
+            final_source = derived
+        elif derived == "ai_example" and final_source != "ai_example":
+            raise ValueError("adopted AI draft cannot be marked user_authored")
+        has_user_creation = final_source in ("user_authored", "mixed")
+        update: dict = {
+            "final_expression": final_expression,
+            "status": "finished",
+            "phase": "done",
+            "method_verdict": method_verdict,
+            "method_verdict_note": method_verdict_note,
+            "final_source": final_source,
+            "source_note": source_note,
+            "final_version_id": effective_version_id,
+            "updated_at": datetime.now(UTC),
+        }
+        if has_user_creation:
+            lesson = cast(
                 PracticeLesson,
-            ),
-        )
-        session = session.model_copy(
-            update={
-                "final_expression": final_expression,
-                "lesson": lesson.lesson,
-                "status": "finished",
-                "phase": "done",
-                "method_verdict": method_verdict,
-                "method_verdict_note": method_verdict_note,
-                "final_source": final_source,
-                "source_note": source_note,
-                "updated_at": datetime.now(UTC),
-            }
-        )
+                self.runner.run(
+                    _LESSON_PROMPT.format(
+                        initial=session.initial_attempt,
+                        final=final_expression,
+                        transfers=self._render_transfers(session),
+                    ),
+                    PracticeLesson,
+                ),
+            )
+            update["lesson"] = lesson.lesson
+            update["learning_observation"] = learning_observation
+        else:
+            update["lesson"] = ""
+            update["learning_observation"] = learning_observation or (
+                "read/adopted AI draft; no learning summary claimed"
+            )
+        session = session.model_copy(update=update)
         self.sessions.upsert(session)
         return session
+
+    def _find_draft(self, session: PracticeSession, version_id: str) -> AiDraft:
+        for draft in session.ai_drafts:
+            if draft.id == version_id:
+                return draft
+        raise ValueError(f"version not found: {version_id}")
+
+    def _material_snapshot(self, session: PracticeSession) -> str:
+        """素材与用户文本的拼接（供 draft 幂等 key）。"""
+        return "\x1f".join(
+            [session.source_material, session.initial_attempt, *session.revisions]
+        )
+
+    def _render_practice_context(
+        self, session: PracticeSession, methods: list[ExpressionMethod]
+    ) -> str:
+        """把模式/素材/用户文本/目标/已选写法/方法体拼成 practice 语境块（复用 draft prompt）。"""
+        mode_guide = {
+            "example": "写一版完整、可独立阅读的草稿。",
+            "guided": "只写开头或框架，不写完整正文；给用户留出需要补写的段落。",
+        }.get(session.mode, "写一版完整、可独立阅读的草稿。")
+        blocks = [
+            "## Mode",
+            mode_guide,
+            "## Material",
+            session.source_material or "(none)",
+            "## User's latest text",
+            (session.revisions[-1] if session.revisions else session.initial_attempt)
+            or "(none)",
+            "## Target",
+            f"audience: {session.context.audience or '(none)'}",
+            f"goal: {session.context.goal or '(none)'}",
+        ]
+        if session.selected_option is not None and 0 <= session.selected_option < len(
+            session.options
+        ):
+            opt = session.options[session.selected_option]
+            blocks += [
+                "## Selected approach",
+                f"name: {opt.name}",
+                f"dimension: {opt.dimension}",
+                f"entry_point: {opt.entry_point}",
+                f"progression: {' -> '.join(opt.progression)}",
+            ]
+        for m in methods:
+            blocks += [
+                "## Expression method",
+                f"id: {m.id}",
+                f"title: {m.title}",
+                f"why_effective: {m.why_effective}",
+                f"when_to_use: {m.when_to_use}",
+                f"boundaries: {m.boundaries}",
+                f"mini_exercise: {m.mini_exercise}",
+            ]
+        return "\n".join(blocks) + "\n\n"
 
     def _get(self, session_id: str) -> PracticeSession:
         session = self.sessions.get(session_id)
