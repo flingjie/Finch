@@ -7,10 +7,14 @@ import pytest
 from finch.content.models import DraftBodyOutput
 from finch.expression_methods.models import ExpressionMethod
 from finch.practice.models import (
+    AiDraft,
     LocalFeedback,
     PracticeDraftMeta,
     PracticeLesson,
     PracticeSession,
+    StructureHint,
+    StructureStep,
+    ThinkingGap,
     UserAction,
 )
 from finch.practice.service import PracticeService, derive_final_source
@@ -19,10 +23,13 @@ from finch.storage.workspace import Workspace
 
 
 class DraftRunner:
-    def __init__(self, body="一版草稿", explanation="先写反差", task="看看最后一句"):
+    def __init__(
+        self, body="一版草稿", explanation="先写反差", task="看看最后一句", structure_hint=None
+    ):
         self.body = body
         self.explanation = explanation
         self.task = task
+        self.structure_hint = structure_hint
         self.lesson = PracticeLesson(lesson="先讲具体场景再下判断")
         self.calls: list[type] = []
 
@@ -31,7 +38,9 @@ class DraftRunner:
         if output_model is DraftBodyOutput:
             return DraftBodyOutput(body=self.body)
         if output_model is PracticeDraftMeta:
-            return PracticeDraftMeta(explanation=self.explanation, task=self.task)
+            return PracticeDraftMeta(
+                explanation=self.explanation, task=self.task, structure_hint=self.structure_hint
+            )
         if output_model is PracticeLesson:
             return self.lesson
         raise AssertionError(output_model)
@@ -59,6 +68,29 @@ def _method(mid="emethod_1"):
         mini_exercise="写开头",
         created_at=now,
         updated_at=now,
+    )
+
+
+def _hint(excerpt="一版草稿", with_content=True):
+    return StructureHint(
+        pattern_id="review",
+        rationale="先反差再行动",
+        steps=[
+            StructureStep(
+                role="expectation",
+                label="预期",
+                content="评估通过，可以上线" if with_content else "  ",
+                basis="user_material",
+                draft_excerpt=excerpt,
+            ),
+            StructureStep(
+                role="observation",
+                label="实际发生",
+                content="推演发现可能超时",
+                draft_excerpt="",
+            ),
+        ],
+        gap=ThinkingGap(kind="causal_jump", location="最后一句", note="单次观察不能推广"),
     )
 
 
@@ -357,3 +389,73 @@ def test_finish_rejects_user_authored_when_derived_ai_example(tmp_path):
     vid = s.ai_drafts[0].id
     with pytest.raises(ValueError):
         svc.finish(s.id, "x", final_version_id=vid, final_source="user_authored")
+
+
+# —— structure_hint ——
+
+
+def test_draft_sets_structure_hint(tmp_path):
+    svc = _service(tmp_path, DraftRunner(structure_hint=_hint()))
+    s = svc.start(material="一个想法")
+    s = svc.draft(s.id)
+    d = s.ai_drafts[0]
+    assert d.structure_hint is not None
+    assert d.structure_hint.pattern_id == "review"
+    assert d.structure_hint.rationale == "先反差再行动"
+    assert len(d.structure_hint.steps) == 2
+    assert d.structure_hint.steps[0].content == "评估通过，可以上线"
+    assert d.structure_hint.gap is not None
+    assert d.structure_hint.gap.kind == "causal_jump"
+
+
+def test_structure_hint_strips_nonmatching_excerpt(tmp_path):
+    svc = _service(tmp_path, DraftRunner(body="一版草稿", structure_hint=_hint(excerpt="不在正文")))
+    s = svc.start(material="一个想法")
+    s = svc.draft(s.id)
+    hint = s.ai_drafts[0].structure_hint
+    assert hint is not None
+    assert all(step.draft_excerpt == "" for step in hint.steps)
+
+
+def test_structure_hint_none_when_no_valid_steps(tmp_path):
+    hint = StructureHint(
+        pattern_id="review",
+        steps=[StructureStep(role="claim", label="主张", content="  ")],
+    )
+    svc = _service(tmp_path, DraftRunner(structure_hint=hint))
+    s = svc.start(material="一个想法")
+    s = svc.draft(s.id)
+    assert s.ai_drafts[0].structure_hint is None
+
+
+def test_structure_hint_none_when_meta_omits(tmp_path):
+    svc = _service(tmp_path)
+    s = svc.start(material="一个想法")
+    s = svc.draft(s.id)
+    assert s.ai_drafts[0].structure_hint is None
+
+
+def test_ai_draft_structure_hint_defaults_none():
+    d = AiDraft(id="aid_1", text="x", created_at=datetime.now(UTC))
+    assert d.structure_hint is None
+
+
+def test_structure_hint_round_trips_yaml(tmp_path):
+    svc = _service(tmp_path, DraftRunner(structure_hint=_hint()))
+    s = svc.start(material="一个想法")
+    s = svc.draft(s.id)
+    reloaded = PracticeSessionRepository(Workspace(tmp_path)).get(s.id)
+    assert reloaded is not None
+    hint = reloaded.ai_drafts[0].structure_hint
+    assert hint is not None
+    assert hint.pattern_id == "review"
+    assert hint.gap is not None and hint.gap.kind == "causal_jump"
+
+
+def test_draft_never_writes_initial_attempt(tmp_path):
+    svc = _service(tmp_path, DraftRunner(structure_hint=_hint()))
+    s = svc.start(material="一个想法")
+    s = svc.draft(s.id)
+    assert s.initial_attempt == ""
+    assert s.revisions == []
+    assert s.ai_drafts[0].text == "一版草稿"

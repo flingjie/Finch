@@ -22,6 +22,13 @@ UserActionLiteral = Literal["adopt", "comment", "edit", "skip"]
 # 风格观察确认状态。
 ObservationStatus = Literal["pending", "accepted", "corrected", "rejected"]
 
+# 结构骨架与思考缺口（draft-first 的结构化思考提示）。
+PatternIdLiteral = Literal["review", "opinion", "solution", "explanation", "custom"]
+StructureStepBasis = Literal["user_material", "sourced", "proposed", "unknown"]
+ThinkingGapKind = Literal[
+    "unclear_claim", "insufficient_basis", "causal_jump", "missing_boundary"
+]
+
 
 class PracticeContext(BaseModel):
     """训练目标语境：目标读者与训练目的。"""
@@ -104,6 +111,35 @@ class PracticeTurn(BaseModel):
         return self
 
 
+class StructureStep(BaseModel):
+    """骨架中的一步：角色、展示名、对应当前素材的内容、依据、来源引用、正文摘录。"""
+
+    role: str  # 自由标签（observation / claim / reason / …），词汇见 structure-patterns.md
+    label: str  # 展示名，如「实际发生」
+    content: str  # 对应当前素材的具体内容，不可为空
+    basis: StructureStepBasis = "user_material"
+    source_refs: list[str] = Field(default_factory=list)  # 仅实际提供/检索到的引用
+    draft_excerpt: str = ""  # 可空；存在时必须匹配对应版本原文
+
+
+class ThinkingGap(BaseModel):
+    """一个会改变核心结论的思考缺口（至多一个）。"""
+
+    kind: ThinkingGapKind
+    location: str = ""  # 指向具体句子/判断
+    note: str = ""
+    handling: str = ""  # 收窄语气 / 询问一个关键证据 / 标为待验证假设
+
+
+class StructureHint(BaseModel):
+    """草稿版本附属的结构骨架（pattern + rationale + steps + 至多一个 gap）。"""
+
+    pattern_id: PatternIdLiteral
+    rationale: str = ""  # 为什么用这个顺序（一句）
+    steps: list[StructureStep] = Field(default_factory=list)
+    gap: ThinkingGap | None = None
+
+
 class AiDraft(BaseModel):
     """AI 草稿版本：example=全文，guided=开头/框架。"""
 
@@ -113,6 +149,7 @@ class AiDraft(BaseModel):
     method_ids: list[str] = Field(default_factory=list)
     explanation: str = ""  # 一条写法说明
     task: str = ""  # 可选微动作（example）或续写任务（guided）
+    structure_hint: StructureHint | None = None  # 附属结构骨架（旧会话为 None）
     created_at: datetime
 
 
@@ -170,10 +207,11 @@ class PracticeLesson(BaseModel):
 
 
 class PracticeDraftMeta(BaseModel):
-    """draft 的 LLM 元信息输出：一条写法说明 + 一个可选小动作/续写任务。"""
+    """draft 的 LLM 元信息输出：一条写法说明 + 一个可选小动作/续写任务 + 结构骨架。"""
 
     explanation: str
     task: str = ""
+    structure_hint: StructureHint | None = None
 
 
 class StyleObservationEvidence(BaseModel):

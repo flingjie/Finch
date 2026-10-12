@@ -16,7 +16,11 @@
 - 局部对比：`feedback_rounds[]`，每轮含 `keep` / `key_location` / `alternative_a` /
   `alternative_b` / `difference` / `rewrite_task` / `user_rewrite` / `method_id` 可空。
 - AI 草稿版本：`ai_drafts[]`，每版含 `id` / `text` / `parent_version_id`（可空）/ `method_ids[]` /
-  `explanation` / `task` / `created_at`。
+  `explanation` / `task` / `structure_hint`（可空）/ `created_at`。
+  `structure_hint` 含 `pattern_id`（review|opinion|solution|explanation|custom）/ `rationale` /
+  `steps[]`（每步 `role` / `label` / `content` / `basis` / `source_refs[]` / `draft_excerpt`）/
+  `gap`（可空，`kind` / `location` / `note` / `handling`）。旧版本没有 `structure_hint` 时为
+  `null`，不回填。
 - 用户动作：`user_actions[]`，每条含 `action`（adopt|comment|edit|skip）/ `target_version_id` /
   `text` / `edit_scope` / `created_at`。
 - 来源：`final_source`（user_authored|ai_example|mixed，默认 user_authored）/ `source_note`

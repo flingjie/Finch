@@ -115,6 +115,7 @@ from .practice.models import (
     ModeLiteral,
     PracticeFeedback,
     ResponseKindLiteral,
+    StructureHint,
     UserActionLiteral,
 )
 from .practice.observations import StyleObservationService
@@ -5000,9 +5001,13 @@ def practice_draft(
     instruction: str = typer.Option("", "--instruction", help="再生成时的修改指令"),
     regenerate: bool = typer.Option(False, "--regenerate", help="显式生成新版本（保留旧版）"),
     method: list[str] = typer.Option([], "--method", help="引用的表达方法 id（可多个）"),
+    view: str = typer.Option("all", "--view", help="draft|structure|all"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """生成一版 AI 草稿 + 一条写法说明 + 一个可选小动作。"""
+    """生成一版 AI 草稿 + 一条写法说明 + 一个可选小动作 + 结构骨架。"""
+    if view not in ("draft", "structure", "all"):
+        typer.echo(f"invalid view: {view}. expected draft|structure|all")
+        raise typer.Exit(code=1)
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -5035,12 +5040,29 @@ def practice_draft(
     else:
         latest = session.ai_drafts[-1]
         typer.echo(f"id: {latest.id}")
-        typer.echo(f"text: {latest.text}")
-        if latest.explanation:
-            typer.echo(f"explanation: {latest.explanation}")
-        if latest.task:
-            typer.echo(f"task: {latest.task}")
+        if view in ("draft", "all"):
+            typer.echo(f"text: {latest.text}")
+        if view in ("structure", "all") and latest.structure_hint is not None:
+            _echo_structure_hint(latest.structure_hint)
+        if view == "all":
+            if latest.explanation:
+                typer.echo(f"explanation: {latest.explanation}")
+            if latest.task:
+                typer.echo(f"task: {latest.task}")
         typer.echo("下一步：finch practice react <id> --version <v> --action adopt|comment|edit")
+
+
+def _echo_structure_hint(hint: StructureHint) -> None:
+    """渲染结构骨架：pattern + rationale + 各步 + 至多一个缺口。"""
+    typer.echo(f"structure: {hint.pattern_id}")
+    if hint.rationale:
+        typer.echo(f"rationale: {hint.rationale}")
+    for i, step in enumerate(hint.steps):
+        typer.echo(f"  [{i + 1}] {step.label}: {step.content}")
+    if hint.gap is not None:
+        gap = hint.gap
+        parts = [p for p in (gap.location, gap.note) if p]
+        typer.echo(f"gap ({gap.kind}): {' — '.join(parts)}")
 
 
 @practice_app.command("react")

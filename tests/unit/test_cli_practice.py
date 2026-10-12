@@ -17,6 +17,9 @@ from finch.practice.models import (
     PracticeLesson,
     PracticeOption,
     PracticeOptionsOutput,
+    StructureHint,
+    StructureStep,
+    ThinkingGap,
 )
 from finch.practice.service import PracticeService
 from finch.settings import Paths, Settings
@@ -421,7 +424,23 @@ class _DraftCliRunner:
         if output_model is DraftBodyOutput:
             return DraftBodyOutput(body="一版草稿")
         if output_model is PracticeDraftMeta:
-            return PracticeDraftMeta(explanation="先写反差", task="看看最后一句")
+            return PracticeDraftMeta(
+                explanation="先写反差",
+                task="看看最后一句",
+                structure_hint=StructureHint(
+                    pattern_id="review",
+                    rationale="先反差再行动",
+                    steps=[
+                        StructureStep(
+                            role="expectation",
+                            label="预期",
+                            content="评估通过",
+                            draft_excerpt="一版草稿",
+                        )
+                    ],
+                    gap=ThinkingGap(kind="causal_jump", location="最后一句"),
+                ),
+            )
         return PracticeLesson(lesson="一个经验")
 
 
@@ -472,6 +491,39 @@ def test_practice_mode_set(monkeypatch, tmp_path):
     r = CliRunner().invoke(app, ["practice", "mode", sid, "--set", "independent"])
     assert r.exit_code == 0, r.output
     assert PracticeSessionRepository(ws).get(sid).mode == "independent"
+
+
+def test_practice_draft_view_structure(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    _patch_draft_runner(monkeypatch)
+    sid = _start_session(app, ["--material", "素材"])
+    r = CliRunner().invoke(app, ["practice", "draft", sid, "--view", "structure"])
+    assert r.exit_code == 0, r.output
+    assert "structure: review" in r.output
+    assert "rationale: 先反差再行动" in r.output
+    assert "预期: 评估通过" in r.output
+    assert "gap (causal_jump)" in r.output
+    assert "text:" not in r.output
+
+
+def test_practice_draft_view_draft_only(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    _patch_draft_runner(monkeypatch)
+    sid = _start_session(app, ["--material", "素材"])
+    r = CliRunner().invoke(app, ["practice", "draft", sid, "--view", "draft"])
+    assert r.exit_code == 0, r.output
+    assert "text: 一版草稿" in r.output
+    assert "structure:" not in r.output
+    assert "explanation:" not in r.output
+
+
+def test_practice_draft_invalid_view(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    _patch_draft_runner(monkeypatch)
+    sid = _start_session(app, ["--material", "素材"])
+    r = CliRunner().invoke(app, ["practice", "draft", sid, "--view", "bogus"])
+    assert r.exit_code == 1
+    assert "invalid view" in r.output
 
 
 def test_practice_save_based_on(monkeypatch, tmp_path):

@@ -29,6 +29,8 @@ from finch.practice.models import (
     PracticeSession,
     PracticeTurn,
     ResponseKindLiteral,
+    StructureHint,
+    StructureStep,
     UserAction,
     UserActionLiteral,
 )
@@ -174,14 +176,45 @@ difference, rewrite_task.
 """
 
 _PRACTICE_META_PROMPT = """\
-You are a writing partner. Given the draft you just produced and the material, explain ONE
-specific writing choice the draft makes and its trade-off, then propose ONE optional micro-action
-for the user (leave task empty if none fits).
+You are a writing partner. Given the draft you just produced and the material, do three things:
 
-Do not write a general writing lesson. Explain a concrete choice in THIS draft (structure,
-opening, detail, or wording) and what it costs or gains. The micro-action, when present, invites
-the user to change or judge ONE small thing (for example: whether the last sentence states what
-they actually intend), not multiple tasks.
+1. Explain ONE specific writing choice the draft makes and its trade-off (structure, opening,
+   detail, or wording). Do not write a general writing lesson.
+2. Propose ONE optional micro-action for the user (leave task empty if none fits). It invites the
+   user to change or judge ONE small thing, not multiple tasks.
+3. Describe the structure skeleton of the draft as structure_hint (must match the mode already
+   described in the context: a full draft vs an opening/framework).
+
+## Structure skeleton (structure_hint)
+
+Pick the seed pattern that best fits the material (pattern_id):
+- "review" (experience / retrospective): expectation -> what happened -> changed
+  judgment -> next step.
+- "opinion" (viewpoint / comment): claim -> reason -> example -> applicable boundary.
+- "solution" (problem / plan): problem -> cause hypothesis -> solution -> verification.
+- "explanation" (concept): reader's question -> concrete example -> core mechanism ->
+  usage conditions.
+- "custom" when none fits.
+
+structure_hint fields:
+- pattern_id: one of the five values above.
+- rationale: one sentence on why this order was chosen.
+- steps: usually 3-5 items (short texts may have fewer). Each step has:
+  - role: a short label (observation / expectation / claim / reason / example / boundary / action /
+    verification / …).
+  - label: a display name for this step.
+  - content: the concrete point from THIS material — never an empty label like "claim" alone.
+  - basis: where the content comes from — "user_material" (given by the user), "sourced" (from a
+    cited source), "proposed" (an AI suggestion / structural arrangement), or "unknown".
+  - source_refs: only actually-provided or retrieved citations; never invent sources.
+  - draft_excerpt: a short verbatim quote from the draft body for this step, or "" if none.
+- gap: AT MOST ONE gap that would change the core conclusion, or null if none. A gap has:
+  - kind: "unclear_claim" | "insufficient_basis" | "causal_jump" | "missing_boundary".
+  - location: which sentence or judgment it points to.
+  - note: what is missing or overreaching.
+  - handling: how to fix it — narrow the claim, ask the user for one key fact, or mark it as a
+    hypothesis to verify. Only report a gap that changes the core conclusion; leave gap null when
+    there is no substantive gap.
 
 ## Draft
 {text}
@@ -189,8 +222,8 @@ they actually intend), not multiple tasks.
 ## Material / target context
 {context}
 
-Respond with JSON matching the schema: explanation (one specific choice + its cost), task
-(one optional micro-action, or empty).
+Respond with JSON matching the schema: explanation (string), task (string or empty), structure_hint
+(object with pattern_id, rationale, steps, gap, or null).
 """
 
 
@@ -211,6 +244,27 @@ def derive_final_source(
         if action.action == "edit" and action.target_version_id == final_version_id:
             return "mixed"
     return "ai_example"
+
+
+def _validate_structure_hint(hint: StructureHint | None, body: str) -> StructureHint | None:
+    """对 meta 输出的结构骨架做有限修复，返回可展示的骨架或 None。
+
+    - 丢弃 content 为空的 step；
+    - draft_excerpt 不是 body 子串时清空（不因引用不匹配而崩）；
+    - 修复后无有效 step 时返回 None（隐藏不可信骨架，而非伪造生成成功）。
+    """
+    if hint is None:
+        return None
+    steps: list[StructureStep] = []
+    for step in hint.steps:
+        if not step.content.strip():
+            continue
+        if step.draft_excerpt and step.draft_excerpt not in body:
+            step = step.model_copy(update={"draft_excerpt": ""})
+        steps.append(step)
+    if not steps:
+        return None
+    return hint.model_copy(update={"steps": steps})
 
 
 class PracticeService:
@@ -414,6 +468,7 @@ class PracticeService:
             method_ids=method_ids,
             explanation=meta.explanation,
             task=meta.task,
+            structure_hint=_validate_structure_hint(meta.structure_hint, body),
             created_at=datetime.now(UTC),
         )
         session = session.model_copy(

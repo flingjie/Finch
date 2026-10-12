@@ -2,7 +2,8 @@
 name: expression-practice
 description: >
   Finch 核心写作练习 Skill：写作伙伴，不是纠错工具。默认「草稿优先」——接收素材后直接
-  返回一版完整草稿 + 一条关键写法解释 + 一个可选小动作，用户可采纳、评价或改一处；
+  返回一版完整草稿 + 一份结构骨架（至多一个思考缺口）+ 一条关键写法解释 + 一个可选小动作，
+  用户可采纳、评价或改一处；
   用户主动要求时才切「跟着写」（补一段）或「自己写」（三方案探索 + 局部对比 + 重写）。
   保存 AI 稿 / 用户判断 / 用户创作 / 混合文本并区分来源（final_source）；AI 稿原样采纳
   记为 ai_example，绝不记为 user_authored。清晰表达 / Simplified Technical English 判据见
@@ -33,16 +34,19 @@ description: >
 
 1. 接收素材 → `finch practice start --material "..."`（保存原话、来源与用途）。
 2. 直接生成草稿 → `finch practice draft <id>`；仅当缺信息会实质改变内容时问一个问题。
-   材料不足时缩短草稿、标明必要缺口，不编造细节。
+   材料不足时缩短草稿、标明必要缺口，不编造细节。`--view draft|structure|all` 控制展示。
 3. 输出一版完整草稿，主体不夹杂教学注释。
-4. 草稿后一两句解释一个关键写法，必要时标注启发方法。
-5. 给一个可选小动作（如「看看最后一句是否准确表达了你下一步要做的事」），不罗列多个任务。
-6. 用户反应 → `finch practice react <id> --version <v> --action adopt|comment|edit|skip`：
+4. 草稿后附一份**思路骨架**（`structure_hint`）：三至五步，每步带当次素材的具体内容；必要时
+   标注**一个**会改变核心结论的思考缺口（`gap`，至多一个；无实质缺口就不显示空区块）。
+   见 `references/structure-patterns.md` / `references/thinking-gaps.md`。
+5. 一两句解释一个关键写法，必要时标注启发方法。
+6. 给一个可选小动作（如「看看最后一句是否准确表达了你下一步要做的事」），不罗列多个任务。
+7. 用户反应 → `finch practice react <id> --version <v> --action adopt|comment|edit|skip`：
    - `adopt`：记录采用并结束，来源保持 `ai_example`，不宣称学习。
    - `comment`：记录评价，必要时 AI 再改一版。
    - `edit`：`finch practice save <id> --revision "..." --based-on <v>` 保存修改，
      最终来源 `mixed`。
-7. 收尾最多给一条本次观察（`--observation`）。只看过草稿时不生成「你学会了」总结，
+8. 收尾最多给一条本次观察（`--observation`）。只看过草稿时不生成「你学会了」总结，
    无需填写复盘表。
 
 ## guided / independent
@@ -87,6 +91,8 @@ voice-profile 创作例句混合；只看过 AI 稿的会话不计入用户创�
 - `references/option-selection.md` — 三方案选择（independent）。
 - `references/diagnosis-rules.md` — 局部对比反馈（independent）。
 - `references/exercise-patterns.md` — predict / hint / transfer 可选微工具（independent）。
+- `references/structure-patterns.md` — 结构骨架：四种种子结构、选择规则、反例、展示示例。
+- `references/thinking-gaps.md` — 思考缺口：四类、优先级、不阻断原则。
 - `references/style-observation.md` — 风格观察：触发条件、确认状态、不自动写画像。
 - `references/session-output.md` — 会话输出 schema。
 - `_shared/asd-ste100-inspired.md` — 清晰表达共享规则（与 drafts revise 共用）。
