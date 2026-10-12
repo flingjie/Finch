@@ -43,6 +43,7 @@ class HotPostEntry(BaseModel):
     relevance_score: float = 0.0
     heat_score: float = 0.0
     matched_terms: list[str] = Field(default_factory=list)
+    is_fallback: bool = False  # 未命中任何兴趣词，只作为热帖兜底展示
 
 
 class OpportunityAssessmentEntry(BaseModel):
@@ -74,8 +75,12 @@ class DiscoverySnapshot(BaseModel):
     recommendation_shortfall: dict[str, int] = Field(default_factory=dict)
     # 首页 3 个重点发现（D7：与 50 人浏览来自同一快照，按序持久化）
     home_person_ids: list[str] = Field(default_factory=list)
-    # 首页/浏览补充的 5 条相关热门帖子（与同一快照重放，不足 5 条如实显示）
+    # 首页/浏览补充的相关热门帖子（与同一快照重放，不足上限时如实显示）
     hot_posts: list[HotPostEntry] = Field(default_factory=list)
+    hot_posts_found: int = 0
+    hot_posts_shown: int = 0
+    hot_posts_zero_relevance: int = 0
+    hot_posts_limit: int = 0
     # 首选机会（新聚合）id：首页 0-1 条首选；空表示本轮无值得优先投入的机会。
     preferred_opportunity_id: str = ""
     # 本轮评估覆盖（含跳过原因）：非刷新读取可重放「为何无首选 / 为何优先」。

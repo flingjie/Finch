@@ -134,6 +134,11 @@ discovery:
   lookback_hours: 720       # 证据窗口：30 天；--lookback 可临时覆盖
   freshness_boost_hours: 72  # 72 小时内加权
   nominate_limit: 10         # 确定性提名上限（P3 生效；本轮先作为计划字段）
+  # 相关热门帖子：首页摘要上限 + 平台/作者多样性 + 新鲜度在热度之外的确定性加成。
+  hot_posts_limit: 8
+  hot_posts_max_per_platform: 3
+  hot_posts_max_per_author: 2
+  hot_posts_freshness_boost: 0.15
   # GitHub README 缓存：去重 + TTL 兜底 + 单次补读外部 README 上限。
   readme_cache_ttl_hours: 168
   max_external_readmes_per_run: 5

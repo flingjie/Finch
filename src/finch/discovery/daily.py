@@ -147,6 +147,10 @@ class RunMetrics:
     llm_input_persons: int = 0
     llm_failures: int = 0
     llm_elapsed_seconds: float = 0.0
+    hot_posts_candidates: int = 0
+    hot_posts_shown: int = 0
+    hot_posts_zero_relevance: int = 0
+    hot_posts_limit: int = 0
     filtered: dict[str, int] = field(default_factory=dict)
     sources: dict[str, SourceRunMetric] = field(default_factory=dict)
 def _truncate(text: str, n: int = _TEXT_LIMIT) -> str:
@@ -379,6 +383,7 @@ def run_daily_discovery(
     skip_sync: bool = False,
     lookback_hours: int | None = None,
     question: str | None = None,
+    hot_posts_limit: int | None = None,
 ) -> DailyDiscoveryResult:
     """跨平台抓取 → 标准化 → 人物与证据投影 → 分层推荐 → 快照。
 
@@ -429,11 +434,17 @@ def run_daily_discovery(
         lookback_hours=plan.lookback_hours,
         as_of=now,
     )
-    result.hot_posts = select_hot_posts(
+    hot_post_selection = select_hot_posts(
         filtered,
         settings=settings,
         question=(question or plan.intent),
+        limit=hot_posts_limit,
     )
+    result.hot_posts = hot_post_selection.posts
+    metrics.hot_posts_candidates = hot_post_selection.candidate_count
+    metrics.hot_posts_shown = hot_post_selection.shown_count
+    metrics.hot_posts_zero_relevance = hot_post_selection.zero_relevance_count
+    metrics.hot_posts_limit = hot_post_selection.limit
 
     # Creator evidence via Codex (fail-soft per person)
     evidence_svc = CreatorEvidenceService(
@@ -643,6 +654,10 @@ def run_daily_discovery(
         recommendation_shortfall=dict(recs.shortfall),
         home_person_ids=[r.person_id for r in select_home_items(recs)],
         hot_posts=result.hot_posts,
+        hot_posts_found=hot_post_selection.candidate_count,
+        hot_posts_shown=hot_post_selection.shown_count,
+        hot_posts_zero_relevance=hot_post_selection.zero_relevance_count,
+        hot_posts_limit=hot_post_selection.limit,
         preferred_opportunity_id=(
             result.preferred_opportunity.id if result.preferred_opportunity else ""
         ),

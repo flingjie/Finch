@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from finch.discovery.hot_posts import select_hot_posts
 from finch.settings import Settings
@@ -21,6 +21,7 @@ def _art(
     views: int = 0,
     score: int = 0,
     comments: int = 0,
+    published_at: datetime | None = None,
 ) -> RawArtifact:
     url = f"https://{platform}.example/{author}/{sid}"
     source = Source.TWITTER if platform == "x" else Source.REDDIT
@@ -41,7 +42,7 @@ def _art(
         ),
         title=title or None,
         text=text,
-        published_at=datetime.now(UTC),
+        published_at=published_at,
         retrieved_at=datetime.now(UTC),
         metrics=metrics,
         content_fingerprint=content_fingerprint(text, url=url),
@@ -70,13 +71,18 @@ def test_related_posts_rank_before_hot_but_unrelated_posts():
         settings=_settings(),
         question="how do people make failure replay reproducible?",
         limit=5,
+        max_per_platform=0,
+        max_per_author=0,
+        freshness_boost=0.0,
     )
-    assert [p.artifact_id for p in selected] == [
+    assert [p.artifact_id for p in selected.posts] == [
         "twitter:post:a",
         "twitter:post:c",
         "twitter:post:b",
     ]
-    assert selected[0].matched_terms
+    assert selected.posts[0].matched_terms
+    assert selected.posts[2].is_fallback
+    assert selected.zero_relevance_count == 1
 
 
 def test_hot_posts_are_capped_and_heat_orders_within_relevance():
@@ -88,9 +94,17 @@ def test_hot_posts_are_capped_and_heat_orders_within_relevance():
         _art("5", text="agent reliability failure replay five", likes=7),
         _art("6", text="agent reliability failure replay six", likes=8),
     ]
-    selected = select_hot_posts(arts, settings=_settings(), limit=5)
-    assert len(selected) == 5
-    assert [p.artifact_id for p in selected] == [
+    selected = select_hot_posts(
+        arts,
+        settings=_settings(),
+        limit=5,
+        max_per_platform=0,
+        max_per_author=0,
+        freshness_boost=0.0,
+    )
+    assert selected.candidate_count == 6
+    assert selected.shown_count == 5
+    assert [p.artifact_id for p in selected.posts] == [
         "twitter:post:3",
         "twitter:post:6",
         "twitter:post:5",
@@ -99,5 +113,72 @@ def test_hot_posts_are_capped_and_heat_orders_within_relevance():
     ]
 
 
-def test_empty_artifacts_return_empty():
-    assert select_hot_posts([], settings=_settings(), limit=5) == []
+def test_empty_artifacts_return_empty_selection():
+    selected = select_hot_posts(
+        [],
+        settings=_settings(),
+        limit=5,
+        max_per_platform=0,
+        max_per_author=0,
+        freshness_boost=0.0,
+    )
+    assert selected.posts == []
+    assert selected.candidate_count == 0
+    assert selected.shown_count == 0
+
+
+def test_platform_and_author_diversity_limits_apply_without_padding():
+    arts = [
+        _art("x1", text="agent reliability failure replay one", likes=5),
+        _art("x2", text="agent reliability failure replay two", likes=4),
+        _art("x3", text="agent reliability failure replay three", likes=3),
+        _art(
+            "r1",
+            platform="reddit",
+            author="bob",
+            text="agent reliability failure replay reddit one",
+            score=5,
+        ),
+    ]
+    selected = select_hot_posts(
+        arts,
+        settings=_settings(),
+        limit=8,
+        max_per_platform=2,
+        max_per_author=1,
+        freshness_boost=0.0,
+    )
+    # X 最多 2 条且 alice 最多 1 条；reddit bob 可进入，不会为了凑 limit 破坏上限。
+    assert len(selected.posts) == 2
+    assert {p.platform for p in selected.posts} == {"x", "reddit"}
+
+
+def test_freshness_boost_orders_newer_post_above_older_post():
+    now = datetime(2026, 1, 10, tzinfo=UTC)
+    arts = [
+        _art(
+            "older",
+            text="agent reliability failure replay older",
+            published_at=now - timedelta(hours=70),
+            likes=10,
+        ),
+        _art(
+            "newer",
+            text="agent reliability failure replay newer",
+            published_at=now - timedelta(hours=1),
+            likes=10,
+        ),
+    ]
+    selected = select_hot_posts(
+        arts,
+        settings=_settings(),
+        limit=5,
+        now=now,
+        max_per_platform=0,
+        max_per_author=0,
+        freshness_boost=0.5,
+    )
+    assert [p.artifact_id for p in selected.posts] == [
+        "twitter:post:newer",
+        "twitter:post:older",
+    ]

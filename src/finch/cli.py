@@ -2401,13 +2401,18 @@ def _run_daily_full(
     *,
     lookback_hours: int | None = None,
     question: str | None = None,
+    hot_posts_limit: int | None = None,
 ):
     """Full daily result including shortlist + connection opportunities."""
     from finch.discovery.daily import run_daily_discovery
 
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     return run_daily_discovery(
-        settings, runner=runner, lookback_hours=lookback_hours, question=question
+        settings,
+        runner=runner,
+        lookback_hours=lookback_hours,
+        question=question,
+        hot_posts_limit=hot_posts_limit,
     )
 
 
@@ -2502,13 +2507,15 @@ def _hot_posts_payload(hot_posts: list[HotPostEntry]) -> list[dict]:
 
 
 def _render_hot_posts(hot_posts: list[HotPostEntry]) -> list[str]:
-    """文本模式渲染相关热门帖子；最多 5 条，不足不凑数。"""
+    """文本模式渲染相关热门帖子；数量已由选择阶段控制，不足不凑数。"""
     if not hot_posts:
         return []
     lines = [f"## 相关热门帖子 ({len(hot_posts)})"]
     for p in hot_posts:
         title = p.title or p.artifact_id
         lines.append(f"- {title}")
+        if p.is_fallback:
+            lines[-1] += "（热帖兜底）"
         if p.url:
             lines.append(f"  {p.url}")
         meta = p.platform or ""
@@ -2823,6 +2830,12 @@ def _persist_discovery(
     )
     home_person_ids = latest.home_person_ids if latest is not None else []
     hot_posts = list(latest.hot_posts) if latest is not None else []
+    hot_posts_found = latest.hot_posts_found if latest is not None else 0
+    hot_posts_shown = latest.hot_posts_shown if latest is not None else 0
+    hot_posts_zero_relevance = (
+        latest.hot_posts_zero_relevance if latest is not None else 0
+    )
+    hot_posts_limit = latest.hot_posts_limit if latest is not None else 0
     preferred_opportunity_id = (
         latest.preferred_opportunity_id if latest is not None else ""
     )
@@ -2854,6 +2867,10 @@ def _persist_discovery(
         recommendation_shortfall=recommendation_shortfall,
         home_person_ids=home_person_ids,
         hot_posts=hot_posts,
+        hot_posts_found=hot_posts_found,
+        hot_posts_shown=hot_posts_shown,
+        hot_posts_zero_relevance=hot_posts_zero_relevance,
+        hot_posts_limit=hot_posts_limit,
         preferred_opportunity_id=preferred_opportunity_id,
         opportunity_assessments=opportunity_assessments,
     )
@@ -2996,6 +3013,9 @@ def connect_today(
 def connect_daily(
     refresh: bool = typer.Option(False, "--refresh", help="先刷新再读取"),
     limit: int = typer.Option(50, "--limit", help="展示机会数"),
+    hot_posts_limit: int | None = typer.Option(
+        None, "--hot-posts-limit", help="相关热门帖子展示上限"
+    ),
     view: str = typer.Option("home", "--view", help="home|browse"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
     lookback: str | None = typer.Option(None, "--lookback", help="时间窗（24h/30d/720h）"),
@@ -3011,7 +3031,10 @@ def connect_daily(
     daily = None
     if need_refresh:
         daily = _run_daily_full(
-            settings, lookback_hours=_lookback_hours(lookback), question=question
+            settings,
+            lookback_hours=_lookback_hours(lookback),
+            question=question,
+            hot_posts_limit=hot_posts_limit,
         )
         result = daily.engagement
         assert result is not None
@@ -3034,6 +3057,24 @@ def connect_daily(
         if daily is not None
         else (list(snapshot.hot_posts) if snapshot is not None else [])
     )
+    if daily is not None:
+        hot_posts_found = daily.metrics.hot_posts_candidates
+        hot_posts_shown = len(daily.hot_posts)
+        hot_posts_zero_relevance = daily.metrics.hot_posts_zero_relevance
+        hot_posts_effective_limit = daily.metrics.hot_posts_limit
+    else:
+        hot_posts_found = snapshot.hot_posts_found if snapshot is not None else 0
+        hot_posts_shown = snapshot.hot_posts_shown if snapshot is not None else len(hot_posts)
+        hot_posts_zero_relevance = (
+            snapshot.hot_posts_zero_relevance if snapshot is not None else 0
+        )
+        hot_posts_effective_limit = (
+            snapshot.hot_posts_limit
+            if snapshot is not None
+            else settings.discovery.hot_posts_limit
+        )
+        if snapshot is not None and hot_posts_effective_limit <= 0:
+            hot_posts_effective_limit = settings.discovery.hot_posts_limit
 
     preferred: PreferredOpportunity | None = None
     assessments: list = []
@@ -3085,6 +3126,10 @@ def connect_daily(
                 else _entries_payload(rec_entries, rec_shortfall)
             ),
             "hot_posts": _hot_posts_payload(hot_posts),
+            "hot_posts_found": hot_posts_found,
+            "hot_posts_shown": hot_posts_shown,
+            "hot_posts_zero_relevance": hot_posts_zero_relevance,
+            "hot_posts_limit": hot_posts_effective_limit,
             "conversations_needing_follow_up": [
                 t.model_dump(mode="json") for t in focus["conversations"]["items"]
             ],

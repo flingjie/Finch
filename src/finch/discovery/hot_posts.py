@@ -8,10 +8,23 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from finch.engagement.models import HotPostEntry
 from finch.settings import Settings
 from finch.sources.models import RawArtifact
+
+
+@dataclass
+class HotPostSelection:
+    """热门帖子选择结果与可观测统计，统计不参与排序。"""
+
+    posts: list[HotPostEntry] = field(default_factory=list)
+    limit: int = 0
+    candidate_count: int = 0
+    shown_count: int = 0
+    zero_relevance_count: int = 0
 
 
 def _tokens(text: str) -> list[str]:
@@ -83,17 +96,55 @@ def _title(art: RawArtifact) -> str:
     return (first_line[0] if first_line else "")[:120]
 
 
+def _freshness_score(
+    published_at: datetime | None,
+    *,
+    clock: datetime,
+    boost_hours: int,
+) -> float:
+    """给窗口内的帖子一个 0 到 1 的确定性新鲜度分，未来时间按当前时间钳制。"""
+    if published_at is None or boost_hours <= 0:
+        return 0.0
+    effective = min(published_at, clock)
+    age_hours = max(0.0, (clock - effective).total_seconds() / 3600.0)
+    if age_hours >= boost_hours:
+        return 0.0
+    return 1.0 - age_hours / boost_hours
+
+
 def select_hot_posts(
     artifacts: list[RawArtifact],
     *,
     settings: Settings,
     question: str = "",
-    limit: int = 5,
-) -> list[HotPostEntry]:
-    """从已过滤帖子中确定性选择最多 ``limit`` 条相关热门帖子。"""
+    limit: int | None = None,
+    now: datetime | None = None,
+    max_per_platform: int | None = None,
+    max_per_author: int | None = None,
+    freshness_boost: float | None = None,
+) -> HotPostSelection:
+    """从已过滤帖子中确定性选择最多 ``limit`` 条相关热门帖子。
+
+    未显式传参时，``limit`` / 平台上限 / 作者上限 / 新鲜度加成都从 ``settings.discovery``
+    读取。平台与作者上限只做 diversity gate，不足时不凑数。
+    """
     terms = _terms(settings, question)
-    if not artifacts or limit <= 0:
-        return []
+    dp = settings.discovery
+    resolved_limit = dp.hot_posts_limit if limit is None else limit
+    resolved_platform_limit = (
+        dp.hot_posts_max_per_platform
+        if max_per_platform is None
+        else max_per_platform
+    )
+    resolved_author_limit = (
+        dp.hot_posts_max_per_author if max_per_author is None else max_per_author
+    )
+    resolved_freshness_boost = (
+        dp.hot_posts_freshness_boost if freshness_boost is None else freshness_boost
+    )
+    clock = now or datetime.now(UTC)
+    if not artifacts or resolved_limit <= 0:
+        return HotPostSelection()
 
     per_platform_max: dict[str, float] = {}
     rows: list[dict] = []
@@ -118,6 +169,11 @@ def select_hot_posts(
                 "relevance": relevance,
                 "heat": heat,
                 "matched_terms": matched_terms,
+                "author": (
+                    art.author_identity.handle
+                    or art.author_identity.external_id
+                    or ""
+                ),
             }
         )
 
@@ -128,19 +184,44 @@ def select_hot_posts(
             row["relevance"] / max_relevance if max_relevance else 0.0
         )
         row["heat_score"] = row["heat"] / platform_max if platform_max else 0.0
+        row["freshness_score"] = _freshness_score(
+            row["art"].published_at or row["art"].retrieved_at,
+            clock=clock,
+            boost_hours=dp.freshness_boost_hours,
+        )
+        row["rank_score"] = (
+            row["heat_score"] + resolved_freshness_boost * row["freshness_score"]
+        )
 
-    # 相关优先；同一相关性下热度更高、更新鲜、id 更小者优先，保证可重放。
+    # 相关优先；同一相关性下用「热度 + 新鲜度加成」，最后按 id 稳定排序保证可重放。
     rows.sort(
         key=lambda row: (
             -row["relevance_score"],
-            -row["heat_score"],
+            -row["rank_score"],
             -(row["art"].published_at or row["art"].retrieved_at).timestamp(),
             row["art"].artifact_id,
         )
     )
 
     out: list[HotPostEntry] = []
-    for row in rows[:limit]:
+    platform_counts: dict[str, int] = {}
+    author_counts: dict[str, int] = {}
+    for row in rows:
+        if len(out) >= resolved_limit:
+            break
+        platform = row["platform"]
+        author = row["author"]
+        if (
+            resolved_platform_limit > 0
+            and platform_counts.get(platform, 0) >= resolved_platform_limit
+        ):
+            continue
+        if (
+            resolved_author_limit > 0
+            and author
+            and author_counts.get(author, 0) >= resolved_author_limit
+        ):
+            continue
         art = row["art"]
         out.append(
             HotPostEntry(
@@ -153,6 +234,17 @@ def select_hot_posts(
                 relevance_score=round(row["relevance_score"], 4),
                 heat_score=round(row["heat_score"], 4),
                 matched_terms=row["matched_terms"][:6],
+                is_fallback=not row["matched_terms"],
             )
         )
-    return out
+        platform_counts[platform] = platform_counts.get(platform, 0) + 1
+        if author:
+            author_counts[author] = author_counts.get(author, 0) + 1
+
+    return HotPostSelection(
+        posts=out,
+        limit=resolved_limit,
+        candidate_count=len(rows),
+        shown_count=len(out),
+        zero_relevance_count=sum(1 for row in rows if row["relevance"] == 0.0),
+    )
