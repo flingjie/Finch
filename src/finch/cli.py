@@ -686,6 +686,11 @@ def _lookback_hours(value: str | None) -> int | None:
         ) from None
 
 
+def _optional_string(value: object) -> str | None:
+    """把 Typer 参数对象归一化为字符串或 None（供 Python 内部委托命令使用）。"""
+    return value if isinstance(value, str) else None
+
+
 @app.command()
 def init() -> None:
     """初始化工作区目录树（幂等）。"""
@@ -2530,6 +2535,29 @@ def _render_hot_posts(hot_posts: list[HotPostEntry]) -> list[str]:
     return lines
 
 
+def _render_post_pool(posts: list[HotPostEntry], page: int, page_count: int) -> list[str]:
+    """渲染帖子浏览池：可读推荐列表，支持分页提示。"""
+    if not posts:
+        return ["当前没有可浏览的帖子（先运行 --refresh）。"]
+    lines = [f"## 帖子浏览 ({page}/{page_count})"]
+    for p in posts:
+        title = p.title or p.artifact_id
+        lines.append(f"- {title}")
+        if p.url:
+            lines.append(f"  {p.url}")
+        meta = p.platform or ""
+        if p.author:
+            meta = f"{p.platform} @{p.author}" if p.platform else p.author
+        if p.matched_terms:
+            meta += f" · 相关: {', '.join(p.matched_terms[:4])}"
+        if meta:
+            lines.append(f"  {meta}")
+    if page < page_count:
+        lines.append(f"下一页：uv run finch connect daily --view posts --posts-page {page + 1}")
+    lines.append("")
+    return lines
+
+
 def _render_recommendation_entries(
     entries: list[RecommendationEntry], shortfall: dict[str, int]
 ) -> list[str]:
@@ -2837,6 +2865,7 @@ def _persist_discovery(
         latest.hot_posts_zero_relevance if latest is not None else 0
     )
     hot_posts_limit = latest.hot_posts_limit if latest is not None else 0
+    post_pool = list(latest.post_pool) if latest is not None else []
     preferred_opportunity_id = (
         latest.preferred_opportunity_id if latest is not None else ""
     )
@@ -2872,6 +2901,7 @@ def _persist_discovery(
         hot_posts_shown=hot_posts_shown,
         hot_posts_zero_relevance=hot_posts_zero_relevance,
         hot_posts_limit=hot_posts_limit,
+        post_pool=post_pool,
         preferred_opportunity_id=preferred_opportunity_id,
         opportunity_assessments=opportunity_assessments,
     )
@@ -3007,7 +3037,7 @@ def connect_today(
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
     """已由 connect daily 首页取代：委托同一快照投影（纯读，不调用网络/LLM）。"""
-    connect_daily(refresh=False, limit=limit, view="home", as_json=as_json)
+    connect_daily(refresh=False, limit=limit, view="home", as_json=as_json, posts_page=1)
 
 
 @connect_app.command("daily")
@@ -3017,12 +3047,17 @@ def connect_daily(
     hot_posts_limit: int | None = typer.Option(
         None, "--hot-posts-limit", help="相关热门帖子展示上限"
     ),
-    view: str = typer.Option("home", "--view", help="home|browse"),
+    view: str = typer.Option("home", "--view", help="home|browse|posts"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
     lookback: str | None = typer.Option(None, "--lookback", help="时间窗（24h/30d/720h）"),
     question: str | None = typer.Option(None, "--question", help="本轮问题/意图"),
+    posts_page: int = typer.Option(
+        1, "--posts-page", min=1, help="帖子浏览分页（仅 --view posts）"
+    ),
 ) -> None:
-    """连接主循环入口：首页 3 重点（默认）+ 50 人分层浏览（--view browse）。"""
+    """连接主循环入口：首页 3 重点（默认）+ 50 人分层浏览 + 帖子浏览。"""
+    question = _optional_string(question)
+    lookback = _optional_string(lookback)
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -3077,6 +3112,27 @@ def connect_daily(
         if snapshot is not None and hot_posts_effective_limit <= 0:
             hot_posts_effective_limit = settings.discovery.hot_posts_limit
 
+    post_pool = (
+        list(daily.post_pool)
+        if daily is not None
+        else (list(snapshot.post_pool) if snapshot is not None else [])
+    )
+    if not post_pool and daily is None:
+        from finch.discovery.hot_posts import build_post_pool_from_repository
+
+        post_pool = build_post_pool_from_repository(
+            ws,
+            settings=settings,
+            question=(question or ""),
+        )
+    post_page_size = settings.discovery.post_pool_page_size
+    post_page_start = (posts_page - 1) * post_page_size
+    post_page = post_pool[post_page_start : post_page_start + post_page_size]
+    post_page_total = len(post_pool)
+    post_page_count = max(
+        1, (post_page_total + post_page_size - 1) // post_page_size
+    )
+
     preferred: PreferredOpportunity | None = None
     assessments: list = []
     if daily is not None:
@@ -3092,6 +3148,29 @@ def connect_daily(
     refresh_status = _connect_daily_refresh_status(
         daily=daily, snapshot=snapshot, stale=stale
     )
+
+    if view == "posts":
+        if as_json:
+            typer.echo(json.dumps({
+                "snapshot_id": snapshot.id if snapshot else None,
+                "refreshed": need_refresh,
+                "stale": stale,
+                "refresh_status": refresh_status,
+                "page": posts_page,
+                "page_size": post_page_size,
+                "page_count": post_page_count,
+                "total": post_page_total,
+                "posts": _hot_posts_payload(post_page),
+            }, ensure_ascii=False, indent=2))
+        else:
+            if snapshot is None:
+                typer.echo(
+                    "no discovery snapshot; run: "
+                    "uv run finch connect daily --refresh --view posts"
+                )
+                return
+            typer.echo("\n".join(_render_post_pool(post_page, posts_page, post_page_count)))
+        return
 
     if as_json:
         typer.echo(json.dumps({

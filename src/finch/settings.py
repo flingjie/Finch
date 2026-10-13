@@ -429,11 +429,15 @@ class DiscoverySettings(BaseModel):
     freshness_boost_hours: int = 72
     nominate_limit: int = 10
     discovery_deadline_seconds: int = 180
-    # 首页相关热门帖子的展示与排序预算；热度只作为同相关性下的次级信号。
-    hot_posts_limit: int = Field(default=8, ge=1)
-    hot_posts_max_per_platform: int = Field(default=3, ge=0)
+    # 相关热门帖子：首页摘要用 ``hot_posts_limit``，``--view posts`` 用 ``post_pool_limit``
+    # 与 ``post_pool_page_size``。热度只作为同相关性下的次级信号。
+    hot_posts_limit: int = Field(default=15, ge=1)
+    hot_posts_max_per_platform: int = Field(default=6, ge=0)
     hot_posts_max_per_author: int = Field(default=2, ge=0)
     hot_posts_freshness_boost: float = Field(default=0.15, ge=0.0)
+    post_pool_limit: int = Field(default=60, ge=1)
+    post_pool_page_size: int = Field(default=15, ge=1)
+    post_pool_lookback_hours: int = Field(default=720, ge=1)
     # GitHub README 背景/按需读取：TTL 兜底 + 单次补读外部 README 上限。
     readme_cache_ttl_hours: int = 168
     max_external_readmes_per_run: int = 5

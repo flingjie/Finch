@@ -9,7 +9,8 @@ from typing import Literal
 
 from finch.codex.runner import CodexRunner
 from finch.discovery.candidate_pool import build_pool, match_interests
-from finch.discovery.hot_posts import select_hot_posts
+from finch.discovery.filtering import filter_artifacts
+from finch.discovery.hot_posts import load_cached_post_artifacts, select_hot_posts
 from finch.engagement.flow import EngagementRunResult, RankedPeer
 from finch.engagement.models import (
     ActionFeedbackValue,
@@ -83,6 +84,7 @@ class DailyDiscoveryResult:
     sync_results: list[SyncResult] = field(default_factory=list)
     recommendations: DailyRecommendationSet | None = None
     hot_posts: list[HotPostEntry] = field(default_factory=list)
+    post_pool: list[HotPostEntry] = field(default_factory=list)
     preferred_opportunity: OppAggregate | None = None
     opportunity_assessments: list[OpportunityAssessment] = field(default_factory=list)
     engagement: EngagementRunResult | None = None
@@ -158,6 +160,42 @@ def _truncate(text: str, n: int = _TEXT_LIMIT) -> str:
     if len(text) <= n:
         return text
     return text[: n - 1] + "…"
+
+
+def _merge_post_pool_artifacts(
+    ws: Workspace,
+    *,
+    fresh_artifacts: list[RawArtifact],
+    excluded_content: list[str],
+    lookback_hours: int,
+    as_of: datetime,
+) -> list[RawArtifact]:
+    """合并本轮同步与历史工件，形成帖子浏览池的候选。
+
+    历史工件先按帖子池时间窗与排除词过滤，再与本轮同步结果按指纹去重；排序后返回。
+    帖子池只用于阅读推荐，不参与人物证据或交流机会。
+    """
+    cached_filtered = load_cached_post_artifacts(
+        ws,
+        excluded_content=excluded_content,
+        lookback_hours=lookback_hours,
+        as_of=as_of,
+    )
+    fresh_filtered, _ = filter_artifacts(
+        fresh_artifacts,
+        excluded_content=excluded_content,
+        as_of=as_of,
+    )
+    seen_fingerprints: set[str] = set()
+    merged: list[RawArtifact] = []
+    for art in [*fresh_filtered, *cached_filtered]:
+        fp = art.content_fingerprint
+        if fp and fp in seen_fingerprints:
+            continue
+        if fp:
+            seen_fingerprints.add(fp)
+        merged.append(art)
+    return sorted(merged, key=lambda a: a.artifact_id)
 
 
 def _cross_domain_hook(evs: list[CreatorEvidence], fallback: str = "") -> str:
@@ -426,25 +464,37 @@ def run_daily_discovery(
             elapsed_seconds=sr.elapsed_seconds,
             error_type=sr.error_type,
         )
-    from finch.discovery.filtering import filter_artifacts
-
     filtered, metrics.filtered = filter_artifacts(
         artifacts,
         excluded_content=list(plan.excluded_content),
         lookback_hours=plan.lookback_hours,
         as_of=now,
     )
+    post_pool_artifacts = _merge_post_pool_artifacts(
+        ws,
+        fresh_artifacts=artifacts,
+        excluded_content=list(plan.excluded_content),
+        lookback_hours=settings.discovery.post_pool_lookback_hours,
+        as_of=now,
+    )
     hot_post_selection = select_hot_posts(
-        filtered,
+        post_pool_artifacts,
         settings=settings,
         question=(question or plan.intent),
         limit=hot_posts_limit,
+        pool_limit=settings.discovery.post_pool_limit,
     )
-    result.hot_posts = hot_post_selection.posts
+    hot_posts_home_limit = (
+        hot_posts_limit
+        if hot_posts_limit is not None
+        else settings.discovery.hot_posts_limit
+    )
+    result.post_pool = hot_post_selection.posts
+    result.hot_posts = hot_post_selection.posts[:hot_posts_home_limit]
     metrics.hot_posts_candidates = hot_post_selection.candidate_count
-    metrics.hot_posts_shown = hot_post_selection.shown_count
+    metrics.hot_posts_shown = len(result.hot_posts)
     metrics.hot_posts_zero_relevance = hot_post_selection.zero_relevance_count
-    metrics.hot_posts_limit = hot_post_selection.limit
+    metrics.hot_posts_limit = hot_posts_home_limit
 
     # Creator evidence via Codex (fail-soft per person)
     evidence_svc = CreatorEvidenceService(
@@ -654,10 +704,11 @@ def run_daily_discovery(
         recommendation_shortfall=dict(recs.shortfall),
         home_person_ids=[r.person_id for r in select_home_items(recs)],
         hot_posts=result.hot_posts,
+        post_pool=result.post_pool,
         hot_posts_found=hot_post_selection.candidate_count,
-        hot_posts_shown=hot_post_selection.shown_count,
+        hot_posts_shown=len(result.hot_posts),
         hot_posts_zero_relevance=hot_post_selection.zero_relevance_count,
-        hot_posts_limit=hot_post_selection.limit,
+        hot_posts_limit=hot_posts_home_limit,
         preferred_opportunity_id=(
             result.preferred_opportunity.id if result.preferred_opportunity else ""
         ),

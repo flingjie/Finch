@@ -81,6 +81,8 @@ class DiscoverySnapshot(BaseModel):
     hot_posts_shown: int = 0
     hot_posts_zero_relevance: int = 0
     hot_posts_limit: int = 0
+    # 完整帖子浏览池（`--view posts` 分页读取）；首页只取其中 hot_posts_limit 条。
+    post_pool: list[HotPostEntry] = Field(default_factory=list)
     # 首选机会（新聚合）id：首页 0-1 条首选；空表示本轮无值得优先投入的机会。
     preferred_opportunity_id: str = ""
     # 本轮评估覆盖（含跳过原因）：非刷新读取可重放「为何无首选 / 为何优先」。

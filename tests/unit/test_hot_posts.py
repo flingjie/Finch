@@ -182,3 +182,27 @@ def test_freshness_boost_orders_newer_post_above_older_post():
         "twitter:post:newer",
         "twitter:post:older",
     ]
+
+
+def test_pool_limit_keeps_more_posts_for_pagination_than_home_limit():
+    arts = [
+        _art(f"{i}", text=f"agent reliability failure replay item {i}", likes=i)
+        for i in range(1, 9)
+    ]
+    selected = select_hot_posts(
+        arts,
+        settings=_settings(),
+        limit=3,
+        pool_limit=8,
+        max_per_platform=0,
+        max_per_author=0,
+        freshness_boost=0.0,
+    )
+    # 首页 slice 由调用方决定；选择器本身要保留比首页更多的确定性池。
+    assert selected.limit == 8
+    assert selected.shown_count == 8
+    assert [p.artifact_id for p in selected.posts[:3]] == [
+        "twitter:post:8",
+        "twitter:post:7",
+        "twitter:post:6",
+    ]

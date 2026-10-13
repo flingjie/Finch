@@ -193,6 +193,45 @@ def test_run_daily_skips_network_with_seeded_artifacts(tmp_path: Path):
     assert len(result.recommendations.priority) >= 1 or result.engagement.posts_found >= 2
 
 
+def test_post_pool_merges_seeded_history_without_network(tmp_path: Path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    seeded = [
+        _art("10", "alice", "agent reliability failure replay historical post"),
+        _art("11", "bob", "agent reliability failure replay cached post"),
+    ]
+    for a in seeded:
+        ArtifactRepository(ws).upsert(a)
+    from finch.sources.projector import ArtifactProjector
+
+    ArtifactProjector(ws).project(seeded)
+
+    settings = Settings(
+        paths={"var_dir": tmp_path},  # type: ignore[arg-type]
+        sources=SourcesSettings(twitter=SourceTwitterPlan(enabled=True, mode="timeline")),
+        interests={"long_term_interests": ["agent reliability", "failure replay"]},  # type: ignore[arg-type]
+    )
+    settings.paths.var_dir = tmp_path
+    settings.paths.practice_profile_path = tmp_path / "practice-profile.yaml"
+
+    def fake_run(argv, timeout):
+        return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+    result = run_daily_discovery(
+        settings,
+        runner=_FakeRunner(),
+        gateway=OpenCliGateway(run_fn=fake_run),
+        skip_sync=True,
+    )
+    pool_ids = {p.artifact_id for p in result.post_pool}
+    assert {"twitter:post:10", "twitter:post:11"} <= pool_ids
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    snapshot = DiscoverySnapshotRepository(ws).latest()
+    assert snapshot is not None
+    assert {p.artifact_id for p in snapshot.post_pool} >= pool_ids
+
+
 def test_enabled_platforms_maps_disabled_sources_out(tmp_path: Path):
     settings = Settings(
         paths={"var_dir": tmp_path},  # type: ignore[arg-type]

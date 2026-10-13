@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from finch.engagement.models import HotPostEntry
 from finch.settings import Settings
 from finch.sources.models import RawArtifact
+from finch.storage.workspace import Workspace
 
 
 @dataclass
@@ -112,25 +113,86 @@ def _freshness_score(
     return 1.0 - age_hours / boost_hours
 
 
+def build_post_pool_from_repository(
+    ws: Workspace,
+    *,
+    settings: Settings,
+    question: str = "",
+) -> list[HotPostEntry]:
+    """从历史工件仓库重建帖子浏览池（纯读，不抓取、不调用 LLM）。
+
+    用于已有快照但没有帖子池时：让 ``--view posts`` 即使不刷新也能基于最近 30 天的
+    缓存工件给出阅读推荐。与刷新路径共用同一套排除词与排序规则。
+    """
+    dp = settings.discovery
+    cached = load_cached_post_artifacts(
+        ws,
+        excluded_content=list(settings.interests.excluded_content),
+        lookback_hours=dp.post_pool_lookback_hours,
+    )
+    selection = select_hot_posts(
+        cached,
+        settings=settings,
+        question=question,
+        pool_limit=dp.post_pool_limit,
+    )
+    return selection.posts
+
+
+def load_cached_post_artifacts(
+    ws: Workspace,
+    *,
+    excluded_content: list[str],
+    lookback_hours: int,
+    as_of: datetime | None = None,
+) -> list[RawArtifact]:
+    """读取并过滤历史工件，供帖子浏览池重建使用。"""
+    from finch.discovery.filtering import filter_artifacts
+    from finch.sources.store import ArtifactRepository
+
+    clock = as_of or datetime.now(UTC)
+    cutoff = clock - timedelta(hours=lookback_hours)
+    cached: list[RawArtifact] = []
+    for art in ArtifactRepository(ws).list_all():
+        published = art.published_at or art.retrieved_at
+        if published is None:
+            continue
+        effective = published if published <= clock else clock
+        if effective < cutoff:
+            continue
+        cached.append(art)
+
+    filtered, _ = filter_artifacts(
+        cached,
+        excluded_content=excluded_content,
+        as_of=clock,
+    )
+    return filtered
+
+
 def select_hot_posts(
     artifacts: list[RawArtifact],
     *,
     settings: Settings,
     question: str = "",
     limit: int | None = None,
+    pool_limit: int | None = None,
     now: datetime | None = None,
     max_per_platform: int | None = None,
     max_per_author: int | None = None,
     freshness_boost: float | None = None,
 ) -> HotPostSelection:
-    """从已过滤帖子中确定性选择最多 ``limit`` 条相关热门帖子。
+    """从已过滤帖子中确定性选择最多 ``pool_limit`` 条进入浏览池。
 
-    未显式传参时，``limit`` / 平台上限 / 作者上限 / 新鲜度加成都从 ``settings.discovery``
+    ``posts`` 是浏览池，``limit`` 之外的池顶仍是确定性排序，供分页使用。未显式传参时，
+    ``limit`` / ``pool_limit`` / 平台上限 / 作者上限 / 新鲜度加成都从 ``settings.discovery``
     读取。平台与作者上限只做 diversity gate，不足时不凑数。
     """
     terms = _terms(settings, question)
     dp = settings.discovery
     resolved_limit = dp.hot_posts_limit if limit is None else limit
+    resolved_pool_limit = resolved_limit if pool_limit is None else pool_limit
+    resolved_pool_limit = max(resolved_limit, resolved_pool_limit)
     resolved_platform_limit = (
         dp.hot_posts_max_per_platform
         if max_per_platform is None
@@ -143,7 +205,7 @@ def select_hot_posts(
         dp.hot_posts_freshness_boost if freshness_boost is None else freshness_boost
     )
     clock = now or datetime.now(UTC)
-    if not artifacts or resolved_limit <= 0:
+    if not artifacts or resolved_pool_limit <= 0:
         return HotPostSelection()
 
     per_platform_max: dict[str, float] = {}
@@ -207,7 +269,7 @@ def select_hot_posts(
     platform_counts: dict[str, int] = {}
     author_counts: dict[str, int] = {}
     for row in rows:
-        if len(out) >= resolved_limit:
+        if len(out) >= resolved_pool_limit:
             break
         platform = row["platform"]
         author = row["author"]
@@ -243,7 +305,7 @@ def select_hot_posts(
 
     return HotPostSelection(
         posts=out,
-        limit=resolved_limit,
+        limit=resolved_pool_limit,
         candidate_count=len(rows),
         shown_count=len(out),
         zero_relevance_count=sum(1 for row in rows if row["relevance"] == 0.0),

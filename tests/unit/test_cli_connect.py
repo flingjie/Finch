@@ -590,6 +590,52 @@ def test_connect_daily_json_includes_freshness(monkeypatch, tmp_path):
     assert payload["snapshot_id"] is None
 
 
+def test_connect_daily_posts_view_is_paginated_json(monkeypatch, tmp_path):
+    from finch.engagement.models import DiscoverySnapshot, HotPostEntry
+    from finch.storage.repositories import DiscoverySnapshotRepository
+
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    posts = [
+        HotPostEntry(
+            artifact_id=f"a{i}",
+            title=f"post {i}",
+            url=f"https://x.example/{i}",
+            platform="x",
+            author="alice",
+        )
+        for i in range(20)
+    ]
+    DiscoverySnapshotRepository(ws).upsert(
+        DiscoverySnapshot(
+            id="daily_posts",
+            created_at=datetime.now(UTC),
+            context_fingerprint="ctx",
+            ranked_opportunity_ids=[],
+            post_pool=posts,
+        )
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(
+        app, ["connect", "daily", "--view", "posts", "--posts-page", "2", "--json"]
+    )
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["page"] == 2
+    assert payload["page_size"] == 15
+    assert payload["total"] == 20
+    assert len(payload["posts"]) == 5
+    assert [p["artifact_id"] for p in payload["posts"]] == [
+        "a15",
+        "a16",
+        "a17",
+        "a18",
+        "a19",
+    ]
+
+
 def test_persist_discovery_preserves_recommendations(tmp_path):
     """F1：_persist_discovery 不得覆盖 run_daily_discovery 已写入的完整 50 人推荐。"""
     from finch.engagement.models import DiscoverySnapshot, HotPostEntry, RecommendationEntry
