@@ -13,6 +13,7 @@ build/
 var/
 .codex/
 web-articles/
+weixin-articles/
 
 # Secrets
 .env
