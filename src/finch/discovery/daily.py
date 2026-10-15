@@ -184,6 +184,7 @@ def _merge_post_pool_artifacts(
     fresh_filtered, _ = filter_artifacts(
         fresh_artifacts,
         excluded_content=excluded_content,
+        lookback_hours=lookback_hours,
         as_of=as_of,
     )
     seen_fingerprints: set[str] = set()
@@ -470,11 +471,16 @@ def run_daily_discovery(
         lookback_hours=plan.lookback_hours,
         as_of=now,
     )
+    post_pool_lookback_hours = (
+        lookback_hours
+        if lookback_hours is not None
+        else settings.discovery.post_pool_lookback_hours
+    )
     post_pool_artifacts = _merge_post_pool_artifacts(
         ws,
         fresh_artifacts=artifacts,
         excluded_content=list(plan.excluded_content),
-        lookback_hours=settings.discovery.post_pool_lookback_hours,
+        lookback_hours=post_pool_lookback_hours,
         as_of=now,
     )
     hot_post_selection = select_hot_posts(
