@@ -430,6 +430,13 @@ class ConnectionsSettings(BaseModel):
     reply_observation_days: int = Field(default=14, ge=1)
 
 
+class GroundedSettings(BaseModel):
+    """接地气练习配置（P1 手动单环）。``enabled=false`` 为 kill-switch，不影响既有流程。"""
+
+    enabled: bool = True
+    max_questions: int = Field(default=1, ge=1)
+
+
 class DiscoverySettings(BaseModel):
     """发现轨道配置（每日 50 人）。
 
@@ -472,6 +479,7 @@ class Settings(BaseModel):
     interests: InterestsSettings = Field(default_factory=InterestsSettings)
     discovery: DiscoverySettings = Field(default_factory=DiscoverySettings)
     connections: ConnectionsSettings = Field(default_factory=ConnectionsSettings)
+    grounded: GroundedSettings = Field(default_factory=GroundedSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
     notion: NotionSettings = Field(default_factory=NotionSettings)

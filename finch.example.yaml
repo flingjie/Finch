@@ -222,6 +222,10 @@ connections:
   review_timezone: Asia/Shanghai
   reply_observation_days: 14
 
+grounded:
+  enabled: true
+  max_questions: 1
+
 interests:
   long_term_interests:
     - agent reliability        # Agent 工程（保留为一组）

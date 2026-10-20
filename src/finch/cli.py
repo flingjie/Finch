@@ -147,6 +147,7 @@ from .storage.repositories import (
     EvidenceRepository,
     FeedbackRepository,
     FeedbackSnapshotRepository,
+    GroundedSessionRepository,
     IdeaExplorationRepository,
     InteractionRecordRepository,
     PeerRepository,
@@ -230,6 +231,11 @@ app.add_typer(problems_app, name="problems")
 
 attempts_app = typer.Typer(help="实践尝试原始素材（问题/尝试/观察/未知）")
 app.add_typer(attempts_app, name="attempts")
+
+grounded_app = typer.Typer(
+    help="接地气：观察他人处境 → 理解 → 单次追问 → 动作 → 真实反馈 → 前后判断对比"
+)
+app.add_typer(grounded_app, name="grounded")
 
 
 angles_app = typer.Typer(help="文章选角：读一篇文章找出值得独立成文的角度（选题卡 / 写作 brief）")
@@ -5931,6 +5937,351 @@ def attempts_close(attempt_id: str = typer.Argument(...)) -> None:
         typer.echo(f"attempt not found: {attempt_id}")
         raise typer.Exit(code=1) from exc
     typer.echo(f"closed attempt {a.id}")
+
+
+def _require_grounded(settings: Settings) -> None:
+    if not settings.grounded.enabled:
+        typer.echo("grounded practice is disabled (grounded.enabled=false)")
+        raise typer.Exit(code=1)
+
+
+@grounded_app.command("start")
+def grounded_start(
+    text: str = typer.Option(None, "--text", help="对方的处境文本"),
+    file: str = typer.Option(None, "--file", help="文本文件"),
+    url: str = typer.Option(None, "--url", help="链接（X/Reddit/普通网页）"),
+    person: str = typer.Option("", "--person", help="person_id 或 peer_id（可选）"),
+    request_id: str | None = typer.Option(None, "--request-id", help="稳定幂等请求 ID"),
+    constraint: list[str] = typer.Option(
+        [], "--constraint", help="约束：description|basis|known|inferred|unknown（可重复）"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """新建一条接地气会话（幂等：同素材/同 request-id 复用）。"""
+    from finch.grounded.models import Constraint, ConstraintEvidence
+    from finch.grounded.service import GroundedService
+    from finch.peers.person_service import PersonRepository, PersonService
+
+    provided = sum(x is not None for x in (text, file, url))
+    if provided != 1:
+        typer.echo("exactly one of --text / --file / --url is required")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    _require_grounded(settings)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+
+    person_ref = None
+    if person:
+        peer = PeerRepository(ws).get(person)
+        if peer is None:
+            prow = PersonRepository(ws).get(person)
+            if prow and prow.identities:
+                peer = PeerRepository(ws).get(prow.identities[0].peer_id)
+        if peer is None:
+            typer.echo(f"person/peer not found: {person}")
+            raise typer.Exit(code=1)
+        person_ref = PersonService(PersonRepository(ws)).ensure_from_peer(peer).person_id
+
+    constraints: list[Constraint] = []
+    for raw in constraint:
+        parts = raw.split("|")
+        desc = parts[0].strip()
+        if not desc:
+            typer.echo(f"invalid --constraint: {raw}")
+            raise typer.Exit(code=1)
+        basis = parts[1].strip() if len(parts) > 1 else ""
+        evidence = parts[2].strip() if len(parts) > 2 else "unknown"
+        if evidence not in ("known", "inferred", "unknown"):
+            typer.echo(f"invalid constraint evidence: {evidence}")
+            raise typer.Exit(code=1)
+        constraints.append(
+            Constraint(description=desc, basis=basis, evidence=cast(ConstraintEvidence, evidence))
+        )
+
+    resolver = SourceResolver(OpenCliClient(), RedditOpenCliClient(), WebFetcher())
+    try:
+        if text is not None:
+            source = resolver.resolve_text(text)
+        elif file is not None:
+            source = resolver.resolve_file(file)
+        else:
+            source = resolver.resolve_url(url)
+        if not source.body.strip():
+            typer.echo("empty body after resolve")
+            raise typer.Exit(code=1)
+        svc = GroundedService(GroundedSessionRepository(ws))
+        session = svc.start(
+            situation=source.body,
+            content_hash=source.content_hash,
+            request_id=request_id,
+            source_refs=[source.source_ref] if source.source_ref else [],
+            person_ref=person_ref,
+            constraints=constraints,
+            coverage=source.coverage,
+        )
+    except (RuntimeError, StructuredOutputError, OSError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(session.model_dump_json(indent=2))
+    else:
+        typer.echo(f"session {session.id} ({session.status})")
+        typer.echo(f'next: finch grounded reflect {session.id} --understanding "<用户原话>"')
+
+
+@grounded_app.command("reflect")
+def grounded_reflect(
+    session_id: str = typer.Argument(...),
+    understanding: str = typer.Option(
+        ..., "--understanding", help="你对对方处境的理解（用户原话）"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """记录用户自己的理解（不替他填）。"""
+    settings = load_settings()
+    _require_grounded(settings)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.grounded.service import GroundedService
+
+    svc = GroundedService(GroundedSessionRepository(ws))
+    try:
+        s = svc.reflect(session_id, understanding=understanding)
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(s.model_dump_json(indent=2))
+    else:
+        typer.echo(f"recorded understanding on {s.id} (status={s.status})")
+
+
+@grounded_app.command("action")
+def grounded_action(
+    session_id: str = typer.Argument(...),
+    action: str = typer.Option(..., "--action", help="observe|ask|help|pause"),
+    hypothesis: str = typer.Option("", "--hypothesis", help="本轮关键假设"),
+    question: str = typer.Option("", "--question", help="确认问题（最多一个）"),
+    action_draft: str = typer.Option(
+        "", "--action-draft", help="动作草稿（observe/ask/help 必填）"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """选择动作（draft → ready）。"""
+    from finch.grounded.models import ActionType
+    from finch.grounded.service import GroundedService
+
+    if action not in ("observe", "ask", "help", "pause"):
+        typer.echo(f"invalid --action: {action}")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    _require_grounded(settings)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    svc = GroundedService(GroundedSessionRepository(ws))
+    try:
+        s = svc.action(
+            session_id,
+            action_type=cast(ActionType, action),
+            hypothesis=hypothesis,
+            question=question,
+            action_draft=action_draft,
+        )
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(s.model_dump_json(indent=2))
+    else:
+        typer.echo(f"action {action} chosen on {s.id} (status={s.status})")
+
+
+@grounded_app.command("record-action")
+def grounded_record_action(
+    session_id: str = typer.Argument(...),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """用户明确记录已行动（ready → waiting_feedback）。"""
+    settings = load_settings()
+    _require_grounded(settings)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.grounded.service import GroundedService
+
+    svc = GroundedService(GroundedSessionRepository(ws))
+    try:
+        s = svc.record_action(session_id)
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(s.model_dump_json(indent=2))
+    else:
+        typer.echo(f"recorded action on {s.id} (status={s.status})")
+
+
+@grounded_app.command("feedback")
+def grounded_feedback(
+    session_id: str = typer.Argument(...),
+    text: str | None = typer.Option(None, "--text", help="真实反馈正文"),
+    input_file: str | None = typer.Option(None, "--input", help="从文件读取反馈正文"),
+    evidence: str = typer.Option("user_reported", "--evidence",
+                                 help="source_quote|user_reported|ai_inferred"),
+    ref: list[str] = typer.Option([], "--ref", help="反馈溯源 URL/ID（可重复）"),
+    revised_understanding: str | None = typer.Option(None, "--revised-understanding",
+                                                     help="修正后的理解"),
+    keep: bool = typer.Option(False, "--keep", help="暂不改变（保留原理解）"),
+    basis: str = typer.Option("", "--basis", help="修正依据"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """追加真实反馈；给修正/暂不改变时完成复盘（waiting_feedback → reviewed）。"""
+    from finch.grounded.models import EvidenceType
+    from finch.grounded.service import GroundedService
+
+    if (text is not None) == (input_file is not None):
+        typer.echo("pass exactly one of --text / --input")
+        raise typer.Exit(code=1)
+    if evidence not in ("source_quote", "user_reported", "ai_inferred"):
+        typer.echo(f"invalid --evidence: {evidence}")
+        raise typer.Exit(code=1)
+    body = text
+    if input_file is not None:
+        try:
+            body = Path(input_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            typer.echo(f"invalid --input: {exc}")
+            raise typer.Exit(code=1) from exc
+    settings = load_settings()
+    _require_grounded(settings)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    svc = GroundedService(GroundedSessionRepository(ws))
+    try:
+        s = svc.feedback(
+            session_id,
+            text=body or "",
+            evidence_type=cast(EvidenceType, evidence),
+            source_refs=list(ref),
+            revised_understanding=revised_understanding,
+            keep=keep,
+            basis=basis,
+        )
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(s.model_dump_json(indent=2))
+    elif s.revision is not None:
+        typer.echo(
+            f"reviewed {s.id}: {s.revision.original_understanding} → "
+            f"{s.revision.revised_understanding} (kept={s.revision.kept})"
+        )
+    else:
+        typer.echo(f"feedback recorded on {s.id} (status={s.status})")
+
+
+@grounded_app.command("pause")
+def grounded_pause(session_id: str = typer.Argument(...)) -> None:
+    """中断会话（draft/ready/waiting_feedback → paused）；reviewed 不可 pause。"""
+    settings = load_settings()
+    _require_grounded(settings)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.grounded.service import GroundedService
+
+    svc = GroundedService(GroundedSessionRepository(ws))
+    try:
+        s = svc.pause(session_id)
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"paused {s.id} (from {s.paused_from})")
+
+
+@grounded_app.command("resume")
+def grounded_resume(session_id: str = typer.Argument(...)) -> None:
+    """恢复被中断的会话（paused → 原状态）。"""
+    settings = load_settings()
+    _require_grounded(settings)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.grounded.service import GroundedService
+
+    svc = GroundedService(GroundedSessionRepository(ws))
+    try:
+        s = svc.resume(session_id)
+    except (KeyError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"resumed {s.id} (status={s.status})")
+
+
+@grounded_app.command("show")
+def grounded_show(
+    session_id: str = typer.Argument(...),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """显示一条接地气会话（含前后对比）。"""
+    settings = load_settings()
+    _require_grounded(settings)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.grounded.service import GroundedService
+
+    svc = GroundedService(GroundedSessionRepository(ws))
+    try:
+        s = svc.show(session_id)
+    except KeyError as exc:
+        typer.echo(f"session not found: {session_id}")
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(s.model_dump_json(indent=2))
+        return
+    typer.echo(f"{s.id} ({s.status})")
+    typer.echo(f"situation: {s.situation}")
+    if s.person_ref:
+        typer.echo(f"person: {s.person_ref}")
+    if s.constraints:
+        typer.echo("constraints:")
+        for c in s.constraints:
+            typer.echo(f"  - {c.description} [{c.evidence}]")
+    if s.initial_understanding:
+        typer.echo(f"understanding: {s.initial_understanding}")
+    if s.hypothesis:
+        typer.echo(f"hypothesis: {s.hypothesis}")
+    if s.question:
+        typer.echo(f"question: {s.question}")
+    if s.action_type:
+        typer.echo(f"action: {s.action_type}")
+    if s.action_draft:
+        typer.echo(f"action_draft: {s.action_draft}")
+    for f in s.feedback:
+        typer.echo(f"feedback[{f.evidence_type}]: {f.text}")
+    if s.revision is not None:
+        typer.echo(
+            f"revision: {s.revision.original_understanding} → "
+            f"{s.revision.revised_understanding} (kept={s.revision.kept})"
+        )
+        if s.revision.basis:
+            typer.echo(f"basis: {s.revision.basis}")
+
+
+@grounded_app.command("list")
+def grounded_list(
+    status: str = typer.Option("all", "--status",
+                               help="draft|ready|waiting_feedback|reviewed|paused|all"),
+) -> None:
+    """列出接地气会话。"""
+    settings = load_settings()
+    _require_grounded(settings)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    from finch.grounded.service import GroundedService
+
+    svc = GroundedService(GroundedSessionRepository(ws))
+    for s in svc.list(status=status):
+        typer.echo(f"{s.id} [{s.status}] {s.situation[:60]}")
 
 
 @article_app.command("analyze")

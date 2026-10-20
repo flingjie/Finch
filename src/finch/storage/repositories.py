@@ -26,6 +26,7 @@ from finch.engagement.models import (
     RecommendationFeedback,
 )
 from finch.evidence.models import EvidenceCard
+from finch.grounded.models import GroundedSession
 from finch.ideas.models import IdeaExploration
 from finch.inbox.models import DecisionRecord
 from finch.learn.models import Feedback
@@ -423,6 +424,20 @@ class PracticeAttemptRepository:
 
     def list_all(self) -> list[PracticeAttempt]:
         return _list_all(self.ws, "attempts", PracticeAttempt)
+
+
+class GroundedSessionRepository:
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
+
+    def upsert(self, session: GroundedSession) -> None:
+        _write(self.ws, "grounded", session.id, session)
+
+    def get(self, session_id: str) -> GroundedSession | None:
+        return _read(self.ws, "grounded", session_id, GroundedSession)
+
+    def list_all(self) -> list[GroundedSession]:
+        return _list_all(self.ws, "grounded", GroundedSession)
 
 
 class PeerRepository:
