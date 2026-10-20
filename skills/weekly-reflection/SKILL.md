@@ -26,6 +26,9 @@ description: >
 
 无试用活动的一周仍正常复盘连接与表达。点赞、愿意试用、实际使用、付款分别表述。
 
+关系指标里的 `help_with_source` 已停用（legacy，恒 0）：真实帮助/介绍结果属后续阶段的
+`RelationshipOutcome`，未落地前不把它当作帮助信号。
+
 ## 执行
 
 `finch weekly [--json]`（关系质量指标与周报指标由代码算，解读由 LLM 做）。

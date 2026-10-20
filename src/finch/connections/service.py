@@ -7,6 +7,7 @@ record`` 在用户登记真实互动后建议阶段升级（不自动发消息�
 
 from pydantic import BaseModel, Field
 
+from finch.engagement.models import InteractionRecord
 from finch.peers.models import PeerProfile, RelationshipStage
 
 
@@ -77,3 +78,22 @@ def apply_stage_upgrade(
 ) -> PeerProfile:
     """仅当 review 建议更高/休眠阶段时更新；不自动发消息。"""
     return peer.model_copy(update={"relationship_stage": review.suggested_stage})
+
+
+def count_bidirectional_episodes(records: list[InteractionRecord]) -> int:
+    """双向 episode 数：同一 episode 内既有 inbound 又有 outbound 且有实质内容。
+
+    一次接触/会话 = 一个 episode；同一次聊天多条消息仍是一轮。``episode_id`` 缺失时
+    回退到线程或 peer 分组。这是关系阶段升级的证据，替代旧的 ``len(prior)``（记录条数
+    会把两条单向消息误判为二次双向沟通）。
+    """
+    groups: dict[str, set[str]] = {}
+    for r in records:
+        if not (r.published_body.strip() or r.body.strip()):
+            continue
+        key = (
+            r.episode_id
+            or (f"thread:{r.thread_id}" if r.thread_id else f"peer:{r.peer_id}")
+        )
+        groups.setdefault(key, set()).add(r.direction)
+    return sum(1 for d in groups.values() if "inbound" in d and "outbound" in d)

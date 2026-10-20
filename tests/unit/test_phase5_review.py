@@ -17,7 +17,7 @@ from finch.peers.service import PeerService
 
 
 class TestNorthStarMetric:
-    def test_counts_multi_touch_peers(self):
+    def test_counts_cross_domain_bidirectional_peers(self):
         now = datetime(2026, 9, 16, tzinfo=UTC)
         peer = PeerService().from_author(platform="x", author_id="a", username="a")
         recs = [
@@ -34,7 +34,7 @@ class TestNorthStarMetric:
             InteractionRecord(
                 id="r2",
                 peer_id=peer.id,
-                platform="x",
+                platform="reddit",
                 source_url="u2",
                 body="follow-up with substance",
                 occurred_at=now - timedelta(days=1),

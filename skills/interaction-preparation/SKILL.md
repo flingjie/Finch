@@ -35,10 +35,12 @@ description: >
 - 演示/成果事实回填：`finch connect artifact-status --opportunity <id> --artifact <id>
   --execution ran_ok|ran_failed|unclear [--real-material] [--note …]`
   （唯一可将 `not_run` 改为 `ran_*` 的路径）。
-- 用户已在平台发出后登记事实：`finch connections record --person <person_id> --url <url>
-  --body "<正文>" --opportunity <id>`（记录真实互动，不等同于批准）。
+- 用户已在平台发出后登记事实：`finch connections record --person <person_id> [--url <url>]
+  [--body "<正文>"] [--topic <主题>] [--occurred-at <ISO>] [--request-id <id>]
+  [--message-id <id>] [--thread <id>] [--opportunity <id>]`（记录真实互动，不等同于批准）。
 - 获知回应后接续：`finch connections follow-up --opportunity <id> --reply-body "…"
-  [--reply-url …]`（实质回应可生成关联的新 proposed 机会）。
+  [--reply-url …]`（实质回应可生成关联的新 proposed 机会）；无机会时
+  `finch connections follow-up --thread <id> --reply-body "…"`。
 
 ## 输入回退（codex 触发）
 

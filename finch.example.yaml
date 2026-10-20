@@ -214,6 +214,14 @@ engagement:
   snapshot_ttl_hours: 12
   public_expression_requires_approval: true
 
+connections:
+  daily_limit: 3
+  daily_budget_minutes: 15
+  first_contact_review_after_hours: 24
+  first_contact_review_due_hours: 48
+  review_timezone: Asia/Shanghai
+  reply_observation_days: 14
+
 interests:
   long_term_interests:
     - agent reliability        # Agent 工程（保留为一组）

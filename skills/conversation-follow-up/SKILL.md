@@ -16,15 +16,19 @@ description: >
 `finch conversations show` / `finch conversations follow-up` / `ingest` / `note` /
 `commit`），不复制业务逻辑。跟进判定由代码确定性计算；「下一步说什么」由本 Skill 补充。
 
-用户在平台发布后：`finch connections record --person <person_id> --url <url>
---body "<正文>" [--opportunity <id>]`（若有选中的机会）；无机会时用 `finch conversations
-ingest` 登记真实互动。对方有回应后：`finch connections follow-up --opportunity <id>
---reply-body "…" [--reply-url …]`（实质回应可生成关联的新 proposed 机会）。登记后也可用
-`conversations follow-up` 恢复线索上下文。**不要**把生成正文当成已发布。
+用户在平台发布后：`finch connections record --person <person_id> [--url <url>]
+[--body "<正文>"] [--topic <主题>] [--occurred-at <ISO>] [--request-id <id>]
+[--message-id <id>] [--thread <id>] [--opportunity <id>]`（若有选中的机会）；无机会时用
+`finch conversations ingest` 登记真实互动。对方有回应后：`finch connections follow-up
+--opportunity <id> --reply-body "…" [--reply-url …]`（实质回应可生成关联的新 proposed 机会），
+或对已有线索 `finch connections follow-up --thread <id> --reply-body "…"`（无需机会）。
+复查处置：`finch connections review --thread <id> --disposition prepare|waiting|snoozed|no_action|closed`。
+登记后也可用 `conversations follow-up` 恢复线索上下文。**不要**把生成正文当成已发布。
 
 跟进只由真实触发驱动：`new_reply` / `own_commitment` / `new_evidence` /
 `related_update`。提供样本或试用的承诺必须是用户明确记录的 `Commitment`。无回复 ≠ 拒绝；
-时间陈旧 alone 不触发对外联系。
+时间陈旧 alone 不触发对外联系。首触复查窗口（+24h 可审阅、+48h 待处理）是**内部复查**，
+不是对外发送期限；`finch connections today` 把「到期复查」与「具备联系理由」分开呈现。
 
 ## 产出契约（ConversationThread 跟进）
 

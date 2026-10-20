@@ -16,6 +16,16 @@ class ThreadStatus(StrEnum):
     DEFERRED = "deferred"
 
 
+class ReviewDisposition(StrEnum):
+    """首触复查处置：内部复查结果，不是对外发送截止。"""
+
+    PREPARE = "prepare"
+    WAITING = "waiting"
+    SNOOZED = "snoozed"
+    NO_ACTION = "no_action"
+    CLOSED = "closed"
+
+
 class ObservationKind(StrEnum):
     """线程内观察笔记种类（问题 / 当前办法 / 使用反馈）。"""
 
@@ -104,3 +114,8 @@ class ConversationThread(BaseModel):
     important_review_enabled: bool = False
     review_cadence_days: int | None = None
     next_review_at: datetime | None = None
+    # 首触复查窗口（P1）：内部复查时间，非对外发送期限。默认 None（旧线索不回填）。
+    follow_up_review_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    review_disposition: ReviewDisposition | None = None
+    snoozed_until: datetime | None = None

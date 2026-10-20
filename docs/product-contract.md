@@ -41,7 +41,7 @@ Finch 是一个**跨领域学习、连接与表达伙伴**：帮你发现不同�
 
 粉丝数、发帖数、草稿数、点赞、曝光都不是核心成功指标，仅作辅助数据。点赞、愿意试用、实际使用、获得价值、付款分别表述，不合成商业总分。`topic-dialogue` 等模拟讨论是练习上下文，不是同行关系进展，不得计入北极星指标，也不得写入 `InteractionRecord`、`ConversationThread` 或关系指标。
 
-每日连接面：`finch connect daily` 首页呈现一条**首选机会**（0–1 条，可为空）；`--view browse` 按请求展开 50 人分层浏览（5 重点 / 15 摘要 / 30 浏览，同一快照投影）；`connections today` / `people shortlist --today` 独立呈现需回应或兑现的真实承诺。首页不再产生第二个人物池。不再并行走独立的 X/Reddit 搜索刷新路径。
+每日连接面：`finch connect daily` 首页呈现一条**首选机会**（0–1 条，可为空）；`--view browse` 按请求展开 50 人分层浏览（5 重点 / 15 摘要 / 30 浏览，同一快照投影）；`connections today` 输出最多 3 条统一「今日行动」（新回复/承诺优先，首触 +24h 可审阅、+48h 待处理，按 person 去重）；`people shortlist --today` 独立呈现需回应或兑现的线索级承诺。首页不再产生第二个人物池。不再并行走独立的 X/Reddit 搜索刷新路径。
 
 ## 对象所有权
 
@@ -51,8 +51,8 @@ Finch 是一个**跨领域学习、连接与表达伙伴**：帮你发现不同�
 | `Person` | 关系领域 | 跨平台自然人；身份合并需互链或多项弱证据，禁止仅凭同名自动合并。 |
 | `CreatorEvidence` | 关系领域 | 创作者证据卡（≠ 用户 GitHub EvidenceCard 表达管线）；必须引用 `artifact_id`。 |
 | `Opportunity`（新聚合） | 关系领域 | 带生命周期状态机（proposed/selected/ready/parked/closed）的**交流机会**：`entry_kind`（困难/成果/分歧/共同探索/跨领域）+ `why_me`/`why_continue` + 最小贡献 `proposal` + `decision`；快照 + `events.jsonl`，乐观并发 + `request_id` 幂等。`finch connect daily` 首页 0–1 条首选。**不是商业机会。** |
-| `InteractionRecord` | 关系领域 | 单独记录真正发生过的互动事实；`proposal_id` 可空、可 `opportunity_id` 回溯到机会。不能用机会状态替代。 |
-| `ConversationThread` | 关系领域 | 同一同行、同一主题的多次互动串联；问题/workaround/使用反馈以线程笔记形式挂在线索上（必填 `source_ref`）；跟进由新回复/承诺到期/新证据/相关更新触发，时间陈旧 alone 不触发对外联系。重要关系周期回顾默认关闭、用户主动开启。 |
+| `InteractionRecord` | 关系领域 | 单独记录真正发生过的互动事实；`proposal_id` 可空、可 `opportunity_id` 回溯到机会；`thread_id`/`episode_id` 关联线索与接触轮次，`request_id`/`namespace` 提供稳定幂等键。不能用机会状态替代。 |
+| `ConversationThread` | 关系领域 | 同一同行、同一主题的多次互动串联；问题/workaround/使用反馈以线程笔记形式挂在线索上（必填 `source_ref`）；跟进由新回复/承诺到期/新证据/相关更新触发，时间陈旧 alone 不触发对外联系。首触复查窗口（`follow_up_review_at`，+24h 可审阅/+48h 待处理）是内部复查不是发送期限。重要关系周期回顾默认关闭、用户主动开启。 |
 | `ContentJob` | 表达领域 | 只表达用户自己的立场（`AuthorPosition` + `position_revisions` append-only；草稿 ≠ 观点已证实）。来源：个人实践、已发生的对话、用户输入、阅读与作品；外部材料 ≠ 本人经验，正文不伪造个人经历。 |
 | `VoiceProfile` | 表达领域 | 只从用户亲写文本、明确批准样本、用户修改后的最终版本更新；不因发现或试用反馈自动调整。 |
 | `PracticeProfile` | 表达 / 关系共用 | 用户亲自确认的真实实践清单（`practice-profile.yaml`）。只有 `confirmed: true` 的条目可被机会评估的 `why_me` 挂钩、被贡献正文以第一人称引用（带 `[id]`，不越 `boundaries`）。`init` 起草 ≠ 已确认；不因发现或反馈自动更新。 |

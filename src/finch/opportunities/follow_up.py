@@ -15,6 +15,7 @@ from typing import cast
 
 from pydantic import BaseModel, Field
 
+from finch.connections.recording import ConnectionRecorder, record_id_for
 from finch.engagement.models import (
     FeedbackSnapshot,
     InteractionRecord,
@@ -75,9 +76,10 @@ class FollowUpResult:
     reused_interaction: bool = False
 
 
-def _reply_record_id(*, opportunity_id: str, reply_url: str, reply_body: str) -> str:
-    raw = f"{opportunity_id}:{reply_url}:{reply_body}"
-    return f"rec_in_{hashlib.sha256(raw.encode()).hexdigest()[:12]}"
+def _follow_up_request_id(*, previous_id: str, reply_url: str, reply_body: str) -> str:
+    """由 (前次机会, 回应链接, 回应正文) 派生稳定请求 id，作为跟进登记幂等键。"""
+    raw = f"{previous_id}:{reply_url}:{reply_body}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 def _follow_up_opportunity_id(*, previous_id: str, reply_url: str, reply_body: str) -> str:
@@ -128,14 +130,28 @@ def follow_up_opportunity(
     service: OpportunityService,
     interactions: InteractionRecordRepository,
     feedbacks: FeedbackSnapshotRepository | None = None,
+    recorder: ConnectionRecorder | None = None,
+    reply_to_id: str | None = None,
 ) -> FollowUpResult:
-    """登记 inbound 回应 → 判断实质与接续 → 可选创建新 proposed 机会。"""
+    """登记 inbound 回应 → 判断实质与接续 → 可选创建新 proposed 机会。
+
+    幂等键统一走 :func:`finch.connections.recording.record_id_for`（稳定 request_id 派生
+    自前次机会 + 回应内容）；提供 ``recorder`` 时同时绑定线索与 episode。
+    """
     if not reply_body.strip() and not reply_url.strip():
         raise ValueError("reply_body or reply_url is required")
-    record_id = _reply_record_id(
-        opportunity_id=previous.id,
-        reply_url=reply_url,
-        reply_body=reply_body,
+
+    now = datetime.now(UTC)
+    request_id = _follow_up_request_id(
+        previous_id=previous.id, reply_url=reply_url, reply_body=reply_body
+    )
+    record_id = record_id_for(
+        namespace="connections.follow-up",
+        platform_message_id=None,
+        request_id=request_id,
+        source_url=reply_url,
+        peer_id=peer_id,
+        occurred_at=now,
     )
     existing = interactions.get(record_id)
     if existing is not None:
@@ -151,23 +167,39 @@ def follow_up_opportunity(
             reused_interaction=True,
         )
 
-    now = datetime.now(UTC)
-    record = InteractionRecord(
-        id=record_id,
-        opportunity_id=previous.id,
-        peer_id=peer_id,
-        platform=platform,
-        source_url=reply_url or f"manual:{previous.id}:{record_id}",
-        published_body=reply_body,
-        body=reply_body,
-        occurred_at=now,
-        observed_at=now,
-        direction="inbound",
-        verification_status=VerificationStatus.USER_ATTESTED,
-        provenance="connections.follow-up",
-        platform_message_id=reply_url or None,
-    )
-    interactions.upsert(record)
+    if recorder is not None:
+        result = recorder.record(
+            peer_id=peer_id,
+            platform=platform,
+            body=reply_body,
+            direction="inbound",
+            occurred_at=now,
+            source_url=reply_url,
+            request_id=request_id,
+            namespace="connections.follow-up",
+            reply_to_id=reply_to_id,
+            opportunity_id=previous.id,
+            verification_status=VerificationStatus.USER_ATTESTED,
+        )
+        record = result.record
+    else:
+        record = InteractionRecord(
+            id=record_id,
+            opportunity_id=previous.id,
+            peer_id=peer_id,
+            platform=platform,
+            source_url=reply_url or f"manual:{previous.id}:{record_id}",
+            published_body=reply_body,
+            body=reply_body,
+            occurred_at=now,
+            observed_at=now,
+            direction="inbound",
+            verification_status=VerificationStatus.USER_ATTESTED,
+            provenance="connections.follow-up",
+            platform_message_id=reply_url or None,
+            reply_to_id=reply_to_id,
+        )
+        interactions.upsert(record)
 
     draft = assess_follow_up(
         runner,

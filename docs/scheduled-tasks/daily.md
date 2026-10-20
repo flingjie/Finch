@@ -1,5 +1,5 @@
 > **已过时（superseded）**：本文描述的 daily 编排（`run_daily` / `ideas search`）已移除。
-> 当前每日入口是 `finch connect daily`（可选 `--refresh`）+ `finch connect today` /
+> 当前每日入口是 `finch connect daily`（可选 `--refresh`）+ `finch connections today` /
 > `finch conversations follow-up` + 按需 `finch ideas create` / `connect create`。
 > 保留作历史参考，不反映当前架构。不要新建 `finch run daily`。
 

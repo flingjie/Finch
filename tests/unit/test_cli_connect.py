@@ -1099,7 +1099,7 @@ def test_people_shortlist_today_lists_commitments(monkeypatch, tmp_path):
     assert [t["id"] for t in json.loads(r.output)] == ["t_pending"]
 
 
-def test_connections_today_delegates_to_commitments(monkeypatch, tmp_path):
+def test_connections_today_lists_actions(monkeypatch, tmp_path):
     settings = _settings(tmp_path)
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -1109,7 +1109,8 @@ def test_connections_today_delegates_to_commitments(monkeypatch, tmp_path):
 
     r = CliRunner().invoke(app, ["connections", "today", "--json"])
     assert r.exit_code == 0, r.output
-    assert [t["id"] for t in json.loads(r.output)] == ["t_pending"]
+    actions = json.loads(r.output)
+    assert [a["primary_thread_id"] for a in actions] == ["t_pending"]
 
 
 def test_people_shortlist_all_lists_every_thread(monkeypatch, tmp_path):

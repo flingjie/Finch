@@ -32,7 +32,7 @@ class RelationshipMetrics(BaseModel):
     stale_conversations: int = 0           # 需要跟进（超期/有未解问题）的对话数
     # Value Discovery P4 diagnosis (sourced counts; not a relationship score).
     bidirectional_threads: int = 0         # 双方均有消息的线索
-    help_with_source: int = 0              # usage_feedback 或带 artifact 的实验结果
+    help_with_source: int = 0              # legacy：真实帮助/介绍结果属 P3，恒 0
     open_commitments: int = 0              # 未完成承诺
     presented_opportunities: int = 0
     worth_following: int = 0
@@ -48,10 +48,11 @@ def active_cross_domain_relationships_30d(
     now: datetime,
     window_days: int = 30,
 ) -> int:
-    """北极星：最近 N 天内双方至少两次有具体内容的互动的人数。
+    """北极星：最近 N 天内双方至少两次有具体内容的互动、且跨至少两个平台的人数。
 
-    「有具体内容」= published_body/body 非空。双向用 direction 集合近似；
-    若方向未知，则同一 peer ≥2 条 outbound/inbound 记录也计入（用户手工登记）。
+    「有具体内容」= published_body/body 非空。双向要求窗口内既有 inbound 又有 outbound
+    （不再把两条单向记录当成双向）。跨域 = 窗口内实际出现 ≥2 个不同平台（P0+P1 的确定性
+    代理；真实主题域标签与 RelationshipOutcome 属 P3，不在此处推断）。
     """
     from datetime import timedelta
 
@@ -61,22 +62,16 @@ def active_cross_domain_relationships_30d(
         if rec.occurred_at >= cutoff and (rec.published_body.strip() or rec.body.strip()):
             by_peer.setdefault(rec.peer_id, []).append(rec)
 
-    peer_platforms = {
-        p.id: {i.platform for i in p.platform_identities} for p in peers
-    }
     count = 0
-    for peer_id, recs in by_peer.items():
+    for recs in by_peer.values():
         if len(recs) < 2:
             continue
         dirs = {r.direction for r in recs}
         bidirectional = "inbound" in dirs and "outbound" in dirs
-        multi_touch = len(recs) >= 2
-        if not (bidirectional or multi_touch):
+        if not bidirectional:
             continue
-        # Cross-domain: peer has >1 platform identity, or we simply count as
-        # cross-domain relationship candidate when peer exists in roster.
-        platforms = peer_platforms.get(peer_id, set())
-        if len(platforms) >= 1:
+        platforms = {r.platform for r in recs}
+        if len(platforms) >= 2:
             count += 1
     return count
 
@@ -184,29 +179,22 @@ def compute_relationship_metrics(
     prepared_count: int = 0,
 ) -> RelationshipMetrics:
     """从关系领域数据聚合关系质量指标（纯函数，无 IO）。"""
-    from finch.conversations.models import CommitmentStatus, ObservationKind
-    from finch.conversations.service import active_observation_notes
+    from finch.conversations.models import CommitmentStatus
 
     per_peer: dict[str, int] = {}
-    dirs_by_thread_peer: dict[str, set[str]] = {}
     for rec in interactions:
         per_peer[rec.peer_id] = per_peer.get(rec.peer_id, 0) + 1
-        dirs_by_thread_peer.setdefault(rec.peer_id, set()).add(rec.direction)
 
+    # 双向按「线程内」计算：同一线程既有 inbound 又有 outbound 且 ≥2 条互动。
+    # 不再按 peer 聚合方向，避免把同一人不同主题的互动拼成一个「双向」。
+    by_id = {r.id: r for r in interactions}
     bidirectional = 0
-    help_count = 0
     open_cmts = 0
     for t in threads:
-        peer_dirs = dirs_by_thread_peer.get(t.peer_id, set())
-        # Approximate bidirectional: both inbound and outbound on same peer,
-        # or ≥2 interactions with substance (notes/body).
-        if "inbound" in peer_dirs and "outbound" in peer_dirs and len(t.interaction_ids) >= 2:
+        thread_recs = [by_id[i] for i in t.interaction_ids if i in by_id]
+        dirs = {r.direction for r in thread_recs}
+        if "inbound" in dirs and "outbound" in dirs and len(thread_recs) >= 2:
             bidirectional += 1
-        notes = active_observation_notes(t)
-        if any(n.kind == ObservationKind.USAGE_FEEDBACK for n in notes):
-            help_count += 1
-        if any(e.actual_result.strip() and e.artifact_ref for e in t.experiments):
-            help_count += 1
         open_cmts += sum(
             1 for c in t.commitments if c.status is CommitmentStatus.OPEN
         )
@@ -223,7 +211,7 @@ def compute_relationship_metrics(
         collaboration_signals=sum(1 for t in threads if t.agreements or t.possible_experiments),
         stale_conversations=sum(1 for t in threads if svc.needs_follow_up(t, now=now)),
         bidirectional_threads=bidirectional,
-        help_with_source=help_count,
+        help_with_source=0,  # legacy：真实帮助/介绍结果属 P3（RelationshipOutcome）
         open_commitments=open_cmts,
         presented_opportunities=presentation_count,
         worth_following=worth_following_count,
@@ -245,7 +233,7 @@ def render_relationship_metrics(m: RelationshipMetrics) -> str:
             f"- 有实质反馈的互动: {m.meaningful_interactions}",
             f"- 继续的对话: {m.continued_conversations}",
             f"- 双向有内容线索: {m.bidirectional_threads}",
-            f"- 有来源的帮助: {m.help_with_source}",
+            f"- 有来源的帮助(legacy): {m.help_with_source}",
             f"- 未完成承诺: {m.open_commitments}",
             f"- 重复互动同行: {m.repeat_peers}",
             f"- 新相关同行: {m.new_relevant_peers}",

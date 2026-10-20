@@ -6,9 +6,17 @@ from finch.conversations.models import (
     Commitment,
     CommitmentStatus,
     FollowUpTrigger,
+    ReviewDisposition,
     ThreadStatus,
 )
-from finch.conversations.service import ConversationService, record_id_for, thread_id_for
+from finch.conversations.service import (
+    ConversationService,
+    due_for_review,
+    first_contact_review_state,
+    has_contact_reason,
+    record_id_for,
+    thread_id_for,
+)
 from finch.engagement.models import VerificationStatus
 from finch.storage.repositories import ConversationThreadRepository, InteractionRecordRepository
 from finch.storage.workspace import Workspace
@@ -246,3 +254,69 @@ def test_mark_important_review_due_without_auto_greet():
     assert thread.next_review_at is not None
     assert svc.needs_follow_up(thread, now=now) is False
     assert svc.needs_follow_up(thread, now=thread.next_review_at) is True
+
+
+def test_contact_reason_and_review_due_are_distinct():
+    svc = ConversationService()
+    now = datetime(2026, 9, 8, tzinfo=UTC)
+    # 有未解问题 → 有接触理由，但无复查到期
+    with_q = svc.open_thread(peer_id="peer_abc", topic="t").model_copy(
+        update={"open_questions": ["how?"]}
+    )
+    assert has_contact_reason(with_q, now=now) is True
+    assert due_for_review(with_q, now=now) is False
+    # 首触复查窗口到期且未复查 → 复查到期，但无接触理由
+    review_due = svc.open_thread(peer_id="peer_abc", topic="t").model_copy(
+        update={"follow_up_review_at": now - timedelta(hours=1)}
+    )
+    assert has_contact_reason(review_due, now=now) is False
+    assert due_for_review(review_due, now=now) is True
+
+
+def test_first_contact_review_state_transitions():
+    svc = ConversationService()
+    anchor = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)
+    thread = svc.open_first_contact_review(
+        svc.open_thread(peer_id="peer_abc", topic="t"),
+        anchor=anchor,
+        review_after_hours=24,
+    )
+    assert thread.follow_up_review_at == anchor + timedelta(hours=24)
+    # before review_at → none
+    assert first_contact_review_state(
+        thread, now=anchor + timedelta(hours=23), review_after_hours=24, review_due_hours=48
+    ) == "none"
+    # after 24h → reviewable
+    assert first_contact_review_state(
+        thread, now=anchor + timedelta(hours=25), review_after_hours=24, review_due_hours=48
+    ) == "reviewable"
+    # after 48h → attention
+    assert first_contact_review_state(
+        thread, now=anchor + timedelta(hours=49), review_after_hours=24, review_due_hours=48
+    ) == "attention"
+    # reviewed → cleared
+    cleared = svc.mark_reviewed(
+        thread, disposition=ReviewDisposition.WAITING, now=anchor + timedelta(hours=25)
+    )
+    assert cleared.reviewed_at is not None
+    assert cleared.review_disposition is ReviewDisposition.WAITING
+    assert first_contact_review_state(
+        cleared, now=anchor + timedelta(hours=49), review_after_hours=24, review_due_hours=48
+    ) == "cleared"
+
+
+def test_mark_reviewed_snoozed_sets_snoozed_until():
+    svc = ConversationService()
+    now = datetime(2026, 9, 8, tzinfo=UTC)
+    until = now + timedelta(days=3)
+    thread = svc.open_thread(peer_id="peer_abc", topic="t").model_copy(
+        update={"follow_up_review_at": now - timedelta(hours=1)}
+    )
+    snoozed = svc.mark_reviewed(
+        thread, disposition=ReviewDisposition.SNOOZED, now=now, snoozed_until=until
+    )
+    assert snoozed.review_disposition is ReviewDisposition.SNOOZED
+    assert snoozed.snoozed_until == until
+    assert first_contact_review_state(
+        snoozed, now=now + timedelta(hours=1), review_after_hours=24, review_due_hours=48
+    ) == "snoozed"

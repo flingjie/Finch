@@ -170,6 +170,12 @@ class InteractionRecord(BaseModel):
     reply_to_id: str | None = None
     verification_status: VerificationStatus = VerificationStatus.UNVERIFIED
     provenance: str = ""
+    # 关联线索与接触轮次（统一互动事实，P0）。默认空以兼容旧记录。
+    thread_id: str | None = None
+    episode_id: str | None = None
+    # 稳定请求幂等键（手工登记用）；命名空间区分不同写入入口。
+    request_id: str | None = None
+    namespace: str = "default"
 
 
 class FeedbackSnapshot(BaseModel):

@@ -10,7 +10,8 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Literal
 
 from finch.engagement.models import InteractionRecord, VerificationStatus
 
@@ -21,6 +22,7 @@ from .models import (
     FollowUpTrigger,
     MiniExperiment,
     ObservationKind,
+    ReviewDisposition,
     ThreadNote,
     ThreadStatus,
 )
@@ -99,6 +101,80 @@ def refuse_polite_interest_as_usage_success(kind: ObservationKind, text: str) ->
 def active_observation_notes(thread: ConversationThread) -> list[ThreadNote]:
     """未 superseded 的 observation 笔记。"""
     return [n for n in thread.observation_notes if not n.superseded]
+
+
+def has_contact_reason(thread: ConversationThread, *, now: datetime) -> bool:
+    """对外接触理由：新回复 / 到期或无期承诺 / 未解问题。不含内部复查窗口。
+
+    与 :func:`due_for_review` 分离：接触理由意味着「有东西可发/该回」，复查到期只意味着
+    「用户该看一眼」。旧 :meth:`ConversationService.needs_follow_up` 把两者混在一起，
+    这里拆开供今日投影组合。
+    """
+    if thread.status is ThreadStatus.CLOSED:
+        return False
+    if thread.status is ThreadStatus.DEFERRED:
+        if thread.defer_until is not None and thread.defer_until > now:
+            return False
+    if thread.pending_triggers:
+        return True
+    for c in thread.commitments:
+        if c.status is not CommitmentStatus.OPEN:
+            continue
+        # Open commitment with no due_at still needs follow-up (explicit promise).
+        if c.due_at is None or c.due_at <= now:
+            return True
+    if thread.open_questions or thread.open_question_notes:
+        return True
+    return False
+
+
+def due_for_review(thread: ConversationThread, *, now: datetime) -> bool:
+    """内部复查到期：首触复查窗口到期且未复查，或重要关系回顾到期。不含接触理由。"""
+    if thread.status is ThreadStatus.CLOSED:
+        return False
+    if thread.status is ThreadStatus.DEFERRED:
+        if thread.defer_until is not None and thread.defer_until > now:
+            return False
+    if (
+        thread.follow_up_review_at is not None
+        and thread.follow_up_review_at <= now
+        and thread.reviewed_at is None
+        and thread.review_disposition
+        not in {ReviewDisposition.SNOOZED, ReviewDisposition.CLOSED}
+    ):
+        return True
+    if (
+        thread.important_review_enabled
+        and thread.next_review_at is not None
+        and thread.next_review_at <= now
+    ):
+        return True
+    return False
+
+
+def first_contact_review_state(
+    thread: ConversationThread,
+    *,
+    now: datetime,
+    review_after_hours: int,
+    review_due_hours: int,
+) -> Literal["none", "reviewable", "attention", "cleared", "snoozed"]:
+    """首触复查窗口状态。``attention`` = 已过 due 小时仍未复查（提示处理）；``reviewable``
+    = 已过 after 小时可审阅。复查或 snoozed/closed 后不再提示。"""
+    if thread.follow_up_review_at is None:
+        return "none"
+    if thread.review_disposition in {ReviewDisposition.SNOOZED, ReviewDisposition.CLOSED}:
+        return "snoozed"
+    if thread.reviewed_at is not None:
+        return "cleared"
+    due_at = thread.follow_up_review_at + timedelta(
+        hours=review_due_hours - review_after_hours
+    )
+    if now >= due_at:
+        return "attention"
+    if now >= thread.follow_up_review_at:
+        return "reviewable"
+    return "none"
 
 
 class ConversationService:
@@ -274,36 +350,44 @@ class ConversationService:
     def needs_follow_up(
         self, thread: ConversationThread, *, now: datetime, stale_days: int = 7
     ) -> bool:
-        """是否需要跟进（可对外呈现）。
+        """是否需要跟进（可对外呈现）。兼容包装：对外接触理由 或 内部复查到期。
 
-        CLOSED 不跟进；DEFERRED 且未到期不跟进。
-        触发：pending_triggers、到期开放承诺、未解问题、到期重要关系回顾。
-        未来到期的承诺 alone 不触发；``stale_days`` 保留签名兼容，但**单独过期不触发**对外联系。
+        CLOSED 不跟进；DEFERRED 且未到期不跟进。``stale_days`` 保留签名兼容，但**单独
+        过期不触发**对外联系。旧调用方无需改；新逻辑拆分为 :func:`has_contact_reason`
+        与 :func:`due_for_review`。
         """
         del stale_days  # time alone must not contact the other person
-        if thread.status is ThreadStatus.CLOSED:
-            return False
-        if thread.status is ThreadStatus.DEFERRED:
-            if thread.defer_until is not None and thread.defer_until > now:
-                return False
-        if thread.pending_triggers:
-            return True
-        for c in thread.commitments:
-            if c.status is not CommitmentStatus.OPEN:
-                continue
-            # Open commitment with no due_at still needs follow-up (explicit promise).
-            # Future due_at alone does not fire until due.
-            if c.due_at is None or c.due_at <= now:
-                return True
-        if thread.open_questions or thread.open_question_notes:
-            return True
-        if (
-            thread.important_review_enabled
-            and thread.next_review_at is not None
-            and thread.next_review_at <= now
-        ):
-            return True
-        return False
+        return has_contact_reason(thread, now=now) or due_for_review(thread, now=now)
+
+    def open_first_contact_review(
+        self,
+        thread: ConversationThread,
+        *,
+        anchor: datetime,
+        review_after_hours: int,
+    ) -> ConversationThread:
+        """首触复查窗口：anchor（真实发生时间）+ after 小时可审阅。仅用于新建空线程。"""
+        return thread.model_copy(
+            update={
+                "follow_up_review_at": anchor + timedelta(hours=review_after_hours)
+            }
+        )
+
+    def mark_reviewed(
+        self,
+        thread: ConversationThread,
+        *,
+        disposition: ReviewDisposition,
+        now: datetime,
+        snoozed_until: datetime | None = None,
+    ) -> ConversationThread:
+        """登记复查处置；SNOOZED 时记录 snoozed_until，其它处置清空 snoozed_until。"""
+        updates: dict = {
+            "reviewed_at": now,
+            "review_disposition": disposition,
+            "snoozed_until": snoozed_until if disposition is ReviewDisposition.SNOOZED else None,
+        }
+        return thread.model_copy(update=updates)
 
     def is_stale_for_internal_review(
         self, thread: ConversationThread, *, now: datetime, stale_days: int = 7

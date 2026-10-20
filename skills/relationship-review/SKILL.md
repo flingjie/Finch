@@ -7,13 +7,15 @@ description: >
 
 # relationship-review
 
-输入：PeerProfile + 双向交流次数 + 是否启动实验/共同产出 + 自然后续理由。
+输入：PeerProfile + 双向 episode 数（同一接触轮内既有 inbound 又有 outbound 且含实质
+内容，由 `count_bidirectional_episodes` 计算；**不是记录条数**）+ 是否启动实验/共同产出 +
+自然后续理由。
 输出：RelationshipReview（suggested_stage / should_contact）。
 
 ## 升级规则
 
 - engaged：用户确认已进行一次公开互动
-- recurring：至少两次有内容的双向交流
+- recurring：至少两个有内容的双向 episode（两条单向消息不算一次双向）
 - practicing：围绕共同问题启动了实验或验证
 - collaborating：共同产生了可见成果
 - 时间陈旧 alone 不触发对外联系；可建议 dormant

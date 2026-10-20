@@ -6,7 +6,7 @@ import json
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import Annotated, cast
 
 import typer
 import yaml
@@ -3715,8 +3715,28 @@ def people_shortlist(
 def connections_today(
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """今日承诺面：需回应/兑现的真实对话线索（委托 people shortlist --today）。"""
-    people_shortlist(today=True, as_json=as_json)
+    """今日行动：最多 3 条「可处理、有理由、可停止」的行动（按 person 去重）。"""
+    from finch.connections.today import build_today_actions, render_today_actions
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    actions = build_today_actions(
+        threads=ConversationThreadRepository(ws).list_all(),
+        interactions=InteractionRecordRepository(ws).list_all(),
+        peers=PeerRepository(ws).list_all(),
+        now=datetime.now(UTC),
+        review_after_hours=settings.connections.first_contact_review_after_hours,
+        review_due_hours=settings.connections.first_contact_review_due_hours,
+        budget_minutes=settings.connections.daily_budget_minutes,
+        limit=settings.connections.daily_limit,
+    )
+    if as_json:
+        typer.echo(json.dumps(
+            [a.model_dump(mode="json") for a in actions], ensure_ascii=False, indent=2
+        ))
+        return
+    typer.echo(render_today_actions(actions))
 
 
 @connections_app.command("record")
@@ -3725,12 +3745,17 @@ def connections_record(
     url: str = typer.Option("", "--url", help="互动链接（可选）"),
     body: str = typer.Option("", "--body", help="已发送正文摘要"),
     platform: str = typer.Option("x", "--platform", help="平台"),
-    direction: str = typer.Option("outbound", "--direction", help="outbound|inbound"),
+    direction: str = typer.Option("outbound", "--direction", help="outbound|inbound|unknown"),
     opportunity: str = typer.Option("", "--opportunity", help="关联的首选机会 ID（可选）"),
+    occurred_at: str | None = typer.Option(None, "--occurred-at", help="发生时间 ISO8601"),
+    request_id: str | None = typer.Option(None, "--request-id", help="稳定幂等请求 ID"),
+    thread: str | None = typer.Option(None, "--thread", help="对话线索 ID（可选）"),
+    message_id: str | None = typer.Option(None, "--message-id", help="平台消息 ID"),
+    topic: str = typer.Option("general", "--topic", help="线索主题"),
 ) -> None:
-    """用户亲自发布后登记互动（MVP 不验证远端是否真正发布）。"""
-    from finch.connections.service import apply_stage_upgrade, review_relationship
-    from finch.engagement.models import InteractionRecord, VerificationStatus
+    """登记一次真实互动（幂等；可补录发生时间、绑定线索）。"""
+    from finch.connections.recording import ConnectionRecorder
+    from finch.engagement.models import VerificationStatus
     from finch.peers.person_service import PersonRepository, PersonService
 
     settings = load_settings()
@@ -3755,39 +3780,47 @@ def connections_record(
     if peer.person_id != person_id:
         peer = peer.model_copy(update={"person_id": person_id})
 
-    record_id = f"rec_{hashlib.sha256(f'{peer.id}:{url}:{body}'.encode()).hexdigest()[:12]}"
-    now = datetime.now(UTC)
-    record = InteractionRecord(
-        id=record_id,
+    if occurred_at:
+        occurred = datetime.fromisoformat(occurred_at)
+        if occurred.tzinfo is None:
+            occurred = occurred.replace(tzinfo=UTC)
+    else:
+        occurred = datetime.now(UTC)
+
+    recorder = ConnectionRecorder(
+        interactions=InteractionRecordRepository(ws),
+        threads=ConversationThreadRepository(ws),
+        peers=peer_repo,
+    )
+    result, updated = recorder.record_and_project(
+        peer=peer,
+        person_id=person_id,
+        natural_next_reason="user recorded a public interaction",
         peer_id=peer.id,
         platform=platform,
-        source_url=url or f"manual:{peer.id}",
-        published_body=body,
         body=body,
-        occurred_at=now,
-        observed_at=now,
-        direction=cast(Literal["outbound", "inbound", "unknown"], direction),
-        verification_status=VerificationStatus.USER_ATTESTED,
-        provenance="connections.record",
+        direction=direction,
+        occurred_at=occurred,
+        source_url=url,
+        platform_message_id=message_id or None,
+        request_id=request_id,
+        namespace="connections.record",
+        topic=topic,
+        thread_id=thread or None,
         opportunity_id=opportunity or None,
+        verification_status=VerificationStatus.USER_ATTESTED,
+        review_after_hours=settings.connections.first_contact_review_after_hours,
     )
-    InteractionRecordRepository(ws).upsert(record)
-
-    prior = InteractionRecordRepository(ws).list_by_peer(peer.id)
-    review = review_relationship(
-        peer,
-        person_id=person_id,
-        bidirectional_exchanges=len(prior),
-        natural_next_reason="user recorded a public interaction",
+    suffix = "" if result.created else " (reused)"
+    typer.echo(
+        f"recorded {result.record.id}{suffix}; stage → {updated.relationship_stage.value}"
     )
-    updated = apply_stage_upgrade(peer, review)
-    peer_repo.upsert(updated)
-    typer.echo(f"recorded {record.id}; stage → {updated.relationship_stage.value}")
 
 
 @connections_app.command("follow-up")
 def connections_follow_up(
-    opportunity: str = typer.Option(..., "--opportunity", help="前次机会 ID"),
+    opportunity: str = typer.Option("", "--opportunity", help="前次机会 ID（与 --thread 二选一）"),
+    thread: str | None = typer.Option(None, "--thread", help="对话线索 ID（无需机会）"),
     reply_body: str = typer.Option("", "--reply-body", help="对方回应正文"),
     reply_url: str = typer.Option("", "--reply-url", help="对方回应链接"),
     person: str = typer.Option(
@@ -3796,10 +3829,10 @@ def connections_follow_up(
     platform: str = typer.Option("x", "--platform", help="平台"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """获知真实回应后提出接续建议（登记 inbound + 可选新 proposed 机会）。"""
-    from finch.opportunities.follow_up import follow_up_opportunity
+    """获知真实回应后登记 inbound 并可选接续（--thread 无需既有机会）。"""
+    from finch.connections.recording import ConnectionRecorder
+    from finch.engagement.models import VerificationStatus
     from finch.peers.person_service import PersonRepository
-    from finch.storage.repositories import FeedbackSnapshotRepository
 
     if not reply_body.strip() and not reply_url.strip():
         typer.echo("pass --reply-body and/or --reply-url")
@@ -3807,6 +3840,45 @@ def connections_follow_up(
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
+
+    if thread:
+        t = ConversationThreadRepository(ws).get(thread)
+        if t is None:
+            typer.echo(f"thread not found: {thread}")
+            raise typer.Exit(code=1)
+        recorder = ConnectionRecorder(
+            interactions=InteractionRecordRepository(ws),
+            threads=ConversationThreadRepository(ws),
+        )
+        recorded = recorder.record(
+            peer_id=t.peer_id,
+            platform=platform,
+            body=reply_body,
+            direction="inbound",
+            occurred_at=datetime.now(UTC),
+            source_url=reply_url,
+            namespace="connections.follow-up",
+            thread_id=thread,
+            verification_status=VerificationStatus.USER_ATTESTED,
+            review_after_hours=settings.connections.first_contact_review_after_hours,
+        )
+        if as_json:
+            typer.echo(json.dumps({
+                "interaction_id": recorded.record.id,
+                "reused_interaction": not recorded.created,
+            }, ensure_ascii=False, indent=2))
+        else:
+            suffix = "" if recorded.created else " (reused)"
+            typer.echo(f"recorded {recorded.record.id}{suffix}")
+        return
+
+    if not opportunity:
+        typer.echo("pass --thread or --opportunity")
+        raise typer.Exit(code=1)
+
+    from finch.opportunities.follow_up import follow_up_opportunity
+    from finch.storage.repositories import FeedbackSnapshotRepository
+
     opp_repo = PreferredOpportunityRepository(ws)
     previous = opp_repo.get(opportunity)
     if previous is None:
@@ -3836,6 +3908,10 @@ def connections_follow_up(
         raise typer.Exit(code=1)
 
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    recorder = ConnectionRecorder(
+        interactions=InteractionRecordRepository(ws),
+        threads=ConversationThreadRepository(ws),
+    )
     result = follow_up_opportunity(
         previous=previous,
         reply_body=reply_body,
@@ -3846,6 +3922,7 @@ def connections_follow_up(
         service=OpportunityService(opp_repo),
         interactions=InteractionRecordRepository(ws),
         feedbacks=FeedbackSnapshotRepository(ws),
+        recorder=recorder,
     )
     if as_json:
         typer.echo(json.dumps({
@@ -3869,6 +3946,85 @@ def connections_follow_up(
         typer.echo("\n".join(_render_preferred_opportunity(result.opportunity)))
     else:
         typer.echo(result.skip_reason or "暂无接续建议")
+
+
+@connections_app.command("review")
+def connections_review(
+    thread: str = typer.Argument(..., help="对话线索 ID"),
+    disposition: str = typer.Option(
+        ..., "--disposition", help="prepare|waiting|snoozed|no_action|closed"
+    ),
+    until: str | None = typer.Option(None, "--until", help="snoozed 到期时间 ISO8601"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """登记首触复查处置（内部复查，不是对外发送期限）。"""
+    from finch.conversations.models import ReviewDisposition
+    from finch.conversations.service import ConversationService
+
+    try:
+        disp = ReviewDisposition(disposition)
+    except ValueError:
+        typer.echo(f"unknown disposition: {disposition}")
+        raise typer.Exit(code=1) from None
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = ConversationThreadRepository(ws)
+    t = repo.get(thread)
+    if t is None:
+        typer.echo(f"thread not found: {thread}")
+        raise typer.Exit(code=1)
+    snoozed_until = None
+    if until:
+        snoozed_until = datetime.fromisoformat(until)
+        if snoozed_until.tzinfo is None:
+            snoozed_until = snoozed_until.replace(tzinfo=UTC)
+    updated = ConversationService().mark_reviewed(
+        t, disposition=disp, now=datetime.now(UTC), snoozed_until=snoozed_until
+    )
+    repo.upsert(updated)
+    if as_json:
+        typer.echo(json.dumps(updated.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"reviewed {thread} → {disp.value}")
+
+
+@connections_app.command("audit")
+def connections_audit(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """审计关系数据五类异常：重复/未知方向/孤立/未确认身份/未来时间。"""
+    from dataclasses import asdict
+
+    from finch.connections.audit import audit_connections
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    report = audit_connections(
+        interactions=InteractionRecordRepository(ws).list_all(),
+        threads=ConversationThreadRepository(ws).list_all(),
+        peers=PeerRepository(ws).list_all(),
+        now=datetime.now(UTC),
+    )
+    if as_json:
+        typer.echo(json.dumps(asdict(report), ensure_ascii=False, indent=2))
+        return
+    lines = [
+        "connection data audit",
+        f"- duplicate messages: {len(report.duplicate_messages)}",
+    ]
+    for d in report.duplicate_messages:
+        lines.append(f"    {d['a']} ↔ {d['b']} ({d['kind']}={d['value']})")
+    lines.append(f"- unknown direction: {len(report.unknown_direction)}")
+    lines += [f"    {rid}" for rid in report.unknown_direction]
+    lines.append(f"- orphan interactions: {len(report.orphan_interactions)}")
+    lines += [f"    {rid}" for rid in report.orphan_interactions]
+    lines.append(f"- unconfirmed identity: {len(report.unconfirmed_identity)}")
+    lines += [f"    {rid}" for rid in report.unconfirmed_identity]
+    lines.append(f"- future occurred_at: {len(report.future_occurred_at)}")
+    lines += [f"    {rid}" for rid in report.future_occurred_at]
+    typer.echo("\n".join(lines))
 
 
 @collisions_app.command("generate")
@@ -4564,6 +4720,7 @@ def conversations_ingest(
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
     """导入一条已发生的互动事实（不要求发布批准；幂等保留原发生时间）。"""
+    from finch.connections.recording import ConnectionRecorder
     from finch.conversations.models import FollowUpTrigger, ObservationKind
     from finch.engagement.models import VerificationStatus
 
@@ -4573,11 +4730,6 @@ def conversations_ingest(
     svc = ConversationService()
     records = InteractionRecordRepository(ws)
     threads = ConversationThreadRepository(ws)
-    existing = None
-    if message_id:
-        existing = records.find_by_platform_message_id(message_id)
-    elif url:
-        existing = records.find_by_source_url(url)
     now = datetime.now(UTC)
     verification = (
         VerificationStatus.USER_ATTESTED if attested else VerificationStatus.UNVERIFIED
@@ -4586,25 +4738,26 @@ def conversations_ingest(
     if not body_text and not url:
         typer.echo("provide --body or --url")
         raise typer.Exit(code=1)
-    rec = svc.ingest_record(
-        existing,
+
+    recorder = ConnectionRecorder(interactions=records, threads=threads)
+    result = recorder.record(
         peer_id=peer_id,
         platform=platform,
-        source_url=url or f"local:{message_id or 'unknown'}",
         body=body_text or "[unknown body]",
-        occurred_at=existing.occurred_at if existing else now,
-        platform_message_id=message_id,
         direction=direction,
+        occurred_at=now,
+        source_url=url or f"local:{message_id or 'unknown'}",
+        platform_message_id=message_id,
+        namespace="default",
+        provenance="ingest",
+        topic=topic,
         verification_status=verification,
         observed_at=now,
+        review_after_hours=settings.connections.first_contact_review_after_hours,
     )
-    records.upsert(rec)
-    thread = threads.get(ConversationService().open_thread(peer_id=peer_id, topic=topic).id)
-    if thread is None:
-        thread = svc.open_thread(peer_id=peer_id, topic=topic, root_message_id=message_id)
-    thread = svc.append_interaction(thread, rec.id, occurred_at=rec.occurred_at)
-    if direction == "inbound":
-        thread = svc.add_trigger(thread, FollowUpTrigger.NEW_REPLY)
+    rec = result.record
+    thread = result.thread
+
     if trigger:
         try:
             thread = svc.add_trigger(thread, FollowUpTrigger(trigger))

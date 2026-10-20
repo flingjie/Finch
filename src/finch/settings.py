@@ -415,6 +415,21 @@ class DailyPeopleSettings(BaseModel):
     cooldown_days: int = 7
 
 
+class ConnectionsSettings(BaseModel):
+    """连接行动域配置（P0+P1：统一互动事实 + 首触复查 + 今日行动）。
+
+    ``first_contact_review_after_hours`` / ``first_contact_review_due_hours`` 定义首触
+    复查窗口（+24h 可审阅、+48h 显示待处理）；这是内部复查时间，不是对外发送期限。
+    """
+
+    daily_limit: int = Field(default=3, ge=1)
+    daily_budget_minutes: int = Field(default=15, ge=1)
+    first_contact_review_after_hours: int = Field(default=24, ge=1)
+    first_contact_review_due_hours: int = Field(default=48, ge=1)
+    review_timezone: str = "Asia/Shanghai"
+    reply_observation_days: int = Field(default=14, ge=1)
+
+
 class DiscoverySettings(BaseModel):
     """发现轨道配置（每日 50 人）。
 
@@ -456,6 +471,7 @@ class Settings(BaseModel):
     engagement: EngagementSettings = Field(default_factory=EngagementSettings)
     interests: InterestsSettings = Field(default_factory=InterestsSettings)
     discovery: DiscoverySettings = Field(default_factory=DiscoverySettings)
+    connections: ConnectionsSettings = Field(default_factory=ConnectionsSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
     notion: NotionSettings = Field(default_factory=NotionSettings)
