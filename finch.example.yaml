@@ -154,9 +154,10 @@ discovery:
     min_artifacts_priority: 2
     cooldown_days: 7
 
+# 顶层 twitter 配置只服务于手动命令 `finch twitter search`；仅 `queries` 被读取。
+# daily_limit / per_query_limit / high_value_authors / blocked_authors 已废弃（代码不读）。
+# 每日发现走 `sources.twitter`（mode: timeline），与此无关。
 twitter:
-  daily_limit: 100
-  per_query_limit: 20
   queries:
     - id: agent_harness_live
       text: '"agent harness" OR "agent loop"'
@@ -190,29 +191,14 @@ twitter:
       text: '"decision making" OR "changed my mind"'
       filter: live
       priority: 3
-  high_value_authors: []
-  blocked_authors: []
 
 quality_gates:
   min_quality_score: 0.75
   max_rewrite_rounds: 2
 
+# 旧互动评分/提案管线已移除；这里只保留仍被读取的发现快照新鲜度（TTL）。
 engagement:
-  enabled: true
-  schedule: every_run
-  platforms: [x, reddit]
-  max_posts_scanned: 30
-  search_concurrency: 4
-  min_candidate_score: 0.72
-  max_bookmarks: 5
-  max_reply_drafts: 10
-  max_public_replies: 2
-  per_author_daily_limit: 1
-  max_discovery_authors: 50
-  max_semantic_authors: 20
-  max_display_opportunities: 10
   snapshot_ttl_hours: 12
-  public_expression_requires_approval: true
 
 connections:
   daily_limit: 3
@@ -250,11 +236,16 @@ interests:
     - deliberate practice
     - writing process
     - changed my mind
-  # 按「形式」排除低价值内容，不按「主题」一刀切（Agent/AI 话题不再整体排除）。
+  # 字面子串硬排除（确定性，非语义）：能识别具体推广话术，不能识别「无证据」「情绪化」等语义类别。
+  # 只排除具体推广话术，不按「主题」（如 Agent/AI）整体排除。
   excluded_content:
-    - 重复宣传
-    - 无新增信息
-    - evidence-free model rankings
+    - 课程推广
+    - 限时招生
+    - 扫码报名
+    - 付费进群
+    - 报名立减
+    - use my referral code
+    - enroll in my course
 
   # 存在非空 practice-profile.yaml 时忽略此项（community-scout 改读画像中 confirmed 条目的 evidence_refs）。
   practice_refs: []
