@@ -79,6 +79,8 @@ from .ideas.service import IdeaService
 from .inbox.models import DecisionAction, InboxTrack
 from .inbox.service import InboxDecisionService, list_items
 from .ingest.resolver import SourceResolver
+from .knowledge.models import KnowledgeBasis
+from .knowledge.service import KnowledgeService
 from .learn.models import Feedback, OutcomeAssessment
 from .learn.reflection import (
     WeeklyReflectionService,
@@ -109,6 +111,8 @@ from .opportunities.repository import (
 from .opportunities.service import OpportunityService
 from .peers.models import PeerProfile
 from .peers.service import PeerService, profile_url_for
+from .practice.attempts import PracticeOutcome
+from .practice.discovery import PracticeDiscoveryService
 from .practice.models import (
     ExerciseLiteral,
     FinalSourceLiteral,
@@ -150,6 +154,7 @@ from .storage.repositories import (
     GroundedSessionRepository,
     IdeaExplorationRepository,
     InteractionRecordRepository,
+    KnowledgeCardRepository,
     PeerRepository,
     PracticeAttemptRepository,
     PracticeSessionRepository,
@@ -236,6 +241,9 @@ grounded_app = typer.Typer(
     help="接地气：观察他人处境 → 理解 → 单次追问 → 动作 → 真实反馈 → 前后判断对比"
 )
 app.add_typer(grounded_app, name="grounded")
+
+knowledge_app = typer.Typer(help="知识卡：可复用结论（实践结果的复用落点）")
+app.add_typer(knowledge_app, name="knowledge")
 
 
 angles_app = typer.Typer(help="文章选角：读一篇文章找出值得独立成文的角度（选题卡 / 写作 brief）")
@@ -5760,6 +5768,8 @@ def practice_observe(
 def problems_add(
     title: str = typer.Option(..., "--title", help="一句话问题"),
     why: str = typer.Option("", "--why", help="为什么值得追"),
+    desired_outcome: str = typer.Option("", "--desired-outcome", help="预期变化/目标"),
+    constraints: str = typer.Option("", "--constraints", help="约束/边界"),
 ) -> None:
     """新建活跃问题（open 数 ≤ 3）。"""
     settings = load_settings()
@@ -5768,7 +5778,12 @@ def problems_add(
     from finch.problems.service import ProblemService
 
     try:
-        problem = ProblemService(ProblemRepository(ws)).add(title=title, why_it_matters=why)
+        problem = ProblemService(ProblemRepository(ws)).add(
+            title=title,
+            why_it_matters=why,
+            desired_outcome=desired_outcome,
+            constraints=constraints,
+        )
     except ValueError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
@@ -5835,6 +5850,8 @@ def attempts_add(
     problem: str = typer.Option(..., "--problem", help="当前问题（一句话）"),
     attempt: str = typer.Option(..., "--attempt", help="尝试了什么"),
     observation: str = typer.Option(..., "--observation", help="实际观察到了什么"),
+    hypothesis: str = typer.Option("", "--hypothesis", help="待验证假设"),
+    planned_action: str = typer.Option("", "--planned-action", help="最小可执行动作"),
     unknown: str = typer.Option("", "--unknown", help="未知/卡点"),
     next_step: str = typer.Option("", "--next-step", help="下一步准备验证"),
     ref: list[str] = typer.Option([], "--ref", help="溯源 URL（可重复）"),
@@ -5852,6 +5869,8 @@ def attempts_add(
             problem=problem,
             attempt=attempt,
             observation=observation,
+            hypothesis=hypothesis,
+            planned_action=planned_action,
             unknown=unknown,
             next_step=next_step,
             source_refs=list(ref),
@@ -5906,8 +5925,17 @@ def attempts_show(attempt_id: str = typer.Argument(...)) -> None:
 def attempts_verify(
     attempt_id: str = typer.Argument(...),
     result: str = typer.Option(..., "--result", help="验证结果"),
+    result_status: str = typer.Option(
+        None, "--result-status", help="结果判定：useful|mixed|ineffective|inconclusive"
+    ),
 ) -> None:
-    """open → verified，回填结果。"""
+    """open → verified，回填结果（及可选 result_status）。"""
+    if result_status is not None and result_status not in _PRACTICE_OUTCOMES:
+        typer.echo(
+            f"invalid result-status: {result_status}. "
+            f"expected one of {', '.join(_PRACTICE_OUTCOMES)}"
+        )
+        raise typer.Exit(code=1)
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -5915,7 +5943,11 @@ def attempts_verify(
 
     svc = PracticeAttemptService(PracticeAttemptRepository(ws), ProblemRepository(ws))
     try:
-        a = svc.verify(attempt_id, result=result)
+        a = svc.verify(
+            attempt_id,
+            result=result,
+            result_status=cast(PracticeOutcome | None, result_status),
+        )
     except (KeyError, ValueError) as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
@@ -5937,6 +5969,165 @@ def attempts_close(attempt_id: str = typer.Argument(...)) -> None:
         typer.echo(f"attempt not found: {attempt_id}")
         raise typer.Exit(code=1) from exc
     typer.echo(f"closed attempt {a.id}")
+
+
+_PRACTICE_OUTCOMES = ("useful", "mixed", "ineffective", "inconclusive")
+_KNOWLEDGE_BASES = ("source_claim", "user_reported", "inferred")
+
+
+@practice_app.command("discover")
+def practice_discover(
+    problem: str = typer.Option(..., "--problem", help="活跃问题 id"),
+    external: bool = typer.Option(False, "--external", help="额外查公开来源（有界）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """围绕一个问题发现 ≤3 张实践卡（先查已有记录；--external 再查公开来源）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    orchestrator = None
+    if external:
+        from finch.sources.opencli_gateway import OpenCliGateway
+        from finch.sources.orchestrator import DiscoveryOrchestrator
+
+        orchestrator = DiscoveryOrchestrator(
+            ws, gateway=OpenCliGateway(profile=settings.opencli.profile)
+        )
+    svc = PracticeDiscoveryService(
+        problems=ProblemRepository(ws),
+        methods=ExpressionMethodRepository(ws),
+        knowledge=KnowledgeCardRepository(ws),
+        attempts=PracticeAttemptRepository(ws),
+        runner=runner,
+        orchestrator=orchestrator,
+    )
+    try:
+        cards = svc.discover(problem, external=external)
+    except KeyError as exc:
+        typer.echo(f"problem not found: {problem}")
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(json.dumps([c.model_dump(mode="json") for c in cards], ensure_ascii=False))
+        return
+    if not cards:
+        typer.echo("no practice cards found")
+        return
+    for i, c in enumerate(cards, start=1):
+        typer.echo(f"{i}. [{c.origin}] {c.claim}")
+        if c.why_relevant:
+            typer.echo(f"   相关: {c.why_relevant}")
+        if c.applicability:
+            typer.echo(f"   适用: {c.applicability}")
+        if c.evidence_refs:
+            typer.echo(f"   证据: {', '.join(c.evidence_refs)}")
+        typer.echo(f"   最小行动: {c.smallest_action}")
+        typer.echo(f"   id: {c.id}")
+
+
+@knowledge_app.command("add")
+def knowledge_add(
+    claim: str = typer.Option(..., "--claim", help="可复用结论一句话"),
+    basis: str = typer.Option(..., "--basis", help="source_claim|user_reported|inferred"),
+    ref: list[str] = typer.Option([], "--ref", help="来源 URL / artifact_id（可重复）"),
+    attempt: list[str] = typer.Option([], "--attempt", help="关联 PracticeAttempt id（可重复）"),
+    problem: list[str] = typer.Option([], "--problem", help="关联 ActiveProblem id（可重复）"),
+    applicability: str = typer.Option("", "--applicability", help="适用条件"),
+    limitations: str = typer.Option("", "--limitations", help="边界/局限"),
+) -> None:
+    """新建/合并一条知识卡（幂等：同 claim 同 id）。"""
+    if basis not in _KNOWLEDGE_BASES:
+        typer.echo(f"invalid basis: {basis}. expected one of {', '.join(_KNOWLEDGE_BASES)}")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    card = KnowledgeService(KnowledgeCardRepository(ws)).upsert(
+        claim=claim,
+        basis=cast(KnowledgeBasis, basis),
+        source_refs=list(ref),
+        attempt_ids=list(attempt),
+        problem_ids=list(problem),
+        applicability=applicability,
+        limitations=limitations,
+    )
+    typer.echo(f"added knowledge {card.id} ({card.basis}): {card.claim}")
+
+
+@knowledge_app.command("list")
+def knowledge_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """列出全部知识卡。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    cards = KnowledgeService(KnowledgeCardRepository(ws)).list_all()
+    if as_json:
+        typer.echo(json.dumps([c.model_dump(mode="json") for c in cards], ensure_ascii=False))
+        return
+    for c in cards:
+        typer.echo(f"{c.id} [{c.basis}] {c.claim}")
+
+
+@knowledge_app.command("show")
+def knowledge_show(card_id: str = typer.Argument(...)) -> None:
+    """显示单条知识卡 + 复用事件。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    try:
+        c = KnowledgeService(KnowledgeCardRepository(ws)).show(card_id)
+    except KeyError as exc:
+        typer.echo(f"knowledge card not found: {card_id}")
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"{c.id} [{c.basis}] {c.claim}")
+    if c.applicability:
+        typer.echo(f"适用: {c.applicability}")
+    if c.limitations:
+        typer.echo(f"边界: {c.limitations}")
+    if c.source_refs:
+        typer.echo("来源: " + ", ".join(c.source_refs))
+    if c.attempt_ids:
+        typer.echo("实践: " + ", ".join(c.attempt_ids))
+    if c.reuse_events:
+        reused = ", ".join(e.problem_id for e in c.reuse_events)
+        typer.echo(f"复用 {len(c.reuse_events)} 次: {reused}")
+
+
+@knowledge_app.command("reuse")
+def knowledge_reuse(
+    card_id: str = typer.Argument(...),
+    problem_id: str = typer.Option(..., "--problem", help="复用该结论的另一个问题 id"),
+    note: str = typer.Option("", "--note", help="复用备注"),
+) -> None:
+    """记录一次实际复用事件（搜索曝光不算复用）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    try:
+        c = KnowledgeService(KnowledgeCardRepository(ws)).record_reuse(
+            card_id, problem_id=problem_id, note=note
+        )
+    except KeyError as exc:
+        typer.echo(f"knowledge card not found: {card_id}")
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"recorded reuse on {c.id} ({len(c.reuse_events)} total)")
+
+
+@knowledge_app.command("search")
+def knowledge_search(
+    query: str = typer.Argument(...),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """确定性文本检索知识卡（claim/applicability/limitations）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    cards = KnowledgeService(KnowledgeCardRepository(ws)).search(query)
+    if as_json:
+        typer.echo(json.dumps([c.model_dump(mode="json") for c in cards], ensure_ascii=False))
+        return
+    for c in cards:
+        typer.echo(f"{c.id} [{c.basis}] {c.claim}")
 
 
 def _require_grounded(settings: Settings) -> None:

@@ -12,7 +12,14 @@ class ProblemService:
     def __init__(self, problems: ProblemRepository) -> None:
         self.problems = problems
 
-    def add(self, *, title: str, why_it_matters: str = "") -> ActiveProblem:
+    def add(
+        self,
+        *,
+        title: str,
+        why_it_matters: str = "",
+        desired_outcome: str = "",
+        constraints: str = "",
+    ) -> ActiveProblem:
         """新建（幂等）；open 数 ≥ 3 时拒绝，提示先 close 一个。"""
         pid = problem_id_for(title)
         existing = self.problems.get(pid)
@@ -25,6 +32,8 @@ class ProblemService:
             id=pid,
             title=title.strip(),
             why_it_matters=why_it_matters,
+            desired_outcome=desired_outcome,
+            constraints=constraints,
             status="open",
             created_at=now,
             updated_at=now,

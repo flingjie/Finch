@@ -13,6 +13,8 @@ class ActiveProblem(BaseModel):
     id: str
     title: str
     why_it_matters: str = ""
+    desired_outcome: str = ""  # 预期变化/目标（允许 unknown）
+    constraints: str = ""  # 约束/边界
     status: Literal["open", "closed"] = "open"
     attempt_ids: list[str] = Field(default_factory=list)
     closed_reason: str = ""

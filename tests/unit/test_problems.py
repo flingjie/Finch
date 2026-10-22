@@ -73,3 +73,25 @@ def test_show_missing_raises(tmp_path):
     except KeyError:
         return
     raise AssertionError("expected KeyError")
+
+
+def test_add_stores_new_fields(tmp_path):
+    svc = _service(tmp_path)
+    p = svc.add(title="汇报", desired_outcome="一次讲清", constraints="30 分钟")
+    got = svc.show(p.id)
+    assert got.desired_outcome == "一次讲清"
+    assert got.constraints == "30 分钟"
+
+
+def test_load_old_problem_without_new_fields(tmp_path):
+    import yaml
+
+    ws = Workspace(tmp_path)
+    p = ProblemService(ProblemRepository(ws)).add(title="旧问题")
+    data = p.model_dump(mode="json")
+    data.pop("desired_outcome")
+    data.pop("constraints")
+    (ws.dir("problems") / f"{p.id}.yaml").write_text(yaml.safe_dump(data, allow_unicode=True))
+    loaded = ProblemRepository(ws).get(p.id)
+    assert loaded.desired_outcome == ""
+    assert loaded.constraints == ""

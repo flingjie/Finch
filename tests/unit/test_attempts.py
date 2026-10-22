@@ -69,3 +69,21 @@ def test_add_with_missing_problem_raises(tmp_path):
         assert "problem not found" in str(exc)
         return
     raise AssertionError("expected ValueError on missing problem")
+
+
+def test_add_stores_hypothesis_and_planned_action(tmp_path):
+    svc = _service(tmp_path)
+    a = svc.add(problem="P", attempt="T", observation="O", hypothesis="H", planned_action="A")
+    assert a.hypothesis == "H"
+    assert a.planned_action == "A"
+
+
+def test_verify_stores_result_status(tmp_path):
+    svc = _service(tmp_path)
+    a = svc.add(problem="P", attempt="T", observation="O")
+    v = svc.verify(a.id, result="r", result_status="mixed")
+    assert v.result_status == "mixed"
+    # 不带 result_status 保持旧行为（None）
+    b = svc.add(problem="Q", attempt="T", observation="O")
+    v2 = svc.verify(b.id, result="r")
+    assert v2.result_status is None

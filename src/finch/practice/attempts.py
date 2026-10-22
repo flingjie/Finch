@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+PracticeOutcome = Literal["useful", "mixed", "ineffective", "inconclusive"]
+
 
 class PracticeAttempt(BaseModel):
     """一次实践尝试：问题 → 尝试 → 观察 → 未知 → 下一步；有结果时在 verify 回填。
@@ -23,9 +25,12 @@ class PracticeAttempt(BaseModel):
     problem: str
     attempt: str
     observation: str
+    hypothesis: str = ""  # 待验证假设
+    planned_action: str = ""  # 最小可执行动作（选卡时写入）
     unknown: str = ""
     next_step: str = ""
     result: str = ""
+    result_status: PracticeOutcome | None = None  # 通用结果判定，verify 回填
     status: Literal["open", "verified", "closed"] = "open"
     source_refs: list[str] = Field(default_factory=list)
     created_at: datetime

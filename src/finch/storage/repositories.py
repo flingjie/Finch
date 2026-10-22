@@ -29,6 +29,7 @@ from finch.evidence.models import EvidenceCard
 from finch.grounded.models import GroundedSession
 from finch.ideas.models import IdeaExploration
 from finch.inbox.models import DecisionRecord
+from finch.knowledge.models import KnowledgeCard
 from finch.learn.models import Feedback
 from finch.peers.models import PeerProfile
 from finch.practice.attempts import PracticeAttempt
@@ -424,6 +425,20 @@ class PracticeAttemptRepository:
 
     def list_all(self) -> list[PracticeAttempt]:
         return _list_all(self.ws, "attempts", PracticeAttempt)
+
+
+class KnowledgeCardRepository:
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
+
+    def upsert(self, card: KnowledgeCard) -> None:
+        _write(self.ws, "knowledge", card.id, card)
+
+    def get(self, card_id: str) -> KnowledgeCard | None:
+        return _read(self.ws, "knowledge", card_id, KnowledgeCard)
+
+    def list_all(self) -> list[KnowledgeCard]:
+        return _list_all(self.ws, "knowledge", KnowledgeCard)
 
 
 class GroundedSessionRepository:

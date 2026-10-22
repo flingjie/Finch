@@ -16,5 +16,9 @@ def render_active_problems(problems: list[ActiveProblem] | None) -> str:
         head = f"- [{p.id}] {p.title}"
         if p.why_it_matters:
             head += f" — {p.why_it_matters}"
+        if p.desired_outcome:
+            head += f" [目标: {p.desired_outcome}]"
+        if p.constraints:
+            head += f" [约束: {p.constraints}]"
         lines.append(head)
     return "\n".join(lines)

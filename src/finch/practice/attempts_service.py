@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from finch.practice.attempts import PracticeAttempt, attempt_id_for
+from finch.practice.attempts import PracticeAttempt, PracticeOutcome, attempt_id_for
 from finch.storage.repositories import PracticeAttemptRepository, ProblemRepository
 
 
@@ -24,6 +24,8 @@ class PracticeAttemptService:
         problem: str,
         attempt: str,
         observation: str,
+        hypothesis: str = "",
+        planned_action: str = "",
         unknown: str = "",
         next_step: str = "",
         source_refs: list[str] | None = None,
@@ -42,6 +44,8 @@ class PracticeAttemptService:
             problem=problem.strip(),
             attempt=attempt,
             observation=observation,
+            hypothesis=hypothesis,
+            planned_action=planned_action,
             unknown=unknown,
             next_step=next_step,
             source_refs=list(source_refs or []),
@@ -65,8 +69,14 @@ class PracticeAttemptService:
             raise KeyError(attempt_id)
         return attempt
 
-    def verify(self, attempt_id: str, *, result: str) -> PracticeAttempt:
-        """open → verified，回填 result；唯一把未验证标为已验证的路径。"""
+    def verify(
+        self,
+        attempt_id: str,
+        *,
+        result: str,
+        result_status: PracticeOutcome | None = None,
+    ) -> PracticeAttempt:
+        """open → verified，回填 result（及可选 result_status）；唯一把未验证标为已验证的路径。"""
         attempt = self.show(attempt_id)
         if attempt.status != "open":
             raise ValueError(
@@ -74,7 +84,12 @@ class PracticeAttemptService:
                 "only open -> verified is legal"
             )
         attempt = attempt.model_copy(
-            update={"status": "verified", "result": result, "updated_at": datetime.now(UTC)}
+            update={
+                "status": "verified",
+                "result": result,
+                "result_status": result_status,
+                "updated_at": datetime.now(UTC),
+            }
         )
         self.attempts.upsert(attempt)
         return attempt
