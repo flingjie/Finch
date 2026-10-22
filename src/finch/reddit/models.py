@@ -2,11 +2,11 @@
 
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class RedditPost(BaseModel):
-    """opencli reddit search 原始 JSON 映射。
+    """opencli reddit 原始 JSON 映射（``search`` 行直接校验，``read`` 行由客户端转换）。
 
     未知字段由 Pydantic 忽略，contract test 捕获字段变化。
     """
@@ -20,6 +20,10 @@ class RedditPost(BaseModel):
     url: str
     created_utc: int | str | float | None = None
     selftext: str = ""
+    # ``reddit read`` 的评论行原文（含缩进）；``search`` 不提供，保持空。
+    comment_rows: list[str] = Field(default_factory=list)
+    # opencli 按 --max-length 截断正文时置位，供上层报告覆盖缺口。
+    truncated: bool = False
 
     @field_validator("score", "comments", mode="before")
     @classmethod
@@ -45,11 +49,13 @@ class RedditPost(BaseModel):
             return None
 
     def content(self) -> str:
-        """标题 + 完整正文；空 selftext 退化为仅标题（链接/图片帖常见）。"""
+        """标题 + 完整正文 + 评论行；空 selftext 退化为仅标题（链接/图片帖常见）。"""
         body = self.selftext.strip()
-        if not body:
-            return self.title
-        return f"{self.title}\n\n{body}"
+        head = self.title if not body else f"{self.title}\n\n{body}"
+        comments = "\n\n".join(row.strip() for row in self.comment_rows if row.strip())
+        if not comments:
+            return head
+        return f"{head}\n\n[评论]\n{comments}"
 
 
 class RedditError(RuntimeError):

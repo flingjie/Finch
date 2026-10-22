@@ -35,13 +35,18 @@ class _X:
 
 
 class _Reddit:
-    def __init__(self, selftext="正文"):
+    def __init__(self, selftext="正文", *, truncated=False, comment_rows=None):
         self.selftext = selftext
+        self.truncated = truncated
+        self.comment_rows = comment_rows or []
 
     def post(self, url):
         from finch.reddit.models import RedditPost
 
-        return RedditPost(id="p1", title="标题", author="a", url=url, selftext=self.selftext)
+        return RedditPost(
+            id="p1", title="标题", author="a", url=url, selftext=self.selftext,
+            truncated=self.truncated, comment_rows=self.comment_rows,
+        )
 
 
 class _Web:
@@ -111,6 +116,19 @@ def test_resolve_url_reddit_empty_selftext_coverage():
     r = SourceResolver(_X(), _Reddit(""), _Web())
     s = r.resolve_url("https://reddit.com/r/x/comments/p1")
     assert any("无正文" in g for g in s.coverage)
+
+
+def test_resolve_url_reddit_comments_in_body():
+    r = SourceResolver(_X(), _Reddit("正文", comment_rows=["一条回复"]), _Web())
+    s = r.resolve_url("https://reddit.com/r/x/comments/p1")
+    assert "[评论]" in s.body and "一条回复" in s.body
+    assert not any("无正文" in g for g in s.coverage)
+
+
+def test_resolve_url_reddit_truncated_coverage():
+    r = SourceResolver(_X(), _Reddit("正文", truncated=True), _Web())
+    s = r.resolve_url("https://reddit.com/r/x/comments/p1")
+    assert any("截断" in g for g in s.coverage)
 
 
 def test_resolve_url_routes_web():

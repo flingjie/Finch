@@ -110,7 +110,9 @@ class SourceResolver:
         post = self.reddit.post(url)
         if post is None:
             raise RuntimeError("reddit source unavailable: post not found")
-        coverage = (
-            ["该 Reddit 帖无正文（图片/链接帖），仅标题"] if not post.selftext.strip() else []
-        )
+        coverage: list[str] = []
+        if not post.selftext.strip() and not post.comment_rows:
+            coverage.append("该 Reddit 帖无正文（图片/链接帖），仅标题")
+        if post.truncated:
+            coverage.append("原帖超过 opencli 单次读取上限，正文或评论被截断")
         return post.content(), coverage
