@@ -32,3 +32,6 @@ voice-profile.yaml
 
 # Local generated artifacts (angle/discovery briefs, diagrams)
 angle_brief_*
+
+# Scratch / temporary output
+tmp/
