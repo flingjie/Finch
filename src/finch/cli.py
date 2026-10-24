@@ -24,6 +24,9 @@ from .article.repository import ArticleReportRepository
 from .article.service import ArticleAnalysisService
 from .codex.runner import CodexRunner
 from .codex.structured_output import StructuredOutputError
+from .comparison.models import ComparisonRecord
+from .comparison.repository import ComparisonRepository
+from .comparison.service import ComparisonContext, ComparisonService
 from .content.jobs import AuthorPosition, ContentJob, ContentJobStatus
 from .content.models import Draft
 from .content.voice import (
@@ -1440,6 +1443,270 @@ def ideas_skip(
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         typer.echo(f"{job.id} -> {job.status.value} (reason: {reason})")
+
+
+@ideas_app.command("compare")
+def ideas_compare(
+    text: str = typer.Option(None, "--text", help="素材文本（一句话/片段/观察）"),
+    file: str = typer.Option(None, "--file", help="素材文件"),
+    url: str = typer.Option(None, "--url", help="素材链接（X/Reddit/普通网页）"),
+    reader: str = typer.Option(None, "--reader", help="目标读者"),
+    reader_problem: str = typer.Option(None, "--reader-problem", help="读者遇到的问题"),
+    goal: str = typer.Option(None, "--goal", help="写作目标"),
+    practice_ref: list[str] = typer.Option(
+        [], "--practice-ref", help="已确认实践引用（可重复，材料非证明）"
+    ),
+    direct: bool = typer.Option(False, "--direct", help="跳过比较，直接走单候选写作路径"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """把同一素材生成可比较方向，供用户取舍（--direct 跳过比较直接写）。"""
+    provided = sum(x is not None for x in (text, file, url))
+    if provided != 1:
+        typer.echo("exactly one of --text / --file / --url is required")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    resolver = SourceResolver(OpenCliClient(), RedditOpenCliClient(), WebFetcher())
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    try:
+        if text is not None:
+            source = resolver.resolve_text(text)
+        elif file is not None:
+            source = resolver.resolve_file(file)
+        else:
+            source = resolver.resolve_url(url)
+        if not source.body.strip():
+            typer.echo("empty body after resolve")
+            raise typer.Exit(code=1)
+        if direct:
+            idea = FragmentService(runner).from_text(source.body)
+            job = IdeaService(ContentJobRepository(ws)).create_candidate(idea)
+            if as_json:
+                typer.echo(
+                    json.dumps(
+                        {"id": job.id, "origin": job.origin, "status": job.status.value},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                typer.echo(_render_idea_detail(job))
+            return
+        context = ComparisonContext(
+            reader=reader or "",
+            reader_problem=reader_problem or "",
+            goal=goal or "",
+            practice_refs=practice_ref,
+        )
+        record = ComparisonService(
+            runner, ComparisonRepository(ws), ContentJobRepository(ws)
+        ).generate(source, context)
+    except (RuntimeError, StructuredOutputError, OSError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(record.model_dump_json(indent=2))
+    else:
+        typer.echo(_render_comparison(record))
+
+
+@ideas_app.command("compare-select")
+def ideas_compare_select(
+    comparison_id: str = typer.Argument(..., help="comparison id（finch ideas compare 输出）"),
+    angle_index: list[int] = typer.Argument(None, help="要选择的方向序号（1-based，可多个）"),
+    final_question: str = typer.Option(None, "--final-question", help="合并后的单一核心问题"),
+    reason: str = typer.Option(None, "--reason", help="一句话理由（可空）"),
+    park: bool = typer.Option(False, "--park", help="暂存，不选方向"),
+    discard: bool = typer.Option(False, "--discard", help="全部放弃"),
+    help_me_choose: bool = typer.Option(False, "--help-me-choose", help="先让 AI 推荐"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """记录取舍、材料检查并分流到写作 / 验证 / 暂存。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = ComparisonRepository(ws)
+    record = repo.get(comparison_id)
+    if record is None:
+        typer.echo(f"comparison not found: {comparison_id}")
+        raise typer.Exit(code=1)
+    runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
+    service = ComparisonService(runner, repo, ContentJobRepository(ws))
+    job: ContentJob | None = None
+    try:
+        if help_me_choose:
+            record = service.recommend(record)
+        elif park:
+            record = service.select(
+                record,
+                selected_angle_ids=[],
+                user_reason=reason or "",
+                rejection_reasons=[reason] if reason else [],
+                decision="parked",
+            )
+        elif discard:
+            record = service.select(
+                record,
+                selected_angle_ids=[],
+                user_reason=reason or "",
+                rejection_reasons=[reason] if reason else [],
+                decision="discarded",
+            )
+        else:
+            selected_ids = [f"d{i}" for i in (angle_index or [])]
+            if not selected_ids:
+                typer.echo(
+                    "provide at least one angle index, or use --park / --discard / --help-me-choose"
+                )
+                raise typer.Exit(code=1)
+            record = service.select(
+                record,
+                selected_angle_ids=selected_ids,
+                final_question=final_question or "",
+                user_reason=reason or "",
+                decision="selected",
+            )
+            record = service.check_readiness(record)
+            if record.readiness == "ready":
+                job = service.materialize(record)
+    except (RuntimeError, StructuredOutputError, ValueError) as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        payload = {
+            "id": record.id,
+            "selection": record.selection.model_dump(mode="json") if record.selection else None,
+            "recommendation": (
+                record.recommendation.model_dump(mode="json")
+                if record.recommendation
+                else None
+            ),
+            "readiness": record.readiness,
+            "next_action": record.next_action,
+            "content_job_id": record.content_job_id,
+        }
+        if job is not None:
+            payload["job_id"] = job.id
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(_render_comparison_route(record, job))
+
+
+@ideas_app.command("compare-show")
+def ideas_compare_show(
+    comparison_id: str = typer.Argument(..., help="comparison id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """回看一次选题比较记录。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    record = ComparisonRepository(ws).get(comparison_id)
+    if record is None:
+        typer.echo(f"comparison not found: {comparison_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(record.model_dump_json(indent=2))
+    else:
+        typer.echo(_render_comparison(record))
+
+
+@ideas_app.command("compare-list")
+def ideas_compare_list(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """列出全部选题比较记录。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    records = sorted(
+        ComparisonRepository(ws).list_all(), key=lambda r: r.created_at, reverse=True
+    )
+    if as_json:
+        payload = [
+            {
+                "id": r.id,
+                "source_type": r.source_type,
+                "readiness": r.readiness,
+                "decision": r.selection.decision if r.selection else None,
+                "content_job_id": r.content_job_id,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in records
+        ]
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not records:
+        typer.echo("no comparisons")
+        return
+    for r in records:
+        decision = r.selection.decision if r.selection else "undecided"
+        typer.echo(f"{r.id}  {r.source_type}  readiness={r.readiness}  decision={decision}")
+
+
+def _render_comparison(record: ComparisonRecord) -> str:
+    lines = [f"comparison {record.id}"]
+    if not record.angles:
+        lines.append("没有生成可比较方向。")
+        if record.generation_note:
+            lines.append(f"说明：{record.generation_note}")
+        return "\n".join(lines)
+    for idx, d in enumerate(record.angles, start=1):
+        lines += [
+            "",
+            f"[{idx}] {d.kind or '未标注'} — {d.question}",
+            f"  读者所得：{d.reader_value}",
+            f"  已有材料：{d.available_materials or '暂无'}",
+            f"  材料缺口：{d.material_gaps or '无'}",
+            f"  取舍：{d.tradeoff or '无'}",
+        ]
+    if record.generation_note:
+        lines += ["", f"说明：{record.generation_note}"]
+    lines += [
+        "",
+        "你更愿意写哪一个？可以用一句话说明原因，也可以全部放弃。",
+        f"选择：uv run finch ideas compare-select {record.id} <序号> [--reason ...]",
+        f"合并：uv run finch ideas compare-select {record.id} <序号> <序号> --final-question ...",
+        f"暂存：uv run finch ideas compare-select {record.id} --park",
+        f"放弃：uv run finch ideas compare-select {record.id} --discard",
+        f"帮我选：uv run finch ideas compare-select {record.id} --help-me-choose",
+    ]
+    return "\n".join(lines)
+
+
+def _render_comparison_route(record: ComparisonRecord, job: ContentJob | None) -> str:
+    if record.recommendation is not None:
+        rec = record.recommendation
+        lines = ["帮我选（依据与缺口）：", rec.reason or "", ""]
+        if rec.angle_ids:
+            lines.append(f"建议方向：{', '.join(rec.angle_ids)}")
+        lines.append(f"选定后：uv run finch ideas compare-select {record.id} <序号>")
+        return "\n".join(lines)
+    sel = record.selection
+    if sel is None:
+        return f"comparison {record.id}: 未选择"
+    if sel.decision in ("parked", "discarded"):
+        verb = "已暂存" if sel.decision == "parked" else "已放弃"
+        lines = [f"{verb}（{record.id}）"]
+        if sel.user_reason:
+            lines.append(f"理由：{sel.user_reason}")
+        return "\n".join(lines)
+    lines = [f"已选择 {', '.join(sel.selected_angle_ids)}：{sel.final_question}"]
+    if sel.user_reason:
+        lines.append(f"理由：{sel.user_reason}")
+    lines.append(f"材料检查：{record.readiness} — {record.readiness_reason}")
+    if record.readiness == "ready" and job is not None:
+        lines += [
+            f"已建任务：{job.id}（{job.status.value}）",
+            "",
+            f"确认立场：uv run finch ideas confirm {job.id}",
+            f"写作：uv run finch drafts create {job.id}",
+            f"结构梳理：uv run finch practice start --material \"{sel.final_question}\"",
+        ]
+    elif record.next_action:
+        lines += ["", "下一步：", record.next_action]
+    return "\n".join(lines)
 
 
 def _render_draft_result(result: DraftCreateResult) -> str:

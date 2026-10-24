@@ -13,8 +13,8 @@ description: >
 能供别人使用、可迁移的 `IdeaCandidate`。commit 来源先经 `IdeaDiverger` 发散；
 fragment / conversation / signals 仍单候选。机械变化、新闻、纯情绪 → 空。
 
-本 Skill 只调用 Finch CLI（`finch ideas commit` / `finch ideas create`），不复制业务逻辑、
-不直接改数据库、不猜测状态。
+本 Skill 只调用 Finch CLI（`finch ideas commit` / `finch ideas create` / `finch ideas compare`），
+不复制业务逻辑、不直接改数据库、不猜测状态。
 
 ## 五种来源
 
@@ -39,6 +39,21 @@ fragment / conversation / signals 仍单候选。机械变化、新闻、纯情�
   `boundaries.unknown`；有「原先以为 → 实际发现」对照时 `content_type=judgment_shift`。
   见 `references/attempt-signals.md`。
 - **signals 来源**：`finch ideas signals`，见 `references/signals-signals.md`。
+
+## 选题比较（同一素材 → 可比较方向 → 取舍 → 材料检查）
+
+用户还没确定「为什么这个问题值得写」时，先用 `finch ideas compare` 生成可比较方向，
+而不是直接落单候选。见 `references/comparison.md` 与 `references/comparison-card.md`。
+
+- `finch ideas compare --text/--file/--url [--reader] [--reader-problem] [--goal] [--practice-ref]`
+  生成 3 个（信息不足时 1–2 个）可比较方向，每张卡 5 字段、合计 ≤600 汉字，不生成标题/提纲/正文。
+- 默认问「你更愿意写哪一个？可以用一句话说明原因，也可以全部放弃」，不预选、不展示分数。
+- 用户回复编号 → `finch ideas compare-select <id> <序号>`；合并多方向 → 附加 `--final-question`；
+  暂存 `--park`；全部放弃 `--discard`；帮我选 `--help-me-choose`。
+- 材料检查后分流：`ready` → 建 `ContentJob`（复用现有路径）并指到 `finch ideas confirm` /
+  `finch drafts create` / `finch practice start`；`needs_material` → 追问一次；
+  `needs_validation` → 最小验证行动；`undecided` → 暂存/放弃。
+- 用户明确「直接写」→ 沿用直接写作路径（`finch ideas compare --direct` 或 `finch drafts write`）。
 
 ## 向用户呈现
 
@@ -72,6 +87,8 @@ fragment / conversation / signals 仍单候选。机械变化、新闻、纯情�
 - `references/conversation-signals.md` — 交流信号中性化提炼的判据。
 - `references/signals-signals.md` — 社区信号（同行主题 + 未解问题/分歧）综合的判据。
 - `references/attempt-signals.md` — 实践尝试是否够格成为 Idea 的判据。
+- `references/comparison.md` — 选题比较流程（素材 → 方向 → 取舍 → 材料检查 → 分流）。
+- `references/comparison-card.md` — 5 字段方向卡模板与 ≤600 字预算。
 - `_shared/idea-contract.md` — IdeaCandidate 契约。
 - `_shared/evidence-policy.md` — 证据优先、外部帖 ≠ 个人证据。
 - `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话（共享原则）。
