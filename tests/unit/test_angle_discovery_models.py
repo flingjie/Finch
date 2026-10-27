@@ -3,7 +3,14 @@
 import pytest
 from pydantic import ValidationError
 
-from finch.angle_discovery.models import AngleBrief, AngleCard, CombinationMaterial, SourceSummary
+from finch.angle_discovery.models import (
+    AngleBrief,
+    AngleCard,
+    CombinationMaterial,
+    ComparisonDimension,
+    ReaderJourney,
+    SourceSummary,
+)
 
 
 def _card(**overrides) -> AngleCard:
@@ -96,3 +103,45 @@ def test_minimal_brief_ok():
     assert b.id == ""
     assert b.coverage == []
     assert b.angles[0].increment_basis == "inference"
+
+
+def test_card_defaults_reader_journey_none():
+    assert _card().reader_journey is None
+
+
+def test_card_defaults_new_fields_empty():
+    c = _card()
+    assert c.applicable_form == ""
+    assert c.main_risk == ""
+
+
+def test_brief_defaults_comparison_empty():
+    assert _brief().comparison == []
+
+
+def test_reader_journey_roundtrip():
+    rj = ReaderJourney(
+        initial_belief="AI 会替代编码工作",
+        cognitive_shift="瓶颈转移到规格与验收",
+        emotional_path=["好奇", "怀疑", "理解"],
+        turning_point="一个团队 20 个 PR 只审 5 个",
+        evidence_refs=["某真实仓库"],
+    )
+    c = _card(reader_journey=rj)
+    assert c.reader_journey is rj
+    assert c.reader_journey.initial_belief == "AI 会替代编码工作"
+
+
+def test_reader_journey_rejects_extra_field():
+    with pytest.raises(ValidationError):
+        ReaderJourney(initial_belief="x", score=3)
+
+
+def test_comparison_dimension_rejects_extra_field():
+    with pytest.raises(ValidationError):
+        ComparisonDimension(dimension="读者相关性", comparison="A 更相关", score=3)
+
+
+def test_comparison_dimension_requires_dimension():
+    with pytest.raises(ValidationError):
+        ComparisonDimension(comparison="A 更相关")

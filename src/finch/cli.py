@@ -5480,15 +5480,18 @@ def practice_select(
 @practice_app.command("feedback")
 def practice_feedback(
     session_id: str = typer.Argument(..., help="session id"),
+    location: str = typer.Option("", "--location", help="选定段落/句子（留空则 AI 自选关键位置）"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """给出一轮局部对比反馈（值得保留 / 关键位置 / 两种写法 / 差异 / 重写任务）。"""
+    """给出一轮局部对比反馈；--location 时对选定段落出两个改写及各自效果/风险。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     runner = cast(CodexRunner, create_runner(settings.llm, "critique") or CodexRunner())
     try:
-        session = PracticeService(PracticeSessionRepository(ws), runner).feedback(session_id)
+        session = PracticeService(PracticeSessionRepository(ws), runner).feedback(
+            session_id, location=location
+        )
     except KeyError:
         typer.echo(f"session not found: {session_id}")
         raise typer.Exit(code=1) from None
@@ -5502,7 +5505,15 @@ def practice_feedback(
         typer.echo(f"值得保留: {fb.keep}")
         typer.echo(f"关键位置: {fb.key_location}")
         typer.echo(f"写法 A: {fb.alternative_a}")
+        if fb.effect_a:
+            typer.echo(f"效果 A: {fb.effect_a}")
+        if fb.risk_a:
+            typer.echo(f"风险 A: {fb.risk_a}")
         typer.echo(f"写法 B: {fb.alternative_b}")
+        if fb.effect_b:
+            typer.echo(f"效果 B: {fb.effect_b}")
+        if fb.risk_b:
+            typer.echo(f"风险 B: {fb.risk_b}")
         typer.echo(f"差异: {fb.difference}")
         typer.echo(f"重写任务: {fb.rewrite_task}")
         typer.echo("下一步：finch practice save --revision 或 finish")
@@ -5693,9 +5704,16 @@ def practice_diagnose(
         "auto", "--exercise", help="练习类型：auto|revise|predict|hint|transfer"
     ),
     hint_level: int = typer.Option(0, "--hint-level", help="提示层级 0-3（仅 hint 用）"),
+    target_reader: str = typer.Option(
+        "", "--target-reader", help="目标读者（reader-diagnosis 用）"
+    ),
+    reader_journey: str = typer.Option("", "--reader-journey", help="可选 ReaderJourney 文本"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
-    """诊断最大问题 + 选定一个下一步动作（LLM）。"""
+    """诊断最大问题 + 选定一个下一步动作（LLM）。
+
+    带 --target-reader/--reader-journey 时改为读者认知旅程诊断。
+    """
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
@@ -5709,13 +5727,20 @@ def practice_diagnose(
         if method_obj is not None:
             card = _render_method_drill_card(method_obj)
             context = card + ("\n\n" + context if context else "")
+    reader_mode = bool(target_reader or reader_journey)
     try:
-        session = PracticeService(PracticeSessionRepository(ws), runner).diagnose(
-            session_id,
-            context=context,
-            exercise=cast(ExerciseLiteral, exercise),
-            hint_level=hint_level,
-        )
+        svc = PracticeService(PracticeSessionRepository(ws), runner)
+        if reader_mode:
+            session = svc.reader_diagnose(
+                session_id, target_reader=target_reader, reader_journey=reader_journey
+            )
+        else:
+            session = svc.diagnose(
+                session_id,
+                context=context,
+                exercise=cast(ExerciseLiteral, exercise),
+                hint_level=hint_level,
+            )
     except KeyError:
         typer.echo(f"session not found: {session_id}")
         raise typer.Exit(code=1) from None
@@ -5724,6 +5749,20 @@ def practice_diagnose(
         raise typer.Exit(code=1) from exc
     if as_json:
         typer.echo(session.model_dump_json(indent=2))
+    elif reader_mode:
+        rd = session.reader_diagnosis
+        if rd is None:
+            typer.echo("（无读者认知诊断）")
+            return
+        typer.echo(f"开头钩子：{rd.opening_hook}")
+        typer.echo(f"读者预期：{rd.reader_expectation}")
+        typer.echo(f"认知转折点：{rd.cognitive_turning_point}")
+        if rd.weak_sections:
+            typer.echo("薄弱段落：")
+            for w in rd.weak_sections:
+                typer.echo(f"  - {w}")
+        typer.echo(f"结尾效果：{rd.ending_effect}")
+        typer.echo(f"最值得先改：{rd.primary_suggestion}")
     else:
         turn = next((t for t in reversed(session.turns) if t.responded_at is None), None)
         if turn is None:
@@ -7495,6 +7534,35 @@ def _render_angle_brief(brief: AngleBrief) -> str:
             lines.append(f"- 读者行动：{card.reader_action}")
         if card.writing_status:
             lines.append(f"- 写作状态：{card.writing_status}")
+        if card.reader_journey is not None:
+            rj = card.reader_journey
+            lines += ["", "读者认知变化："]
+            if rj.initial_belief:
+                lines.append(f"  - 原有认知（假设）：{rj.initial_belief}")
+            if rj.reader_problem:
+                lines.append(f"  - 读者问题：{rj.reader_problem}")
+            if rj.cognitive_shift:
+                lines.append(f"  - 认知转变：{rj.cognitive_shift}")
+            if rj.emotional_path:
+                lines.append(f"  - 情绪路径：{' → '.join(rj.emotional_path)}")
+            if rj.turning_point:
+                lines.append(f"  - 转折点：{rj.turning_point}")
+            if rj.evidence_refs:
+                lines.append("  - 转折依据：")
+                lines += [f"    - {r}" for r in rj.evidence_refs]
+            if rj.evidence_gaps:
+                lines.append("  - 转折依据缺口：")
+                lines += [f"    - {g}" for g in rj.evidence_gaps]
+            if rj.desired_afterthought:
+                lines.append(f"  - 读后留下：{rj.desired_afterthought}")
+        if card.applicable_form:
+            lines.append(f"- 适用形式：{card.applicable_form}")
+        if card.main_risk:
+            lines.append(f"- 主要风险：{card.main_risk}")
+    if brief.comparison:
+        lines += ["", "## 角度比较"]
+        for dim in brief.comparison:
+            lines.append(f"- {dim.dimension}：{dim.comparison or '（未说明）'}")
     if brief.recommended_index is not None:
         lines += [
             "",

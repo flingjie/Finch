@@ -39,6 +39,33 @@ class SourceSummary(BaseModel):
     gaps: list[str] = Field(default_factory=list)  # 原文未回答的问题/主要缺口（选题由缺口触发）
 
 
+class ReaderJourney(BaseModel):
+    """一个候选角度期望引起的读者认知变化。
+
+    读者心理是假设，须标注，不得冒充调查事实。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    initial_belief: str = ""  # 读者原有认知（假设，标注为推断）
+    reader_problem: str = ""  # 读者实际关心的问题
+    cognitive_shift: str = ""  # 希望读者重新理解什么
+    emotional_path: list[str] = Field(default_factory=list)  # 如 ["好奇", "怀疑", "理解"]
+    turning_point: str = ""  # 触发变化的事实或经历
+    evidence_refs: list[str] = Field(default_factory=list)  # 转折依据（真实来源，字符串）
+    evidence_gaps: list[str] = Field(default_factory=list)  # 转折依据仍缺的证据
+    desired_afterthought: str = ""  # 读后留下的问题或行动
+
+
+class ComparisonDimension(BaseModel):
+    """一个比较维度的定性说明（跨角度，非数值、非总分）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dimension: str  # 读者相关性 / 认知新意 / 证据充分度 / 可实践性 / 与作者风格契合度
+    comparison: str = ""  # 定性比较文字
+
+
 class AngleCard(BaseModel):
     """一张选题卡：相对原文有增量的独立成文方向。"""
 
@@ -56,6 +83,9 @@ class AngleCard(BaseModel):
     evidence_gaps: list[str] = Field(default_factory=list)  # 需要补充的证据
     reader_action: str = ""  # 读者能采取的行动
     writing_status: str = ""  # 写作状态（可先写机制 / 需先验证）
+    reader_journey: ReaderJourney | None = None  # 可选；本角度的读者认知变化
+    applicable_form: str = ""  # 适用形式（推文 / 长文 / 视频…）
+    main_risk: str = ""  # 主要风险
 
 
 class AngleBrief(BaseModel):
@@ -76,3 +106,4 @@ class AngleBrief(BaseModel):
     outline: list[str] = Field(default_factory=list)  # 推荐方向的提纲
     evidence_gaps: list[str] = Field(default_factory=list)  # 推荐方向需补充的证据
     smallest_validation_action: str = ""  # 最小验证行动
+    comparison: list[ComparisonDimension] = Field(default_factory=list)  # 5 个维度定性比较

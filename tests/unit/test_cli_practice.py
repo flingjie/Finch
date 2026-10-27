@@ -17,6 +17,7 @@ from finch.practice.models import (
     PracticeLesson,
     PracticeOption,
     PracticeOptionsOutput,
+    ReaderDiagnosis,
     StructureHint,
     StructureStep,
     ThinkingGap,
@@ -347,6 +348,78 @@ class _PartnerRunner:
 def _patch_partner_runner(monkeypatch):
     monkeypatch.setattr(cli, "create_runner", lambda *a, **k: _PartnerRunner())
     monkeypatch.setattr(cli, "CodexRunner", _PartnerRunner)
+
+
+class _ReaderJourneyRunner:
+    def run(self, prompt, output_model, **kw):
+        if output_model is ReaderDiagnosis:
+            return ReaderDiagnosis(
+                opening_hook="开头好",
+                reader_expectation="预期有反差",
+                cognitive_turning_point="第二段",
+                weak_sections=["第三段没证据"],
+                ending_effect="留下行动",
+                primary_suggestion="先补证据",
+            )
+        if output_model is LocalFeedback:
+            return LocalFeedback(
+                keep="保留这一句",
+                key_location="选定段落",
+                alternative_a="写法 A",
+                effect_a="更具体",
+                risk_a="略啰嗦",
+                alternative_b="写法 B",
+                effect_b="更有力",
+                risk_b="略绝对",
+                difference="A 具体 B 有力",
+                rewrite_task="请重写",
+            )
+        return PracticeLesson(lesson="一个经验")
+
+
+def test_practice_reader_diagnose_cli(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    _patch(monkeypatch, settings)
+    monkeypatch.setattr(cli, "create_runner", lambda *a, **k: _ReaderJourneyRunner())
+    monkeypatch.setattr(cli, "CodexRunner", _ReaderJourneyRunner)
+    session_id = _start_session(app, ["--attempt", "一版草稿"])
+    r = CliRunner().invoke(
+        app,
+        [
+            "practice",
+            "diagnose",
+            session_id,
+            "--target-reader",
+            "小团队",
+            "--reader-journey",
+            "好奇→怀疑→理解",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    assert "开头钩子" in r.output
+    assert "读者预期" in r.output
+    assert "认知转折点" in r.output
+    assert "薄弱段落" in r.output
+    assert "结尾效果" in r.output
+    assert "最值得先改" in r.output
+    session = PracticeSessionRepository(ws).get(session_id)
+    assert session is not None and session.turns == []
+    assert session.reader_diagnosis is not None
+
+
+def test_practice_feedback_location_cli(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    _patch(monkeypatch, settings)
+    monkeypatch.setattr(cli, "create_runner", lambda *a, **k: _ReaderJourneyRunner())
+    monkeypatch.setattr(cli, "CodexRunner", _ReaderJourneyRunner)
+    session_id = _start_session(app, ["--attempt", "一版草稿"])
+    r = CliRunner().invoke(app, ["practice", "feedback", session_id, "--location", "某一段"])
+    assert r.exit_code == 0, r.output
+    assert "效果 A" in r.output
+    assert "风险 A" in r.output
+    assert "效果 B" in r.output
+    assert "风险 B" in r.output
 
 
 def test_practice_start_with_material_only(monkeypatch, tmp_path):

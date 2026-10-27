@@ -57,6 +57,20 @@ description: >
   见 `references/option-selection.md` / `references/diagnosis-rules.md`。此模式**不先给
   完整范文、完整开头或逐句提纲**。
 
+## reader-diagnosis 与 contrast-rewrite（作用于已有草稿）
+
+这两个能力作用于**已有草稿**，不改 `ModeLiteral`（example/guided/independent 仍是草稿生成策略）。
+
+- **reader-diagnosis**：诊断已有草稿的读者认知旅程。
+  `finch practice diagnose <id> --target-reader "..." [--reader-journey "..."]` 输出六字段：
+  opening_hook / reader_expectation / cognitive_turning_point / weak_sections / ending_effect /
+  primary_suggestion。可选 ReaderJourney 来自 `finch angles discover` 选中的角度。
+- **contrast-rewrite**：对**用户选定段落**出两个局部改写，各带效果/风险。
+  `finch practice feedback <id> --location "..."`；留空 `--location` 则回到 AI 自选关键位置的
+  局部对比。不改事实、数字、引用、观点边界；不凭空加入「亲身经历」「实验结果」。
+
+两条命令都遵守「事实与来源规则」；读者心理是假设，不冒充调查事实。
+
 ## 事实与来源规则
 
 - 一次只给一版主草稿；用户要求比较或换角度时再给替代稿。

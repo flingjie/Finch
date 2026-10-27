@@ -28,6 +28,7 @@ from finch.practice.models import (
     PracticeOptionsOutput,
     PracticeSession,
     PracticeTurn,
+    ReaderDiagnosis,
     ResponseKindLiteral,
     StructureHint,
     StructureStep,
@@ -173,6 +174,67 @@ Keep alternatives short; do not write the full text or a sentence-by-sentence ou
 
 Respond with JSON matching the schema: keep, key_location, alternative_a, alternative_b,
 difference, rewrite_task.
+"""
+
+_CONTRAST_REWRITE_PROMPT = """\
+You are a writing partner. Rewrite ONLY the user-selected paragraph below, in two genuinely
+different ways, each with its own reading effect and risk. Do not rewrite any other part.
+
+Fill each field:
+- keep: quote ONE phrase in the selected paragraph that works and say why.
+- key_location: restate the selected paragraph (verbatim) you are rewriting.
+- alternative_a: a short rewrite of that paragraph (strategy A).
+- effect_a: the reading effect of A.
+- risk_a: what A risks losing or overclaiming.
+- alternative_b: a short rewrite of the same paragraph (strategy B, genuinely different).
+- effect_b: the reading effect of B.
+- risk_b: what B risks.
+- difference: how A and B differ in strategy and what each costs.
+- rewrite_task: invite the user to write their own version (A, B, or a third).
+
+Rules: change only the selected paragraph. Do NOT change facts, numbers, quotes, or the
+viewpoint boundary. Do NOT invent "my own experience" or "experimental results". Two versions
+must use different expression strategies and you must explain the trade-off.
+
+## Selected paragraph
+{location}
+
+## Full text (context only; do not rewrite outside the selected paragraph)
+{text}
+
+Respond with JSON matching the schema: keep, key_location, alternative_a, effect_a, risk_a,
+alternative_b, effect_b, risk_b, difference, rewrite_task.
+"""
+
+_READER_DIAGNOSE_PROMPT = """\
+You are a writing coach. Diagnose the READER's cognitive journey through the user's current
+draft: where the draft hooks, sets expectation, shifts understanding, and what it leaves
+behind. Focus on the reader's experience, not generic advice.
+
+Fill each field:
+- opening_hook: why the opening is worth continuing to read (or why it is not yet).
+- reader_expectation: what expectation the reader forms early on.
+- cognitive_turning_point: where the reader's understanding actually changes (or is missing).
+- weak_sections: the specific places that block or stall the reader's shift; quote or point to
+  the draft's own sentences, never invent text.
+- ending_effect: what the ending leaves the reader with.
+- primary_suggestion: the single change most worth making first.
+
+Rules: quote the user's text for weak_sections. Reader psychology is a HYPOTHESIS — write it
+as such, never as surveyed fact. Do not invent the user's experiences, effect numbers, or
+stance. Do not list multi-dimension scores.
+
+## Target reader
+{target_reader}
+
+## ReaderJourney (optional; may be empty)
+{reader_journey}
+
+## Current draft
+{draft}
+
+Respond with JSON matching the schema: opening_hook, reader_expectation,
+cognitive_turning_point, weak_sections, ending_effect, primary_suggestion.
 """
 
 _PRACTICE_META_PROMPT = """\
@@ -378,8 +440,12 @@ class PracticeService:
         self.sessions.upsert(session)
         return session
 
-    def feedback(self, session_id: str) -> PracticeSession:
-        """针对用户当前文本生成一轮局部对比反馈，追加 feedback_rounds，置 phase=feedback。"""
+    def feedback(self, session_id: str, *, location: str = "") -> PracticeSession:
+        """针对用户当前文本生成一轮局部对比反馈，追加 feedback_rounds，置 phase=feedback。
+
+        ``location`` 非空时对用户选定段落做 contrast-rewrite（填充效果/风险）；
+        为空时沿用自动选关键位置的局部对比。
+        """
         session = self._require_started(session_id)
         text = session.revisions[-1] if session.revisions else session.initial_attempt
         if not text.strip():
@@ -389,17 +455,15 @@ class PracticeService:
             session.options
         ):
             chosen = session.options[session.selected_option].name
-        out = cast(
-            LocalFeedback,
-            self.runner.run(
-                _FEEDBACK_PROMPT.format(
-                    option=chosen or "（未选择）",
-                    dimension=session.practice_dimension,
-                    text=text,
-                ),
-                LocalFeedback,
-            ),
-        )
+        if location:
+            prompt = _CONTRAST_REWRITE_PROMPT.format(location=location, text=text)
+        else:
+            prompt = _FEEDBACK_PROMPT.format(
+                option=chosen or "（未选择）",
+                dimension=session.practice_dimension,
+                text=text,
+            )
+        out = cast(LocalFeedback, self.runner.run(prompt, LocalFeedback))
         session = session.model_copy(
             update={
                 "feedback_rounds": [*session.feedback_rounds, out],
@@ -589,6 +653,35 @@ class PracticeService:
         if out.action in ("revise", "predict", "transfer"):
             update["questions_asked"] = [*session.questions_asked, out.task]
         session = session.model_copy(update=update)
+        self.sessions.upsert(session)
+        return session
+
+    def reader_diagnose(
+        self,
+        session_id: str,
+        *,
+        target_reader: str = "",
+        reader_journey: str = "",
+    ) -> PracticeSession:
+        """对会话当前草稿做读者认知旅程诊断，存 ``reader_diagnosis``，不建 turn。"""
+        session = self._require_started(session_id)
+        latest = session.revisions[-1] if session.revisions else session.initial_attempt
+        if not latest.strip():
+            raise ValueError("no text to diagnose; write a first draft first")
+        out = cast(
+            ReaderDiagnosis,
+            self.runner.run(
+                _READER_DIAGNOSE_PROMPT.format(
+                    target_reader=target_reader or session.context.audience or "（未指定）",
+                    reader_journey=reader_journey or "（未提供）",
+                    draft=latest,
+                ),
+                ReaderDiagnosis,
+            ),
+        )
+        session = session.model_copy(
+            update={"reader_diagnosis": out, "updated_at": datetime.now(UTC)}
+        )
         self.sessions.upsert(session)
         return session
 

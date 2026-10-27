@@ -68,6 +68,10 @@ class LocalFeedback(BaseModel):
     rewrite_task: str = ""  # 重写任务
     user_rewrite: str = ""  # 用户重写结果（保存最终版用）
     method_id: str | None = None  # 该反馈由哪个表达方法启发（可空）
+    effect_a: str = ""  # 写法 A 的阅读效果
+    risk_a: str = ""  # 写法 A 的风险
+    effect_b: str = ""  # 写法 B 的阅读效果
+    risk_b: str = ""  # 写法 B 的风险
 
 
 class PracticeFeedback(BaseModel):
@@ -89,6 +93,17 @@ class PracticeFeedback(BaseModel):
         if self.action != "hint" and self.hint_level != 0:
             raise ValueError("hint_level is only allowed for hint action")
         return self
+
+
+class ReaderDiagnosis(BaseModel):
+    """读者认知旅程诊断：针对会话当前草稿 + 目标读者 + 可选 ReaderJourney。"""
+
+    opening_hook: str = ""  # 开头为何值得继续读
+    reader_expectation: str = ""  # 读者形成什么预期
+    cognitive_turning_point: str = ""  # 理解在哪里发生变化
+    weak_sections: list[str] = Field(default_factory=list)
+    ending_effect: str = ""  # 结尾留下什么
+    primary_suggestion: str = ""  # 最值得先改的一处
 
 
 class PracticeTurn(BaseModel):
@@ -196,6 +211,7 @@ class PracticeSession(BaseModel):
     user_actions: list[UserAction] = Field(default_factory=list)  # adopt/comment/edit/skip
     final_version_id: str | None = None  # 最终版对应 AI 版本 id；None=用户独立创作
     learning_observation: str = ""  # 本次轻量学习观察（偏好，非创作证据）
+    reader_diagnosis: ReaderDiagnosis | None = None  # 仅 reader-diagnosis 模式填充；旧会话 None
     created_at: datetime
     updated_at: datetime
 

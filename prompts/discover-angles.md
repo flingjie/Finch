@@ -108,6 +108,22 @@ angles: a list of AngleCard. Each card:
 - evidence_gaps: what evidence you still need to make this claim solidly.
 - reader_action: one concrete action the reader can take.
 - writing_status: a short status such as 「可先写机制」or「需先验证」.
+- reader_journey: optional (set null when not confident). The intended reader cognitive
+  change for THIS angle, as an object with: initial_belief (the reader's prior belief —
+  a HYPOTHESIS, mark it as inferred, never present reader psychology as surveyed fact),
+  reader_problem, cognitive_shift (what you want the reader to re-understand),
+  emotional_path (a short list such as 好奇/怀疑/理解), turning_point (the fact or
+  experience that triggers the change — must have evidence_refs or be marked unverified),
+  evidence_refs (real sources only; never invent), evidence_gaps (evidence still missing
+  for the turning point), desired_afterthought (a question or action left with the reader).
+- applicable_form: the form this angle fits (推文 / 长文 / 视频 / …).
+- main_risk: the main risk of this angle (e.g. evidence too weak, too contrarian, overlaps
+  the original).
+
+comparison: a list of 5 ComparisonDimension objects (one per dimension: 读者相关性 /
+认知新意 / 证据充分度 / 可实践性 / 与作者风格契合度). Each has `dimension` and a
+`comparison` sentence qualitatively comparing the candidate angles on that dimension.
+No numbers, no scores, no totals.
 
 recommended_index: the index (0-based) into angles of the ONE direction to deepen. Set to null when `angles` is empty.
 recommendation_reason: why this one.
@@ -123,6 +139,10 @@ smallest_validation_action: the lowest-cost action to test the key assumption.
 - Do not treat popularity as truth; do not invent personal experience; do not force a contrarian angle or a cross-domain analogy.
 - Do not restate the article as an "angle"; do not comment on how the article is written (that is article_analysis's job).
 - No totals, scores, or numeric ratings anywhere.
+- initial_belief and emotional_path are reader-psychology HYPOTHESES: mark them as inferred,
+  never present them as surveyed fact or the author's own claimed experience.
+- turning_point must cite evidence_refs or be explicitly marked as 待验证; do not output an
+  evidence-free dramatic turn. Do not fabricate reader reactions.
 
 ## Reader / author context (use to shape angles, never to fabricate)
 

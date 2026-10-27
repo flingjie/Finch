@@ -70,6 +70,44 @@ class _FakeEmptyService:
         )
 
 
+class _FakeJourneyService:
+    def discover(self, source, context=None):
+        from finch.angle_discovery.models import (
+            AngleBrief,
+            AngleCard,
+            ComparisonDimension,
+            ReaderJourney,
+            SourceSummary,
+        )
+
+        return AngleBrief(
+            id="angle_j",
+            source_type=source.source_type,
+            source_ref=source.source_ref,
+            content_hash=source.content_hash,
+            source_summary=SourceSummary(main_point="AI 让个人编码更快。"),
+            angles=[
+                AngleCard(
+                    title="交付瓶颈转移",
+                    thesis="瓶颈转移到规格与验收。",
+                    incremental_value="从个人效率到团队交付。",
+                    reader_journey=ReaderJourney(
+                        initial_belief="AI 会替代编码",
+                        cognitive_shift="瓶颈转移到验收",
+                        emotional_path=["好奇", "怀疑", "理解"],
+                        turning_point="20 个 PR 只审 5 个",
+                        evidence_refs=["某真实仓库"],
+                    ),
+                    applicable_form="长文",
+                    main_risk="证据不足",
+                )
+            ],
+            comparison=[
+                ComparisonDimension(dimension="读者相关性", comparison="A 更相关"),
+            ],
+        )
+
+
 def test_discover_requires_exactly_one_source(monkeypatch, tmp_path):
     _patch(monkeypatch, _settings(tmp_path))
     r = CliRunner().invoke(app, ["angles", "discover"])
@@ -142,3 +180,23 @@ def test_show_and_list(monkeypatch, tmp_path):
     listed = CliRunner().invoke(app, ["angles", "list"])
     assert listed.exit_code == 0, listed.output
     assert "angle_x" in listed.output
+
+
+def test_discover_reader_journey_json(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    monkeypatch.setattr(cli, "AngleDiscoveryService", lambda runner: _FakeJourneyService())
+    r = CliRunner().invoke(app, ["angles", "discover", "--text", "hello", "--json"])
+    assert r.exit_code == 0, r.output
+    assert '"reader_journey"' in r.output
+    assert '"comparison"' in r.output
+
+
+def test_discover_reader_journey_render(monkeypatch, tmp_path):
+    _patch(monkeypatch, _settings(tmp_path))
+    monkeypatch.setattr(cli, "AngleDiscoveryService", lambda runner: _FakeJourneyService())
+    r = CliRunner().invoke(app, ["angles", "discover", "--text", "hello"])
+    assert r.exit_code == 0, r.output
+    assert "读者认知变化" in r.output
+    assert "角度比较" in r.output
+    assert "适用形式" in r.output
+    assert "主要风险" in r.output

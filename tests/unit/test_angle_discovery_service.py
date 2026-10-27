@@ -89,6 +89,16 @@ def test_discover_prompt_includes_sample_size():
     assert "Sample count\n3" in (runner.last_prompt or "")
 
 
+def test_discover_prompt_includes_reader_journey_and_comparison():
+    runner = _Runner(_raw_brief())
+    AngleDiscoveryService(runner).discover(_source())
+    prompt = runner.last_prompt or ""
+    assert "reader_journey" in prompt
+    assert "comparison" in prompt
+    assert "cognitive_shift" in prompt
+    assert "turning_point" in prompt
+
+
 def test_discover_merges_deterministic_coverage():
     gap = "该 X 线程包含媒体（图片/视频），本次未读取其内容"
     src = _source().model_copy(update={"coverage": [gap]})
