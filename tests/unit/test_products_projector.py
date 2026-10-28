@@ -35,6 +35,9 @@ def test_clusters_artifacts_by_product_key():
     assert set(by_key) == {"github.com/acme/widget", "github.com/other/tool"}
     assert len(by_key["github.com/acme/widget"].artifacts) == 2
     assert by_key["github.com/acme/widget"].product.founder is not None
+    assert by_key["github.com/acme/widget"].product.product_url == (
+        "https://github.com/acme/widget"
+    )
 
 
 def test_founder_from_first_artifact():
@@ -44,4 +47,5 @@ def test_founder_from_first_artifact():
     ]
     cluster = ProductProjector().build_product_candidates(arts)[0]
     assert cluster.product.founder.display_name == "alice"
+    assert cluster.product.founder.handles[0].url == "https://x.com/alice"
     assert cluster.product.fingerprint

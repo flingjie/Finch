@@ -18,7 +18,12 @@ from finch.products.models import (
     Product,
     ProductEvidence,
 )
-from finch.products.urls import product_key_for
+from finch.products.urls import (
+    first_product_url,
+    product_key_for,
+    product_url_for_key,
+    profile_url_for,
+)
 from finch.sources.models import RawArtifact
 
 _TEXT_LIMIT = 2000
@@ -70,6 +75,9 @@ class ProductProjector:
         author = first.author_identity
         platform = _coerce_platform((author.platform or "").strip() or "web")
         external_id = author.external_id or author.handle or ""
+        founder_url = profile_url_for(
+            platform, handle=author.handle, external_id=author.external_id
+        )
         founder = Founder(
             founder_id=founder_id_for(platform, external_id) if external_id else "",
             display_name=author.handle or author.external_id or "",
@@ -78,6 +86,7 @@ class ProductProjector:
                     platform=platform,  # type: ignore[arg-type]
                     external_id=author.external_id,
                     handle=author.handle,
+                    url=founder_url,
                 )
             ],
             source_refs=[a.artifact_id for a in arts],
@@ -86,6 +95,7 @@ class ProductProjector:
         product = Product(
             id=product_id_for(key),
             key=key,
+            product_url=first_product_url(arts) or product_url_for_key(key) or "",
             founder=founder if external_id else None,
             evidence=[
                 ProductEvidence(

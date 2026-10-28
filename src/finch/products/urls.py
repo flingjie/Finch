@@ -27,6 +27,9 @@ _SOCIAL_HOSTS = {
     "xiaohongshu.com",
     "www.xiaohongshu.com",
     "xhslink.com",
+    "t.co",
+    "bit.ly",
+    "tinyurl.com",
 }
 
 _URL_RE = re.compile(r"https?://[^\s\)\]\"'<>]+", re.IGNORECASE)
@@ -58,6 +61,46 @@ def classify_product_url(url: str) -> str | None:
 
 def extract_urls(text: str) -> list[str]:
     return [m.group(0).rstrip(".,;") for m in _URL_RE.finditer(text or "")]
+
+
+def profile_url_for(platform: str, *, handle: str = "", external_id: str = "") -> str | None:
+    """由平台身份构造公开主页 URL；产品领域独立实现，不依赖 peers 领域。"""
+    ident = (handle or external_id).strip().lstrip("@")
+    if not ident:
+        return None
+    if platform == "x":
+        return f"https://x.com/{ident}"
+    if platform == "reddit":
+        return f"https://www.reddit.com/user/{ident}"
+    if platform == "github":
+        return f"https://github.com/{ident}"
+    if platform == "v2ex":
+        return f"https://www.v2ex.com/member/{ident}"
+    if platform == "xiaohongshu":
+        return f"https://www.xiaohongshu.com/user/profile/{ident}"
+    return None
+
+
+def product_url_for_key(key: str) -> str | None:
+    """由规范化 key 重建产品 URL；社媒/短链 key 不当作产品页。"""
+    key = (key or "").strip()
+    if not key:
+        return None
+    if key.lower().startswith(("http://", "https://")):
+        return None if is_social_url(key) else key
+    if is_social_url(f"https://{key}"):
+        return None
+    return f"https://{key.lstrip('/')}"
+
+
+def first_product_url(artifacts: list[RawArtifact]) -> str | None:
+    """从一批工件中挑出第一个非社媒产品 URL；找不到返回 None。"""
+    for art in artifacts:
+        candidates = [art.canonical_url, *extract_urls((art.title or "") + "\n" + art.text)]
+        for url in candidates:
+            if classify_product_url(url):
+                return url.strip()
+    return None
 
 
 def product_key_for(artifact: RawArtifact) -> str:

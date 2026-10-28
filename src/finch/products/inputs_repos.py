@@ -16,6 +16,7 @@ from finch.products.models import (
     ProductEvidence,
 )
 from finch.products.projector import ProductCluster
+from finch.products.urls import profile_url_for
 from finch.repos.repository import RepoDiscoveryRepository
 from finch.storage.workspace import Workspace
 
@@ -34,7 +35,13 @@ def products_from_latest_repos_run(ws: Workspace) -> list[ProductCluster]:
         founder = Founder(
             founder_id=founder_id_for("github", repo.owner),
             display_name=repo.owner,
-            handles=[FounderHandle(platform="github", handle=repo.owner)],
+            handles=[
+                FounderHandle(
+                    platform="github",
+                    handle=repo.owner,
+                    url=profile_url_for("github", handle=repo.owner),
+                )
+            ],
             first_seen_at=datetime.now(UTC),
         )
         share_urls = list(repo.source_share_urls)
@@ -43,6 +50,7 @@ def products_from_latest_repos_run(ws: Workspace) -> list[ProductCluster]:
             key=key,
             name=repo.name,
             tagline=repo.description or "",
+            product_url=f"https://github.com/{repo.key}",
             founder=founder,
             evidence=[
                 ProductEvidence(

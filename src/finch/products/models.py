@@ -64,6 +64,7 @@ class Product(BaseModel):
     key: str  # 规范化产品身份（如 github.com/owner/repo）
     name: str = ""
     tagline: str = ""
+    product_url: str = ""
     founder: Founder | None = None
     target_user: str = ""
     problem_solved: str = ""

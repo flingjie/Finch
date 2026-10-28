@@ -137,6 +137,8 @@ from .products.repository import (
     ProductSnapshotRepository,
     SolutionRepository,
 )
+from .products.urls import product_url_for_key
+from .products.urls import profile_url_for as product_profile_url_for
 from .profile import bootstrap as profile_bootstrap
 from .profile.models import (
     PracticeEvidenceStatus,
@@ -769,6 +771,48 @@ def diagnose() -> None:
     typer.echo(f"  doctor: {opencli_doctor}")
 
 
+def _dedupe_urls(urls: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for url in urls:
+        url = (url or "").strip()
+        if url and url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def _product_primary_url(p: Product) -> str:
+    return (p.product_url or product_url_for_key(p.key) or "").strip()
+
+
+def _product_founder_urls(p: Product) -> list[str]:
+    if p.founder is None:
+        return []
+    urls = []
+    for handle in p.founder.handles:
+        url = handle.url or product_profile_url_for(
+            handle.platform, handle=handle.handle, external_id=handle.external_id
+        )
+        if url:
+            urls.append(url)
+    return urls
+
+
+def _product_link_summary(p: Product) -> str:
+    parts: list[str] = []
+    primary = _product_primary_url(p)
+    if primary:
+        parts.append(f"产品 {primary}")
+    source_urls = _dedupe_urls([e.url for e in p.evidence])
+    if source_urls:
+        parts.append("来源 " + " ".join(source_urls))
+    founder_urls = _dedupe_urls(_product_founder_urls(p))
+    if founder_urls:
+        parts.append("创始人 " + " ".join(founder_urls))
+    return " | ".join(parts)
+
+
 def _render_product_line(index: int, p: Product) -> None:
     founder = p.founder.display_name if p.founder else ""
     typer.echo(f"{index}. {p.name or p.key}  [{p.key}]")
@@ -783,6 +827,9 @@ def _render_product_line(index: int, p: Product) -> None:
         typer.echo("   " + "  ".join(meta))
     if p.why_worth_attention:
         typer.echo(f"   值得关注：{p.why_worth_attention}")
+    links = _product_link_summary(p)
+    if links:
+        typer.echo(f"   链接：{links}")
     typer.echo(f"   深入：uv run finch products explore {p.id}")
 
 
@@ -793,6 +840,11 @@ def _render_product_full(p: Product) -> None:
     typer.echo(f"name: {p.name or '-'}")
     typer.echo(f"tagline: {p.tagline or '-'}")
     typer.echo(f"founder: {founder or '-'}")
+    typer.echo(f"product_url: {_product_primary_url(p) or '-'}")
+    source_urls = _dedupe_urls([e.url for e in p.evidence])
+    typer.echo(f"source_urls: {' '.join(source_urls) or '-'}")
+    founder_urls = _dedupe_urls(_product_founder_urls(p))
+    typer.echo(f"founder_urls: {' '.join(founder_urls) or '-'}")
     typer.echo(f"target_user: {p.target_user or '-'}")
     typer.echo(f"problem_solved: {p.problem_solved or '-'}")
     typer.echo(f"core_solution: {p.core_solution or '-'}")
@@ -803,7 +855,7 @@ def _render_product_full(p: Product) -> None:
     typer.echo(f"evidence: {len(p.evidence)} 条")
 
 
-def _render_solution(s: Solution) -> None:
+def _render_solution(s: Solution, product: Product | None = None) -> None:
     verdict_labels = {
         "worth_trial": "值得试用",
         "worth_outreach": "值得联系创业者",
@@ -823,6 +875,10 @@ def _render_solution(s: Solution) -> None:
     typer.echo(f"6) 值得学习的设计思路：{s.design_thinking or '-'}")
     typer.echo(f"7) 谁在构建：{s.builders or '-'}")
     typer.echo(f"8) 下一步：{verdict_labels.get(s.verdict.value, s.verdict.value)}")
+    if product is not None:
+        links = _product_link_summary(product)
+        if links:
+            typer.echo(f"相关链接：{links}")
 
 
 @products_app.command("daily")
@@ -975,7 +1031,7 @@ def products_explore(
     if as_json:
         typer.echo(json.dumps(solution.model_dump(mode="json"), ensure_ascii=False, indent=2))
         return
-    _render_solution(solution)
+    _render_solution(solution, p)
 
 
 @sources_app.command("doctor")

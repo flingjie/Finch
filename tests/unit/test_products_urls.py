@@ -6,8 +6,11 @@ from datetime import UTC, datetime
 
 from finch.products.urls import (
     classify_product_url,
+    first_product_url,
     normalize_product_key,
     product_key_for,
+    product_url_for_key,
+    profile_url_for,
 )
 from finch.sources.fingerprint import artifact_id, content_fingerprint
 from finch.sources.models import AuthorIdentity, RawArtifact, Source
@@ -56,3 +59,25 @@ def test_self_contained_launch_post_uses_own_url():
         "I built a thing, no product link yet",
     )
     assert product_key_for(art) == "x.com/alice/status/3"
+
+
+def test_profile_url_for_platforms():
+    assert profile_url_for("x", handle="@alice") == "https://x.com/alice"
+    assert profile_url_for("github", external_id="acme") == "https://github.com/acme"
+    assert profile_url_for("reddit", handle="alice") == "https://www.reddit.com/user/alice"
+    assert profile_url_for("weixin", handle="alice") is None
+
+
+def test_product_url_for_key_rejects_social_links():
+    assert product_url_for_key("github.com/acme/widget") == "https://github.com/acme/widget"
+    assert product_url_for_key("x.com/alice/status/3") is None
+    assert product_url_for_key("t.co/abc") is None
+
+
+def test_first_product_url_prefers_non_social_link():
+    art = _art(
+        "4",
+        "https://x.com/alice/status/4",
+        "we shipped https://github.com/acme/widget today",
+    )
+    assert first_product_url([art]) == "https://github.com/acme/widget"
