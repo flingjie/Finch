@@ -128,6 +128,15 @@ from .practice.models import (
 from .practice.observations import StyleObservationService
 from .practice.service import PracticeService
 from .problems.render import render_active_problems
+from .products.discovery import run_product_discovery
+from .products.explorer import explore_product
+from .products.models import Product, Solution
+from .products.presentation import ProductPresentationRepository
+from .products.repository import (
+    ProductRepository,
+    ProductSnapshotRepository,
+    SolutionRepository,
+)
 from .profile import bootstrap as profile_bootstrap
 from .profile.models import (
     PracticeEvidenceStatus,
@@ -173,10 +182,12 @@ from .twitter.opencli_client import OpenCliClient
 from .twitter.query_builder import QueryBuilder
 from .webfetch.fetcher import WebFetcher
 
-app = typer.Typer(help="Finch: 同行连接与个人表达系统。")
+app = typer.Typer(help="Finch: AI 产品发现与创业者连接 Copilot。")
 
+# 冻结（hidden=True）：旧使命子命令从默认 `finch --help` 面移除，但命令仍可调用、
+# 代码与测试保留；验证新方向后再决定删除。恢复只需删掉 hidden=True。
 github_app = typer.Typer(help="GitHub 读取与工程事件提取")
-app.add_typer(github_app, name="github")
+app.add_typer(github_app, name="github", hidden=True)
 
 twitter_app = typer.Typer(help="Twitter 搜索与读取")
 app.add_typer(twitter_app, name="twitter")
@@ -188,19 +199,19 @@ repos_app = typer.Typer(help="X 分享的 GitHub 仓库发现与热度榜（只�
 app.add_typer(repos_app, name="repos")
 
 voice_app = typer.Typer(help="Manage the author voice profile (local, no auto-publish)")
-app.add_typer(voice_app, name="voice")
+app.add_typer(voice_app, name="voice", hidden=True)
 
 profile_app = typer.Typer(help="Manage the user's confirmed practice profile (local only)")
-app.add_typer(profile_app, name="profile")
+app.add_typer(profile_app, name="profile", hidden=True)
 
 ideas_app = typer.Typer(help="Idea 候选流（commit / 用户片段 / 对话提炼 + 状态转换）")
-app.add_typer(ideas_app, name="ideas")
+app.add_typer(ideas_app, name="ideas", hidden=True)
 
 drafts_app = typer.Typer(help="Draft 生成（已确认 idea → 草稿，不自动发布）")
-app.add_typer(drafts_app, name="drafts")
+app.add_typer(drafts_app, name="drafts", hidden=True)
 
 review_app = typer.Typer(help="Review original drafts (accept/revise/skip, no auto-publish)")
-app.add_typer(review_app, name="review")
+app.add_typer(review_app, name="review", hidden=True)
 
 connect_app = typer.Typer(
     help=(
@@ -208,70 +219,73 @@ connect_app = typer.Typer(
         "prepare / feedback / assess / artifact-status"
     )
 )
-app.add_typer(connect_app, name="connect")
+app.add_typer(connect_app, name="connect", hidden=True)
 
 peers_app = typer.Typer(help="同行档案与关系上下文")
-app.add_typer(peers_app, name="peers")
+app.add_typer(peers_app, name="peers", hidden=True)
 
 people_app = typer.Typer(help="今日承诺面：需回应/兑现的真实对话线索")
-app.add_typer(people_app, name="people")
+app.add_typer(people_app, name="people", hidden=True)
 
 connections_app = typer.Typer(help="连接机会与互动记录（record / follow-up）")
-app.add_typer(connections_app, name="connections")
+app.add_typer(connections_app, name="connections", hidden=True)
 
 collisions_app = typer.Typer(help="跨领域碰撞")
-app.add_typer(collisions_app, name="collisions")
+app.add_typer(collisions_app, name="collisions", hidden=True)
 
 experiments_app = typer.Typer(help="一周内小实验")
-app.add_typer(experiments_app, name="experiments")
+app.add_typer(experiments_app, name="experiments", hidden=True)
 
 inspirations_app = typer.Typer(help="轻量灵感笔记")
-app.add_typer(inspirations_app, name="inspirations")
+app.add_typer(inspirations_app, name="inspirations", hidden=True)
 
 conversations_app = typer.Typer(help="对话线索与跟进")
-app.add_typer(conversations_app, name="conversations")
+app.add_typer(conversations_app, name="conversations", hidden=True)
 
 practice_app = typer.Typer(help="表达练习")
-app.add_typer(practice_app, name="practice")
+app.add_typer(practice_app, name="practice", hidden=True)
 
 problems_app = typer.Typer(help="活跃问题（≤3 open；学习闭环的脊柱）")
-app.add_typer(problems_app, name="problems")
+app.add_typer(problems_app, name="problems", hidden=True)
 
 attempts_app = typer.Typer(help="实践尝试原始素材（问题/尝试/观察/未知）")
-app.add_typer(attempts_app, name="attempts")
+app.add_typer(attempts_app, name="attempts", hidden=True)
 
 grounded_app = typer.Typer(
     help="接地气：观察他人处境 → 理解 → 单次追问 → 动作 → 真实反馈 → 前后判断对比"
 )
-app.add_typer(grounded_app, name="grounded")
+app.add_typer(grounded_app, name="grounded", hidden=True)
 
 knowledge_app = typer.Typer(help="知识卡：可复用结论（实践结果的复用落点）")
-app.add_typer(knowledge_app, name="knowledge")
+app.add_typer(knowledge_app, name="knowledge", hidden=True)
 
 
 angles_app = typer.Typer(help="文章选角：读一篇文章找出值得独立成文的角度（选题卡 / 写作 brief）")
-app.add_typer(angles_app, name="angles")
+app.add_typer(angles_app, name="angles", hidden=True)
 
 map_app = typer.Typer(help="发散思维导图：读一篇文章生成可继续探索的问题导图")
 angles_app.add_typer(map_app, name="map")
 
 article_app = typer.Typer(help="分析一篇文章的表达任务、读者变化与方法有效性")
-app.add_typer(article_app, name="article")
+app.add_typer(article_app, name="article", hidden=True)
 
 methods_app = typer.Typer(help="表达方法库（从文章分析选中可迁移方法）")
-app.add_typer(methods_app, name="methods")
+app.add_typer(methods_app, name="methods", hidden=True)
 
 community_app = typer.Typer(help="社区匹配与进入助手（发现、观察、回访可进入的社区）")
-app.add_typer(community_app, name="community")
+app.add_typer(community_app, name="community", hidden=True)
 
 dialogue_app = typer.Typer(help="讨论摘要记忆（薄持久化，可检索；命令由 Skill 使用）")
-app.add_typer(dialogue_app, name="dialogue")
+app.add_typer(dialogue_app, name="dialogue", hidden=True)
 
 summaries_app = typer.Typer(help="回看已保存的内容摘要")
-app.add_typer(summaries_app, name="summaries")
+app.add_typer(summaries_app, name="summaries", hidden=True)
 
 materials_app = typer.Typer(help="素材库（Notion 权威来源；记录/读取/同步/讨论/提炼）")
-app.add_typer(materials_app, name="materials")
+app.add_typer(materials_app, name="materials", hidden=True)
+
+products_app = typer.Typer(help="AI 产品发现 + 创业者连接（产品候选 / 方案分析）")
+app.add_typer(products_app, name="products")
 
 
 def _idea_meta_line(job: ContentJob) -> str:
@@ -717,7 +731,7 @@ def init() -> None:
     typer.echo(f"initialized: {settings.paths.var_dir}")
 
 
-@app.command()
+@app.command(hidden=True)
 def context(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
     """生成当日上下文投影并写入 projections/（可重建，非事实源）。"""
     settings = load_settings()
@@ -753,6 +767,215 @@ def diagnose() -> None:
     typer.echo("opencli:")
     typer.echo(f"  version: {opencli_ver or 'unavailable'}")
     typer.echo(f"  doctor: {opencli_doctor}")
+
+
+def _render_product_line(index: int, p: Product) -> None:
+    founder = p.founder.display_name if p.founder else ""
+    typer.echo(f"{index}. {p.name or p.key}  [{p.key}]")
+    if p.tagline:
+        typer.echo(f"   {p.tagline}")
+    meta = []
+    if founder:
+        meta.append(f"founder={founder}")
+    if p.target_user:
+        meta.append(f"用户={p.target_user}")
+    if meta:
+        typer.echo("   " + "  ".join(meta))
+    if p.why_worth_attention:
+        typer.echo(f"   值得关注：{p.why_worth_attention}")
+    typer.echo(f"   深入：uv run finch products explore {p.id}")
+
+
+def _render_product_full(p: Product) -> None:
+    founder = p.founder.display_name if p.founder else ""
+    typer.echo(f"id: {p.id}")
+    typer.echo(f"key: {p.key}")
+    typer.echo(f"name: {p.name or '-'}")
+    typer.echo(f"tagline: {p.tagline or '-'}")
+    typer.echo(f"founder: {founder or '-'}")
+    typer.echo(f"target_user: {p.target_user or '-'}")
+    typer.echo(f"problem_solved: {p.problem_solved or '-'}")
+    typer.echo(f"core_solution: {p.core_solution or '-'}")
+    typer.echo(f"differentiation: {p.differentiation or '-'}")
+    typer.echo(f"progress: {p.progress or '-'}")
+    typer.echo(f"why_worth_attention: {p.why_worth_attention or '-'}")
+    typer.echo(f"score: {p.score_total:.2f}")
+    typer.echo(f"evidence: {len(p.evidence)} 条")
+
+
+def _render_solution(s: Solution) -> None:
+    verdict_labels = {
+        "worth_trial": "值得试用",
+        "worth_outreach": "值得联系创业者",
+        "watch": "继续观察",
+        "skip": "跳过",
+    }
+    typer.echo("8 点理解：")
+    typer.echo(f"1) 为谁解决什么问题：{s.who_problem or '-'}")
+    typer.echo(f"2) 原来如何解决：{s.prior_approach or '-'}")
+    typer.echo(f"3) 新方案：{s.new_solution or '-'}")
+    typer.echo(f"4) 为什么可能更有价值：{s.why_more_valuable or '-'}")
+    typer.echo("5) 价值证据 vs 假设：")
+    if not s.value_evidence:
+        typer.echo("   （无显式证据，均视为未验证假设）")
+    for ev in s.value_evidence:
+        typer.echo(f"   [{ev.status.value}] {ev.claim or '-'}")
+    typer.echo(f"6) 值得学习的设计思路：{s.design_thinking or '-'}")
+    typer.echo(f"7) 谁在构建：{s.builders or '-'}")
+    typer.echo(f"8) 下一步：{verdict_labels.get(s.verdict.value, s.verdict.value)}")
+
+
+@products_app.command("daily")
+def products_daily(
+    refresh: bool = typer.Option(False, "--refresh", help="重新跑发现；否则回放最新快照"),
+    view: str = typer.Option("home", "--view", help="home|browse"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    lookback_hours: int | None = typer.Option(None, "--lookback-hours", help="回溯小时数"),
+    question: str | None = typer.Option(None, "--question", help="发现意图/问题"),
+) -> None:
+    """每日产品候选（5–10 个）；--refresh 跑发现，否则回放最新快照。"""
+    from finch.sources.opencli_gateway import OpenCliGateway
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = ProductRepository(ws)
+    snap_repo = ProductSnapshotRepository(ws)
+    presentation = ProductPresentationRepository(ws)
+
+    if refresh:
+        runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
+        gateway = OpenCliGateway(profile=settings.opencli.profile)
+        result = run_product_discovery(
+            settings,
+            runner=runner,
+            gateway=gateway,
+            lookback_hours=lookback_hours,
+            question=question,
+        )
+        snapshot = result.snapshot
+        products = result.products
+        if result.detail:
+            typer.echo(f"note: {result.detail}")
+    else:
+        snapshot = snap_repo.latest()
+        products = []
+        if snapshot is not None:
+            for pid in snapshot.product_ids:
+                p = repo.get(pid)
+                if p is not None:
+                    products.append(p)
+
+    if view == "browse":
+        products = sorted(repo.list_all(), key=lambda p: (-p.score_total, p.id))
+    elif snapshot is not None:
+        for p in products:
+            presentation.record_shown(product_id=p.id, surface="home", snapshot_id=snapshot.id)
+
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "snapshot_id": snapshot.id if snapshot else "",
+                    "products": [p.model_dump(mode="json") for p in products],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+
+    if not products:
+        typer.echo("今日无产品候选（空轮保持空）。可用 `uv run finch products daily --refresh`。")
+        return
+    typer.echo(f"每日产品候选（{len(products)}）：")
+    for i, p in enumerate(products, 1):
+        _render_product_line(i, p)
+
+
+@products_app.command("list")
+def products_list(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
+    """全部已保存产品（按分数降序）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    repo = ProductRepository(ws)
+    products = sorted(repo.list_all(), key=lambda p: (-p.score_total, p.id))
+    if as_json:
+        typer.echo(
+            json.dumps([p.model_dump(mode="json") for p in products], ensure_ascii=False, indent=2)
+        )
+        return
+    if not products:
+        typer.echo("暂无产品。")
+        return
+    typer.echo(f"全部产品（{len(products)}）：")
+    for i, p in enumerate(products, 1):
+        _render_product_line(i, p)
+
+
+@products_app.command("show")
+def products_show(
+    product_id: str = typer.Argument(..., help="产品 id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """查看单个产品的完整档案。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    repo = ProductRepository(ws)
+    p = repo.get(product_id)
+    if p is None:
+        typer.echo(f"product not found: {product_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(json.dumps(p.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    _render_product_full(p)
+
+
+@products_app.command("explore")
+def products_explore(
+    product_id: str = typer.Argument(..., help="产品 id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    refresh: bool = typer.Option(False, "--refresh", help="强制重新分析（默认幂等复用已存结果）"),
+) -> None:
+    """选中一个产品 → 8 点理解（方案分析）。"""
+    from finch.sources.store import ArtifactRepository
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    repo = ProductRepository(ws)
+    sol_repo = SolutionRepository(ws)
+    p = repo.get(product_id)
+    if p is None:
+        typer.echo(f"product not found: {product_id}")
+        raise typer.Exit(code=1)
+
+    ProductPresentationRepository(ws).record_selected(product_id=product_id, surface="explore")
+
+    existing = sol_repo.get(product_id)
+    solution: Solution | None
+    if existing is not None and not refresh:
+        solution = existing
+    else:
+        runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
+        artifacts = ArtifactRepository(ws).list_by_ids(p.source_refs)
+        solution = explore_product(
+            runner,
+            p,
+            artifacts,
+            sol_repo,
+            version=settings.products.solution.version,
+            force=refresh,
+        )
+
+    if solution is None:
+        typer.echo("方案分析未生成（证据不足或 LLM 失败）。")
+        raise typer.Exit(code=1)
+
+    if as_json:
+        typer.echo(json.dumps(solution.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    _render_solution(solution)
 
 
 @sources_app.command("doctor")
@@ -1973,7 +2196,7 @@ def twitter_diagnose() -> None:
         typer.echo(f"search probe: failed ({type(exc).__name__}: {exc})")
 
 
-@app.command("learn")
+@app.command("learn", hidden=True)
 def learn(
     draft_id: str = typer.Argument(..., help="已发布草稿 id"),
     url: str = typer.Option(None, "--url", help="发布后的 URL"),
@@ -2024,7 +2247,7 @@ def learn(
         typer.echo(f"recorded feedback for {draft_id}")
 
 
-@app.command("weekly")
+@app.command("weekly", hidden=True)
 def run_weekly(as_json: bool = typer.Option(False, "--json", help="输出 JSON")) -> None:
     """周复盘：关系质量指标与周报指标由代码算，LLM 定性解读（五个关系问题）。"""
     settings = load_settings()
@@ -6840,7 +7063,7 @@ def article_show(
         typer.echo(_render_article_report(report))
 
 
-@app.command("summarize")
+@app.command("summarize", hidden=True)
 def summarize(
     text: str = typer.Option(None, "--text", help="要摘要的文本"),
     file: str = typer.Option(None, "--file", help="文本文件"),

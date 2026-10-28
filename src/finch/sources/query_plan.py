@@ -12,43 +12,44 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
-from finch.settings import ExplorationTopic, Settings, SourceDiscoverySettings
+from finch.settings import ExplorationTopic, Settings, SourceDiscoverySettings, SourcesSettings
 from finch.sources.connectors import DiscoveryContext
 from finch.sources.models import Source
 
 
-def _plan(settings: Settings, src: Source) -> SourceDiscoverySettings:
-    return getattr(settings.sources, src.value)
+def _plan(sources: SourcesSettings, src: Source) -> SourceDiscoverySettings:
+    return getattr(sources, src.value)
 
 
-def _payload(settings: Settings, src: Source) -> tuple[list[str], list[str]]:
+def _payload(sources: SourcesSettings, src: Source) -> tuple[list[str], list[str]]:
     """返回 (queries, urls)；GitHub 用 users 当登录名，weixin 同时支持 query 与 url。"""
     if src == Source.TWITTER:
-        return list(settings.sources.twitter.queries), list(settings.sources.twitter.urls)
+        return list(sources.twitter.queries), list(sources.twitter.urls)
     if src == Source.REDDIT:
-        return list(settings.sources.reddit.queries), list(settings.sources.reddit.urls)
+        return list(sources.reddit.queries), list(sources.reddit.urls)
     if src == Source.GITHUB:
-        return list(settings.sources.github.users), []
+        return list(sources.github.users), []
     if src == Source.V2EX:
-        return list(settings.sources.v2ex.queries), []
+        return list(sources.v2ex.queries), []
     if src == Source.WEIXIN:
-        return list(settings.sources.weixin.queries), list(settings.sources.weixin.urls)
+        return list(sources.weixin.queries), list(sources.weixin.urls)
     if src == Source.XIAOHONGSHU:
         return (
-            list(settings.sources.xiaohongshu.queries),
-            list(settings.sources.xiaohongshu.urls),
+            list(sources.xiaohongshu.queries),
+            list(sources.xiaohongshu.urls),
         )
     return [], []
 
 
 def select_exploration_topic(
-    settings: Settings, *, now: datetime | None = None
+    settings: Settings, *, now: datetime | None = None, sources: SourcesSettings | None = None
 ) -> ExplorationTopic | None:
     """按天轮换选择一个主题组（D9）。
 
     确定性（同一天同一组）、幂等（重试复用同组）、纯读安全（不推进状态）。
     """
-    topics = settings.sources.exploration_topics
+    src_cfg = sources or settings.sources
+    topics = src_cfg.exploration_topics
     if not topics:
         return None
     clock = now or datetime.now(UTC)
@@ -64,6 +65,7 @@ def build_context_by_source(
     limit: int = 20,
     all_sources: bool = False,
     topic: ExplorationTopic | None = None,
+    sources: SourcesSettings | None = None,
 ) -> dict[Source, DiscoveryContext]:
     """Build per-source DiscoveryContext.
 
@@ -76,6 +78,7 @@ def build_context_by_source(
     queries = list(cli_queries or [])
     urls = list(cli_urls or [])
     use_cli = bool(queries or urls) and source is not None and not all_sources
+    src_cfg = sources or settings.sources
 
     out: dict[Source, DiscoveryContext] = {}
     targets = [source] if source is not None and not all_sources else list(Source)
@@ -90,7 +93,7 @@ def build_context_by_source(
                 out[src] = DiscoveryContext(queries=queries, urls=urls, limit=limit)
             continue
 
-        plan = _plan(settings, src)
+        plan = _plan(src_cfg, src)
         if not plan.enabled or plan.mode == "disabled":
             continue
         # 时间线模式：关注时间线是独立输入（无 queries/urls，不合并主题词，不回退搜索）。
@@ -99,7 +102,7 @@ def build_context_by_source(
                 queries=[], urls=[], limit=plan.fetch_limit, mode="timeline"
             )
             continue
-        q, u = _payload(settings, src)
+        q, u = _payload(src_cfg, src)
         # D9：合并当前主题组的查询（去重；用户固定查询优先，GitHub 用登录名）。
         if topic is not None:
             if src == Source.GITHUB:
@@ -158,14 +161,19 @@ def build_discovery_plan(
     *,
     lookback_hours: int | None = None,
     intent: str | None = None,
+    sources: SourcesSettings | None = None,
 ) -> DiscoveryPlan:
-    """构造一次刷新唯一的输入契约；CLI 覆盖优先，默认走配置与当前问题。"""
+    """构造一次刷新唯一的输入契约；CLI 覆盖优先，默认走配置与当前问题。
+
+    ``sources`` 缺省用 ``settings.sources``；产品发现传 ``settings.products.sources``。
+    """
     dp = settings.discovery.daily_people
+    src_cfg = sources or settings.sources
     source_queries: dict[str, list[str]] = {}
     source_limits: dict[str, int] = {}
-    topic = select_exploration_topic(settings)
+    topic = select_exploration_topic(settings, sources=src_cfg)
     for src in Source:
-        plan = getattr(settings.sources, src.value, None)
+        plan = getattr(src_cfg, src.value, None)
         if plan is None or not plan.enabled or plan.mode == "disabled":
             continue
         # 时间线源计入计划（空 inputs 表达「时间线模式」，区别于禁用）。
@@ -173,7 +181,7 @@ def build_discovery_plan(
             source_queries[src.value] = []
             source_limits[src.value] = plan.fetch_limit
             continue
-        q, u = _payload(settings, src)
+        q, u = _payload(src_cfg, src)
         # D9：与 build_context_by_source 一致，合并当前主题组查询（GitHub 用登录名）。
         if topic is not None:
             if src == Source.GITHUB:

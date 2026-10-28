@@ -1,23 +1,22 @@
 # Finch
 
-Finch 是一个**跨领域学习、连接与表达伙伴**。它帮你发现不同领域中持续创造、分享一手经验的人与思想，理解值得了解或交流的原因，通过讨论和小规模实践形成并修正自己的判断，把经验写成清晰、有价值的内容，并延续真实交流。学习、实践、表达与连接是并列的路径；公开表达（形成自己的观点、写成像自己的内容）是与连接并列的出口之一，而不是连接的下游。
+Finch 是一个 **AI 产品发现 + 创业者连接 Copilot**。它持续发现值得关注的 AI 产品与创业者，理解产品为谁解决什么问题、采用什么方案、有哪些证据与未验证假设，通过真实试用、具体反馈与公开讨论建立有价值的关系，并逐步形成自己的产品判断。
 
-Finch 记录对话事实、明确承诺与线程内问题/使用反馈笔记；不做跨来源痛点聚类或产品机会评分（那是 builderDNA），也不做产业战略（Quinn）。工具收款权威记录属于具体工具项目。
+产品是主要研究对象，创业者是主要连接对象。内容生产不是目的，也不服从连接。
 
 > 完整定义见 [`docs/product-contract.md`](docs/product-contract.md)。Finch 独立运行，不依赖任何其他项目（如 builderDNA）。
 
-当前架构是 **Skill + 领域服务**（不是 Graph Runtime，也不是 LLM agent loop）：Skill 覆盖认知任务，状态机、存储、幂等、评分、Critic 门禁都留在确定性 Python 领域服务。`finch diagnose` 可分别报告 `gh` 与 `opencli` 状态。
+当前架构是 **Skill + 领域服务**（不是 Graph Runtime，也不是 LLM agent loop）：状态机、存储、幂等、产品聚类、确定性打分、证据门禁都留在确定性 Python 领域服务。`finch diagnose` 可分别报告 `gh` 与 `opencli` 状态。
 
-## 四条并列路径
+## 核心闭环
 
-- **学习**：从问题、文章/作品或个人经历进入，理解材料、形成并修正自己的判断。
-- **实践**：把判断落成小规模、可观察、有停止条件的尝试。
-- **表达**：从实践、阅读与对话形成观点 → 写成像自己的内容。
-- **连接**：发现同行/使用者 → 准备互动 → 记录关系 → 继续对话（`finch connect daily`）。
+```text
+发现产品 → 理解问题 → 拆解方案 → 比较与学习 → 选择行动 → 反馈与连接
+```
 
-四条路径并列，不串成强制流水线；出口可跳过或组合。
+第一轮落地「发现产品 + 方案分析（Solution Explorer）」。创业者连接、产品比较与洞察积累在后续轮次交付。
 
-北极星指标：**每周新增或加深多少个「有上下文、可继续」的同行关系**；关系之外每周同时观察判断修正、实际行动、自己的表达与持续交流（各自记录，不合成成长总分）。粉丝数、发帖数、草稿数都不是核心指标。PeerProfile 不是 CRM lead；Opportunity 不是商业机会。
+北极星指标：**每周新增或加深多少个「有上下文、可继续」的创业者关系**；关系之外每周分别观察判断修正、真实行动、自己的判断与持续交流（各自记录，不合成总分）。收藏数、发现数、试用数、反馈数都不是核心指标。
 
 ## 安装
 
@@ -28,142 +27,57 @@ uv sync
 ## 命令
 
 ```bash
-uv run finch init [--prune]             # 初始化 var/ 文件工作区
-uv run finch diagnose                    # 探测 gh / opencli 可用性
+uv run finch init                          # 初始化 var/ 文件工作区
+uv run finch diagnose                      # 探测 gh / opencli 可用性
 
-# —— 连接 ——
-uv run finch connect daily [--refresh] [--view home|browse] [--question "…"]  # 首页 0–1 首选机会；browse 为 50 人分层（5/15/30）
-uv run finch connect today --limit 10    # 别名：connect daily 首页（纯读）
-uv run finch connect person <person_id>  # 查看某人完整证据与档案（只读）
-uv run finch connect prepare --opportunity ID --reaction "你的一句反应"   # 深度准备（默认每次最多 5；不传 --reaction 只得澄清问题）
-uv run finch connect assess --url <url>  # 对指定讨论做一次机会评估
-uv run finch connect feedback --file feedback.json
-uv run finch peers list / show <peer_id> # 同行档案与关系上下文
-uv run finch connections today           # 今日承诺面（需回应 / 兑现）
-uv run finch connections record --person <peer_id> --url <url> --body "..."   # 用户亲自发布后登记
-uv run finch connections follow-up --opportunity ID   # 接续对方回应
-uv run finch people shortlist --today    # 同 connections today
-uv run finch conversations list --needs-follow-up / show / follow-up / ingest / note / commit / defer / close
-uv run finch sources doctor / sync       # 只读采集（twitter|reddit|github|v2ex|weixin|xiaohongshu）
-uv run finch repos discover [--resume ID] / list --run ID / export --run ID  # X→GitHub 热度榜
+# —— 产品发现（本轮核心） ——
+uv run finch products daily [--refresh] [--view home|browse] [--json] [--question "…"]
+                                           # 每日 5–10 个产品候选；--refresh 跑发现，否则回放最新快照
+uv run finch products list [--json]        # 全部已保存产品（按分数降序）
+uv run finch products show <product_id>    # 单个产品完整档案
+uv run finch products explore <product_id> [--refresh] [--json]
+                                           # 选中一个产品 → 8 点理解（方案分析）
 
-# —— 灵感笔记 ——
-uv run finch inspirations save --text "想保留的启发" [--source <ref>] [--origin …]
-uv run finch inspirations list / show <id> / note <id> --text "…" / archive <id>
-uv run finch collisions generate / weekly
-uv run finch experiments start <collision_id> --action "…" --observe "…" --stop "…"
-
-# —— 表达 ——
-uv run finch ideas commit / create / list / show / confirm / revise-position / skip
-uv run finch drafts write / create / show / revise
-uv run finch review list / show / approve / revise / skip
-uv run finch voice show / approve-example / reject-example / revoke-example / propose
-uv run finch weekly
-uv run finch learn <draft_id>            # 记录发布反馈
-uv run finch practice start --material "<想法>" --attempt "<已有段落>"  # 二选一：只有想法用 --material，已有段落用 --attempt
-uv run finch practice explore / select / save / feedback / finish / show / observe  # 写作伙伴：三方案 → 用户写 → 局部对比 → 重写
-uv run finch methods seed / list / show  # 表达方法库（seed 幂等导入《精简写作》48 条种子）
-uv run finch article analyze --text "<文本>" | --file posts.md | --url "<链接>"  # 含写作风格七维
-uv run finch community context / list / run
-uv run finch dialogue save / search / show / forget
-uv run finch github reflect
+# —— 只读采集（产品发现复用） ——
+uv run finch sources doctor / sync         # 跨平台只读采集（twitter|reddit|github|v2ex|weixin|xiaohongshu）
+uv run finch repos discover [--resume ID] / list --run ID / export --run ID   # X→GitHub 热度榜
 uv run finch twitter search / import-bookmarks / diagnose
-uv run finch context                     # 每日 / 待办只读投影
 ```
 
-## 自然语言用法
+产品发现使用 `finch.yaml` 中独立的 `products.sources` 查询块（与旧 `sources` 隔离）。
 
-- 「只看结果」——完成当前任务，不做延伸讨论。
-- 「继续讨论」——回应 Finch 上轮延伸问题，进入连续讨论。
-- 「查看依据」——要求展示某条结论的来源。
-- 「先不查」——停止待查证动作。
-- 「别记这段」——跳过当前讨论摘要的保存。
+### 已冻结的旧使命命令
 
-### 清晰表达（ASD-STE100-inspired）
+旧「跨领域学习 / 连接 / 表达」使命的领域服务已冻结（`hidden=True`），从 `finch --help` 默认面移除，但命令仍可调用、代码与测试保留、数据原样保留，验证新方向后再决定删除。包括：`connect`、`peers`、`connections`、`conversations`、`ideas`、`drafts`、`review`、`voice`、`profile`、`practice`、`article`、`angles`、`methods`、`community`、`dialogue`、`materials`、`problems`、`attempts`、`grounded`、`knowledge`、`collisions`、`experiments`、`inspirations`、`github reflect`、`learn`、`weekly`、`summarize`、`context`。
 
-草稿修订默认应用 Finch 的 ASD-STE100-inspired 清晰规则（中文适配，不声称官方合规）：
+## 产品发现用法
 
 ```bash
-uv run finch drafts revise <draft_id> --instruction "用 ASD-STE100 的原则优化，保留我的语气"
-uv run finch drafts revise <draft_id> --instruction "改成清晰的技术操作说明"
+# 1. 跑一次产品发现（5–10 个候选；空轮保持空）
+uv run finch products daily --refresh --question "最近发布的值得关注的 AI 产品"
+
+# 2. 选中一个产品，得到 8 点理解（方案分析）
+uv run finch products explore <product_id>
+
+# 3. 查看或导出候选
+uv run finch products list --json
+uv run finch products show <product_id>
 ```
 
-规则见 `skills/_shared/asd-ste100-inspired.md`。练习清晰表达走 `expression-practice`；从文章学习降低理解成本的写法见 `finch article analyze`。
-
-## 从同行到观点
-
-```bash
-# 1. 发现交流机会（轻量卡，无整表草稿）
-uv run finch connect daily --refresh
-
-# 2. 选中后深度准备（生成正文 ≠ 已发布）
-uv run finch connect prepare --opportunity <opportunity_id> [--reaction "<你的原话>"]
-
-# 3. 记录真实互动（含系统外导入），收到回复后跟进
-uv run finch connections record --person <peer_id> --url <url> --body "..." --opportunity <opportunity_id>
-uv run finch conversations ingest --peer <peer_id> --url <url> --body "..." --attested
-uv run finch conversations follow-up <conversation_id>
-
-# 4. 从对话形成观点候选（确认立场 → 草稿 → 人工审核）
-uv run finch ideas create --conversation <id>
-uv run finch ideas confirm <id>
-uv run finch drafts create <id>
-uv run finch review approve <draft_id>
-```
-
-观点状态机：`PROPOSED → CONFIRMED`，或 `PROPOSED/CONFIRMED → SKIPPED`。修订历史 append-only；草稿生成走「待审」（`review`）语义，不改 job 状态，且 ≠ 观点已证实。
-
-## Skill 架构
-
-```
-skills/
-  peer-discovery/          公开讨论 → 首页 0–1 首选机会 + browse 的 50 人分层（5/15/30）+ PeerProfile
-  creator-evidence/        有限工件 → CreatorEvidence（必须引用 artifact_id）
-  connection-opportunity/  判断有无真实贡献（无贡献则 SKIP）
-  interaction-preparation/ 选中后深度准备互动建议（默认每次最多 5）
-  reply-crafting/          公开回复草稿；不发布
-  conversation-follow-up/  按真实触发信号恢复对话并提出下一步
-  relationship-review/     由互动记录判断关系阶段与是否联系
-  idea-discovery/          Commit/用户片段/已验证对话 → ContentJob
-  voice-profile/           个人表达画像（只从用户认可样本更新）
-  weekly-reflection/       关系质量/观点形成/表达反馈复盘
-  collision-lab/           跨领域结构碰撞 → CollisionCard
-  micro-experiment/        CollisionCard → 一周内小实验
-  # —— 独立训练工具（不进入默认流水线）——
-  community-scout/         围绕问题发现并持续参与社区（三入口 + 观察/可参与分层，验证中）
-  expression-practice/     写作伙伴：三方案探索 → 用户写 → 局部对比 → 用户重写
-  article_analysis/        文章表达 + 写作风格分析（只读，不写画像）
-  feynman-practice/        费曼技巧
-  sticky-message/          检查想法是否清晰易记
-  topic-dialogue/          围绕话题讨论，形成或修正判断（不写关系记录）
-  _shared/                 idea-contract / evidence-policy / author-position / expression-contract / publication-safety / agent-presentation / dialogue-policy
-```
+## 架构
 
 ```
 src/finch/
-  peers/           PeerProfile / Person / CreatorEvidence（按 platform+author_id 幂等归一化）
-  conversations/   ConversationThread / 跟进触发 / Commitment
-  connections/     真实互动登记与机会跟进
-  dialogue/        讨论摘要（与对话线索、观点分开）
-  inspirations/    轻量灵感笔记
-  collisions/      跨领域碰撞与一周小实验
-  opportunities/   交流机会聚合（评估 / 状态机 / 贡献制作）
-  discovery/       每日发现编排（sources → people → 首选机会）
-  sources/         跨平台只读抓取（opencli + RawArtifact）
-  engagement/      发现快照 / InteractionRecord / 推荐反馈（旧评分管线已移除）
-  communities/     社区档案与反馈（无评分）
-  ideas/           观点状态机 + Commit/Fragment 服务
-  drafts/          DraftService（已确认观点 → Draft + CriticReport）
-  practice/        expression-practice 会话
-  idea/            finch drafts 复用的纯函数
-  content/         ContentJob、writer、critic 检查器、voice profile
-  article/         article_analysis（ArticleReport + SourceResolver，只读）
-  webfetch/        通用网页正文提取器（只读 adapter，fail-closed）
-  inbox/           连接与表达循环的只读统一投影与决策
-  learn/           Feedback + 周复盘指标 + 定性复盘
-  evidence/        Commit → EngineeringEvent → EvidenceCard
-  github/ twitter/ reddit/  只读 adapter（gh / opencli）
+  products/        Product / Founder / Solution 模型 + 产品发现 + 方案分析（本轮核心）
+  sources/         跨平台只读抓取（opencli + RawArtifact；产品发现复用）
+  repos/           X 分享的 GitHub 仓库发现与热度榜（产品发现输入）
+  github/ twitter/ reddit/ webfetch/ ingest/  只读 adapter
   storage/         文件 Workspace（YAML / Markdown / JSONL，原子写）
+  codex/ llm/      `codex exec` 子进程 + OpenAI 兼容结构化推理
+  # —— 已冻结（旧使命，代码与测试保留） ——
+  peers/ opportunities/ conversations/ connections/ ideas/ drafts/ content/ practice/
+  article/ angle_discovery/ content_summary/ expression_methods/ communities/ grounded/
+  problems/ attempts/ knowledge/ materials/ learn/ inbox/ evidence/ collisions/ inspirations/
 ```
 
 详见 `docs/` 与 `skills/`。

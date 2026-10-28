@@ -126,6 +126,67 @@ sources:
       - "决策 反思"
     urls: []
 
+# AI 产品发现（finch products daily --refresh）：与上面 `sources`（旧连接发现）隔离，
+# 用产品向查询；旧 `sources` 查询保持不变。
+products:
+  lookback_hours: 720
+  daily_limit: 10
+  min_candidates: 5
+  max_card_candidates: 20
+  card_batch_size: 5
+  cooldown_days: 7
+  repos_as_input: true
+  solution:
+    version: product-solution-v1
+  sources:
+    twitter:
+      enabled: true
+      mode: query
+      fetch_limit: 100
+      queries:
+        - '("I built" OR "we built" OR "just launched") (product OR app OR tool)'
+        - '("solo founder" OR bootstrapped) (launched OR shipped)'
+        - '("Product Hunt" OR "product hunt")'
+      urls: []
+    reddit:
+      enabled: true
+      mode: query
+      fetch_limit: 100
+      queries:
+        - "I built a side project"
+        - "launched my startup"
+        - "product validation feedback"
+      urls: []
+    github:
+      # GitHub 查询是登录名，不是主题词。
+      enabled: false
+      mode: query
+      fetch_limit: 100
+      users: []
+    v2ex:
+      enabled: true
+      mode: query
+      fetch_limit: 100
+      queries:
+        - "新产品 发布"
+        - "独立开发 上线"
+    weixin:
+      enabled: true
+      mode: query
+      fetch_limit: 50
+      queries:
+        - "AI 产品 发布"
+        - "独立开发者 上线"
+      urls: []
+    xiaohongshu:
+      enabled: true
+      mode: query
+      fetch_limit: 100
+      queries:
+        - "AI 产品 推荐"
+        - "新 App 发布"
+      urls: []
+
 # Daily 50-person discovery: 5 priority / 15 summary / 30 browse tiers.
 # LLM budget is fixed: at most `semantic_assess_limit` people enter batch semantic
 # assessment, and `deep_prepare_limit` people get a full connection analysis —

@@ -94,6 +94,8 @@ class DiscoveryOrchestrator:
         self,
         source: Source,
         context: DiscoveryContext | None = None,
+        *,
+        project_peers: bool = True,
     ) -> SyncResult:
         ctx = context or DiscoveryContext()
         if ctx.config_error:
@@ -141,7 +143,7 @@ class DiscoveryOrchestrator:
                     if was_new:
                         created += 1
                     normalized.append(art)
-            proj = self._project(normalized)
+            proj = self._project(normalized) if project_peers else ProjectResult()
             payload = self._run_payload(
                 run_id, source, caps.snapshot_id, raw_count, len(normalized), created, last_kind
             )
@@ -224,7 +226,7 @@ class DiscoveryOrchestrator:
         if ctx.cursor:
             self.cursors.set(source, ctx.cursor)
 
-        proj = self._project(normalized)
+        proj = self._project(normalized) if project_peers else ProjectResult()
         payload = self._run_payload(
             run_id, source, caps.snapshot_id, raw_count, len(normalized), created, last_kind
         )
@@ -264,6 +266,8 @@ class DiscoveryOrchestrator:
         self,
         sources: list[Source] | None = None,
         context_by_source: dict[Source, DiscoveryContext] | None = None,
+        *,
+        project_peers: bool = True,
     ) -> list[SyncResult]:
         candidates = sources if sources is not None else list(self.connectors.keys())
         if context_by_source is not None:
@@ -276,7 +280,7 @@ class DiscoveryOrchestrator:
             ctx = (context_by_source or {}).get(src) or DiscoveryContext()
             started = time.perf_counter()
             try:
-                result = self.sync_source(src, ctx)
+                result = self.sync_source(src, ctx, project_peers=project_peers)
             except Exception as exc:  # noqa: BLE001
                 result = SyncResult(
                     source=src,

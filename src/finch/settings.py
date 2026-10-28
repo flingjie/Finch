@@ -273,6 +273,29 @@ class SourcesSettings(BaseModel):
     exploration_topics: list[ExplorationTopic] = Field(default_factory=list)
 
 
+class SolutionExplorerSettings(BaseModel):
+    """Solution Explorer 配置（最小版：只控 prompt 版本）。"""
+
+    version: str = "product-solution-v1"
+
+
+class ProductDiscoverySettings(BaseModel):
+    """产品发现轨道配置（第一轮：每日 5–10 产品 + 方案分析）。
+
+    ``sources`` 是产品向的独立查询块（与旧 ``settings.sources`` 隔离，旧 peer 查询不动）。
+    """
+
+    sources: SourcesSettings = Field(default_factory=SourcesSettings)
+    lookback_hours: int = 720
+    daily_limit: int = Field(default=10, ge=1)
+    min_candidates: int = Field(default=5, ge=0)
+    max_card_candidates: int = Field(default=20, ge=1)
+    card_batch_size: int = Field(default=5, ge=1)
+    cooldown_days: int = Field(default=7, ge=0)
+    repos_as_input: bool = True
+    solution: SolutionExplorerSettings = Field(default_factory=SolutionExplorerSettings)
+
+
 class ScoringWeights(BaseModel):
     """互动评分五维权重（执行计划 5 默认评分权重表）。
 
@@ -483,6 +506,7 @@ class Settings(BaseModel):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
     notion: NotionSettings = Field(default_factory=NotionSettings)
+    products: ProductDiscoverySettings = Field(default_factory=ProductDiscoverySettings)
 
 
 def _warn_legacy_sources(data: dict) -> None:
