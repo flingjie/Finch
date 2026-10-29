@@ -11,6 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from finch.sources.models import Source
+
 Platform = Literal["x", "reddit", "github", "v2ex", "weixin", "xiaohongshu", "web"]
 
 
@@ -20,6 +22,24 @@ class EvidenceStatus(StrEnum):
     EXPLICIT = "explicit"
     INFERRED = "inferred"
     ASSUMPTION = "assumption"
+
+
+class FeedbackType(StrEnum):
+    """一条用户反馈的类型（证据，不是投票）。"""
+
+    PRAISE = "praise"
+    COMPLAINT = "complaint"
+    REQUEST = "request"
+    COMPARISON = "comparison"
+    QUESTION = "question"
+
+
+class ExperienceLevel(StrEnum):
+    """使用经历层级：第一手 / 间接转述 / 未知。"""
+
+    FIRST_HAND = "first_hand"
+    SECOND_HAND = "second_hand"
+    UNKNOWN = "unknown"
 
 
 class FounderHandle(BaseModel):
@@ -93,10 +113,35 @@ class SolutionVerdict(StrEnum):
 
 
 class SolutionEvidence(BaseModel):
-    """一条价值判断的证据/假设（区分显式证据与未验证假设）。"""
+    """一条价值判断的证据/假设（区分显式证据与未验证假设）。
+
+    ``origin`` 标记证据来源：founder（创业者主张，引用产品 source_ref）/ feedback
+    （用户反馈，引用 feedback_id）/ inference（模型推断，无引用）。
+    """
 
     claim: str
     source_refs: list[str] = Field(default_factory=list)
+    feedback_refs: list[str] = Field(default_factory=list)
+    origin: Literal["founder", "feedback", "inference"] = "founder"
+    status: EvidenceStatus = EvidenceStatus.ASSUMPTION
+
+
+class FeedbackOpportunityKind(StrEnum):
+    """反馈揭示的机会类型。"""
+
+    PAIN_POINT = "pain_point"
+    UNMET_NEED = "unmet_need"
+    CONTRADICTION = "contradiction"
+    HYPOTHESIS = "hypothesis"
+    FOUNDER_QUESTION = "founder_question"
+
+
+class FeedbackOpportunity(BaseModel):
+    """Solution 中由用户反馈揭示的机会/待验证假设（可追溯到 feedback_id）。"""
+
+    kind: FeedbackOpportunityKind
+    claim: str
+    feedback_refs: list[str] = Field(default_factory=list)
     status: EvidenceStatus = EvidenceStatus.ASSUMPTION
 
 
@@ -114,6 +159,56 @@ class Solution(BaseModel):
     design_thinking: str = ""  # (6) 值得学习的产品设计思路
     builders: str = ""  # (7) 谁在构建
     verdict: SolutionVerdict = SolutionVerdict.WATCH  # (8) 是否值得深入试用/交流
+    feedback_opportunities: list[FeedbackOpportunity] = Field(
+        default_factory=list
+    )  # 用户反馈揭示的机会
+    feedback_report_id: str = ""  # 该 Solution 基于哪份反馈报告（失效审计）
+    sources: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class Feedback(BaseModel):
+    """一条结构化用户反馈（研究主对象）。摘录与链接必须可追溯到候选讨论。"""
+
+    feedback_id: str  # fb_<sha256[:12]>，由 product/source/url/excerpt 内容派生
+    product_id: str
+    source: Source
+    source_url: str = ""
+    author: str = ""
+    published_at: datetime | None = None
+    feedback_type: FeedbackType = FeedbackType.QUESTION
+    user_scenario: str = ""  # 使用场景
+    original_excerpt: str = ""  # 逐字原文摘录
+    user_problem: str = ""  # 用户遇到的问题
+    requested_outcome: str = ""  # 期望结果 / 功能请求
+    experience_level: ExperienceLevel = ExperienceLevel.UNKNOWN
+    evidence_status: EvidenceStatus = EvidenceStatus.ASSUMPTION
+    confidence: Literal["low", "medium", "high"] = "medium"
+
+
+class FeedbackPoint(BaseModel):
+    """反馈报告里的一条可追溯结论（LLM 提语义，代码算 count + 校验 refs）。"""
+
+    claim: str
+    feedback_refs: list[str] = Field(default_factory=list)
+    count: int = 0  # 去重后的独立反馈数（代码算，LLM 不写）
+    status: EvidenceStatus = EvidenceStatus.ASSUMPTION
+
+
+class FeedbackReport(BaseModel):
+    """一个产品的用户反馈研究报告（综合 + 对照前的输入）。"""
+
+    report_id: str  # fbr_<sha256[:12]>，由 product/version/feedback_ids 内容派生
+    product_id: str
+    version: str = "product-feedback-v1"
+    feedback: list[Feedback] = Field(default_factory=list)
+    recurring_problems: list[FeedbackPoint] = Field(default_factory=list)
+    unmet_needs: list[FeedbackPoint] = Field(default_factory=list)
+    contradictions: list[FeedbackPoint] = Field(default_factory=list)
+    questions_for_founder: list[FeedbackPoint] = Field(default_factory=list)
+    info_gaps: str = ""
+    insufficient_feedback: bool = False
+    search_fingerprint: str = ""  # 查询/来源/配置指纹（缓存 TTL 用，非失效键）
     sources: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

@@ -7,6 +7,8 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, model_validator
 
+from finch.sources.models import Source
+
 
 class Paths(BaseModel):
     var_dir: Path = Field(default_factory=lambda: Path("var"))
@@ -279,6 +281,19 @@ class SolutionExplorerSettings(BaseModel):
     version: str = "product-solution-v1"
 
 
+class FeedbackResearchSettings(BaseModel):
+    """产品反馈研究配置：来源子集 + 候选/抽取上限 + 缓存 TTL。"""
+
+    enabled: bool = True
+    sources: list[Source] = Field(
+        default_factory=lambda: [Source.REDDIT, Source.TWITTER, Source.GITHUB]
+    )
+    min_candidates: int = Field(default=3, ge=0)
+    max_candidates: int = Field(default=30, ge=1)
+    stale_hours: int = Field(default=72, ge=0)
+    version: str = "product-feedback-v1"
+
+
 class ProductDiscoverySettings(BaseModel):
     """产品发现轨道配置（第一轮：每日 5–10 产品 + 方案分析）。
 
@@ -294,6 +309,7 @@ class ProductDiscoverySettings(BaseModel):
     cooldown_days: int = Field(default=7, ge=0)
     repos_as_input: bool = True
     solution: SolutionExplorerSettings = Field(default_factory=SolutionExplorerSettings)
+    feedback: FeedbackResearchSettings = Field(default_factory=FeedbackResearchSettings)
 
 
 class ScoringWeights(BaseModel):

@@ -13,8 +13,10 @@ def founder_id_for(platform: str, external_id: str) -> str:
     return f"founder_{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:12]}"
 
 
-def solution_id_for(product_id: str, fingerprint: str, *, version: str) -> str:
+def solution_id_for(
+    product_id: str, fingerprint: str, *, version: str, feedback_fingerprint: str = ""
+) -> str:
     digest = hashlib.sha256(
-        f"{product_id}:{fingerprint}:{version}".encode()
+        f"{product_id}:{fingerprint}:{version}:{feedback_fingerprint}".encode()
     ).hexdigest()
     return f"sol_{digest[:12]}"

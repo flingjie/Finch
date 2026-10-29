@@ -138,6 +138,16 @@ products:
   repos_as_input: true
   solution:
     version: product-solution-v1
+  feedback:
+    enabled: true
+    sources:
+      - reddit
+      - twitter
+      - github
+    min_candidates: 3
+    max_candidates: 30
+    stale_hours: 72
+    version: product-feedback-v1
   sources:
     twitter:
       enabled: true

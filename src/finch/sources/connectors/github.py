@@ -24,6 +24,10 @@ _MAX_COMMITS_PER_REPO = 5
 _MAX_ISSUES = 5
 _MAX_PRS = 5
 _MAX_RELEASES_PER_REPO = 2
+# 反馈研究有界抓取上限（区别于 creator 深度的 5 条）。
+_MAX_REPO_ISSUES = 30
+_MAX_REPO_PRS = 30
+_MAX_REPO_DISCUSSIONS = 10
 
 
 class GitHubConnector:
@@ -223,6 +227,100 @@ class GitHubConnector:
             kind=ResultKind.SUCCESS,
             stderr_summary="; ".join(errors)[:300] if errors else None,
         )
+
+    def fetch_repo_feedback(self, owner_repo: str) -> list[RawArtifact]:
+        """有界抓取产品仓库的 issue / PR / discussion 作为用户反馈候选。只读。"""
+        now = datetime.now(UTC)
+        out: list[RawArtifact] = []
+        for source_type, fetch, limit in (
+            ("issue", self.gh.list_repo_issues, _MAX_REPO_ISSUES),
+            ("pull_request", self.gh.list_repo_pull_requests, _MAX_REPO_PRS),
+        ):
+            try:
+                items = fetch(owner_repo, limit=limit)
+            except Exception:  # noqa: BLE001
+                items = []
+            for item in items:
+                art = self._feedback_item_artifact(item, now, source_type=source_type)
+                if art is not None:
+                    out.append(art)
+        try:
+            discussions = self.gh.list_repo_discussions(owner_repo, limit=_MAX_REPO_DISCUSSIONS)
+        except Exception:  # noqa: BLE001
+            discussions = []
+        for item in discussions:
+            art = self._discussion_artifact(item, now)
+            if art is not None:
+                out.append(art)
+        return out
+
+    def _feedback_item_artifact(
+        self, row: dict[str, Any], now: datetime, *, source_type: str
+    ) -> RawArtifact | None:
+        number = row.get("number")
+        title = str(row.get("title") or "")
+        url = str(row.get("html_url") or "")
+        user = row.get("user") or {}
+        login = str(user.get("login") or "") if isinstance(user, dict) else ""
+        body = str(row.get("body") or "")
+        text = f"{title}\n\n{body}".strip()
+        sid = str(row.get("id") or f"{source_type}-{number}")
+        fp = content_fingerprint(text, url=url)
+        published = self._parse_ts(row.get("created_at") or row.get("updated_at"))
+        return RawArtifact(
+            artifact_id=artifact_id("github", source_type, sid),
+            source=Source.GITHUB,
+            source_type=source_type,
+            source_id=sid,
+            canonical_url=url,
+            author_identity=AuthorIdentity(
+                platform="github", external_id=login.lower(), handle=login
+            ),
+            title=title or None,
+            text=text,
+            published_at=published,
+            metrics={},
+            retrieved_at=now,
+            capture_method="gh",
+            content_fingerprint=fp,
+        )
+
+    def _discussion_artifact(self, row: dict[str, Any], now: datetime) -> RawArtifact | None:
+        title = str(row.get("title") or "")
+        url = str(row.get("url") or "")
+        author = row.get("author") or {}
+        login = str(author.get("login") or "") if isinstance(author, dict) else ""
+        body = str(row.get("body") or "")
+        text = f"{title}\n\n{body}".strip()
+        sid = str(row.get("id") or url or "")
+        fp = content_fingerprint(text, url=url)
+        published = self._parse_ts(row.get("createdAt"))
+        return RawArtifact(
+            artifact_id=artifact_id("github", "discussion", sid),
+            source=Source.GITHUB,
+            source_type="discussion",
+            source_id=sid,
+            canonical_url=url,
+            author_identity=AuthorIdentity(
+                platform="github", external_id=login.lower(), handle=login
+            ),
+            title=title or None,
+            text=text,
+            published_at=published,
+            metrics={},
+            retrieved_at=now,
+            capture_method="gh",
+            content_fingerprint=fp,
+        )
+
+    @staticmethod
+    def _parse_ts(value: Any) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
 
     def _row_to_artifact(self, row: dict[str, Any], now: datetime) -> RawArtifact | None:
         kind = str(row.get("_kind") or "user")

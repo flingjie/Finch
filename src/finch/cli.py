@@ -130,8 +130,12 @@ from .practice.service import PracticeService
 from .problems.render import render_active_problems
 from .products.discovery import run_product_discovery
 from .products.explorer import explore_product
-from .products.models import Product, Solution
+from .products.feedback import research_feedback
+from .products.models import FeedbackReport, Product, Solution
 from .products.presentation import ProductPresentationRepository
+from .products.repository import (
+    FeedbackRepository as ProductFeedbackRepository,
+)
 from .products.repository import (
     ProductRepository,
     ProductSnapshotRepository,
@@ -871,14 +875,54 @@ def _render_solution(s: Solution, product: Product | None = None) -> None:
     if not s.value_evidence:
         typer.echo("   （无显式证据，均视为未验证假设）")
     for ev in s.value_evidence:
-        typer.echo(f"   [{ev.status.value}] {ev.claim or '-'}")
+        origin = {"founder": "创业者主张", "feedback": "用户反馈", "inference": "推断"}.get(
+            ev.origin, ev.origin
+        )
+        typer.echo(f"   [{origin}/{ev.status.value}] {ev.claim or '-'}")
     typer.echo(f"6) 值得学习的设计思路：{s.design_thinking or '-'}")
     typer.echo(f"7) 谁在构建：{s.builders or '-'}")
     typer.echo(f"8) 下一步：{verdict_labels.get(s.verdict.value, s.verdict.value)}")
+    if s.feedback_opportunities:
+        typer.echo("用户反馈揭示的机会：")
+        for opp in s.feedback_opportunities:
+            typer.echo(f"   [{opp.kind.value}] {opp.claim or '-'}")
     if product is not None:
         links = _product_link_summary(product)
         if links:
             typer.echo(f"相关链接：{links}")
+
+
+def _render_feedback_report(report: FeedbackReport) -> None:
+    if report.insufficient_feedback:
+        typer.echo("用户反馈研究：证据不足。")
+        if report.info_gaps:
+            typer.echo(f"  说明：{report.info_gaps}")
+        return
+    typer.echo(f"用户反馈（{len(report.feedback)} 条）：")
+    for i, f in enumerate(report.feedback, 1):
+        summary = f.user_problem or f.requested_outcome or f.user_scenario or "-"
+        typer.echo(f"{i}. [{f.feedback_type.value}] {summary}")
+        if f.original_excerpt:
+            if len(f.original_excerpt) <= 160:
+                excerpt = f.original_excerpt
+            else:
+                excerpt = f.original_excerpt[:159] + "…"
+            typer.echo(f"   摘录：{excerpt}")
+        if f.source_url:
+            typer.echo(f"   来源：{f.source_url}")
+    for label, points in (
+        ("高频痛点", report.recurring_problems),
+        ("未满足需求", report.unmet_needs),
+        ("用户意见矛盾", report.contradictions),
+        ("可向创业者提问", report.questions_for_founder),
+    ):
+        if not points:
+            continue
+        typer.echo(f"{label}：")
+        for p in points:
+            typer.echo(f"  - {p.claim or '-'}" + (f"（{p.count} 条）" if p.count else ""))
+    if report.info_gaps:
+        typer.echo(f"信息不足：{report.info_gaps}")
 
 
 @products_app.command("daily")
@@ -993,12 +1037,19 @@ def products_explore(
     product_id: str = typer.Argument(..., help="产品 id"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
     refresh: bool = typer.Option(False, "--refresh", help="强制重新分析（默认幂等复用已存结果）"),
+    skip_feedback: bool = typer.Option(
+        False, "--skip-feedback", help="不研究用户反馈，仅基于已有资料分析"
+    ),
 ) -> None:
-    """选中一个产品 → 8 点理解（方案分析）。"""
+    """选中一个产品 → 8 点理解（方案分析；默认纳入用户反馈研究）。"""
+    from finch.sources.connectors.github import GitHubConnector
+    from finch.sources.opencli_gateway import OpenCliGateway
+    from finch.sources.orchestrator import DiscoveryOrchestrator
     from finch.sources.store import ArtifactRepository
 
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
     repo = ProductRepository(ws)
     sol_repo = SolutionRepository(ws)
     p = repo.get(product_id)
@@ -1008,30 +1059,90 @@ def products_explore(
 
     ProductPresentationRepository(ws).record_selected(product_id=product_id, surface="explore")
 
-    existing = sol_repo.get(product_id)
-    solution: Solution | None
-    if existing is not None and not refresh:
-        solution = existing
-    else:
-        runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
-        artifacts = ArtifactRepository(ws).list_by_ids(p.source_refs)
-        solution = explore_product(
-            runner,
-            p,
-            artifacts,
-            sol_repo,
-            version=settings.products.solution.version,
-            force=refresh,
+    runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
+
+    feedback_report: FeedbackReport | None = None
+    if not skip_feedback and settings.products.feedback.enabled:
+        orchestrator = DiscoveryOrchestrator(
+            ws, gateway=OpenCliGateway(profile=settings.opencli.profile)
         )
+        feedback_report = research_feedback(
+            p,
+            runner=runner,
+            repository=ProductFeedbackRepository(ws),
+            settings=settings,
+            orchestrator=orchestrator,
+            github_connector=GitHubConnector(),
+            force=False,
+        )
+
+    artifacts = ArtifactRepository(ws).list_by_ids(p.source_refs)
+    solution = explore_product(
+        runner,
+        p,
+        artifacts,
+        sol_repo,
+        version=settings.products.solution.version,
+        force=refresh,
+        feedback_report=feedback_report,
+    )
 
     if solution is None:
         typer.echo("方案分析未生成（证据不足或 LLM 失败）。")
         raise typer.Exit(code=1)
 
     if as_json:
-        typer.echo(json.dumps(solution.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        payload = solution.model_dump(mode="json")
+        if feedback_report is not None:
+            payload["feedback"] = feedback_report.model_dump(mode="json")
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
+    if feedback_report is not None:
+        _render_feedback_report(feedback_report)
+        typer.echo("")
     _render_solution(solution, p)
+
+
+@products_app.command("feedback")
+def products_feedback(
+    product_id: str = typer.Argument(..., help="产品 id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    refresh: bool = typer.Option(False, "--refresh", help="强制重新搜索（默认幂等复用缓存）"),
+) -> None:
+    """研究一个产品的真实用户反馈（定向搜索 → 结构化 → 报告）。"""
+    from finch.sources.connectors.github import GitHubConnector
+    from finch.sources.opencli_gateway import OpenCliGateway
+    from finch.sources.orchestrator import DiscoveryOrchestrator
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    p = ProductRepository(ws).get(product_id)
+    if p is None:
+        typer.echo(f"product not found: {product_id}")
+        raise typer.Exit(code=1)
+
+    runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
+    orchestrator = DiscoveryOrchestrator(
+        ws, gateway=OpenCliGateway(profile=settings.opencli.profile)
+    )
+    report = research_feedback(
+        p,
+        runner=runner,
+        repository=ProductFeedbackRepository(ws),
+        settings=settings,
+        orchestrator=orchestrator,
+        github_connector=GitHubConnector(),
+        force=refresh,
+    )
+
+    if report is None:
+        typer.echo("反馈研究未启用。")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(json.dumps(report.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    _render_feedback_report(report)
 
 
 @sources_app.command("doctor")

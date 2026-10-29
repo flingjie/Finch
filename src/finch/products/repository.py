@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from finch.products.models import Product, ProductSnapshot, Solution
+from finch.products.models import FeedbackReport, Product, ProductSnapshot, Solution
 from finch.storage.workspace import Workspace
 
 
@@ -58,6 +58,38 @@ class SolutionRepository:
     def get(self, product_id: str) -> Solution | None:
         path = self._path(product_id)
         return self.ws.read_yaml(path, Solution)
+
+
+class FeedbackRepository:
+    """``var/products/<product_id>/feedback/``（raw.jsonl + report.yaml，幂等）。"""
+
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
+
+    def _dir(self, product_id: str) -> Path:
+        return self.ws.dir(f"products/{self.ws.safe_filename(product_id)}/feedback")
+
+    def _report_path(self, product_id: str) -> Path:
+        return self._dir(product_id) / "report.yaml"
+
+    def _raw_path(self, product_id: str) -> Path:
+        return self._dir(product_id) / "raw.jsonl"
+
+    def upsert(self, report: FeedbackReport) -> None:
+        self.ws.write_yaml(self._report_path(report.product_id), report)
+
+    def get(self, product_id: str) -> FeedbackReport | None:
+        return self.ws.read_yaml(self._report_path(product_id), FeedbackReport)
+
+    def append_raw(self, product_id: str, entry: dict) -> None:
+        self.ws.append_jsonl(self._raw_path(product_id), entry)
+
+    def clear_raw(self, product_id: str) -> None:
+        """重搜前清空审计日志，避免跨轮累积重复候选。"""
+        self._raw_path(product_id).unlink(missing_ok=True)
+
+    def read_raw(self, product_id: str) -> list[dict]:
+        return self.ws.read_jsonl(self._raw_path(product_id))
 
 
 class ProductSnapshotRepository:

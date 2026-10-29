@@ -21,6 +21,14 @@ from finch.github.models import (
     parse_repo_view,
 )
 
+_DISCUSSIONS_QUERY = (
+    "query($owner: String!, $name: String!) {"
+    "repository(owner: $owner, name: $name) {"
+    "discussions(first: {first}, orderBy: {field: CREATED_AT, direction: DESC}) {"
+    "nodes { title url body createdAt author { login } }"
+    "} } }"
+)
+
 
 def _run(argv: list[str], timeout: float, stdin: str | None = None) -> dict:
     """子进程数组传参 + 超时，返回结构化结果；可选 stdin 输入。"""
@@ -296,3 +304,64 @@ class GhClient:
         )
         assert isinstance(data, list)
         return [r for r in data if isinstance(r, dict)][:cap]
+
+    def list_repo_issues(
+        self, repo: str, *, state: str = "all", limit: int = 30
+    ) -> list[dict]:
+        """Issues in a repo (REST ``repos/{repo}/issues``，排除 PR 条目)。"""
+        cap = max(1, min(limit, 100))
+        data = self._gh_json(
+            [
+                "gh",
+                "api",
+                "-H",
+                "Accept: application/vnd.github+json",
+                f"repos/{repo}/issues?state={state}&sort=created&direction=desc&per_page={cap}",
+            ],
+            timeout=60.0,
+        )
+        assert isinstance(data, list)
+        # issues 端点同时返回 PR；PR 带 pull_request 字段，单独走 list_repo_pull_requests。
+        return [i for i in data if isinstance(i, dict) and "pull_request" not in i][:cap]
+
+    def list_repo_pull_requests(
+        self, repo: str, *, state: str = "all", limit: int = 30
+    ) -> list[dict]:
+        """PRs in a repo (REST ``repos/{repo}/pulls``)。"""
+        cap = max(1, min(limit, 100))
+        data = self._gh_json(
+            [
+                "gh",
+                "api",
+                "-H",
+                "Accept: application/vnd.github+json",
+                f"repos/{repo}/pulls?state={state}&sort=created&direction=desc&per_page={cap}",
+            ],
+            timeout=60.0,
+        )
+        assert isinstance(data, list)
+        return [i for i in data if isinstance(i, dict)][:cap]
+
+    def list_repo_discussions(self, repo: str, *, limit: int = 10) -> list[dict]:
+        """Repo Discussions via GraphQL（REST 无 discussions 端点）。"""
+        owner, _, name = repo.partition("/")
+        cap = max(1, min(limit, 30))
+        query = _DISCUSSIONS_QUERY.replace("{first}", str(cap))
+        data = self._gh_json(
+            [
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                f"query={query}",
+                "-f",
+                f"owner={owner}",
+                "-f",
+                f"name={name}",
+            ],
+            timeout=60.0,
+        )
+        assert isinstance(data, dict)
+        repo_node = (data.get("data") or {}).get("repository") or {}
+        nodes = (repo_node.get("discussions") or {}).get("nodes") or []
+        return [n for n in nodes if isinstance(n, dict)][:cap]

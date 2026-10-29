@@ -20,7 +20,7 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (round 1 core): `finch products daily` (`--refresh` runs discovery, else replays latest snapshot; `--view home|browse`; `--json`; `--lookback-hours`; `--question`), `finch products list`, `finch products show <id>`, `finch products explore <id>` (`--refresh` forces re-analysis).
+CLI surface (round 1 core): `finch products daily` (`--refresh` runs discovery, else replays latest snapshot; `--view home|browse`; `--json`; `--lookback-hours`; `--question`), `finch products list`, `finch products show <id>`, `finch products feedback <id>` (`--refresh` re-searches user feedback, else replays cache), `finch products explore <id>` (`--refresh` forces re-analysis; auto-runs feedback research when absent/stale; `--skip-feedback` to analyze from existing material only).
 
 Active read-only infra: `finch init`, `finch diagnose`, `finch twitter ...`, `finch sources ...` (doctor/sync), `finch repos ...` (discover/list/export).
 
@@ -32,7 +32,7 @@ Skill + domain services, not an LLM agent loop and not a graph runtime. Ordering
 
 ```
 src/finch/
-  products/        Product / Founder / Solution models + product discovery + solution explorer
+  products/        Product / Founder / Solution / Feedback models + product discovery + feedback research + solution explorer
   sources/         cross-platform read-only fetch (opencli gateway + RawArtifact)
   repos/           X-shared GitHub repo discovery (product discovery input)
   github/ twitter/ reddit/ webfetch/ ingest/  read-only adapters
@@ -48,7 +48,9 @@ src/finch/
 
 Product discovery pipeline (`products/discovery.py`): `build_discovery_plan`/`build_context_by_source` (with `settings.products.sources`) → `DiscoveryOrchestrator.sync_all(project_peers=False)` → `filter_artifacts` → `ProductProjector.build_product_candidates` (cluster by product key) → optional `products_from_latest_repos_run` → `score_product` (deterministic) → `select_daily_products` (cooldown + top-N) → `ProductCardService.fill` (LLM batch) → `ProductSnapshot`.
 
-Solution explorer (`products/explorer.py`): select a product → `assess_solution` (LLM) → `build_solution` (deterministic gate: 6 narrative fields required; evidence refs subset of product source_refs, empty refs forced ASSUMPTION; verdict coerced) → idempotent upsert.
+Product feedback research (`products/feedback.py`): select a product → targeted search (Reddit/X via `DiscoveryOrchestrator.sync_source`; GitHub via `GitHubConnector.fetch_repo_feedback` for issues/PRs/discussions) → `filter_feedback_candidates` (attribution / drop founder+promo / dedupe) → `assess_feedback` (LLM) → `build_feedback_report` (deterministic gates: excerpt must trace to a candidate, feedback refs subset, empty refs forced ASSUMPTION, no feedback → `insufficient_feedback`) → idempotent report cached by `search_fingerprint` + TTL.
+
+Solution explorer (`products/explorer.py`): select a product → `assess_solution` (LLM) → `build_solution` (deterministic gate: 6 narrative fields required; evidence refs subset of product source_refs, feedback refs subset of report `feedback_id`s, empty refs forced ASSUMPTION; verdict coerced) → idempotent upsert keyed by `solution_id` including `feedback_report_id` (feedback change invalidates).
 
 ## Invariants (do not violate)
 

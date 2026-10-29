@@ -179,3 +179,64 @@ def test_list_public_repos_filters_and_caps(monkeypatch):
     assert repos[0].description == "agent eval harness"
     assert repos[0].pushed_at is not None
 
+
+def test_list_repo_issues_excludes_pull_requests(monkeypatch):
+    _set(
+        json.dumps(
+            [
+                {"id": 1, "number": 10, "title": "bug", "html_url": "u/10", "body": "x"},
+                {"id": 2, "number": 11, "title": "pr", "html_url": "u/11", "pull_request": {}},
+            ]
+        ),
+        monkeypatch,
+    )
+    issues = GhClient().list_repo_issues("acme/widget")
+    assert [i["number"] for i in issues] == [10]
+
+
+def test_list_repo_pull_requests_parses(monkeypatch):
+    _set(
+        json.dumps([{"id": 3, "number": 12, "title": "fix", "html_url": "u/12"}]),
+        monkeypatch,
+    )
+    prs = GhClient().list_repo_pull_requests("acme/widget")
+    assert [p["number"] for p in prs] == [12]
+
+
+def test_list_repo_discussions_parses(monkeypatch):
+    captured = {}
+
+    def fake(argv, timeout):
+        captured["argv"] = argv
+        return {
+            "ok": True,
+            "exit_code": 0,
+            "stdout": json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "discussions": {
+                                "nodes": [
+                                    {
+                                        "title": "how do I import?",
+                                        "url": "https://github.com/acme/widget/discussions/1",
+                                        "body": "stuck",
+                                        "createdAt": "2026-09-01T00:00:00Z",
+                                        "author": {"login": "alice"},
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            ),
+            "stderr": "",
+        }
+
+    monkeypatch.setattr("finch.github.gh_client._run", fake)
+    discs = GhClient().list_repo_discussions("acme/widget", limit=5)
+    assert [d["title"] for d in discs] == ["how do I import?"]
+    joined = " ".join(captured["argv"])
+    assert "graphql" in joined
+    assert "first: 5" in joined
+

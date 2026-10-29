@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from finch import cli
 from finch.cli import app
-from finch.products.ids import product_id_for
+from finch.products.ids import product_id_for, solution_id_for
 from finch.products.models import Product, Solution
 from finch.products.repository import ProductRepository, SolutionRepository
 from finch.settings import Paths, Settings
@@ -49,14 +49,16 @@ def test_products_explore_returns_stored_solution(tmp_path, monkeypatch):
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
     pid = _seed_product(ws)
+    expected_id = solution_id_for(pid, "", version="product-solution-v1")
     SolutionRepository(ws).upsert(
-        Solution(id="sol_x", product_id=pid, who_problem="QA flaky tests")
+        Solution(id=expected_id, product_id=pid, who_problem="QA flaky tests")
     )
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
-    r = CliRunner().invoke(app, ["products", "explore", pid, "--json"])
+    # --skip-feedback：离线冒烟，不触发定向反馈搜索。
+    r = CliRunner().invoke(app, ["products", "explore", pid, "--json", "--skip-feedback"])
     assert r.exit_code == 0, r.output
-    assert json.loads(r.output)["id"] == "sol_x"
+    assert json.loads(r.output)["id"] == expected_id
 
 
 def test_products_show_missing_exits_1(tmp_path, monkeypatch):
