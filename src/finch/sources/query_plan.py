@@ -87,10 +87,16 @@ def build_context_by_source(
         if use_cli and src == source:
             if src == Source.GITHUB:
                 # GitHub queries are always logins; CLI --query treated as users.
-                out[src] = DiscoveryContext(queries=queries, urls=[], limit=limit)
+                out[src] = DiscoveryContext(
+                    queries=queries, urls=[], limit=limit,
+                    configured_queries=list(queries), configured_urls=[],
+                )
             else:
                 # Weixin 与其它源一致：--query 走搜索，--url 走文章导入。
-                out[src] = DiscoveryContext(queries=queries, urls=urls, limit=limit)
+                out[src] = DiscoveryContext(
+                    queries=queries, urls=urls, limit=limit,
+                    configured_queries=list(queries), configured_urls=list(urls),
+                )
             continue
 
         plan = _plan(src_cfg, src)
@@ -98,8 +104,14 @@ def build_context_by_source(
             continue
         # 时间线模式：关注时间线是独立输入（无 queries/urls，不合并主题词，不回退搜索）。
         if plan.mode == "timeline":
+            configured_q, _ = _payload(src_cfg, src)
             out[src] = DiscoveryContext(
-                queries=[], urls=[], limit=plan.fetch_limit, mode="timeline"
+                queries=[],
+                urls=[],
+                configured_queries=list(configured_q),
+                configured_urls=[],
+                limit=plan.fetch_limit,
+                mode="timeline",
             )
             continue
         q, u = _payload(src_cfg, src)
@@ -118,6 +130,8 @@ def build_context_by_source(
         out[src] = DiscoveryContext(
             queries=q,
             urls=u,
+            configured_queries=list(q),
+            configured_urls=list(u),
             limit=plan.fetch_limit,
             mode=plan.mode,
         )

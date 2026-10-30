@@ -26,6 +26,8 @@ class DiscoveryContext:
     mode: str = "query"
     config_error: str = ""
     extra: dict = field(default_factory=dict)
+    configured_queries: list[str] = field(default_factory=list)  # 配置了但可能没跑
+    configured_urls: list[str] = field(default_factory=list)
 
 
 class SourceConnector(Protocol):

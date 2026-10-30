@@ -286,3 +286,28 @@ def test_timeline_mode_infers_enabled_without_queries():
     plan = SourceTwitterPlan(mode="timeline")
     assert plan.enabled is True
     assert plan.mode == "timeline"
+
+
+def test_timeline_mode_records_configured_queries_as_skipped():
+    settings = Settings(
+        sources=SourcesSettings(
+            twitter=SourceTwitterPlan(
+                queries=["agent stuck"], enabled=True, mode="timeline"
+            )
+        )
+    )
+    ctx = build_context_by_source(settings, all_sources=True)
+    assert ctx[Source.TWITTER].mode == "timeline"
+    assert ctx[Source.TWITTER].queries == []
+    assert ctx[Source.TWITTER].configured_queries == ["agent stuck"]
+
+
+def test_query_mode_configured_equals_run():
+    settings = Settings(
+        sources=SourcesSettings(
+            twitter=SourceTwitterPlan(queries=["agent stuck"], enabled=True, mode="query")
+        )
+    )
+    ctx = build_context_by_source(settings, all_sources=True)
+    assert ctx[Source.TWITTER].queries == ["agent stuck"]
+    assert ctx[Source.TWITTER].configured_queries == ["agent stuck"]
