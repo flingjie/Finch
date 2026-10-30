@@ -1,7 +1,7 @@
 # problem-discovery 筛选规则
 
 本文件是 Skill 挑「≤3 个重点问题」的筛选真源。呈现形状见 `presentation.md`，共享呈现原则见
-`../_shared/agent-presentation.md`。
+`_shared/agent-presentation.md`。
 
 ## 正向筛选
 
