@@ -140,7 +140,7 @@ from .problem_discovery.repository import (
 )
 from .problem_discovery.summary import build_summary
 from .problems.render import render_active_problems
-from .products.discovery import run_product_discovery
+from .products.discovery import DiscoveryRunReport, run_product_discovery
 from .products.explorer import explore_product
 from .products.feedback import research_feedback
 from .products.models import FeedbackReport, Product, Solution
@@ -968,6 +968,16 @@ def _render_feedback_report(report: FeedbackReport) -> None:
         typer.echo(f"信息不足：{report.info_gaps}")
 
 
+def _render_report_line(report: DiscoveryRunReport) -> str:
+    states = ", ".join(f"{s}:{st}" for s, st in sorted(report.per_source_state.items()))
+    return (
+        f"raw={report.raw_count} norm={report.normalized_count} "
+        f"filtered={report.filtered_count} products={report.product_count} "
+        f"cards={report.card_fill_success}ok/{report.card_fill_failed}fail "
+        f"{report.elapsed_seconds}s [{states}]"
+    )
+
+
 @products_app.command("daily")
 def products_daily(
     refresh: bool = typer.Option(False, "--refresh", help="重新跑发现；否则回放最新快照"),
@@ -977,7 +987,10 @@ def products_daily(
     question: str | None = typer.Option(None, "--question", help="发现意图/问题"),
 ) -> None:
     """每日产品候选（5–10 个）；--refresh 跑发现，否则回放最新快照。"""
+    from dataclasses import asdict
+
     from finch.sources.opencli_gateway import OpenCliGateway
+    from finch.sources.orchestrator import aggregate_state
 
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
@@ -986,6 +999,8 @@ def products_daily(
     snap_repo = ProductSnapshotRepository(ws)
     presentation = ProductPresentationRepository(ws)
 
+    report = None
+    sync_results = []
     if refresh:
         runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
         gateway = OpenCliGateway(profile=settings.opencli.profile)
@@ -998,6 +1013,8 @@ def products_daily(
         )
         snapshot = result.snapshot
         products = result.products
+        report = result.report
+        sync_results = result.sync_results
         if result.detail:
             typer.echo(f"note: {result.detail}")
     else:
@@ -1021,6 +1038,7 @@ def products_daily(
                 {
                     "snapshot_id": snapshot.id if snapshot else "",
                     "products": [p.model_dump(mode="json") for p in products],
+                    "report": asdict(report) if report else None,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -1028,8 +1046,21 @@ def products_daily(
         )
         return
 
+    if report is not None:
+        typer.echo(_render_report_line(report))
+
     if not products:
-        typer.echo("今日无产品候选（空轮保持空）。可用 `uv run finch products daily --refresh`。")
+        if sync_results:
+            typer.echo("今日无产品候选（空轮保持空）。来源状态：")
+            for sr in sync_results:
+                typer.echo(
+                    f"  {sr.source.value}: {aggregate_state(sr)}"
+                    + (f" ({sr.detail})" if sr.detail else "")
+                )
+        else:
+            typer.echo(
+                "今日无产品候选（空轮保持空）。可用 `uv run finch products daily --refresh`。"
+            )
         return
     typer.echo(f"每日产品候选（{len(products)}）：")
     for i, p in enumerate(products, 1):
@@ -1704,7 +1735,7 @@ def sources_sync(
     from finch.sources.opencli_gateway import OpenCliGateway
     from finch.sources.orchestrator import (
         DiscoveryOrchestrator,
-        classify_result,
+        aggregate_state,
         sync_result_to_dict,
     )
     from finch.sources.query_plan import build_context_by_source
@@ -1751,7 +1782,7 @@ def sources_sync(
             if r is None:
                 rows.append({"source": s.value, "state": "not_executed", "status": "disabled"})
             else:
-                rows.append({**sync_result_to_dict(r), "state": classify_result(r)})
+                rows.append({**sync_result_to_dict(r), "state": aggregate_state(r)})
         typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
         return
 
@@ -1761,23 +1792,26 @@ def sources_sync(
         if r is None:
             typer.echo(f"{s.value}: not_executed [disabled]")
             continue
-        state = classify_result(r)
+        state = aggregate_state(r)
         typer.echo(
             f"{r.source.value}: {state} [{r.mode or '-'}] "
             f"started={r.started_at or '-'} raw={r.raw_count} "
             f"norm={r.normalized_count} new={r.created_count} "
             f"projected={r.projected_count}"
             + (f" ({r.detail})" if r.detail else "")
+            + (f" projection_failed={r.projection_error}" if r.projection_failed else "")
         )
         for o in r.per_query:
             if o.outcome == "skipped":
                 typer.echo(f"  - skipped (mode={r.mode}): {o.query}")
             elif o.outcome == "failed":
-                typer.echo(f"  - {o.query}: failed ({o.kind.value if o.kind else 'error'})")
+                typer.echo(f"  - {o.query}: failed ({o.kind.value if o.kind else 'error'})"
+                           + (f" — {o.detail}" if o.detail else ""))
             elif o.outcome == "empty":
                 typer.echo(f"  - {o.query}: empty (0 raw)")
             else:
-                typer.echo(f"  - {o.query}: ran ({o.raw_count} raw)")
+                suffix = " (partial)" if o.partial else ""
+                typer.echo(f"  - {o.query}: ran ({o.raw_count} raw){suffix}")
 
 
 @repos_app.command("discover")
