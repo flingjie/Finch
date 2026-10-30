@@ -7,7 +7,11 @@ from datetime import UTC, datetime
 from pydantic import BaseModel
 
 from finch.products.cards import ProductCardBatchOutput, ProductCardItem, ProductCardService
-from finch.products.discovery import run_product_discovery, select_daily_products
+from finch.products.discovery import (
+    DiscoveryRunReport,
+    run_product_discovery,
+    select_daily_products,
+)
 from finch.products.presentation import ProductPresentationRepository
 from finch.products.repository import ProductRepository
 from finch.settings import (
@@ -24,7 +28,7 @@ from finch.sources.models import (
     Source,
     SourceStatus,
 )
-from finch.sources.orchestrator import DiscoveryOrchestrator, SyncResult
+from finch.sources.orchestrator import DiscoveryOrchestrator, QueryOutcome, SyncResult
 from finch.storage.workspace import Workspace
 
 
@@ -132,8 +136,9 @@ def test_card_service_fills_fields(tmp_path):
     repo.upsert(Product(id=pid, key="github.com/acme/widget"))
 
     svc = ProductCardService(ws, runner=_FakeCardRunner("github.com/acme/widget"))
-    saved = svc.fill(repo.list_all())
+    saved, failed = svc.fill(repo.list_all())
     assert saved == 1
+    assert failed == 0
     filled = repo.get(pid)
     assert filled is not None
     assert filled.name == "Widget"
@@ -162,3 +167,42 @@ def test_select_daily_products_applies_cooldown(tmp_path):
         repo.list_all(), settings=settings, presentation_repo=presentation
     )
     assert selected == []  # 冷却期内不再出现
+
+
+def test_run_product_discovery_builds_report(tmp_path, monkeypatch):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    fresh = _art(
+        "1",
+        "https://github.com/acme/widget",
+        "We launched widget, an agent harness for QA pain points and flaky test struggles",
+    )
+    ok = SyncResult(
+        source=Source.TWITTER,
+        status=SourceStatus.READY,
+        raw_count=1,
+        normalized_count=1,
+        projected_count=0,
+        kind=ResultKind.SUCCESS,
+        artifacts=[fresh],
+        per_query=[
+            QueryOutcome(query="github.com has:links", outcome="ran", raw_count=1,
+                         kind=ResultKind.SUCCESS)
+        ],
+    )
+    monkeypatch.setattr(DiscoveryOrchestrator, "sync_all", lambda self, **kw: [ok])
+
+    settings = _settings(tmp_path)
+    result = run_product_discovery(settings, runner=_FakeCardRunner("github.com/acme/widget"))
+
+    assert isinstance(result.report, DiscoveryRunReport)
+    assert result.report.raw_count == 1
+    assert result.report.normalized_count == 1
+    assert result.report.product_count == len(result.products)
+    assert result.report.card_fill_success == 1
+    assert result.report.card_fill_failed == 0
+    assert result.report.elapsed_seconds >= 0.0
+    assert result.snapshot is not None
+    assert result.snapshot.source_states == {"twitter": "success"}
+    assert result.snapshot.card_fill_success == 1
+    assert result.snapshot.card_fill_failed == 0

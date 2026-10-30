@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -23,9 +24,23 @@ from finch.products.scoring import score_product
 from finch.settings import Settings
 from finch.sources.models import RawArtifact
 from finch.sources.opencli_gateway import OpenCliGateway
-from finch.sources.orchestrator import DiscoveryOrchestrator, SyncResult
+from finch.sources.orchestrator import DiscoveryOrchestrator, SyncResult, aggregate_state
 from finch.sources.query_plan import build_context_by_source, build_discovery_plan
 from finch.storage.workspace import Workspace
+
+
+@dataclass
+class DiscoveryRunReport:
+    """一次产品发现运行的可观测汇总。"""
+
+    per_source_state: dict[str, str] = field(default_factory=dict)
+    raw_count: int = 0
+    normalized_count: int = 0
+    filtered_count: int = 0
+    product_count: int = 0
+    card_fill_success: int = 0
+    card_fill_failed: int = 0
+    elapsed_seconds: float = 0.0
 
 
 @dataclass
@@ -36,6 +51,7 @@ class ProductDiscoveryResult:
     snapshot: ProductSnapshot | None = None
     detail: str = ""
     filtered: dict[str, int] = field(default_factory=dict)
+    report: DiscoveryRunReport | None = None
 
 
 def _merge_clusters(clusters: list[ProductCluster]) -> list[ProductCluster]:
@@ -103,6 +119,7 @@ def run_product_discovery(
     ws.ensure()
     now = datetime.now(UTC)
     run_id = f"products_{now.strftime('%Y%m%d%H%M%S')}"
+    started = time.perf_counter()
     result = ProductDiscoveryResult(run_id=run_id)
 
     plan = build_discovery_plan(
@@ -160,6 +177,8 @@ def run_product_discovery(
         products, settings=settings, presentation_repo=presentation, now=now
     )
 
+    card_fill_success = 0
+    card_fill_failed = 0
     if runner is not None:
         cards = ProductCardService(
             ws,
@@ -167,10 +186,22 @@ def run_product_discovery(
             max_candidates=settings.products.max_card_candidates,
             batch_size=settings.products.card_batch_size,
         )
-        cards.fill(selected)
+        card_fill_success, card_fill_failed = cards.fill(selected)
         # 卡片填充是 upsert 新对象；重读以拿到填好的卡片字段。
         selected = [repo.get(p.id) or p for p in selected]
 
+    elapsed = round(time.perf_counter() - started, 4)
+    source_states = {sr.source.value: aggregate_state(sr) for sr in result.sync_results}
+    report = DiscoveryRunReport(
+        per_source_state=source_states,
+        raw_count=sum(sr.raw_count for sr in result.sync_results),
+        normalized_count=sum(sr.normalized_count for sr in result.sync_results),
+        filtered_count=sum(result.filtered.values()),
+        product_count=len(selected),
+        card_fill_success=card_fill_success,
+        card_fill_failed=card_fill_failed,
+        elapsed_seconds=elapsed,
+    )
     snapshot = ProductSnapshot(
         id=run_id,
         created_at=now,
@@ -186,9 +217,18 @@ def run_product_discovery(
             }
             for sr in result.sync_results
         },
+        source_states=source_states,
+        card_fill_success=card_fill_success,
+        card_fill_failed=card_fill_failed,
+        elapsed_seconds=elapsed,
     )
     ProductSnapshotRepository(ws).upsert(snapshot)
 
+    failed_states = {
+        s: st for s, st in source_states.items() if st != "success"
+    }
+    result.detail = "；".join(f"{s}:{st}" for s, st in failed_states.items())
+    result.report = report
     result.products = selected
     result.snapshot = snapshot
     return result

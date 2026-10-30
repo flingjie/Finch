@@ -223,3 +223,7 @@ class ProductSnapshot(BaseModel):
     product_ids: list[str] = Field(default_factory=list)  # 有序每日列表
     shortfall: dict[str, int] = Field(default_factory=dict)
     source_coverage: dict[str, object] = Field(default_factory=dict)
+    source_states: dict[str, str] = Field(default_factory=dict)
+    card_fill_success: int = 0
+    card_fill_failed: int = 0
+    elapsed_seconds: float = 0.0

@@ -76,18 +76,19 @@ class ProductCardService:
         self.batch_size = batch_size
         self.repo = ProductRepository(workspace)
 
-    def fill(self, products: list[Product]) -> int:
-        """批量填卡片字段并落库；返回已保存产品数。失败批跳过，不阻断。"""
+    def fill(self, products: list[Product]) -> tuple[int, int]:
+        """批量填卡片字段并落库；返回 (saved, failed)。失败批跳过，不阻断。"""
         if self.runner is None or not products:
-            return 0
+            return 0, 0
 
         saved = 0
+        failed = 0
         for batch in _chunks(products[: self.max_candidates], self.batch_size):
             try:
                 saved += self._fill_batch(batch)
             except Exception:  # noqa: BLE001
-                continue
-        return saved
+                failed += len(batch)
+        return saved, failed
 
     def _fill_batch(self, batch: list[Product]) -> int:
         assert self.runner is not None
