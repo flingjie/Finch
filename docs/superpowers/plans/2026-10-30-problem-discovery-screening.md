@@ -34,7 +34,7 @@
 # problem-discovery 筛选规则
 
 本文件是 Skill 挑「≤3 个重点问题」的筛选真源。呈现形状见 `presentation.md`，共享呈现原则见
-`../_shared/agent-presentation.md`。
+`_shared/agent-presentation.md`。
 
 ## 正向筛选
 
@@ -115,9 +115,9 @@ git commit -m "docs(problem-discovery): add screening rules reference"
    - 尚未证实什么：根因 / 影响范围 / 当前版本状态，各自可写「未证实 / 待核实」；与事实分开。
    - 下一步最小验证：哪一个实验能减少关键不确定性 + 理由。
    - 验证后的去向：修复 / 补测试 / 协助已有 PR / 继续观察，据证据强度与个人匹配度给出。
-3. **判断边界**：单仓库公开 issue 的覆盖限制；区分历史报告与当前仍存在（未核对写「当前状态待核实」）。
+3. **判断边界**：单仓库公开 issue 的覆盖限制；不称「普遍需求」「商业机会」；区分历史报告与当前仍存在（未核对写「当前状态待核实」）。
    证据收紧四条：声称已修复 ≠ 已修复；AI triage ≠ 维护者确认；贡献者报告复现 ≠ 已验证；
-   多人讨论 / 认领 ≠ 多人独立复现；制造页面崩溃 ≠ 复现原报告场景（分别记录）。
+   多人讨论 / 认领 ≠ 多人独立复现。另：制造页面崩溃 ≠ 复现原报告场景（分别记录）。
 4. **继续入口**：2–3 个与本轮内容相关的自然语言示例，如「展开第二个」「看看哪些缺证据」。
 
 ## 形状
@@ -237,7 +237,23 @@ git commit -m "docs(problem-discovery): restructure per-problem presentation int
 - `references/presentation.md` — 默认返回结构与「展开 / 看剩下的 / 换一批」映射。
 ```
 
-- [ ] **Step 4: 验证三处改动落地**
+- [ ] **Step 4: 改 frontmatter `description` 的旧五件事为新五件**
+
+将 `description` 中的旧五件事：
+
+```markdown
+  再由本 Skill 挑最多 3 个重点问题，给出受阻场景 / 已知事实 / 可能影响 / 关键未知 /
+  建议动作，并支持「展开第二个」「看剩下的」等自然语言连续查看。
+```
+
+改为：
+
+```markdown
+  再由本 Skill 挑最多 3 个重点问题，给出受阻场景 / 已知事实 / 尚未证实什么 / 下一步最小验证 /
+  验证后的去向，并支持「展开第二个」「看剩下的」等自然语言连续查看。
+```
+
+- [ ] **Step 5: 验证四处改动落地**
 
 Run: `grep -n "references/screening.md" skills/problem-discovery/SKILL.md`
 Expected: 命中两行（流程第 3 步 + 参考段）。
@@ -245,7 +261,10 @@ Expected: 命中两行（流程第 3 步 + 参考段）。
 Run: `grep -n "多人讨论 / 认领" skills/problem-discovery/SKILL.md`
 Expected: 命中边界段新增的那一行。
 
-- [ ] **Step 5: Commit**
+Run: `grep -n "尚未证实什么 / 下一步最小验证" skills/problem-discovery/SKILL.md`
+Expected: 命中 frontmatter `description` 那一行。
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add skills/problem-discovery/SKILL.md
