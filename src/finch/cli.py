@@ -1697,11 +1697,16 @@ def sources_sync(
     query: list[str] = typer.Option([], "--query", "-q", help="查询词（可重复）"),
     url: list[str] = typer.Option([], "--url", help="URL 导入（公众号/笔记等）"),
     limit: int = typer.Option(20, "--limit", help="每查询条数上限"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
 ) -> None:
     """只读同步：raw 落盘 → RawArtifact → Peer/Person 投影（单源失败不阻塞）。"""
     from finch.sources.models import Source
     from finch.sources.opencli_gateway import OpenCliGateway
-    from finch.sources.orchestrator import DiscoveryOrchestrator
+    from finch.sources.orchestrator import (
+        DiscoveryOrchestrator,
+        classify_result,
+        sync_result_to_dict,
+    )
     from finch.sources.query_plan import build_context_by_source
 
     settings = load_settings()
@@ -1729,17 +1734,47 @@ def sources_sync(
 
     if all_sources or source is None:
         results = orch.sync_all(context_by_source=contexts)
+        all_targets = list(Source)
     else:
         assert src is not None
         results = [orch.sync_source(src, contexts.get(src))]
+        all_targets = [src]
 
-    for r in results:
+    if as_json:
+        rows = []
+        by_source = {r.source: r for r in results}
+        for s in all_targets:
+            r = by_source.get(s)
+            if r is None:
+                rows.append({"source": s.value, "state": "not_executed", "status": "disabled"})
+            else:
+                rows.append({**sync_result_to_dict(r), "state": classify_result(r)})
+        typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
+        return
+
+    by_source = {r.source: r for r in results}
+    for s in all_targets:
+        r = by_source.get(s)
+        if r is None:
+            typer.echo(f"{s.value}: not_executed [disabled]")
+            continue
+        state = classify_result(r)
         typer.echo(
-            f"{r.source.value}: {r.status.value} "
-            f"raw={r.raw_count} norm={r.normalized_count} new={r.created_count} "
+            f"{r.source.value}: {state} [{r.mode or '-'}] "
+            f"started={r.started_at or '-'} raw={r.raw_count} "
+            f"norm={r.normalized_count} new={r.created_count} "
             f"projected={r.projected_count}"
             + (f" ({r.detail})" if r.detail else "")
         )
+        for o in r.per_query:
+            if o.outcome == "skipped":
+                typer.echo(f"  - skipped (mode={r.mode}): {o.query}")
+            elif o.outcome == "failed":
+                typer.echo(f"  - {o.query}: failed ({o.kind.value if o.kind else 'error'})")
+            elif o.outcome == "empty":
+                typer.echo(f"  - {o.query}: empty (0 raw)")
+            else:
+                typer.echo(f"  - {o.query}: ran ({o.raw_count} raw)")
 
 
 @repos_app.command("discover")
