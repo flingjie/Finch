@@ -612,3 +612,51 @@ class TestGitHubPartial:
         assert "repos: timeout" in q.detail
         from finch.sources.orchestrator import aggregate_state
         assert aggregate_state(result) == "partial_success"
+
+    def test_github_projection_failure_is_surfaced(self, tmp_path: Path):
+        ws = Workspace(tmp_path)
+        ws.ensure()
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.connectors.github import GitHubConnector
+        from finch.sources.models import OpenCliResult, ResultKind
+        from finch.sources.models import Source as S
+
+        class _FakeGitHub(GitHubConnector):
+            def __init__(self):
+                self.gh = None  # type: ignore[assignment]
+
+            def probe(self, capabilities):
+                from finch.sources.models import SourceStatus
+                return SourceStatus.READY
+
+            def fetch_creator(self, login):
+                return OpenCliResult(
+                    rows=[{"_kind": "user", "login": "alice", "id": 1, "name": "Alice",
+                           "bio": "builder", "html_url": "https://github.com/alice"}],
+                    exit_code=0,
+                    kind=ResultKind.SUCCESS,
+                )
+
+        class _RaisingProjector:
+            def project(self, artifacts):
+                raise RuntimeError("boom")
+
+        def fake_run(argv, timeout):
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": json.dumps([{"site": "github", "commands": ["user"]}]),
+                "stderr": "",
+            }
+
+        from finch.sources.opencli_gateway import OpenCliGateway
+
+        orch = DiscoveryOrchestrator(
+            ws, gateway=OpenCliGateway(run_fn=fake_run),
+            connectors={S.GITHUB: _FakeGitHub()},
+            projector=_RaisingProjector(),
+        )
+        result = orch.sync_source(S.GITHUB, DiscoveryContext(queries=["alice"]), project_peers=True)
+        assert result.projection_failed is True
+        assert "boom" in result.projection_error

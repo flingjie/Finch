@@ -145,6 +145,27 @@ def test_card_service_fills_fields(tmp_path):
     assert filled.card_version == "product-card-batch-v1"
 
 
+class _RaisingCardRunner:
+    def run(self, prompt: str, output_model: type[BaseModel], *, timeout: float = 600.0):
+        raise RuntimeError("llm down")
+
+
+def test_card_service_fill_counts_failed_batch(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    repo = ProductRepository(ws)
+    from finch.products.ids import product_id_for
+    from finch.products.models import Product
+
+    pid = product_id_for("github.com/acme/widget")
+    repo.upsert(Product(id=pid, key="github.com/acme/widget"))
+
+    svc = ProductCardService(ws, runner=_RaisingCardRunner())
+    saved, failed = svc.fill(repo.list_all())
+    assert saved == 0
+    assert failed == 1
+
+
 def test_select_daily_products_applies_cooldown(tmp_path):
     ws = Workspace(tmp_path)
     ws.ensure()
