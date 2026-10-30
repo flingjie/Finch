@@ -312,6 +312,17 @@ class ProductDiscoverySettings(BaseModel):
     feedback: FeedbackResearchSettings = Field(default_factory=FeedbackResearchSettings)
 
 
+class RelationshipSettings(BaseModel):
+    """人际关系领域配置（从真实任务理解人 + 周度简报）。
+
+    与 products 隔离：只共享 ``sources`` 的原始工件与存储层，不共享 products 模型。
+    """
+
+    enabled: bool = True
+    weekly_limit: int = Field(default=3, ge=1)
+    briefing_version: str = "relationship-briefing-v1"
+
+
 class ScoringWeights(BaseModel):
     """互动评分五维权重（执行计划 5 默认评分权重表）。
 
@@ -523,6 +534,7 @@ class Settings(BaseModel):
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
     notion: NotionSettings = Field(default_factory=NotionSettings)
     products: ProductDiscoverySettings = Field(default_factory=ProductDiscoverySettings)
+    relationships: RelationshipSettings = Field(default_factory=RelationshipSettings)
 
 
 def _warn_legacy_sources(data: dict) -> None:

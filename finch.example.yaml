@@ -197,6 +197,13 @@ products:
         - "新 App 发布"
       urls: []
 
+# 人际关系：从真实任务理解人、建立持续交流（人物/事件/交流/周度简报）。
+# 与 products 隔离：只共享 sources 原始工件与存储层，不共享 products 模型。
+relationships:
+  enabled: true
+  weekly_limit: 3            # 周度简报最多推荐 3 人
+  briefing_version: relationship-briefing-v1
+
 # Daily 50-person discovery: 5 priority / 15 summary / 30 browse tiers.
 # LLM budget is fixed: at most `semantic_assess_limit` people enter batch semantic
 # assessment, and `deep_prepare_limit` people get a full connection analysis —
