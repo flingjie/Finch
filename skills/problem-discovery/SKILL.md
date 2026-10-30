@@ -37,7 +37,7 @@ uv run finch problem-discovery last-presented [--json]
 
 1. 未导入来源时先 `add`；已导入则跳过。
 2. `discover --json` 抽卡片；`summary --json` 取确定性概览。
-3. 从卡片里挑最多 3 个重点问题（定性、有解释，不写总分，不生成精确无依据的排名）。
+3. 按 `references/screening.md` 挑最多 3 个重点问题（定性、有解释，不写总分，不生成精确无依据的排名）。
 4. 按 `references/presentation.md` 组织返回，末尾 `present <本轮展示的有序 problem_id...>`
    记录映射，再按 `_shared/dialogue-policy.md` 做一次延伸点检查。
 
@@ -52,11 +52,14 @@ uv run finch problem-discovery last-presented [--json]
 - 角色不明不编造用户画像；来源缺失说明「来源链接缺失」，不拼造 issue 编号或链接。
 - 单仓库公开 issue 覆盖有限：不自动称「普遍需求」「商业机会」；issue 关闭 ≠ 已修复，
   当前状态未核对时写「待核实」。
+- 声称修复 / 报告复现 / AI triage 不等同于已修复 / 已验证 / 维护者确认；多人讨论 / 认领
+  不等同于多人独立复现。
 - 卡片数量 ≠ 需求数量；本 Skill 不给出「问题组数量」或「独立反馈者数」（尚未合并，P2 才落地）。
 - 影响未知标「未知」；推荐访谈不等于发起访谈，对外发送必须获明确授权。
 
 ## 参考
 
+- `references/screening.md` — 挑重点问题的筛选真源（正向筛选 / 三分离 / 证据收紧 / 主题）。
 - `references/presentation.md` — 默认返回结构与「展开 / 看剩下的 / 换一批」映射。
 - `_shared/agent-presentation.md` — 调用 CLI 之后如何对用户说话（共享原则）。
 - `_shared/dialogue-policy.md` — 任务后延伸点选择、授权边界与收束。
