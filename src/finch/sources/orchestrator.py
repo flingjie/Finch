@@ -76,7 +76,7 @@ def classify_result(result: SyncResult) -> str:
     """按源把执行结果归类为 failed / empty / success（not_executed 由 CLI 对缺失源合成）。"""
     if result.kind in _ERROR_KINDS:
         return "failed"
-    if result.status != SourceStatus.READY:
+    if result.status != SourceStatus.READY and (result.detail or result.raw_count == 0):
         return "failed"
     if result.raw_count == 0:
         return "empty"

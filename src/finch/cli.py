@@ -1737,7 +1737,10 @@ def sources_sync(
         all_targets = list(Source)
     else:
         assert src is not None
-        results = [orch.sync_source(src, contexts.get(src))]
+        if src not in contexts:
+            results = []  # 禁用源：不实际同步，直接报 not_executed
+        else:
+            results = [orch.sync_source(src, contexts.get(src))]
         all_targets = [src]
 
     if as_json:

@@ -41,6 +41,20 @@ def test_classify_result_states():
     )
 
 
+def test_classify_timeline_success_not_failed():
+    assert (
+        classify_result(
+            SyncResult(
+                source=Source.TWITTER,
+                status=SourceStatus.DEGRADED,
+                kind=ResultKind.SUCCESS,
+                raw_count=3,
+            )
+        )
+        == "success"
+    )
+
+
 def test_request_label():
     assert (
         _request_label(OpenCliRequest(surface="twitter", command="timeline"), "timeline")

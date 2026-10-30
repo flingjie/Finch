@@ -17,6 +17,15 @@ from finch.sources.orchestrator import (
 )
 
 
+def test_sources_sync_single_disabled_source_not_executed(tmp_path, monkeypatch):
+    settings = Settings(paths=Paths(var_dir=tmp_path))
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["sources", "sync", "--source", "github"])
+    assert r.exit_code == 0, r.output
+    assert "github: not_executed [disabled]" in r.output
+
+
 def test_sources_sync_json(tmp_path, monkeypatch):
     settings = Settings(paths=Paths(var_dir=tmp_path))
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
