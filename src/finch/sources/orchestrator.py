@@ -15,7 +15,13 @@ from finch.sources.connectors.twitter import TwitterConnector
 from finch.sources.connectors.v2ex import V2exConnector
 from finch.sources.connectors.weixin import WeixinConnector
 from finch.sources.connectors.xiaohongshu import XiaohongshuConnector
-from finch.sources.models import RawArtifact, ResultKind, Source, SourceStatus
+from finch.sources.models import (
+    OpenCliRequest,
+    RawArtifact,
+    ResultKind,
+    Source,
+    SourceStatus,
+)
 from finch.sources.opencli_gateway import OpenCliGateway
 from finch.sources.projector import ArtifactProjector, ProjectResult
 from finch.sources.store import ArtifactRepository, CursorStore, RawStore, RunRecorder
@@ -55,6 +61,71 @@ def _error_type(result: SyncResult) -> str:
 
 
 @dataclass
+class QueryOutcome:
+    """单条查询/时间线的执行结果。"""
+
+    query: str = ""
+    outcome: str = ""  # ran | empty | failed | skipped
+    raw_count: int = 0
+    normalized_count: int = 0
+    kind: ResultKind | None = None
+    detail: str = ""
+
+
+def classify_result(result: SyncResult) -> str:
+    """按源把执行结果归类为 failed / empty / success（not_executed 由 CLI 对缺失源合成）。"""
+    if result.kind in _ERROR_KINDS:
+        return "failed"
+    if result.status != SourceStatus.READY:
+        return "failed"
+    if result.raw_count == 0:
+        return "empty"
+    return "success"
+
+
+def _request_label(req: OpenCliRequest, mode: str) -> str:
+    """从一次请求反推查询标签（timeline/hot 用模式名，其余用首个非旗标参数）。"""
+    if mode in ("timeline", "hot"):
+        return mode
+    if req.args and not req.args[0].startswith("-"):
+        return req.args[0]
+    return req.command
+
+
+def _query_outcome_dict(o: QueryOutcome) -> dict[str, Any]:
+    return {
+        "query": o.query,
+        "outcome": o.outcome,
+        "raw_count": o.raw_count,
+        "normalized_count": o.normalized_count,
+        "kind": o.kind.value if o.kind else None,
+        "detail": o.detail,
+    }
+
+
+def sync_result_to_dict(result: SyncResult) -> dict[str, Any]:
+    """SyncResult → 可 JSON 序列化的 dict（不含 artifacts）。"""
+    return {
+        "source": result.source.value,
+        "status": result.status.value,
+        "run_id": result.run_id,
+        "raw_count": result.raw_count,
+        "normalized_count": result.normalized_count,
+        "created_count": result.created_count,
+        "projected_count": result.projected_count,
+        "kind": result.kind.value if result.kind else None,
+        "detail": result.detail,
+        "elapsed_seconds": result.elapsed_seconds,
+        "error_type": result.error_type,
+        "mode": result.mode,
+        "ran_queries": list(result.ran_queries),
+        "skipped_queries": list(result.skipped_queries),
+        "per_query": [_query_outcome_dict(o) for o in result.per_query],
+        "started_at": result.started_at,
+    }
+
+
+@dataclass
 class SyncResult:
     source: Source
     status: SourceStatus
@@ -68,6 +139,11 @@ class SyncResult:
     elapsed_seconds: float = 0.0
     error_type: str = ""
     artifacts: list[RawArtifact] = field(default_factory=list)
+    mode: str = ""
+    ran_queries: list[str] = field(default_factory=list)
+    skipped_queries: list[str] = field(default_factory=list)
+    per_query: list[QueryOutcome] = field(default_factory=list)
+    started_at: str = ""
 
 
 class DiscoveryOrchestrator:
