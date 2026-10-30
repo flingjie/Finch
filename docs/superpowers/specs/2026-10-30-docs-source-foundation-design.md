@@ -57,10 +57,11 @@
 
 - 新增 dataclass `DiscoveryRunReport`（`products/discovery.py`）：
   - `per_source_state: dict[str, str]`（source → `aggregate_state`）
-  - `query_outcomes: list[dict]`（来自 sync_results 的 per_query 序列化）
   - `raw_count / normalized_count / filtered_count / product_count: int`
   - `card_fill_success / card_fill_failed: int`
   - `elapsed_seconds: float`
+
+  注：不含 `query_outcomes`——per-query 详情已随 `result.sync_results` 返回；`products daily --json` 只带聚合状态与计数，逐 query 详情走 `sources sync --json`。
 - `ProductDiscoveryResult` 新增 `report: DiscoveryRunReport | None`。
 - `ProductCardService.fill()` 改为返回 `(saved: int, failed: int)`（批级 except 时 `failed += len(batch)`）；`run_product_discovery` 用它填 `card_fill_success/failed`。
 - `run_product_discovery`：起点记 `time.perf_counter()`，结束算 elapsed；组装 report；`result.detail` 置为失败汇总字符串（哪个源 failed/empty/partial）。
