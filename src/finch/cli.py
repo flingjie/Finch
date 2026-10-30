@@ -130,6 +130,7 @@ from .practice.service import PracticeService
 from .problem_discovery.discover import discover_problems
 from .problem_discovery.importing import import_discussion
 from .problem_discovery.models import Problem
+from .problem_discovery.presentation import ProblemPresentationRepository
 from .problem_discovery.repository import (
     DiscoveryRunRepository,
     DiscussionRepository,
@@ -137,6 +138,7 @@ from .problem_discovery.repository import (
 from .problem_discovery.repository import (
     ProblemRepository as DiscoveredProblemRepository,
 )
+from .problem_discovery.summary import build_summary
 from .problems.render import render_active_problems
 from .products.discovery import run_product_discovery
 from .products.explorer import explore_product
@@ -1599,6 +1601,71 @@ def problem_discovery_show(
         typer.echo(json.dumps(p.model_dump(mode="json"), ensure_ascii=False, indent=2))
         return
     _render_problem(p)
+
+
+@problem_discovery_app.command("summary")
+def problem_discovery_summary(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """确定性概览：卡片数 / 来源范围 / 缺失字段（供 Skill 呈现，不含重点选择）。"""
+    from finch.sources.store import ArtifactRepository
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    summary = build_summary(
+        problem_repo=DiscoveredProblemRepository(ws),
+        artifact_repo=ArtifactRepository(ws),
+        discussion_repo=DiscussionRepository(ws),
+        run_repo=DiscoveryRunRepository(ws),
+    )
+    if as_json:
+        typer.echo(json.dumps(summary.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"问题卡片（{summary.total_cards}）：")
+    typer.echo(f"  来源范围：{summary.source_scope}（{summary.total_sources} 个来源）")
+    if summary.source_urls:
+        typer.echo(f"  来源链接：{', '.join(summary.source_urls)}")
+    if summary.cards_without_evidence:
+        typer.echo(f"  缺证据卡片：{len(summary.cards_without_evidence)} 张")
+    if summary.cards_without_role:
+        typer.echo(f"  缺角色卡片：{len(summary.cards_without_role)} 张")
+
+
+@problem_discovery_app.command("present")
+def problem_discovery_present(
+    problem_ids: list[str] = typer.Argument(None, help="本轮展示的有序 problem_id 列表"),
+    batch: str = typer.Option("", "--batch", help="批次标识（run_id 或日期）"),
+) -> None:
+    """记录一次展示顺序（供「展开第二个」等自然语言引用跨会话恢复）。"""
+    ids = problem_ids or []
+    if not ids:
+        typer.echo("需要至少一个 problem_id")
+        raise typer.Exit(code=1)
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    record = ProblemPresentationRepository(ws).record_shown(ids, batch=batch)
+    typer.echo(record.id)
+
+
+@problem_discovery_app.command("last-presented")
+def problem_discovery_last_presented(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """读取最近一次展示顺序（序号 → problem_id）。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    record = ProblemPresentationRepository(ws).latest()
+    if record is None:
+        typer.echo("暂无展示记录。")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(json.dumps(record.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    for i, pid in enumerate(record.problem_ids, 1):
+        typer.echo(f"{i}. {pid}")
 
 
 @sources_app.command("doctor")

@@ -100,3 +100,34 @@ def test_problem_discovery_add_url(tmp_path, monkeypatch):
     r = CliRunner().invoke(app, ["problem-discovery", "add", "--url", "https://x.com/a/1"])
     assert r.exit_code == 0, r.output
     assert "disc_" in r.output
+
+
+def test_problem_discovery_summary_json(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_problem(ws)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["problem-discovery", "summary", "--json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["total_cards"] == 1
+    assert payload["cards_without_evidence"] == ["prob_x"]
+    assert payload["groups_available"] is False
+
+
+def test_problem_discovery_present_and_last_presented(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_problem(ws)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["problem-discovery", "present", "prob_x"])
+    assert r.exit_code == 0, r.output
+    assert "pd_" in r.output
+
+    r2 = CliRunner().invoke(app, ["problem-discovery", "last-presented", "--json"])
+    assert r2.exit_code == 0, r2.output
+    assert json.loads(r2.output)["problem_ids"] == ["prob_x"]
