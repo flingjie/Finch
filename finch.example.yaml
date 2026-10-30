@@ -71,22 +71,19 @@ sources:
     mode: timeline
     fetch_limit: 200
     queries:
-      - '"agent reliability" OR "agent evals"'                 # Agent 工程（保留为一组）
-      - '("indie maker" OR bootstrapped) (lessons OR mistakes)'
-      - '("learning in public" OR "deliberate practice")'
-      - '("writing process" OR "clear writing")'
-      - '("decision making" OR "changed my mind")'
-      - '("creative process" OR "design process")'
+      - '"agent stuck" OR "tool calling failed"'
+      - '"agent evals" OR "human in the loop"'
+      - '"AI notes remembering" OR "knowledge retrieval"'
     urls: []
   reddit:
     enabled: true
     mode: query
     fetch_limit: 100
     queries:
-      - "agent reliability production failure"     # Agent 工程（保留为一组）
-      - "learning in public deliberate practice"
-      - "clear writing process"
-      - "decision making changed my mind"
+      - "agent stuck"
+      - "tool calling failed"
+      - "AI notes remembering"
+      - "knowledge retrieval"
     urls: []
   github:
     # Add logins under `users`, then set enabled: true.
@@ -99,32 +96,59 @@ sources:
     mode: query
     fetch_limit: 100
     queries:
-      - "AI Agent 实践"          # Agent 工程（保留为一组）
-      - "独立创作 复盘"
-      - "学习方法 实践"
-      - "写作 修改过程"
-      - "决策 反思"
+      - "Agent 卡住"
+      - "工具调用失败"
+      - "笔记很多但记不住"
+
   weixin:
-    # 搜狗微信搜索（opencli weixin search）；`mode: url` 则按文章链接导入。
     enabled: true
     mode: query
     fetch_limit: 50
     queries:
-      - "AI Agent 实践"          # Agent 工程（保留为一组）
-      - "独立创作 复盘"
-      - "学习方法 实践"
-      - "写作 修改过程"
+      - "Agent 卡住"
+      - "工具调用失败"
+      - "学了不会用"
     urls: []
+
   xiaohongshu:
     enabled: true
     mode: query
     fetch_limit: 100
     queries:
-      - "AI Agent 开发实践"      # Agent 工程（保留为一组）
-      - "独立创作 复盘"
-      - "学习方法 实践"
-      - "决策 反思"
+      - "AI 自动化 翻车"
+      - "笔记很多但记不住"
     urls: []
+
+  # 两主题轮换；意图轴（困难/替代/绕路/放弃/价值）只作写词指南，不落字段。
+  exploration_topics:
+    - id: agent_in_production
+      label: Agent 实际落地
+      queries_by_source:
+        twitter:
+          - '"agent stuck" OR "tool calling failed"'
+        reddit:
+          - "agent stuck"
+          - "tool calling failed"
+        weixin:
+          - "Agent 卡住"
+          - "工具调用失败"
+        xiaohongshu:
+          - "AI 自动化 翻车"
+      github_users: []
+    - id: ai_personal_empowerment
+      label: AI 个人赋能
+      queries_by_source:
+        twitter:
+          - '"AI notes remembering" OR "knowledge retrieval"'
+        reddit:
+          - "AI notes remembering"
+          - "knowledge retrieval"
+        weixin:
+          - "笔记很多但记不住"
+          - "学了不会用"
+        xiaohongshu:
+          - "笔记很多但记不住"
+      github_users: []
 
 # AI 产品发现（finch products daily --refresh）：与上面 `sources`（旧连接发现）隔离，
 # 用产品向查询；旧 `sources` 查询保持不变。
@@ -154,17 +178,16 @@ products:
       mode: query
       fetch_limit: 100
       queries:
-        - '("I built" OR "we built" OR "just launched") (product OR app OR tool)'
-        - '("solo founder" OR bootstrapped) (launched OR shipped)'
-        - '("Product Hunt" OR "product hunt")'
+        - '("I built" OR "just launched") (learning OR "knowledge management" OR agent)'
+        - '("solo founder" OR bootstrapped) (agent OR learning)'
       urls: []
     reddit:
       enabled: true
       mode: query
       fetch_limit: 100
       queries:
-        - "I built a side project"
-        - "launched my startup"
+        - "I built a side project for learning"
+        - "launched my agent product"
         - "product validation feedback"
       urls: []
     github:

@@ -99,3 +99,9 @@ def test_llm_node_settings_rejects_nonpositive_concurrency():
 def test_extraction_global_concurrency_default():
     s = load_settings(Path("finch.example.yaml"))
     assert s.extraction.global_max_concurrency == 4
+
+
+def test_example_sources_converge_to_two_topics():
+    s = load_settings(Path("finch.example.yaml"))
+    ids = [t.id for t in s.sources.exploration_topics]
+    assert ids == ["agent_in_production", "ai_personal_empowerment"]
