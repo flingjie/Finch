@@ -248,6 +248,8 @@ class DiscoveryOrchestrator:
                         raw_count=len(result.rows),
                         normalized_count=len(normalized) - norm_before,
                         kind=result.kind,
+                        detail=result.stderr_summary or "",
+                        partial=bool(result.rows and result.stderr_summary),
                     )
                 )
             ran = [o.query for o in per_query if o.outcome != "skipped"]

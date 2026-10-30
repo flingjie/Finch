@@ -529,3 +529,51 @@ class TestOrchestratorIsolation:
         assert outcomes["ok-me"].outcome == "ran"
         from finch.sources.orchestrator import aggregate_state
         assert aggregate_state(result) == "partial_success"
+
+
+class TestGitHubPartial:
+    def test_github_partial_failure_recorded(self, tmp_path: Path):
+        ws = Workspace(tmp_path)
+        ws.ensure()
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.connectors.github import GitHubConnector
+        from finch.sources.models import OpenCliResult, ResultKind, Source as S
+
+        class _FakeGitHub(GitHubConnector):
+            def __init__(self):
+                self.gh = None  # type: ignore[assignment]
+
+            def probe(self, capabilities):
+                from finch.sources.models import SourceStatus
+                return SourceStatus.READY
+
+            def fetch_creator(self, login):
+                return OpenCliResult(
+                    rows=[{"_kind": "user", "login": "alice", "id": 1, "name": "Alice",
+                           "bio": "builder", "html_url": "https://github.com/alice"}],
+                    exit_code=0,
+                    kind=ResultKind.SUCCESS,
+                    stderr_summary="repos: timeout; commits alice/tool: 403",
+                )
+
+        def fake_run(argv, timeout):
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": json.dumps([{"site": "github", "commands": ["user"]}]),
+                "stderr": "",
+            }
+
+        from finch.sources.opencli_gateway import OpenCliGateway
+
+        orch = DiscoveryOrchestrator(
+            ws, gateway=OpenCliGateway(run_fn=fake_run),
+            connectors={S.GITHUB: _FakeGitHub()},
+        )
+        result = orch.sync_source(S.GITHUB, DiscoveryContext(queries=["alice"]))
+        q = result.per_query[0]
+        assert q.partial is True
+        assert "repos: timeout" in q.detail
+        from finch.sources.orchestrator import aggregate_state
+        assert aggregate_state(result) == "partial_success"
