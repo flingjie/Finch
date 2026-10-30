@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from finch import cli
 from finch.cli import app
-from finch.problem_discovery.models import Problem
+from finch.problem_discovery.models import Problem, ProblemScenario
 from finch.problem_discovery.repository import ProblemRepository
 from finch.settings import Paths, Settings
 from finch.storage.workspace import Workspace
@@ -20,7 +20,15 @@ def _settings(tmp_path) -> Settings:
 
 def _seed_problem(ws: Workspace) -> str:
     repo = ProblemRepository(ws)
-    repo.upsert(Problem(problem_id="prob_x", title="Agent 失败后难以复现"))
+    repo.upsert(
+        Problem(
+            problem_id="prob_x",
+            title="Agent 失败后难以复现",
+            user_type="Agent 应用开发者",
+            scenario=ProblemScenario(task="调试 Agent 失败"),
+            next_action="interview",
+        )
+    )
     return "prob_x"
 
 
@@ -35,6 +43,32 @@ def test_problem_discovery_list_json(tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert [p["problem_id"] for p in payload] == ["prob_x"]
+
+
+def test_problem_discovery_list_compact(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_problem(ws)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["problem-discovery", "list"])
+    assert r.exit_code == 0, r.output
+    assert "Agent 失败后难以复现" in r.output
+    assert "查看：uv run finch problem-discovery show prob_x" in r.output
+    assert "场景：任务=调试 Agent 失败" not in r.output
+
+
+def test_problem_discovery_list_full(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_problem(ws)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["problem-discovery", "list", "--full"])
+    assert r.exit_code == 0, r.output
+    assert "场景：任务=调试 Agent 失败" in r.output
 
 
 def test_problem_discovery_show_json(tmp_path, monkeypatch):

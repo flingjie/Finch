@@ -1249,6 +1249,18 @@ def _render_traceback(tb: PersonTraceback) -> None:
             typer.echo(f"    触发：{n.trigger}")
 
 
+def _render_problem_line(index: int, p: Problem) -> None:
+    typer.echo(f"{index}. {p.title or '-'}  [{p.problem_id}]")
+    meta = []
+    if p.user_type:
+        meta.append(f"用户={p.user_type}")
+    meta.append(f"证据={len(p.evidence)} 条")
+    if p.next_action:
+        meta.append(f"下一步={p.next_action}")
+    typer.echo("   " + " | ".join(meta))
+    typer.echo(f"   查看：uv run finch problem-discovery show {p.problem_id}")
+
+
 def _render_briefing(briefing: Briefing, persons_by_id: dict[str, PersonProfile]) -> None:
     if briefing.insufficient:
         typer.echo("周度简报：暂无可报告的人（不足时少报）。")
@@ -1509,6 +1521,7 @@ def problem_discovery_add(
 def problem_discovery_discover(
     refresh: bool = typer.Option(False, "--refresh", help="强制重抽；否则复用缓存"),
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    full: bool = typer.Option(False, "--full", help="显示完整问题卡片"),
 ) -> None:
     """从已导入来源抽取问题卡片并入库。"""
     from finch.sources.store import ArtifactRepository
@@ -1535,13 +1548,17 @@ def problem_discovery_discover(
         )
         return
     typer.echo(f"问题卡片（{len(problems)}）：")
-    for p in problems:
-        _render_problem(p)
+    for i, p in enumerate(problems, 1):
+        if full:
+            _render_problem(p)
+        else:
+            _render_problem_line(i, p)
 
 
 @problem_discovery_app.command("list")
 def problem_discovery_list(
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    full: bool = typer.Option(False, "--full", help="显示完整问题卡片"),
 ) -> None:
     """列出所有已入库问题。"""
     settings = load_settings()
@@ -1556,9 +1573,13 @@ def problem_discovery_list(
     if not problems:
         typer.echo("暂无问题。可用 `uv run finch problem-discovery add` 导入讨论，再 `discover`。")
         return
+    problems.sort(key=lambda p: (p.title.casefold(), p.problem_id))
     typer.echo(f"问题（{len(problems)}）：")
-    for p in problems:
-        _render_problem(p)
+    for i, p in enumerate(problems, 1):
+        if full:
+            _render_problem(p)
+        else:
+            _render_problem_line(i, p)
 
 
 @problem_discovery_app.command("show")
