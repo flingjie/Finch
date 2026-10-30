@@ -444,3 +444,54 @@ class TestOrchestratorIsolation:
         assert r.status.value == "DEGRADED"
         assert "timeline unavailable" in r.detail
         assert "not falling back to search" in r.detail
+
+    def test_sync_reports_per_query_outcomes_and_skips(self, tmp_path: Path):
+        ws = Workspace(tmp_path)
+        ws.ensure()
+
+        def fake_run(argv, timeout):
+            if argv[:2] == ["opencli", "list"]:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": json.dumps(
+                        [
+                            {"site": "twitter", "commands": ["timeline"]},
+                            {"site": "reddit", "commands": ["search"]},
+                        ]
+                    ),
+                    "stderr": "",
+                }
+            if "timeline" in argv:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": (FIXTURES / "twitter-search.json").read_text(),
+                    "stderr": "",
+                }
+            if "reddit" in argv and "empty" in argv:
+                return {"ok": True, "exit_code": 66, "stdout": "[]", "stderr": ""}
+            return {"ok": True, "exit_code": 0, "stdout": "[]", "stderr": ""}
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.models import Source as S
+        from finch.sources.opencli_gateway import OpenCliGateway
+
+        orch = DiscoveryOrchestrator(ws, gateway=OpenCliGateway(run_fn=fake_run))
+        results = orch.sync_all(
+            sources=[S.TWITTER, S.REDDIT],
+            context_by_source={
+                S.TWITTER: DiscoveryContext(
+                    mode="timeline", configured_queries=["agent stuck", "tool calling failed"]
+                ),
+                S.REDDIT: DiscoveryContext(queries=["empty"]),
+            },
+        )
+        by = {r.source: r for r in results}
+        tw = by[S.TWITTER]
+        assert tw.mode == "timeline"
+        assert [o.query for o in tw.per_query if o.outcome == "ran"] == ["timeline"]
+        assert tw.skipped_queries == ["agent stuck", "tool calling failed"]
+        rd = by[S.REDDIT]
+        assert rd.per_query[0].query == "empty"
+        assert rd.per_query[0].outcome == "empty"

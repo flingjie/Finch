@@ -180,6 +180,7 @@ class DiscoveryOrchestrator:
                 status=SourceStatus.DEGRADED,
                 kind=ResultKind.CONFIG_ERROR,
                 detail=ctx.config_error,
+                mode=ctx.mode,
             )
         connector = self.connectors.get(source)
         if connector is None:
@@ -187,20 +188,25 @@ class DiscoveryOrchestrator:
                 source=source,
                 status=SourceStatus.UNAVAILABLE,
                 detail="no connector",
+                mode=ctx.mode,
             )
 
         caps = fetch_capabilities(run_fn=self.gateway._run_fn, profile=self.gateway.profile)
         self.gateway.capability_snapshot_id = caps.snapshot_id
         status = connector.probe(caps)
         if status == SourceStatus.UNAVAILABLE:
-            return SyncResult(source=source, status=status, detail="probe unavailable")
+            return SyncResult(
+                source=source, status=status, detail="probe unavailable", mode=ctx.mode
+            )
 
         run_id, run_dir = self.raw_store.begin_run(source)
+        started_at = datetime.now(UTC).isoformat()
         created = 0
         normalized: list[RawArtifact] = []
         raw_count = 0
         last_kind: ResultKind | None = None
         detail = ""
+        per_query: list[QueryOutcome] = []
 
         # GitHub: special path via GhClient (creator depth: user/repos/commits/…)
         if source == Source.GITHUB and isinstance(connector, GitHubConnector):
@@ -212,6 +218,7 @@ class DiscoveryOrchestrator:
                     run_dir, q, result.rows or {"empty": True}
                 )
                 raw_count += len(result.rows)
+                norm_before = len(normalized)
                 arts = connector.normalize(result)
                 for art in arts:
                     art.raw_ref = raw_ref
@@ -219,9 +226,23 @@ class DiscoveryOrchestrator:
                     if was_new:
                         created += 1
                     normalized.append(art)
+                per_query.append(
+                    QueryOutcome(
+                        query=q,
+                        outcome="empty" if not result.rows else "ran",
+                        raw_count=len(result.rows),
+                        normalized_count=len(normalized) - norm_before,
+                        kind=result.kind,
+                    )
+                )
+            ran = [o.query for o in per_query if o.outcome != "skipped"]
+            skipped = [o.query for o in per_query if o.outcome == "skipped"]
             proj = self._project(normalized) if project_peers else ProjectResult()
             payload = self._run_payload(
-                run_id, source, caps.snapshot_id, raw_count, len(normalized), created, last_kind
+                run_id, source, caps.snapshot_id, raw_count, len(normalized), created,
+                last_kind, mode=ctx.mode, configured_queries=ctx.configured_queries,
+                ran_queries=ran, skipped_queries=skipped, per_query=per_query,
+                started_at=started_at,
             )
             payload["projected_count"] = proj.projected_peers
             self.runs.save(run_id, payload)
@@ -235,6 +256,11 @@ class DiscoveryOrchestrator:
                 projected_count=proj.projected_peers,
                 kind=last_kind,
                 artifacts=normalized,
+                mode=ctx.mode,
+                ran_queries=ran,
+                skipped_queries=skipped,
+                per_query=per_query,
+                started_at=started_at,
             )
 
         # Weixin URL-import without opencli when only urls + empty capability
@@ -252,6 +278,9 @@ class DiscoveryOrchestrator:
                     if was_new:
                         created += 1
                     normalized.append(art)
+                    per_query.append(
+                        QueryOutcome(query=url, outcome="ran", raw_count=1, normalized_count=1)
+                    )
 
         requests = connector.plan(ctx, caps)
         if (
@@ -272,11 +301,16 @@ class DiscoveryOrchestrator:
             # github surface is not in opencli policy — skip gateway for non-opencli
             if req.surface == "github":
                 continue
+            label = _request_label(req, ctx.mode)
             try:
                 result = self.gateway.run(req)
             except Exception as exc:  # noqa: BLE001
                 detail = str(exc)[:300]
                 last_kind = ResultKind.ERROR
+                per_query.append(
+                    QueryOutcome(query=label, outcome="failed", kind=ResultKind.ERROR,
+                                 detail=str(exc)[:300])
+                )
                 continue
             last_kind = result.kind
             if result.kind in {
@@ -285,12 +319,16 @@ class DiscoveryOrchestrator:
                 ResultKind.CONFIG_ERROR,
             }:
                 detail = result.stderr_summary or result.kind.value
-                # Stop this source but do not raise
+                per_query.append(
+                    QueryOutcome(query=label, outcome="failed", kind=result.kind,
+                                 detail=detail, raw_count=len(result.rows))
+                )
                 break
             raw_payload: Any = result.rows if result.rows else {"kind": result.kind.value}
             item_key = req.command + "_" + (req.args[0] if req.args else "x")
             raw_ref = self.raw_store.write_raw(run_dir, item_key[:80], raw_payload)
             raw_count += len(result.rows)
+            norm_before = len(normalized)
             arts = connector.normalize(result)
             for art in arts:
                 art.raw_ref = raw_ref
@@ -298,13 +336,34 @@ class DiscoveryOrchestrator:
                 if was_new:
                     created += 1
                 normalized.append(art)
+            per_query.append(
+                QueryOutcome(
+                    query=label,
+                    outcome="empty" if not result.rows else "ran",
+                    raw_count=len(result.rows),
+                    normalized_count=len(normalized) - norm_before,
+                    kind=result.kind,
+                )
+            )
+
+        # 时间线模式下，配置里写了但被忽略的查询显式记成 skipped。
+        if ctx.mode == "timeline" and ctx.configured_queries:
+            per_query.extend(
+                QueryOutcome(query=q, outcome="skipped")
+                for q in ctx.configured_queries
+            )
 
         if ctx.cursor:
             self.cursors.set(source, ctx.cursor)
 
+        ran = [o.query for o in per_query if o.outcome != "skipped"]
+        skipped = [o.query for o in per_query if o.outcome == "skipped"]
         proj = self._project(normalized) if project_peers else ProjectResult()
         payload = self._run_payload(
-            run_id, source, caps.snapshot_id, raw_count, len(normalized), created, last_kind
+            run_id, source, caps.snapshot_id, raw_count, len(normalized), created, last_kind,
+            mode=ctx.mode, configured_queries=ctx.configured_queries,
+            ran_queries=ran, skipped_queries=skipped, per_query=per_query,
+            started_at=started_at,
         )
         payload["projected_count"] = proj.projected_peers
         if detail:
@@ -328,6 +387,11 @@ class DiscoveryOrchestrator:
             kind=last_kind,
             detail=detail,
             artifacts=normalized,
+            mode=ctx.mode,
+            ran_queries=ran,
+            skipped_queries=skipped,
+            per_query=per_query,
+            started_at=started_at,
         )
 
     def _project(self, artifacts: list[RawArtifact]) -> ProjectResult:
@@ -377,14 +441,27 @@ class DiscoveryOrchestrator:
         normalized_count: int,
         created_count: int,
         kind: ResultKind | None,
+        *,
+        mode: str = "",
+        configured_queries: list[str] | None = None,
+        ran_queries: list[str] | None = None,
+        skipped_queries: list[str] | None = None,
+        per_query: list[QueryOutcome] | None = None,
+        started_at: str = "",
     ) -> dict[str, Any]:
         return {
             "run_id": run_id,
             "source": source.value,
             "capability_snapshot_id": snapshot_id,
-            "started_at": datetime.now(UTC).isoformat(),
+            "started_at": started_at or datetime.now(UTC).isoformat(),
             "raw_count": raw_count,
             "normalized_count": normalized_count,
             "created_count": created_count,
             "kind": kind.value if kind else None,
+            "mode": mode,
+            "configured_queries": list(configured_queries or []),
+            "ran_queries": list(ran_queries or []),
+            "skipped_queries": list(skipped_queries or []),
+            "per_query": [_query_outcome_dict(o) for o in (per_query or [])],
         }
+
