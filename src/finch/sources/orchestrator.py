@@ -50,6 +50,12 @@ _ERROR_KINDS = {
     ResultKind.ERROR,
 }
 
+_BREAK_KINDS = {
+    ResultKind.AUTH_REQUIRED,
+    ResultKind.BRIDGE_DOWN,
+    ResultKind.CONFIG_ERROR,
+}
+
 
 def _error_type(result: SyncResult) -> str:
     """Deterministic error label: specific ResultKind first, else non-READY status."""
@@ -322,17 +328,15 @@ class DiscoveryOrchestrator:
                 )
                 continue
             last_kind = result.kind
-            if result.kind in {
-                ResultKind.AUTH_REQUIRED,
-                ResultKind.BRIDGE_DOWN,
-                ResultKind.CONFIG_ERROR,
-            }:
+            if result.kind in _ERROR_KINDS:
                 detail = result.stderr_summary or result.kind.value
                 per_query.append(
                     QueryOutcome(query=label, outcome="failed", kind=result.kind,
                                  detail=detail, raw_count=len(result.rows))
                 )
-                break
+                if result.kind in _BREAK_KINDS:
+                    break
+                continue
             raw_payload: Any = result.rows if result.rows else {"kind": result.kind.value}
             item_key = req.command + "_" + (req.args[0] if req.args else "x")
             raw_ref = self.raw_store.write_raw(run_dir, item_key[:80], raw_payload)

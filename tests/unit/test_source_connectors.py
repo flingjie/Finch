@@ -495,3 +495,37 @@ class TestOrchestratorIsolation:
         rd = by[S.REDDIT]
         assert rd.per_query[0].query == "empty"
         assert rd.per_query[0].outcome == "empty"
+
+    def test_timeout_query_recorded_failed_not_empty(self, tmp_path: Path):
+        ws = Workspace(tmp_path)
+        ws.ensure()
+
+        def fake_run(argv, timeout):
+            if argv[:2] == ["opencli", "list"]:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": json.dumps([{"site": "reddit", "commands": ["search"]}]),
+                    "stderr": "",
+                }
+            if "timeout-me" in argv:
+                return {"ok": True, "exit_code": 75, "stdout": "", "stderr": ""}
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": (FIXTURES / "reddit-search.json").read_text(),
+                "stderr": "",
+            }
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.models import Source as S
+        from finch.sources.opencli_gateway import OpenCliGateway
+
+        orch = DiscoveryOrchestrator(ws, gateway=OpenCliGateway(run_fn=fake_run))
+        result = orch.sync_source(S.REDDIT, DiscoveryContext(queries=["timeout-me", "ok-me"]))
+        outcomes = {o.query: o for o in result.per_query}
+        assert outcomes["timeout-me"].outcome == "failed"
+        assert outcomes["timeout-me"].kind == ResultKind.TIMEOUT
+        assert outcomes["ok-me"].outcome == "ran"
+        from finch.sources.orchestrator import aggregate_state
+        assert aggregate_state(result) == "partial_success"
