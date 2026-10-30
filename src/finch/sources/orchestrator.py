@@ -132,6 +132,8 @@ def sync_result_to_dict(result: SyncResult) -> dict[str, Any]:
         "detail": result.detail,
         "elapsed_seconds": result.elapsed_seconds,
         "error_type": result.error_type,
+        "projection_failed": result.projection_failed,
+        "projection_error": result.projection_error,
         "mode": result.mode,
         "ran_queries": list(result.ran_queries),
         "skipped_queries": list(result.skipped_queries),
@@ -159,6 +161,8 @@ class SyncResult:
     skipped_queries: list[str] = field(default_factory=list)
     per_query: list[QueryOutcome] = field(default_factory=list)
     started_at: str = ""
+    projection_failed: bool = False
+    projection_error: str = ""
 
 
 class DiscoveryOrchestrator:
@@ -262,6 +266,8 @@ class DiscoveryOrchestrator:
                 started_at=started_at,
             )
             payload["projected_count"] = proj.projected_peers
+            payload["projection_failed"] = proj.failed
+            payload["projection_error"] = proj.error
             self.runs.save(run_id, payload)
             return SyncResult(
                 source=source,
@@ -278,6 +284,8 @@ class DiscoveryOrchestrator:
                 skipped_queries=skipped,
                 per_query=per_query,
                 started_at=started_at,
+                projection_failed=proj.failed,
+                projection_error=proj.error,
             )
 
         # Weixin URL-import without opencli when only urls + empty capability
@@ -381,6 +389,8 @@ class DiscoveryOrchestrator:
             started_at=started_at,
         )
         payload["projected_count"] = proj.projected_peers
+        payload["projection_failed"] = proj.failed
+        payload["projection_error"] = proj.error
         if detail:
             payload["detail"] = detail
         self.runs.save(run_id, payload)
@@ -407,6 +417,8 @@ class DiscoveryOrchestrator:
             skipped_queries=skipped,
             per_query=per_query,
             started_at=started_at,
+            projection_failed=proj.failed,
+            projection_error=proj.error,
         )
 
     def _project(self, artifacts: list[RawArtifact]) -> ProjectResult:
@@ -414,8 +426,8 @@ class DiscoveryOrchestrator:
             return ProjectResult()
         try:
             return self.projector.project(artifacts)
-        except Exception:  # noqa: BLE001
-            return ProjectResult()
+        except Exception as exc:  # noqa: BLE001
+            return ProjectResult(failed=True, error=str(exc)[:300])
 
     def sync_all(
         self,

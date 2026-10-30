@@ -530,6 +530,40 @@ class TestOrchestratorIsolation:
         from finch.sources.orchestrator import aggregate_state
         assert aggregate_state(result) == "partial_success"
 
+    def test_projection_failure_is_surfaced(self, tmp_path: Path):
+        ws = Workspace(tmp_path)
+        ws.ensure()
+
+        def fake_run(argv, timeout):
+            if argv[:2] == ["opencli", "list"]:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": json.dumps([{"site": "reddit", "commands": ["search"]}]),
+                    "stderr": "",
+                }
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": (FIXTURES / "reddit-search.json").read_text(),
+                "stderr": "",
+            }
+
+        class _RaisingProjector:
+            def project(self, artifacts):
+                raise RuntimeError("boom")
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.models import Source as S
+        from finch.sources.opencli_gateway import OpenCliGateway
+
+        orch = DiscoveryOrchestrator(
+            ws, gateway=OpenCliGateway(run_fn=fake_run), projector=_RaisingProjector()
+        )
+        result = orch.sync_source(S.REDDIT, DiscoveryContext(queries=["q"]), project_peers=True)
+        assert result.projection_failed is True
+        assert "boom" in result.projection_error
+
 
 class TestGitHubPartial:
     def test_github_partial_failure_recorded(self, tmp_path: Path):

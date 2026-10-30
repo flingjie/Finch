@@ -23,6 +23,8 @@ class ProjectResult:
     updated_peers: int = 0
     skipped: int = 0
     peer_ids: list[str] = field(default_factory=list)
+    failed: bool = False
+    error: str = ""
 
 
 def _author_key(art: RawArtifact) -> tuple[str, str] | None:
