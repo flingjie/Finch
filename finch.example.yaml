@@ -204,6 +204,12 @@ relationships:
   weekly_limit: 3            # 周度简报最多推荐 3 人
   briefing_version: relationship-briefing-v1
 
+# 问题发现：从真实讨论提取问题卡片（Problem Inbox）。
+# 与 products / relationships 隔离：只共享 sources 原始工件与存储层。
+problem_discovery:
+  enabled: true
+  version: problem-v1
+
 # Daily 50-person discovery: 5 priority / 15 summary / 30 browse tiers.
 # LLM budget is fixed: at most `semantic_assess_limit` people enter batch semantic
 # assessment, and `deep_prepare_limit` people get a full connection analysis —

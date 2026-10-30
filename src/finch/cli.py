@@ -127,6 +127,16 @@ from .practice.models import (
 )
 from .practice.observations import StyleObservationService
 from .practice.service import PracticeService
+from .problem_discovery.discover import discover_problems
+from .problem_discovery.importing import import_discussion
+from .problem_discovery.models import Problem
+from .problem_discovery.repository import (
+    DiscoveryRunRepository,
+    DiscussionRepository,
+)
+from .problem_discovery.repository import (
+    ProblemRepository as DiscoveredProblemRepository,
+)
 from .problems.render import render_active_problems
 from .products.discovery import run_product_discovery
 from .products.explorer import explore_product
@@ -318,6 +328,11 @@ relationships_app = typer.Typer(
     help="人际关系：从真实任务理解人、建立持续交流（人物 / 事件 / 交流 / 周度简报）"
 )
 app.add_typer(relationships_app, name="relationships")
+
+problem_discovery_app = typer.Typer(
+    help="问题发现：从真实讨论提取问题卡片（Problem Inbox）"
+)
+app.add_typer(problem_discovery_app, name="problem-discovery")
 
 
 def _idea_meta_line(job: ContentJob) -> str:
@@ -1442,6 +1457,127 @@ def relationships_show(
         typer.echo(json.dumps(tb.model_dump(mode="json"), ensure_ascii=False, indent=2))
         return
     _render_traceback(tb)
+
+
+def _render_problem(p: Problem) -> None:
+    typer.echo(f"问题：{p.title or '-'}  [{p.problem_id}]")
+    if p.user_type:
+        typer.echo(f"  用户类型：{p.user_type}")
+    s = p.scenario
+    if s.task or s.trigger or s.consequence:
+        typer.echo(
+            f"  场景：任务={s.task or '-'} | 触发={s.trigger or '-'} | 后果={s.consequence or '-'}"
+        )
+    if p.current_solutions:
+        typer.echo(f"  现有方案：{'；'.join(p.current_solutions)}")
+    typer.echo(f"  证据（{len(p.evidence)} 条）：")
+    for e in p.evidence:
+        typer.echo(f"    - [{e.evidence_level.value}] {e.claim or '-'}")
+        if e.quote:
+            typer.echo(f"      摘录：{e.quote}")
+        if e.url:
+            typer.echo(f"      来源：{e.url}")
+    if p.hypotheses:
+        typer.echo(f"  假设：{'；'.join(p.hypotheses)}")
+    if p.unknowns:
+        typer.echo(f"  未知：{'；'.join(p.unknowns)}")
+    if p.next_action:
+        typer.echo(f"  下一步：{p.next_action}")
+
+
+@problem_discovery_app.command("add")
+def problem_discovery_add(
+    repo: str | None = typer.Option(None, "--repo", help="GitHub owner/repo"),
+    url: str = typer.Option("", "--url", help="公开讨论链接"),
+    text: str = typer.Option("", "--text", help="粘贴的讨论正文"),
+    title: str = typer.Option("", "--title", help="标题"),
+    author: str = typer.Option("", "--author", help="作者"),
+) -> None:
+    """导入一条公开讨论（GitHub repo 或 URL/文本），返回可引用的 source_ref。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    if not repo and not url and not text:
+        typer.echo("需要 --repo 或 --url 或 --text")
+        raise typer.Exit(code=1)
+    refs = import_discussion(ws, repo=repo or "", url=url, text=text, title=title, author=author)
+    for ref in refs:
+        typer.echo(ref)
+
+
+@problem_discovery_app.command("discover")
+def problem_discovery_discover(
+    refresh: bool = typer.Option(False, "--refresh", help="强制重抽；否则复用缓存"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """从已导入来源抽取问题卡片并入库。"""
+    from finch.sources.store import ArtifactRepository
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
+    problems = discover_problems(
+        runner,
+        problem_repo=DiscoveredProblemRepository(ws),
+        artifact_repo=ArtifactRepository(ws),
+        discussion_repo=DiscussionRepository(ws),
+        run_repo=DiscoveryRunRepository(ws),
+        version=settings.problem_discovery.version,
+        force=refresh,
+    )
+    if problems is None:
+        typer.echo("无已导入来源或无法抽取。")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(
+            json.dumps([p.model_dump(mode="json") for p in problems], ensure_ascii=False, indent=2)
+        )
+        return
+    typer.echo(f"问题卡片（{len(problems)}）：")
+    for p in problems:
+        _render_problem(p)
+
+
+@problem_discovery_app.command("list")
+def problem_discovery_list(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """列出所有已入库问题。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    problems = DiscoveredProblemRepository(ws).list_all()
+    if as_json:
+        typer.echo(
+            json.dumps([p.model_dump(mode="json") for p in problems], ensure_ascii=False, indent=2)
+        )
+        return
+    if not problems:
+        typer.echo("暂无问题。可用 `uv run finch problem-discovery add` 导入讨论，再 `discover`。")
+        return
+    typer.echo(f"问题（{len(problems)}）：")
+    for p in problems:
+        _render_problem(p)
+
+
+@problem_discovery_app.command("show")
+def problem_discovery_show(
+    problem_id: str = typer.Argument(..., help="问题 problem_id"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """查看单个问题卡片及其证据。"""
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    p = DiscoveredProblemRepository(ws).get(problem_id)
+    if p is None:
+        typer.echo(f"problem not found: {problem_id}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(json.dumps(p.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    _render_problem(p)
 
 
 @sources_app.command("doctor")

@@ -323,6 +323,16 @@ class RelationshipSettings(BaseModel):
     briefing_version: str = "relationship-briefing-v1"
 
 
+class ProblemDiscoverySettings(BaseModel):
+    """问题发现领域配置（真实问题发现 + 验证）。
+
+    与 products / relationships 隔离：只共享 ``sources`` 的原始工件与存储层。
+    """
+
+    enabled: bool = True
+    version: str = "problem-v1"
+
+
 class ScoringWeights(BaseModel):
     """互动评分五维权重（执行计划 5 默认评分权重表）。
 
@@ -535,6 +545,9 @@ class Settings(BaseModel):
     notion: NotionSettings = Field(default_factory=NotionSettings)
     products: ProductDiscoverySettings = Field(default_factory=ProductDiscoverySettings)
     relationships: RelationshipSettings = Field(default_factory=RelationshipSettings)
+    problem_discovery: ProblemDiscoverySettings = Field(
+        default_factory=ProblemDiscoverySettings
+    )
 
 
 def _warn_legacy_sources(data: dict) -> None:
