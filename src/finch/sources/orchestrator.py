@@ -70,17 +70,25 @@ class QueryOutcome:
     normalized_count: int = 0
     kind: ResultKind | None = None
     detail: str = ""
+    partial: bool = False
 
 
-def classify_result(result: SyncResult) -> str:
-    """按源把执行结果归类为 failed / empty / success（not_executed 由 CLI 对缺失源合成）。"""
+def aggregate_state(result: SyncResult) -> str:
+    """源级聚合状态：success / empty / partial_success / failed。
+
+    优先聚合 per_query：任一 query failed 或 partial → 有 raw 为 partial_success、
+    无 raw 为 failed。无 per_query 时沿用旧 classify 语义（kind 错误 / status 非 READY
+    且有 detail 或空 raw → failed）。
+    """
+    has_failure = any(o.outcome == "failed" for o in result.per_query)
+    has_partial = any(o.partial for o in result.per_query)
+    if has_failure or has_partial:
+        return "partial_success" if result.raw_count > 0 else "failed"
     if result.kind in _ERROR_KINDS:
         return "failed"
     if result.status != SourceStatus.READY and (result.detail or result.raw_count == 0):
         return "failed"
-    if result.raw_count == 0:
-        return "empty"
-    return "success"
+    return "success" if result.raw_count > 0 else "empty"
 
 
 def _request_label(req: OpenCliRequest, mode: str) -> str:
@@ -99,6 +107,7 @@ def _query_outcome_dict(o: QueryOutcome) -> dict[str, Any]:
         "raw_count": o.raw_count,
         "normalized_count": o.normalized_count,
         "kind": o.kind.value if o.kind else None,
+        "partial": o.partial,
         "detail": o.detail,
     }
 
