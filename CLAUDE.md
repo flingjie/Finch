@@ -4,7 +4,7 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 
 ## Project
 
-Finch is an AI product discovery + founder connection copilot. It finds AI products and founders worth watching, explains why they are worth learning from or talking to, breaks down the solution (who it solves what problem for, the prior approach, the new solution, evidence vs. assumption), and threads real interactions into relationship context. Products are the main object of study; founders are the main object of connection. Content production is not the purpose and does not serve connection.
+Finch is an AI product discovery + founder connection copilot. It finds AI products and founders worth watching, explains why they are worth learning from or talking to, breaks down the solution (who it solves what problem for, the prior approach, the new solution, evidence vs. assumption), and threads real interactions into relationship context. Products are the main object of study; founders are the main object of connection. Problems are a first-class object of study alongside products, linked by evidence or manual confirmation. First round scope: product discovery + solution explorer. Content production is not the purpose and does not serve connection.
 
 First round scope: product discovery + solution explorer. Founder connection, product comparison, and insight accumulation are later rounds. Canonical definition: `docs/product-contract.md`. Finch is fully standalone — no builderDNA dependency.
 
@@ -33,6 +33,8 @@ Skill + domain services, not an LLM agent loop and not a graph runtime. Ordering
 ```
 src/finch/
   products/        Product / Founder / Solution / Feedback models + product discovery + feedback research + solution explorer
+  problem_discovery/  real user problem extraction + problem inbox
+  relationships/      person task understanding + weekly briefing
   sources/         cross-platform read-only fetch (opencli gateway + RawArtifact)
   repos/           X-shared GitHub repo discovery (product discovery input)
   github/ twitter/ reddit/ webfetch/ ingest/  read-only adapters

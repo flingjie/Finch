@@ -2,7 +2,7 @@
 
 Finch 是一个 **AI 产品发现 + 创业者连接 Copilot**。它持续发现值得关注的 AI 产品与创业者，理解产品为谁解决什么问题、采用什么方案、有哪些证据与未验证假设，通过真实试用、具体反馈与公开讨论建立有价值的关系，并逐步形成自己的产品判断。
 
-产品是主要研究对象，创业者是主要连接对象。内容生产不是目的，也不服从连接。
+产品是主要研究对象，创业者是主要连接对象。问题是与产品并列的一等研究对象：一个真实用户问题对应多个候选方案，一个产品可解决多个问题，二者通过证据或人工确认关联。内容生产不是目的，也不服从连接。
 
 > 完整定义见 [`docs/product-contract.md`](docs/product-contract.md)。Finch 独立运行，不依赖任何其他项目（如 builderDNA）。
 
@@ -13,6 +13,8 @@ Finch 是一个 **AI 产品发现 + 创业者连接 Copilot**。它持续发现�
 ```text
 发现产品 → 理解问题 → 拆解方案 → 比较与学习 → 选择行动 → 反馈与连接
 ```
+
+真实问题既可从产品与用户反馈中发现，也可直接从社区问题（issue / 讨论）中发现；问题与产品双向关联，方案比较围绕真实问题展开。
 
 第一轮落地「发现产品 + 方案分析（Solution Explorer）」。创业者连接、产品比较与洞察积累在后续轮次交付。
 
@@ -48,7 +50,7 @@ uv run finch twitter search / import-bookmarks / diagnose
 
 ### 已冻结的旧使命命令
 
-旧「跨领域学习 / 连接 / 表达」使命的领域服务已冻结（`hidden=True`），从 `finch --help` 默认面移除，但命令仍可调用、代码与测试保留、数据原样保留，验证新方向后再决定删除。包括：`connect`、`peers`、`connections`、`conversations`、`ideas`、`drafts`、`review`、`voice`、`profile`、`practice`、`article`、`angles`、`methods`、`community`、`dialogue`、`materials`、`problems`、`attempts`、`grounded`、`knowledge`、`collisions`、`experiments`、`inspirations`、`github reflect`、`learn`、`weekly`、`summarize`、`context`。
+旧「学习 / 连接 / 表达」使命的领域服务已冻结（`hidden=True`），从 `finch --help` 默认面移除，但命令仍可调用、代码与测试保留、数据原样保留，验证新方向后再决定删除。包括：`connect`、`peers`、`connections`、`conversations`、`ideas`、`drafts`、`review`、`voice`、`profile`、`practice`、`article`、`angles`、`methods`、`community`、`dialogue`、`materials`、`problems`、`attempts`、`grounded`、`knowledge`、`collisions`、`experiments`、`inspirations`、`github reflect`、`learn`、`weekly`、`summarize`、`context`。
 
 ## 产品发现用法
 

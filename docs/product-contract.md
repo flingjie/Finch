@@ -2,7 +2,7 @@
 
 Finch 是一个 **AI 产品发现 + 创业者连接 Copilot**：持续发现值得关注的 AI 产品与创业者，理解产品为谁解决什么问题、采用什么方案、有哪些证据与未验证假设，通过真实试用、具体反馈与公开讨论与创业者建立有价值的关系，并从中形成可复用的产品洞察与自己的产品判断。
 
-产品是主要研究对象，创业者是主要连接对象。学习（理解解决方案）、实践（试用与反馈）、表达（形成自己的判断）与连接（创业者关系）围绕产品展开，但内容生产不是目的，也不服从连接。
+产品是主要研究对象，创业者是主要连接对象。问题是与产品并列的一等研究对象：一个真实用户问题对应多个候选方案，一个产品可解决多个问题，二者通过证据或人工确认关联。学习（理解解决方案）、实践（试用与反馈）、表达（形成自己的判断）与连接（创业者关系）围绕产品展开，但内容生产不是目的，也不服从连接。
 
 这不是一个「证据驱动的内容生成工具」，也不是 CRM / 线索库 / PMF 漏斗。
 
@@ -24,13 +24,22 @@ Finch 是一个 **AI 产品发现 + 创业者连接 Copilot**：持续发现值�
 
 > 每周新增或加深多少个「有上下文、可继续」的创业者关系。
 
-关系之外，每周分别观察、不合成一个总分的四类进展：修正了什么理解、尝试了什么及结果、形成了什么自己的判断、哪些真实交流值得继续。收藏数、发现数、试用数、反馈数都不是核心成功指标。
+关系之外，每周分别观察、不合成一个总分的五类进展：
+
+- 修正了什么理解
+- 尝试了什么及结果
+- 形成了什么自己的判断
+- 哪些真实交流值得继续
+- 问题推进：哪些问题从初步发现推进到更深理解或真实验证
+
+收藏数、发现数、试用数、反馈数都不是核心成功指标。
 
 ## 对象所有权
 
 | 对象 | 归属 | 规则 |
 |---|---|---|
 | `Product` | 产品领域 | 一个待关注的产品：名称、一句话介绍、创业者、目标用户、解决的问题、核心方案、与既有方式的差异、当前进展、证据、为什么值得关注。按规范化产品身份（如 `github.com/owner/repo`）幂等归一化。**不是线索库条目。** |
+| `Problem` | 问题领域 | 真实用户问题：受阻场景、证据、受影响用户、现有 workaround、候选方案（引用 `Product`）。按语义身份幂等归一化。是产品的并列研究对象，不合成单一总分。 |
 | `Founder` | 连接领域（后续轮） | 构建产品的创业者（轻量身份；第一轮只作为 `Product` 的内嵌字段）。 |
 | `Solution` | 智能领域 | 选中一个产品后的 8 点理解：为谁解决什么问题 / 原来如何解决 / 新方案 / 为什么更有价值 / 证据 vs 假设 / 值得学习的设计思路 / 谁在构建 / 下一步判断。证据引用必须是产品证据子集；无证据的主张强制标记为假设。 |
 | `Insight` | 智能领域（后续轮） | 可复用的产品洞察（真实问题、有特点的方案、设计取舍、未验证假设、可迁移方法）。 |
@@ -65,7 +74,7 @@ Finch 是一个 **AI 产品发现 + 创业者连接 Copilot**：持续发现值�
 
 ## 已冻结的旧使命服务
 
-第一轮把旧「跨领域学习 / 连接 / 表达」使命的领域服务**冻结**（`hidden=True`，从默认 `finch --help` 面移除），代码与测试保留、数据原样保留，验证新方向后再决定删除。冻结范围：`connect`、`peers`、`people`、`connections`、`conversations`、`ideas`、`drafts`、`review`、`voice`、`profile`、`practice`、`article`、`angles`、`methods`、`community`、`dialogue`、`summaries`、`materials`、`problems`、`attempts`、`grounded`、`knowledge`、`collisions`、`experiments`、`inspirations`、`github reflect`、`learn`、`weekly`、`summarize`、`context`。
+第一轮把旧「学习 / 连接 / 表达」使命的领域服务**冻结**（`hidden=True`，从默认 `finch --help` 面移除），代码与测试保留、数据原样保留，验证新方向后再决定删除。冻结范围：`connect`、`peers`、`people`、`connections`、`conversations`、`ideas`、`drafts`、`review`、`voice`、`profile`、`practice`、`article`、`angles`、`methods`、`community`、`dialogue`、`summaries`、`materials`、`problems`、`attempts`、`grounded`、`knowledge`、`collisions`、`experiments`、`inspirations`、`github reflect`、`learn`、`weekly`、`summarize`、`context`。
 
 保持活跃：`init`、`diagnose`、`twitter`、`sources`、`repos`、新增 `products`。只读 adapter（`sources` / `github` / `twitter` / `reddit` / `webfetch` / `ingest` / `opencli`）与基础设施（`storage` / `codex` / `llm` / `settings`）保留复用。
 
