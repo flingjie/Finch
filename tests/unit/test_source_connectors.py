@@ -572,7 +572,8 @@ class TestGitHubPartial:
 
         from finch.sources.connectors import DiscoveryContext
         from finch.sources.connectors.github import GitHubConnector
-        from finch.sources.models import OpenCliResult, ResultKind, Source as S
+        from finch.sources.models import OpenCliResult, ResultKind
+        from finch.sources.models import Source as S
 
         class _FakeGitHub(GitHubConnector):
             def __init__(self):
