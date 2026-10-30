@@ -231,12 +231,25 @@ class SourceTwitterPlan(SourceDiscoverySettings):
 class SourceRedditPlan(SourceDiscoverySettings):
     queries: list[str] = Field(default_factory=list)
     urls: list[str] = Field(default_factory=list)
+    subreddits: list[str] = Field(default_factory=list)
+    sorts: list[str] = Field(default_factory=lambda: ["relevance"])
+    max_expand: int = Field(default=5, ge=0)
 
 
 class SourceGithubPlan(SourceDiscoverySettings):
-    """GitHub 查询是登录名，不是主题词。"""
+    """GitHub 查询是登录名，不是主题词；watchlist / issue_queries 供问题发现。"""
 
     users: list[str] = Field(default_factory=list)
+    watchlist: list[str] = Field(default_factory=list)  # owner/repo
+    issue_queries: list[str] = Field(default_factory=list)
+
+
+class SourceHackerNewsPlan(SourceDiscoverySettings):
+    """Hacker News：search 查询 + ask/show/new/top 入口；urls 为 story id。"""
+
+    queries: list[str] = Field(default_factory=list)
+    urls: list[str] = Field(default_factory=list)
+    entrances: list[str] = Field(default_factory=lambda: ["search"])
 
 
 class SourceV2exPlan(SourceDiscoverySettings):
@@ -268,6 +281,7 @@ class SourcesSettings(BaseModel):
     twitter: SourceTwitterPlan = Field(default_factory=SourceTwitterPlan)
     reddit: SourceRedditPlan = Field(default_factory=SourceRedditPlan)
     github: SourceGithubPlan = Field(default_factory=SourceGithubPlan)
+    hackernews: SourceHackerNewsPlan = Field(default_factory=SourceHackerNewsPlan)
     v2ex: SourceV2exPlan = Field(default_factory=SourceV2exPlan)
     weixin: SourceWeixinPlan = Field(default_factory=SourceWeixinPlan)
     xiaohongshu: SourceXiaohongshuPlan = Field(default_factory=SourceXiaohongshuPlan)
@@ -323,14 +337,31 @@ class RelationshipSettings(BaseModel):
     briefing_version: str = "relationship-briefing-v1"
 
 
+class ResearchTopic(BaseModel):
+    """问题研究主题：信号词 + 分源查询（合并进 ``problem_discovery.sources``）。"""
+
+    id: str
+    label: str = ""
+    signals: list[str] = Field(default_factory=list)
+    # keys: reddit / hackernews / github_issue_queries / github_watchlist
+    queries_by_source: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class ProblemDiscoverySettings(BaseModel):
     """问题发现领域配置（真实问题发现 + 验证）。
 
     与 products / relationships 隔离：只共享 ``sources`` 的原始工件与存储层。
+    ``sources`` 与 ``research_topics`` 仅服务问题发现采集，不改 peer / products 查询块。
     """
 
     enabled: bool = True
-    version: str = "problem-v1"
+    version: str = "problem-v2"
+    lookback_hours: int = Field(default=720, ge=0)
+    max_sources: int = Field(default=40, ge=1)
+    max_chars_per_source: int = Field(default=4000, ge=1)
+    batch_size: int = Field(default=10, ge=1)
+    sources: SourcesSettings = Field(default_factory=SourcesSettings)
+    research_topics: list[ResearchTopic] = Field(default_factory=list)
 
 
 class ScoringWeights(BaseModel):

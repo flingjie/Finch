@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "description": "8–12 real-style discussion fixtures for Skill-first shadow vs control",
+  "samples": [
+    {
+      "id": "s01",
+      "title": "Browser-use session restore",
+      "url": "https://example.com/fixture/s01",
+      "text": "Browser-use loses session state after a mid-task tab crash. I have to re-login and restart the agent from scratch. Workaround: manually snapshot cookies, but that fails for SPA auth."
+    },
+    {
+      "id": "s02",
+      "title": "Agent tool calling timeout",
+      "url": "https://example.com/fixture/s02",
+      "text": "Our agent hangs when a tool call times out. It never cancels the pending step and keeps retrying the same tool. Users see a spinning UI for minutes."
+    },
+    {
+      "id": "s03",
+      "title": "Human-in-the-loop approval lost",
+      "url": "https://example.com/fixture/s03",
+      "text": "When the human approval modal closes accidentally, the agent continues without confirmation. We expected it to pause. Happens in Chrome only."
+    },
+    {
+      "id": "s04",
+      "title": "RAG retrieval noise",
+      "url": "https://example.com/fixture/s04",
+      "text": "Knowledge retrieval returns unrelated notes when the query mentions 'agent'. Indexing seems fine; ranking dumps marketing blog posts over the internal runbook."
+    },
+    {
+      "id": "s05",
+      "title": "Eval flake on CI",
+      "url": "https://example.com/fixture/s05",
+      "text": "Agent eval suite flakes on CI when network is slow. Local runs pass. We mark tests skipped which hides real regressions."
+    },
+    {
+      "id": "s06",
+      "title": "OpenCLI bridge down recovery",
+      "url": "https://example.com/fixture/s06",
+      "text": "When opencli bridge is down, Finch reports empty results as if no posts existed. We need failures to surface as failed, not empty success."
+    },
+    {
+      "id": "s07",
+      "title": "GitHub issue closed but unfixed",
+      "url": "https://example.com/fixture/s07",
+      "text": "Maintainers closed the issue as 'not planned' but users still reproduce the crash on v1.4. Closing is treated by some bots as fixed — that is wrong."
+    },
+    {
+      "id": "s08",
+      "title": "Multi-agent handoff drops context",
+      "url": "https://example.com/fixture/s08",
+      "text": "In a multi-agent harness, handoff to the worker agent drops the last three tool results. Parent agent assumes the worker saw them."
+    },
+    {
+      "id": "s09",
+      "title": "Ask HN: stuck agents",
+      "url": "https://example.com/fixture/s09",
+      "text": "Ask HN: how do you detect when an agent is stuck in a tool loop? We only notice after burn rate alerts. Looking for first-hand ops practices, not product pitches."
+    },
+    {
+      "id": "s10",
+      "title": "Reddit: memory bloat",
+      "url": "https://example.com/fixture/s10",
+      "text": "r/LocalLLaMA: long agent sessions balloon RAM because transcript is kept verbatim. Truncation helpers delete the wrong turns and break resume."
+    }
+  ]
+}

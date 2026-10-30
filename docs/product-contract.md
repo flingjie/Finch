@@ -18,7 +18,7 @@ Finch 是一个 **AI 产品发现 + 创业者连接 Copilot**：持续发现值�
 - **选择行动**：收藏观察 / 深入研究 / 试用 / 反馈 / 联系创业者 / 小型合作实验。
 - **反馈与连接**：通过真实试用体验、具体反馈、公开讨论建立关系，记录真实互动事实。
 
-第一轮只落地「发现产品 + 方案分析（Solution Explorer）」。创业者连接、产品比较与洞察积累在后续轮次交付。
+当前已落地：「发现产品 + 方案分析（Solution Explorer）」与并行的「问题发现（Problem Inbox）」；`relationships` 周度简报亦已可用。Product↔Problem 显式关联层、Problem Radar、Investigate 深调查在后续轮次交付。创业者连接深化、产品比较与洞察积累亦在后续轮次。
 
 ## 北极星指标
 
@@ -39,7 +39,7 @@ Finch 是一个 **AI 产品发现 + 创业者连接 Copilot**：持续发现值�
 | 对象 | 归属 | 规则 |
 |---|---|---|
 | `Product` | 产品领域 | 一个待关注的产品：名称、一句话介绍、创业者、目标用户、解决的问题、核心方案、与既有方式的差异、当前进展、证据、为什么值得关注。按规范化产品身份（如 `github.com/owner/repo`）幂等归一化。**不是线索库条目。** |
-| `Problem` | 问题领域 | 真实用户问题：受阻场景、证据、受影响用户、现有 workaround、候选方案（引用 `Product`）。按语义身份幂等归一化。是产品的并列研究对象，不合成单一总分。 |
+| `Problem` | 问题领域 | 真实用户问题：受阻场景、证据、受影响用户、现有 workaround；候选方案引用 `Product`（显式关联层后续轮次落地，当前以文本 workaround / 人工确认记录）。按语义身份幂等归一化。是产品的并列研究对象，不合成单一总分。 |
 | `Founder` | 连接领域（后续轮） | 构建产品的创业者（轻量身份；第一轮只作为 `Product` 的内嵌字段）。 |
 | `Solution` | 智能领域 | 选中一个产品后的 8 点理解：为谁解决什么问题 / 原来如何解决 / 新方案 / 为什么更有价值 / 证据 vs 假设 / 值得学习的设计思路 / 谁在构建 / 下一步判断。证据引用必须是产品证据子集；无证据的主张强制标记为假设。 |
 | `Insight` | 智能领域（后续轮） | 可复用的产品洞察（真实问题、有特点的方案、设计取舍、未验证假设、可迁移方法）。 |
@@ -76,8 +76,8 @@ Finch 是一个 **AI 产品发现 + 创业者连接 Copilot**：持续发现值�
 
 第一轮把旧「学习 / 连接 / 表达」使命的领域服务**冻结**（`hidden=True`，从默认 `finch --help` 面移除），代码与测试保留、数据原样保留，验证新方向后再决定删除。冻结范围：`connect`、`peers`、`people`、`connections`、`conversations`、`ideas`、`drafts`、`review`、`voice`、`profile`、`practice`、`article`、`angles`、`methods`、`community`、`dialogue`、`summaries`、`materials`、`problems`、`attempts`、`grounded`、`knowledge`、`collisions`、`experiments`、`inspirations`、`github reflect`、`learn`、`weekly`、`summarize`、`context`。
 
-保持活跃：`init`、`diagnose`、`twitter`、`sources`、`repos`、新增 `products`。只读 adapter（`sources` / `github` / `twitter` / `reddit` / `webfetch` / `ingest` / `opencli`）与基础设施（`storage` / `codex` / `llm` / `settings`）保留复用。
+保持活跃：`init`、`diagnose`、`twitter`、`sources`、`repos`、`products`、`problem-discovery`、`relationships`。只读 adapter（`sources` / `github` / `twitter` / `reddit` / `webfetch` / `ingest` / `opencli`）与基础设施（`storage` / `codex` / `llm` / `settings`）保留复用。
 
 ## 第一轮完成标准
 
-`finch products daily` 每天输出 5–10 个产品候选；`finch products explore <id>` 对一个产品给出 8 点理解。旧使命命令从默认面隐藏但未删除，数据原样保留。
+`finch products daily` 每天输出 5–10 个产品候选；`finch products explore <id>` 对一个产品给出 8 点理解；`finch problem-discovery discover` 能从已导入讨论抽出有证据门禁的问题卡片。旧使命命令从默认面隐藏但未删除，数据原样保留。

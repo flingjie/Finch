@@ -229,9 +229,51 @@ relationships:
 
 # 问题发现：从真实讨论提取问题卡片（Problem Inbox）。
 # 与 products / relationships 隔离：只共享 sources 原始工件与存储层。
+# ``finch problem-discovery discover --refresh`` 会先按本块 sources + research_topics 广域同步。
 problem_discovery:
   enabled: true
-  version: problem-v1
+  version: problem-v2
+  lookback_hours: 720
+  max_sources: 40
+  max_chars_per_source: 4000
+  batch_size: 10
+  sources:
+    github:
+      enabled: false
+      mode: query
+      fetch_limit: 30
+      users: []
+      watchlist: []          # owner/repo 观察清单
+      issue_queries: []      # 跨仓库 search/issues 查询
+    reddit:
+      enabled: false
+      mode: query
+      fetch_limit: 50
+      queries: []
+      subreddits: []
+      sorts: [new, top, comments]
+      max_expand: 5
+    hackernews:
+      enabled: false
+      mode: query
+      fetch_limit: 30
+      queries: []
+      entrances: [search, ask, show]
+  research_topics:
+    - id: agent-stuck
+      label: Agent stuck / tool calling
+      signals:
+        - "agent stuck"
+        - "tool calling failed"
+      queries_by_source:
+        reddit:
+          - "agent stuck"
+          - "tool calling failed"
+        hackernews:
+          - "agent stuck"
+        github_issue_queries:
+          - "agent stuck type:issue"
+
 
 # Daily 50-person discovery: 5 priority / 15 summary / 30 browse tiers.
 # LLM budget is fixed: at most `semantic_assess_limit` people enter batch semantic

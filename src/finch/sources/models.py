@@ -13,6 +13,7 @@ class Source(StrEnum):
     TWITTER = "twitter"
     REDDIT = "reddit"
     GITHUB = "github"
+    HACKERNEWS = "hackernews"
     V2EX = "v2ex"
     WEIXIN = "weixin"
     XIAOHONGSHU = "xiaohongshu"

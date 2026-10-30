@@ -6,7 +6,7 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 
 Finch is an AI product discovery + founder connection copilot. It finds AI products and founders worth watching, explains why they are worth learning from or talking to, breaks down the solution (who it solves what problem for, the prior approach, the new solution, evidence vs. assumption), and threads real interactions into relationship context. Products are the main object of study; founders are the main object of connection. Problems are a first-class object of study alongside products, linked by evidence or manual confirmation. Content production is not the purpose and does not serve connection.
 
-First round scope: product discovery + solution explorer. Founder connection, product comparison, and insight accumulation are later rounds. Canonical definition: `docs/product-contract.md`. Finch is fully standalone — no builderDNA dependency.
+Shipped scope: product discovery + solution explorer + problem inbox (`problem-discovery`) + relationships briefing. Product↔Problem relation layer, Problem Radar, and Investigate are later rounds, as are deeper founder connection, product comparison, and insight accumulation. Canonical definition: `docs/product-contract.md`. Finch is fully standalone — no builderDNA dependency.
 
 ## Commands
 
@@ -20,7 +20,11 @@ uv run finch <command>  # CLI entry point (typer)
 
 Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k name`.
 
-CLI surface (round 1 core): `finch products daily` (`--refresh` runs discovery, else replays latest snapshot; `--view home|browse`; `--json`; `--lookback-hours`; `--question`), `finch products list`, `finch products show <id>`, `finch products feedback <id>` (`--refresh` re-searches user feedback, else replays cache), `finch products explore <id>` (`--refresh` forces re-analysis; auto-runs feedback research when absent/stale; `--skip-feedback` to analyze from existing material only).
+CLI surface (core): `finch products daily` (`--refresh` runs discovery, else replays latest snapshot; `--view home|browse`; `--json`; `--lookback-hours`; `--question`), `finch products list`, `finch products show <id>`, `finch products feedback <id>` (`--refresh` re-searches user feedback, else replays cache), `finch products explore <id>` (`--refresh` forces re-analysis; auto-runs feedback research when absent/stale; `--skip-feedback` to analyze from existing material only).
+
+Problem discovery: `finch problem-discovery add|discover|list|show|summary|present|last-presented`.
+
+Relationships: `finch relationships import|add-person|add-event|record-contact|next|weekly`.
 
 Active read-only infra: `finch init`, `finch diagnose`, `finch twitter ...`, `finch sources ...` (doctor/sync), `finch repos ...` (discover/list/export).
 
@@ -37,7 +41,7 @@ src/finch/
   relationships/      person task understanding + weekly briefing
   sources/         cross-platform read-only fetch (opencli gateway + RawArtifact)
   repos/           X-shared GitHub repo discovery (product discovery input)
-  github/ twitter/ reddit/ webfetch/ ingest/  read-only adapters
+  github/ twitter/ reddit/ hackernews/ webfetch/ ingest/  read-only adapters
   storage/         file workspace: Workspace + repositories (YAML/Markdown/JSONL, atomic write)
   codex/           `codex exec` subprocess (timeout + Pydantic JSON)
   llm/             OpenAI-compatible nodes
@@ -70,4 +74,4 @@ Solution explorer (`products/explorer.py`): select a product → `assess_solutio
 - Bilingual (Chinese/English) docstrings are common; match the surrounding file.
 - Ruff selects `E,F,I,B,UP`; line-length 100. Persistence is the file workspace (`Workspace.atomic_write`); there is no database or Alembic.
 
-Config lives in `finch.yaml` (gitignored): `products` (sources / daily_limit / min_candidates / max_card_candidates / card_batch_size / cooldown_days / repos_as_input / solution), plus frozen `sources`, `repo_discovery`, `opencli`, `interests`, `llm`. `finch.example.yaml` is the committed template.
+Config lives in `finch.yaml` (gitignored): `products` (sources / daily_limit / min_candidates / max_card_candidates / card_batch_size / cooldown_days / repos_as_input / solution / feedback), `problem_discovery` (version / lookback / budgets / sources), `relationships`, plus frozen `sources`, `repo_discovery`, `opencli`, `interests`, `llm`. `finch.example.yaml` is the committed template.

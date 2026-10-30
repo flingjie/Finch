@@ -4,6 +4,7 @@ import difflib
 import hashlib
 import json
 import os
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, cast
@@ -1556,12 +1557,21 @@ def problem_discovery_discover(
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
     full: bool = typer.Option(False, "--full", help="显示完整问题卡片"),
 ) -> None:
-    """从已导入来源抽取问题卡片并入库。"""
+    """从已导入来源抽取问题卡片并入库。
+
+    ``--refresh``：若配置了 ``problem_discovery.sources`` / research_topics，先广域同步再重抽。
+    """
+    from finch.problem_discovery.sync import format_sync_summary, sync_problem_sources
     from finch.sources.store import ArtifactRepository
 
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
+    pd = settings.problem_discovery
+    if refresh:
+        sync_results = sync_problem_sources(ws, settings)
+        if sync_results:
+            typer.echo(format_sync_summary(sync_results))
     runner = cast(CodexRunner, create_runner(settings.llm) or CodexRunner())
     problems = discover_problems(
         runner,
@@ -1569,8 +1579,12 @@ def problem_discovery_discover(
         artifact_repo=ArtifactRepository(ws),
         discussion_repo=DiscussionRepository(ws),
         run_repo=DiscoveryRunRepository(ws),
-        version=settings.problem_discovery.version,
+        version=pd.version,
         force=refresh,
+        lookback_hours=pd.lookback_hours,
+        max_sources=pd.max_sources,
+        max_chars_per_source=pd.max_chars_per_source,
+        batch_size=pd.batch_size,
     )
     if problems is None:
         typer.echo("无已导入来源或无法抽取。")
@@ -1699,6 +1713,208 @@ def problem_discovery_last_presented(
         typer.echo(f"{i}. {pid}")
 
 
+@problem_discovery_app.command("candidates")
+def problem_discovery_candidates(
+    as_json: bool = typer.Option(True, "--json/--text", help="输出 JSON（默认）"),
+) -> None:
+    """导出与 discover 同源的候选池（fingerprint + budget_stats）；供影子 Skill 使用。"""
+    from finch.problem_discovery.shadow import export_candidates
+    from finch.sources.store import ArtifactRepository
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    pd = settings.problem_discovery
+    export = export_candidates(
+        artifact_repo=ArtifactRepository(ws),
+        discussion_repo=DiscussionRepository(ws),
+        version=pd.version,
+        lookback_hours=pd.lookback_hours,
+        max_sources=pd.max_sources,
+        max_chars_per_source=pd.max_chars_per_source,
+    )
+    if as_json:
+        typer.echo(json.dumps(export.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    typer.echo(
+        f"candidates={export.budget_stats.get('source_count', 0)} "
+        f"fingerprint={export.fingerprint or '(empty)'}"
+    )
+
+
+@problem_discovery_app.command("sync")
+def problem_discovery_sync(
+    source: str | None = typer.Option(
+        None, "--source", help="twitter|reddit|github|hackernews|…"
+    ),
+    query: list[str] | None = typer.Option(None, "--query", "-q", help="覆盖/追加查询"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """按 problem_discovery.sources + research_topics 同步（非 peer settings.sources）。"""
+    from finch.problem_discovery.shadow import JournalEntry, journal_append
+    from finch.problem_discovery.sync import format_sync_summary, sync_problem_sources
+    from finch.sources.orchestrator import sync_result_to_dict
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    results = sync_problem_sources(
+        ws, settings, source=source, cli_queries=list(query or []) or None
+    )
+    journal_append(
+        ws,
+        JournalEntry(
+            kind="sync",
+            shadow=True,
+            detail={
+                "source": source or "all",
+                "queries": list(query or []),
+                "states": {r.source.value: r.kind.value if r.kind else "" for r in results},
+            },
+        ),
+        shadow=True,
+    )
+    if as_json:
+        typer.echo(
+            json.dumps([sync_result_to_dict(r) for r in results], ensure_ascii=False, indent=2)
+        )
+        return
+    typer.echo(format_sync_summary(results))
+
+
+@problem_discovery_app.command("validate-upsert")
+def problem_discovery_validate_upsert(
+    draft: str = typer.Option("-", "--draft", help="草稿 JSON 路径；- 表示 stdin"),
+    shadow: bool = typer.Option(False, "--shadow", help="写入 shadow 命名空间"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """对宿主草稿跑 build_problem 门禁并入库；--shadow 不污染 control inbox。"""
+    from finch.problem_discovery.shadow import (
+        JournalEntry,
+        journal_append,
+        validate_upsert,
+    )
+    from finch.sources.store import ArtifactRepository
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    pd = settings.problem_discovery
+    if draft == "-":
+        raw = sys.stdin.read()
+    else:
+        raw = Path(draft).read_text(encoding="utf-8")
+    result = validate_upsert(
+        raw,
+        artifact_repo=ArtifactRepository(ws),
+        discussion_repo=DiscussionRepository(ws),
+        problem_repo=DiscoveredProblemRepository(ws, shadow=shadow),
+        run_repo=DiscoveryRunRepository(ws, shadow=shadow),
+        version=pd.version,
+        lookback_hours=pd.lookback_hours,
+        max_sources=pd.max_sources,
+        max_chars_per_source=pd.max_chars_per_source,
+    )
+    journal_append(
+        ws,
+        JournalEntry(
+            kind="validate",
+            shadow=shadow,
+            detail={
+                "draft_count": result.draft_count,
+                "kept_count": result.kept_count,
+                "dropped": result.dropped,
+                "run_id": result.run_id,
+                "fingerprint": result.fingerprint,
+            },
+        ),
+        shadow=shadow or True,
+    )
+    if as_json:
+        typer.echo(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    typer.echo(
+        f"kept={result.kept_count}/{result.draft_count} "
+        f"run={result.run_id or '-'} fingerprint={result.fingerprint or '(empty)'}"
+    )
+    for d in result.dropped:
+        typer.echo(f"  dropped: {d}")
+
+
+@problem_discovery_app.command("journal")
+def problem_discovery_journal(
+    action: str = typer.Argument("show", help="show | append"),
+    shadow: bool = typer.Option(True, "--shadow/--control", help="默认 shadow journal"),
+    kind: str = typer.Option("note", "--kind", help="append 时的事件类型"),
+    detail: str = typer.Option("{}", "--detail", help="append 时 JSON detail"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """影子实验运行日志：show 最近事件；append 追加一条。"""
+    from finch.problem_discovery.shadow import JournalEntry, journal_append, journal_show
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    if action == "append":
+        journal_append(
+            ws,
+            JournalEntry(kind=kind, shadow=shadow, detail=json.loads(detail)),
+            shadow=shadow,
+        )
+        typer.echo("ok")
+        return
+    if action != "show":
+        typer.echo("action must be show|append")
+        raise typer.Exit(code=1)
+    entries = journal_show(ws, shadow=shadow)
+    if as_json:
+        typer.echo(
+            json.dumps([e.model_dump(mode="json") for e in entries], ensure_ascii=False, indent=2)
+        )
+        return
+    if not entries:
+        typer.echo("journal empty")
+        return
+    for e in entries:
+        typer.echo(f"{e.at.isoformat()} {e.kind} {json.dumps(e.detail, ensure_ascii=False)}")
+
+
+@problem_discovery_app.command("compare")
+def problem_discovery_compare(
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+) -> None:
+    """对比最新 control vs shadow DiscoveryRun。"""
+    from finch.problem_discovery.shadow import JournalEntry, compare_runs, journal_append
+
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    result = compare_runs(
+        control_run_repo=DiscoveryRunRepository(ws, shadow=False),
+        shadow_run_repo=DiscoveryRunRepository(ws, shadow=True),
+        control_problem_repo=DiscoveredProblemRepository(ws, shadow=False),
+        shadow_problem_repo=DiscoveredProblemRepository(ws, shadow=True),
+    )
+    journal_append(
+        ws,
+        JournalEntry(kind="compare", shadow=True, detail=result.model_dump(mode="json")),
+        shadow=True,
+    )
+    if as_json:
+        typer.echo(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    typer.echo(
+        f"control={result.control_run_id or '-'} shadow={result.shadow_run_id or '-'} "
+        f"fp_match={result.fingerprint_match} overlap={len(result.overlap_ids)}"
+    )
+    if result.only_control:
+        typer.echo(f"  only_control: {', '.join(result.only_control)}")
+    if result.only_shadow:
+        typer.echo(f"  only_shadow: {', '.join(result.only_shadow)}")
+    for note in result.notes:
+        typer.echo(f"  note: {note}")
+
+
 @sources_app.command("doctor")
 def sources_doctor(
     smoke: bool = typer.Option(True, "--smoke/--no-smoke", help="对各源跑最小只读探测"),
@@ -1722,7 +1938,7 @@ def sources_doctor(
 @sources_app.command("sync")
 def sources_sync(
     source: str | None = typer.Option(
-        None, "--source", help="twitter|reddit|github|v2ex|weixin|xiaohongshu"
+        None, "--source", help="twitter|reddit|github|hackernews|v2ex|weixin|xiaohongshu"
     ),
     all_sources: bool = typer.Option(False, "--all", help="同步全部已注册源"),
     query: list[str] = typer.Option([], "--query", "-q", help="查询词（可重复）"),

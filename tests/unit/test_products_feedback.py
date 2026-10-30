@@ -204,7 +204,9 @@ class _FakeOrchestrator:
 
 class _FakeGithub:
     def fetch_repo_feedback(self, repo):
-        return []
+        from finch.sources.connectors.github import RepoFeedbackResult
+
+        return RepoFeedbackResult(artifacts=[])
 
 
 def test_research_feedback_full_flow_and_cache(tmp_path):

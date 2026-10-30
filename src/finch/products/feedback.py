@@ -434,7 +434,10 @@ def _search_artifacts(
     if Source.GITHUB in cfg.sources and github_connector is not None:
         repo = _github_repo(product)
         if repo:
-            artifacts.extend(github_connector.fetch_repo_feedback(repo))
+            feedback = github_connector.fetch_repo_feedback(repo)
+            # errors / stderr_summary remain on RepoFeedbackResult for callers;
+            # empty artifacts + errors is not written as a success cache here.
+            artifacts.extend(feedback.artifacts)
     return artifacts
 
 

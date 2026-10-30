@@ -660,3 +660,146 @@ class TestGitHubPartial:
         result = orch.sync_source(S.GITHUB, DiscoveryContext(queries=["alice"]), project_peers=True)
         assert result.projection_failed is True
         assert "boom" in result.projection_error
+
+
+class TestGitHubHardError:
+    def _caps_run(self, argv, timeout):
+        return {
+            "ok": True,
+            "exit_code": 0,
+            "stdout": json.dumps([{"site": "github", "commands": ["user"]}]),
+            "stderr": "",
+        }
+
+    def test_github_error_outcome_failed_no_empty_raw(self, tmp_path: Path):
+        ws = Workspace(tmp_path)
+        ws.ensure()
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.connectors.github import GitHubConnector
+        from finch.sources.models import OpenCliResult, ResultKind
+        from finch.sources.models import Source as S
+        from finch.sources.opencli_gateway import OpenCliGateway
+        from finch.sources.orchestrator import aggregate_state
+
+        class _FakeGitHub(GitHubConnector):
+            def __init__(self):
+                self.gh = None  # type: ignore[assignment]
+
+            def probe(self, capabilities):
+                from finch.sources.models import SourceStatus
+
+                return SourceStatus.READY
+
+            def fetch_creator(self, login):
+                return OpenCliResult(
+                    rows=[],
+                    exit_code=1,
+                    kind=ResultKind.ERROR,
+                    stderr_summary="gh api failed",
+                )
+
+        orch = DiscoveryOrchestrator(
+            ws,
+            gateway=OpenCliGateway(run_fn=self._caps_run),
+            connectors={S.GITHUB: _FakeGitHub()},
+        )
+        result = orch.sync_source(S.GITHUB, DiscoveryContext(queries=["alice"]))
+        assert result.per_query[0].outcome == "failed"
+        assert result.per_query[0].kind == ResultKind.ERROR
+        assert aggregate_state(result) == "failed"
+        # No raw empty marker for hard errors.
+        raw_root = tmp_path / "var" / "raw" / "github"
+        if raw_root.exists():
+            for path in raw_root.rglob("*.json"):
+                payload = path.read_text(encoding="utf-8")
+                assert '"empty"' not in payload or "True" not in payload
+
+    def test_github_mixed_error_and_success_is_partial(self, tmp_path: Path):
+        ws = Workspace(tmp_path)
+        ws.ensure()
+
+        from finch.sources.connectors import DiscoveryContext
+        from finch.sources.connectors.github import GitHubConnector
+        from finch.sources.models import OpenCliResult, ResultKind
+        from finch.sources.models import Source as S
+        from finch.sources.opencli_gateway import OpenCliGateway
+        from finch.sources.orchestrator import aggregate_state
+
+        class _FakeGitHub(GitHubConnector):
+            def __init__(self):
+                self.gh = None  # type: ignore[assignment]
+
+            def probe(self, capabilities):
+                from finch.sources.models import SourceStatus
+
+                return SourceStatus.READY
+
+            def fetch_creator(self, login):
+                if login == "bad":
+                    return OpenCliResult(
+                        rows=[],
+                        exit_code=1,
+                        kind=ResultKind.ERROR,
+                        stderr_summary="boom",
+                    )
+                return OpenCliResult(
+                    rows=[
+                        {
+                            "_kind": "user",
+                            "login": "good",
+                            "id": 2,
+                            "name": "Good",
+                            "bio": "ok",
+                            "html_url": "https://github.com/good",
+                        }
+                    ],
+                    exit_code=0,
+                    kind=ResultKind.SUCCESS,
+                )
+
+        orch = DiscoveryOrchestrator(
+            ws,
+            gateway=OpenCliGateway(run_fn=self._caps_run),
+            connectors={S.GITHUB: _FakeGitHub()},
+        )
+        result = orch.sync_source(
+            S.GITHUB, DiscoveryContext(queries=["bad", "good"])
+        )
+        outcomes = {o.query: o.outcome for o in result.per_query}
+        assert outcomes["bad"] == "failed"
+        assert outcomes["good"] == "ran"
+        assert aggregate_state(result) == "partial_success"
+        assert result.raw_count >= 1
+
+
+class TestFetchRepoFeedbackErrors:
+    def test_endpoint_errors_are_visible(self):
+        from finch.sources.connectors.github import GitHubConnector, RepoFeedbackResult
+
+        class _Gh:
+            def list_repo_issues(self, repo, *, state="all", limit=30):
+                raise RuntimeError("issues down")
+
+            def list_repo_pull_requests(self, repo, *, state="all", limit=30):
+                return [
+                    {
+                        "id": 1,
+                        "number": 1,
+                        "title": "fix",
+                        "body": "body",
+                        "html_url": "https://github.com/a/b/pull/1",
+                        "user": {"login": "u"},
+                        "created_at": "2024-01-01T00:00:00Z",
+                    }
+                ]
+
+            def list_repo_discussions(self, repo, *, limit=10):
+                raise RuntimeError("discussions down")
+
+        result = GitHubConnector(gh=_Gh()).fetch_repo_feedback("a/b")  # type: ignore[arg-type]
+        assert isinstance(result, RepoFeedbackResult)
+        assert len(result.artifacts) == 1
+        assert any("issue" in e for e in result.errors)
+        assert any("discussion" in e for e in result.errors)
+        assert "issues down" in result.stderr_summary

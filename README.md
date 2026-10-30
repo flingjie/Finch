@@ -16,7 +16,7 @@ Finch 是一个 **AI 产品发现 + 创业者连接 Copilot**。它持续发现�
 
 真实问题既可从产品与用户反馈中发现，也可直接从社区问题（issue / 讨论）中发现；问题与产品双向关联，方案比较围绕真实问题展开。
 
-第一轮落地「发现产品 + 方案分析（Solution Explorer）」。创业者连接、产品比较与洞察积累在后续轮次交付。
+当前已落地「发现产品 + 方案分析」与「问题发现（Problem Inbox）」；Product↔Problem 显式关联、Radar、Investigate 与创业者连接深化在后续轮次。
 
 北极星指标：**每周新增或加深多少个「有上下文、可继续」的创业者关系**；关系之外每周分别观察判断修正、真实行动、自己的判断、持续交流与问题推进（各自记录，不合成总分）。收藏数、发现数、试用数、反馈数都不是核心指标。
 
@@ -37,16 +37,26 @@ uv run finch products daily [--refresh] [--view home|browse] [--json] [--questio
                                            # 每日 5–10 个产品候选；--refresh 跑发现，否则回放最新快照
 uv run finch products list [--json]        # 全部已保存产品（按分数降序）
 uv run finch products show <product_id>    # 单个产品完整档案
+uv run finch products feedback <product_id> [--refresh] [--json]
+                                           # 用户反馈研究（Reddit / X / GitHub）
 uv run finch products explore <product_id> [--refresh] [--json]
                                            # 选中一个产品 → 8 点理解（方案分析）
 
-# —— 只读采集（产品发现复用） ——
-uv run finch sources doctor / sync         # 跨平台只读采集（twitter|reddit|github|v2ex|weixin|xiaohongshu）
+# —— 问题发现（与产品并列） ——
+uv run finch problem-discovery add --repo <owner/repo> | --url <链接> | --text <正文>
+uv run finch problem-discovery discover [--refresh] [--json]
+uv run finch problem-discovery list|show|summary|present|last-presented
+
+# —— 人物关系 ——
+uv run finch relationships import|add-person|add-event|record-contact|next|weekly
+
+# —— 只读采集（产品/问题发现复用） ——
+uv run finch sources doctor / sync         # 跨平台只读采集（twitter|reddit|github|v2ex|weixin|xiaohongshu|…）
 uv run finch repos discover [--resume ID] / list --run ID / export --run ID   # X→GitHub 热度榜
 uv run finch twitter search / import-bookmarks / diagnose
 ```
 
-产品发现使用 `finch.yaml` 中独立的 `products.sources` 查询块（与旧 `sources` 隔离）。
+产品发现使用 `finch.yaml` 中独立的 `products.sources` 查询块（与旧 `sources` 隔离）。问题发现使用 `problem_discovery` 配置块。
 
 ### 已冻结的旧使命命令
 
@@ -70,12 +80,14 @@ uv run finch products show <product_id>
 
 ```
 src/finch/
-  products/        Product / Founder / Solution 模型 + 产品发现 + 方案分析（本轮核心）
-  sources/         跨平台只读抓取（opencli + RawArtifact；产品发现复用）
-  repos/           X 分享的 GitHub 仓库发现与热度榜（产品发现输入）
+  products/           Product / Founder / Solution / Feedback + 产品发现 + 方案分析
+  problem_discovery/  真实问题抽取与 Problem Inbox
+  relationships/      人物任务理解与周度简报
+  sources/            跨平台只读抓取（opencli + RawArtifact）
+  repos/              X 分享的 GitHub 仓库发现与热度榜（产品发现输入）
   github/ twitter/ reddit/ webfetch/ ingest/  只读 adapter
-  storage/         文件 Workspace（YAML / Markdown / JSONL，原子写）
-  codex/ llm/      `codex exec` 子进程 + OpenAI 兼容结构化推理
+  storage/            文件 Workspace（YAML / Markdown / JSONL，原子写）
+  codex/ llm/         `codex exec` 子进程 + OpenAI 兼容结构化推理
   # —— 已冻结（旧使命，代码与测试保留） ——
   peers/ opportunities/ conversations/ connections/ ideas/ drafts/ content/ practice/
   article/ angle_discovery/ content_summary/ expression_methods/ communities/ grounded/

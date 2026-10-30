@@ -1,0 +1,1 @@
+"""Hacker News 读取 adapter（通过 opencli hackernews）。"""

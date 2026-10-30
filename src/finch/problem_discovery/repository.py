@@ -8,6 +8,11 @@ from finch.problem_discovery.models import DiscoveryRun, ImportedDiscussion, Pro
 from finch.storage.workspace import Workspace
 
 _NS = "problem_discovery"
+_SHADOW_NS = "problem_discovery/shadow"
+
+
+def _ns(shadow: bool = False) -> str:
+    return _SHADOW_NS if shadow else _NS
 
 
 def _write(ws: Workspace, name: str, key: str, model) -> None:
@@ -28,23 +33,25 @@ def _list_all[T: BaseModel](ws: Workspace, name: str, model_cls: type[T]) -> lis
 
 
 class ProblemRepository:
-    """``var/problem-discovery/problems/<problem_id>.yaml``（幂等 upsert）。"""
+    """``var/problem_discovery[/shadow]/problems/<problem_id>.yaml``（幂等 upsert）。"""
 
-    def __init__(self, ws: Workspace) -> None:
+    def __init__(self, ws: Workspace, *, shadow: bool = False) -> None:
         self.ws = ws
+        self.shadow = shadow
+        self._root = f"{_ns(shadow)}/problems"
 
     def upsert(self, problem: Problem) -> None:
-        _write(self.ws, f"{_NS}/problems", problem.problem_id, problem)
+        _write(self.ws, self._root, problem.problem_id, problem)
 
     def get(self, problem_id: str) -> Problem | None:
-        return _read(self.ws, f"{_NS}/problems", problem_id, Problem)
+        return _read(self.ws, self._root, problem_id, Problem)
 
     def list_all(self) -> list[Problem]:
-        return _list_all(self.ws, f"{_NS}/problems", Problem)
+        return _list_all(self.ws, self._root, Problem)
 
 
 class DiscussionRepository:
-    """``var/problem-discovery/discussions/<discussion_id>.yaml``。"""
+    """Discussions YAML store shared by control and shadow paths."""
 
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
@@ -60,19 +67,21 @@ class DiscussionRepository:
 
 
 class DiscoveryRunRepository:
-    """``var/problem-discovery/runs/<run_id>.yaml``。"""
+    """``var/problem_discovery[/shadow]/runs/<run_id>.yaml``。"""
 
-    def __init__(self, ws: Workspace) -> None:
+    def __init__(self, ws: Workspace, *, shadow: bool = False) -> None:
         self.ws = ws
+        self.shadow = shadow
+        self._root = f"{_ns(shadow)}/runs"
 
     def upsert(self, run: DiscoveryRun) -> None:
-        _write(self.ws, f"{_NS}/runs", run.run_id, run)
+        _write(self.ws, self._root, run.run_id, run)
 
     def get(self, run_id: str) -> DiscoveryRun | None:
-        return _read(self.ws, f"{_NS}/runs", run_id, DiscoveryRun)
+        return _read(self.ws, self._root, run_id, DiscoveryRun)
 
     def list_all(self) -> list[DiscoveryRun]:
-        return _list_all(self.ws, f"{_NS}/runs", DiscoveryRun)
+        return _list_all(self.ws, self._root, DiscoveryRun)
 
     def latest(self) -> DiscoveryRun | None:
         items = sorted(self.list_all(), key=lambda r: r.created_at, reverse=True)

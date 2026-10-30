@@ -28,7 +28,10 @@ def _payload(sources: SourcesSettings, src: Source) -> tuple[list[str], list[str
     if src == Source.REDDIT:
         return list(sources.reddit.queries), list(sources.reddit.urls)
     if src == Source.GITHUB:
+        # users 作登录名；watchlist / issue_queries 经 context.extra 下发。
         return list(sources.github.users), []
+    if src == Source.HACKERNEWS:
+        return list(sources.hackernews.queries), list(sources.hackernews.urls)
     if src == Source.V2EX:
         return list(sources.v2ex.queries), []
     if src == Source.WEIXIN:
@@ -121,7 +124,31 @@ def build_context_by_source(
                 q = list(dict.fromkeys([*q, *topic.github_users]))
             else:
                 q = list(dict.fromkeys([*q, *topic.queries_by_source.get(src.value, [])]))
-        if plan.mode == "query" and not q:
+        extra: dict = {}
+        if src == Source.REDDIT:
+            extra = {
+                "subreddits": list(getattr(plan, "subreddits", []) or []),
+                "sorts": list(getattr(plan, "sorts", None) or ["relevance"]),
+                "max_expand": int(getattr(plan, "max_expand", 5) or 0),
+            }
+        elif src == Source.GITHUB:
+            extra = {
+                "watchlist": list(getattr(plan, "watchlist", []) or []),
+                "issue_queries": list(getattr(plan, "issue_queries", []) or []),
+            }
+        elif src == Source.HACKERNEWS:
+            extra = {
+                "entrances": list(getattr(plan, "entrances", None) or ["search"]),
+            }
+        has_alt_inputs = bool(
+            (src == Source.GITHUB and (extra.get("watchlist") or extra.get("issue_queries")))
+            or (src == Source.REDDIT and extra.get("subreddits"))
+            or (
+                src == Source.HACKERNEWS
+                and any(e != "search" for e in (extra.get("entrances") or []))
+            )
+        )
+        if plan.mode == "query" and not q and not has_alt_inputs:
             out[src] = DiscoveryContext(config_error=f"{src.value}: enabled but no queries")
             continue
         if plan.mode == "url" and not u:
@@ -134,6 +161,7 @@ def build_context_by_source(
             configured_urls=list(u),
             limit=plan.fetch_limit,
             mode=plan.mode,
+            extra=extra,
         )
     return out
 

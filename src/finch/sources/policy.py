@@ -52,6 +52,19 @@ _ALLOW: dict[str, frozenset[str]] = {
             "reddit user-comments",
         }
     ),
+    "hackernews": frozenset(
+        {
+            "hackernews search",
+            "hackernews ask",
+            "hackernews show",
+            "hackernews new",
+            "hackernews top",
+            "hackernews best",
+            "hackernews jobs",
+            "hackernews read",
+            "hackernews user",
+        }
+    ),
     "v2ex": frozenset(
         {
             "v2ex topic",
@@ -135,6 +148,15 @@ _DENY: dict[str, frozenset[str]] = {
             "reddit upvote",
             "reddit subscribe",
             "reddit login",
+        }
+    ),
+    "hackernews": frozenset(
+        {
+            "hackernews submit",
+            "hackernews comment",
+            "hackernews reply",
+            "hackernews vote",
+            "hackernews login",
         }
     ),
     "v2ex": frozenset(

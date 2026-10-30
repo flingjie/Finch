@@ -10,6 +10,7 @@ from typing import Any
 from finch.sources.capabilities import fetch_capabilities
 from finch.sources.connectors import DiscoveryContext, SourceConnector
 from finch.sources.connectors.github import GitHubConnector
+from finch.sources.connectors.hackernews import HackerNewsConnector
 from finch.sources.connectors.reddit import RedditConnector
 from finch.sources.connectors.twitter import TwitterConnector
 from finch.sources.connectors.v2ex import V2exConnector
@@ -33,6 +34,7 @@ def default_connectors() -> dict[Source, SourceConnector]:
         Source.TWITTER: TwitterConnector(),
         Source.REDDIT: RedditConnector(),
         Source.GITHUB: GitHubConnector(),
+        Source.HACKERNEWS: HackerNewsConnector(),
         Source.V2EX: V2exConnector(),
         Source.WEIXIN: WeixinConnector(),
         Source.XIAOHONGSHU: XiaohongshuConnector(),
@@ -227,14 +229,40 @@ class DiscoveryOrchestrator:
         detail = ""
         per_query: list[QueryOutcome] = []
 
-        # GitHub: special path via GhClient (creator depth: user/repos/commits/…)
+        # GitHub: special path via GhClient (creator / watchlist / issue search)
         if source == Source.GITHUB and isinstance(connector, GitHubConnector):
-            for q in ctx.queries:
-                fetch = getattr(connector, "fetch_creator", None) or connector.fetch_user
-                result = fetch(q)
+            import json as _json
+
+            def _ingest_github_result(label: str, result: Any) -> None:
+                nonlocal raw_count, created, last_kind, detail
                 last_kind = result.kind
+                err_detail = result.stderr_summary or ""
+                if result.kind in _ERROR_KINDS:
+                    detail = err_detail or result.kind.value
+                    per_query.append(
+                        QueryOutcome(
+                            query=label,
+                            outcome="failed",
+                            kind=result.kind,
+                            detail=detail,
+                            raw_count=0,
+                        )
+                    )
+                    return
+                if not result.rows and err_detail:
+                    detail = err_detail
+                    per_query.append(
+                        QueryOutcome(
+                            query=label,
+                            outcome="failed",
+                            kind=result.kind or ResultKind.ERROR,
+                            detail=detail,
+                            raw_count=0,
+                        )
+                    )
+                    return
                 raw_ref = self.raw_store.write_raw(
-                    run_dir, q, result.rows or {"empty": True}
+                    run_dir, label[:80], result.rows if result.rows else {"empty": True}
                 )
                 raw_count += len(result.rows)
                 norm_before = len(normalized)
@@ -247,15 +275,58 @@ class DiscoveryOrchestrator:
                     normalized.append(art)
                 per_query.append(
                     QueryOutcome(
-                        query=q,
+                        query=label,
                         outcome="empty" if not result.rows else "ran",
                         raw_count=len(result.rows),
                         normalized_count=len(normalized) - norm_before,
                         kind=result.kind,
-                        detail=result.stderr_summary or "",
-                        partial=bool(result.rows and result.stderr_summary),
+                        detail=err_detail,
+                        partial=bool(result.rows and err_detail),
                     )
                 )
+
+            for q in ctx.queries:
+                fetch = getattr(connector, "fetch_creator", None) or connector.fetch_user
+                _ingest_github_result(q, fetch(q))
+
+            # Incremental cursors: JSON map repo → last updated_at watermark.
+            watch_cursors: dict[str, str] = {}
+            raw_cursor = self.cursors.get(source)
+            if raw_cursor:
+                try:
+                    parsed = _json.loads(raw_cursor)
+                    if isinstance(parsed, dict):
+                        watch_cursors = {str(k): str(v) for k, v in parsed.items()}
+                except (_json.JSONDecodeError, TypeError):
+                    watch_cursors = {}
+
+            for repo in ctx.extra.get("watchlist") or []:
+                repo_s = str(repo).strip()
+                if not repo_s:
+                    continue
+                since = watch_cursors.get(repo_s)
+                result = connector.fetch_watchlist_repo(repo_s, since=since)
+                _ingest_github_result(f"watch:{repo_s}", result)
+                # Advance watermark from newest updated_at in this batch.
+                newest = since or ""
+                for row in result.rows:
+                    updated = str(row.get("updated_at") or "")
+                    if updated > newest:
+                        newest = updated
+                if newest:
+                    watch_cursors[repo_s] = newest
+
+            for iq in ctx.extra.get("issue_queries") or []:
+                q = str(iq).strip()
+                if not q:
+                    continue
+                _ingest_github_result(
+                    f"search:{q}", connector.fetch_issue_search(q, limit=ctx.limit)
+                )
+
+            if watch_cursors:
+                self.cursors.set(source, _json.dumps(watch_cursors, sort_keys=True))
+
             ran = [o.query for o in per_query if o.outcome != "skipped"]
             skipped = [o.query for o in per_query if o.outcome == "skipped"]
             proj = self._project(normalized) if project_peers else ProjectResult()
@@ -322,10 +393,11 @@ class DiscoveryOrchestrator:
             )
             status = SourceStatus.DEGRADED
 
-        for req in requests:
-            # github surface is not in opencli policy — skip gateway for non-opencli
+        def _run_opencli_request(req: OpenCliRequest) -> bool:
+            """执行单次 OpenCLI 请求；返回是否应因 break 类错误中止循环。"""
+            nonlocal raw_count, created, last_kind, detail
             if req.surface == "github":
-                continue
+                return False
             label = _request_label(req, ctx.mode)
             try:
                 result = self.gateway.run(req)
@@ -333,20 +405,27 @@ class DiscoveryOrchestrator:
                 detail = str(exc)[:300]
                 last_kind = ResultKind.ERROR
                 per_query.append(
-                    QueryOutcome(query=label, outcome="failed", kind=ResultKind.ERROR,
-                                 detail=str(exc)[:300])
+                    QueryOutcome(
+                        query=label,
+                        outcome="failed",
+                        kind=ResultKind.ERROR,
+                        detail=str(exc)[:300],
+                    )
                 )
-                continue
+                return False
             last_kind = result.kind
             if result.kind in _ERROR_KINDS:
                 detail = result.stderr_summary or result.kind.value
                 per_query.append(
-                    QueryOutcome(query=label, outcome="failed", kind=result.kind,
-                                 detail=detail, raw_count=len(result.rows))
+                    QueryOutcome(
+                        query=label,
+                        outcome="failed",
+                        kind=result.kind,
+                        detail=detail,
+                        raw_count=len(result.rows),
+                    )
                 )
-                if result.kind in _BREAK_KINDS:
-                    break
-                continue
+                return result.kind in _BREAK_KINDS
             raw_payload: Any = result.rows if result.rows else {"kind": result.kind.value}
             item_key = req.command + "_" + (req.args[0] if req.args else "x")
             raw_ref = self.raw_store.write_raw(run_dir, item_key[:80], raw_payload)
@@ -368,6 +447,27 @@ class DiscoveryOrchestrator:
                     kind=result.kind,
                 )
             )
+            return False
+
+        for req in requests:
+            if _run_opencli_request(req):
+                break
+
+        # Reddit：搜索/社区结果后有界 expand read，补正文与评论上下文。
+        if (
+            source == Source.REDDIT
+            and isinstance(connector, RedditConnector)
+            and int(ctx.extra.get("max_expand") or 0) > 0
+            and normalized
+        ):
+            expand_reqs = connector.expand_read_requests(
+                normalized,
+                max_expand=int(ctx.extra.get("max_expand") or 0),
+                capabilities=caps,
+            )
+            for req in expand_reqs:
+                if _run_opencli_request(req):
+                    break
 
         # 时间线模式下，配置里写了但被忽略的查询显式记成 skipped。
         if ctx.mode == "timeline" and ctx.configured_queries:

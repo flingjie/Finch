@@ -31,8 +31,10 @@ def test_import_repo_returns_artifact_ids(tmp_path):
     ws.ensure()
 
     class _Conn:
-        def fetch_repo_feedback(self, owner_repo: str) -> list[RawArtifact]:
-            return [_art("github:issue:1", "crashes on import")]
+        def fetch_repo_feedback(self, owner_repo: str):
+            from finch.sources.connectors.github import RepoFeedbackResult
+
+            return RepoFeedbackResult(artifacts=[_art("github:issue:1", "crashes on import")])
 
     refs = import_discussion(ws, repo="a/b", connector=_Conn())
     assert refs == ["github:issue:1"]

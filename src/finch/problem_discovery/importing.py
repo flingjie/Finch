@@ -27,10 +27,10 @@ def import_discussion(
     """导入一条公开讨论，返回 source_ref（artifact_id 或 discussion_id）列表。"""
     if repo:
         conn = connector or GitHubConnector()
-        artifacts = conn.fetch_repo_feedback(repo)
+        feedback = conn.fetch_repo_feedback(repo)
         artifact_repo = ArtifactRepository(ws)
         refs: list[str] = []
-        for art in artifacts:
+        for art in feedback.artifacts:
             artifact_repo.upsert(art)
             refs.append(art.artifact_id)
         return refs

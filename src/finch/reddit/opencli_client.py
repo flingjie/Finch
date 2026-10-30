@@ -154,7 +154,7 @@ def _call(argv: list[str], timeout: float = 60.0) -> list[dict]:
 
 
 class RedditOpenCliClient:
-    """opencli Reddit 只读客户端（仅 search，见 spec §1）。"""
+    """opencli Reddit 只读客户端（search / subreddit / read）。"""
 
     def search(
         self, query: str, *, sort: str = "relevance", limit: int = 20
@@ -163,6 +163,19 @@ class RedditOpenCliClient:
         argv = [
             "opencli", "reddit", "search",
             query,
+            "--sort", sort,
+            "--limit", str(limit),
+            "-f", "json",
+        ]
+        return _to_posts(_call(argv, timeout=60.0))
+
+    def subreddit(
+        self, name: str, *, sort: str = "new", limit: int = 20
+    ) -> list[RedditPost]:
+        """指定社区列表（new / top / hot）。"""
+        argv = [
+            "opencli", "reddit", "subreddit",
+            name.lstrip("r/"),
             "--sort", sort,
             "--limit", str(limit),
             "-f", "json",

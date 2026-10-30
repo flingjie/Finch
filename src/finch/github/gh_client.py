@@ -248,12 +248,10 @@ class GhClient:
         assert isinstance(data, dict)
         return parse_pull_request(data)
 
-    def list_user_issues(
-        self, login: str, *, limit: int = 10
-    ) -> list[dict]:
-        """Issues authored by ``login`` (public search API)."""
-        cap = max(1, min(limit, 30))
-        q = quote(f"author:{login} type:issue", safe=":")
+    def search_issues(self, query: str, *, limit: int = 30) -> list[dict]:
+        """跨仓库 issue 搜索（``search/issues``）；调用方自行拼 q（含 type:issue 等）。"""
+        cap = max(1, min(limit, 50))
+        q = quote(query, safe=":+ ")
         data = self._gh_json(
             [
                 "gh",
@@ -268,25 +266,35 @@ class GhClient:
         items = data.get("items") or []
         return [i for i in items if isinstance(i, dict)][:cap]
 
-    def list_user_pull_requests(
-        self, login: str, *, limit: int = 10
+    def list_issue_comments(
+        self, repo: str, number: int, *, limit: int = 30
     ) -> list[dict]:
-        """PRs authored by ``login``."""
-        cap = max(1, min(limit, 30))
-        q = quote(f"author:{login} type:pr", safe=":")
+        """Issue 评论（REST ``repos/{repo}/issues/{number}/comments``）。"""
+        cap = max(1, min(limit, 100))
         data = self._gh_json(
             [
                 "gh",
                 "api",
                 "-H",
                 "Accept: application/vnd.github+json",
-                f"search/issues?q={q}&sort=updated&order=desc&per_page={cap}",
+                f"repos/{repo}/issues/{number}/comments?per_page={cap}",
             ],
-            timeout=60.0,
+            timeout=45.0,
         )
-        assert isinstance(data, dict)
-        items = data.get("items") or []
-        return [i for i in items if isinstance(i, dict)][:cap]
+        assert isinstance(data, list)
+        return [c for c in data if isinstance(c, dict)][:cap]
+
+    def list_user_issues(
+        self, login: str, *, limit: int = 10
+    ) -> list[dict]:
+        """Issues authored by ``login`` (public search API)."""
+        return self.search_issues(f"author:{login} type:issue", limit=limit)
+
+    def list_user_pull_requests(
+        self, login: str, *, limit: int = 10
+    ) -> list[dict]:
+        """PRs authored by ``login``."""
+        return self.search_issues(f"author:{login} type:pr", limit=limit)
 
     def list_repo_releases(
         self, name_with_owner: str, *, limit: int = 5
