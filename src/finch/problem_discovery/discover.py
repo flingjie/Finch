@@ -359,6 +359,7 @@ def discover_problems(
     """从已导入来源抽取问题卡片并入库；幂等（同来源内容指纹复用缓存），``force`` 重算。
 
     无来源或无 runner → None。LLM ``eval_failed`` 不写运行缓存，避免把失败永久当空成功。
+    ``force`` 只绕过指纹缓存，不把已 ``ACCEPTED`` 的卡片降级。
     """
     clock = now or datetime.now(UTC)
     source_texts, urls = _collect_sources(
@@ -396,6 +397,15 @@ def discover_problems(
             problem = build_problem(pd, source_texts=batch_texts, urls=batch_urls, now=clock)
             if problem is not None:
                 problem = admit_problem(problem)
+                # force 只绕过指纹缓存；已接受的卡片在这条路径上保持 ACCEPTED。
+                existing = problem_repo.get(problem.problem_id)
+                if (
+                    existing is not None
+                    and existing.admission == Admission.ACCEPTED
+                    and problem.admission != Admission.ACCEPTED
+                ):
+                    problem.admission = Admission.ACCEPTED
+                    problem.admission_reason = existing.admission_reason or "human_accepted"
                 problem_repo.upsert(problem)
                 problems_by_id[problem.problem_id] = problem
 

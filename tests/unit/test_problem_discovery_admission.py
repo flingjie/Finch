@@ -1,10 +1,14 @@
 from datetime import UTC, datetime
 
+from pydantic import BaseModel
+
 from finch.problem_discovery.discover import (
     ProblemDraft,
     ProblemEvidenceDraft,
+    ProblemsExtraction,
     admit_problem,
     build_problem,
+    discover_problems,
 )
 from finch.problem_discovery.models import Admission, EvidenceLevel, Problem, ProblemEvidence
 
@@ -167,6 +171,7 @@ def test_n05_two_stated_author_ids_allow_e2():
 # --- validate_upsert / discover_problems integration ---
 
 import pytest  # noqa: E402
+from test_problem_discovery_discover import _art, _discover_kwargs  # noqa: E402
 
 from finch.problem_discovery.importing import import_discussion  # noqa: E402
 from finch.problem_discovery.repository import (  # noqa: E402
@@ -252,3 +257,82 @@ def test_validate_upsert_new_problem_unaffected_by_force(tmp_path, force):
     ws, ref = _setup(tmp_path)
     out = _run(ws, ref, "session restore failure", force=force)
     assert out.problems[0].admission == Admission.VERIFIED
+
+
+def test_discover_problems_keeps_accepted_on_force_reextract(tmp_path):
+    """force recomputes extraction; it must not demote a human-accepted card."""
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    ref = "github:issue:1"
+    body = "crashes on import when the session is large"
+    ArtifactRepository(ws).upsert(_art(ref, body))
+
+    class _VerifiedRunner:
+        def run(self, prompt: str, output_model: type[BaseModel], *, timeout: float = 600.0):
+            return ProblemsExtraction(
+                problems=[
+                    ProblemDraft(
+                        title="Session crashes",
+                        user_type="developer",
+                        evidence=[
+                            ProblemEvidenceDraft(source_ref=ref, quote="crashes on import")
+                        ],
+                    )
+                ]
+            )
+
+    kwargs = _discover_kwargs(ws)
+    first = discover_problems(_VerifiedRunner(), **kwargs)
+    assert first is not None and len(first) == 1
+    assert first[0].admission == Admission.VERIFIED
+    pid = first[0].problem_id
+
+    repo = ProblemRepository(ws)
+    accepted = repo.get(pid)
+    assert accepted is not None
+    accepted.admission = Admission.ACCEPTED
+    accepted.admission_reason = "human_accepted"
+    repo.upsert(accepted)
+
+    class _RefreshRunner:
+        def run(self, prompt: str, output_model: type[BaseModel], *, timeout: float = 600.0):
+            return ProblemsExtraction(
+                problems=[
+                    ProblemDraft(
+                        title="Session crashes",
+                        user_type="operator",
+                        evidence=[
+                            ProblemEvidenceDraft(source_ref=ref, quote="crashes on import")
+                        ],
+                    ),
+                    ProblemDraft(
+                        title="New timeout",
+                        evidence=[
+                            ProblemEvidenceDraft(source_ref=ref, quote="session is large")
+                        ],
+                    ),
+                ]
+            )
+
+    refreshed = discover_problems(_RefreshRunner(), force=True, **kwargs)
+    assert refreshed is not None
+    by_title = {p.title: p for p in refreshed}
+
+    kept = by_title["Session crashes"]
+    assert kept.problem_id == pid
+    assert kept.user_type == "operator"
+    assert kept.admission == Admission.ACCEPTED
+    assert kept.admission_reason == "human_accepted"
+    stored = repo.get(pid)
+    assert stored is not None
+    assert stored.admission == Admission.ACCEPTED
+    assert stored.admission_reason == "human_accepted"
+    assert stored.user_type == "operator"
+
+    fresh = by_title["New timeout"]
+    assert fresh.problem_id != pid
+    assert fresh.admission == Admission.VERIFIED
+    assert fresh.admission_reason == "has_valid_evidence"
+    stored_fresh = repo.get(fresh.problem_id)
+    assert stored_fresh is not None
+    assert stored_fresh.admission == Admission.VERIFIED
