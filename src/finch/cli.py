@@ -130,11 +130,12 @@ from .practice.observations import StyleObservationService
 from .practice.service import PracticeService
 from .problem_discovery.discover import discover_problems
 from .problem_discovery.importing import import_discussion
-from .problem_discovery.models import Problem
+from .problem_discovery.models import Admission, Problem
 from .problem_discovery.presentation import ProblemPresentationRepository
 from .problem_discovery.repository import (
     DiscoveryRunRepository,
     DiscussionRepository,
+    filter_by_admission,
 )
 from .problem_discovery.repository import (
     ProblemRepository as DiscoveredProblemRepository,
@@ -1606,12 +1607,17 @@ def problem_discovery_discover(
 def problem_discovery_list(
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
     full: bool = typer.Option(False, "--full", help="显示完整问题卡片"),
+    admission: str = typer.Option(
+        "verified,accepted",
+        "--admission",
+        help="Filter by admission (default verified,accepted; use all for quarantine)",
+    ),
 ) -> None:
-    """列出所有已入库问题。"""
+    """列出问题卡片（默认 verified,accepted；隔离卡用 --admission all）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
-    problems = DiscoveredProblemRepository(ws).list_all()
+    problems = filter_by_admission(DiscoveredProblemRepository(ws).list_all(), admission)
     if as_json:
         typer.echo(
             json.dumps([p.model_dump(mode="json") for p in problems], ensure_ascii=False, indent=2)
@@ -1651,6 +1657,11 @@ def problem_discovery_show(
 @problem_discovery_app.command("summary")
 def problem_discovery_summary(
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    admission: str = typer.Option(
+        "verified,accepted",
+        "--admission",
+        help="Filter by admission (default verified,accepted; use all for quarantine)",
+    ),
 ) -> None:
     """确定性概览：卡片数 / 来源范围 / 缺失字段（供 Skill 呈现，不含重点选择）。"""
     from finch.sources.store import ArtifactRepository
@@ -1663,6 +1674,7 @@ def problem_discovery_summary(
         artifact_repo=ArtifactRepository(ws),
         discussion_repo=DiscussionRepository(ws),
         run_repo=DiscoveryRunRepository(ws),
+        admission=admission,
     )
     if as_json:
         typer.echo(json.dumps(summary.model_dump(mode="json"), ensure_ascii=False, indent=2))
@@ -1675,6 +1687,38 @@ def problem_discovery_summary(
         typer.echo(f"  缺证据卡片：{len(summary.cards_without_evidence)} 张")
     if summary.cards_without_role:
         typer.echo(f"  缺角色卡片：{len(summary.cards_without_role)} 张")
+
+
+@problem_discovery_app.command("admit")
+def problem_discovery_admit(
+    problem_id: str = typer.Argument(..., help="问题 problem_id"),
+    accepted: bool = typer.Option(False, "--accepted", help="标为 accepted（必填）"),
+    force: bool = typer.Option(
+        False, "--force", help="预留：降级时需要；设置 accepted 不依赖此标志"
+    ),
+    shadow: bool = typer.Option(False, "--shadow", help="写入 shadow 命名空间"),
+) -> None:
+    """将卡片标为 accepted（admission_reason=human_accepted）。
+
+    只升级到 accepted（draft / quarantined / verified 均可）。--accepted 必填。
+    已是 accepted 时成功返回且不改写入。--force 仅为后续降级预留。
+    """
+    if not accepted:
+        raise typer.BadParameter("admit requires --accepted")
+    _ = force  # forward-compat; this command does not demote
+    settings = load_settings()
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    repo = DiscoveredProblemRepository(ws, shadow=shadow)
+    problem = repo.get(problem_id)
+    if problem is None:
+        typer.echo(f"problem not found: {problem_id}")
+        raise typer.Exit(code=1)
+    if problem.admission != Admission.ACCEPTED:
+        problem.admission = Admission.ACCEPTED
+        problem.admission_reason = "human_accepted"
+        repo.upsert(problem)
+    typer.echo(f"{problem.problem_id} admission={problem.admission.value}")
 
 
 @problem_discovery_app.command("present")

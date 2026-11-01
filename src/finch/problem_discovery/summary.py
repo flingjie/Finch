@@ -17,6 +17,7 @@ from finch.problem_discovery.repository import (
     DiscoveryRunRepository,
     DiscussionRepository,
     ProblemRepository,
+    filter_by_admission,
 )
 from finch.sources.store import ArtifactRepository
 
@@ -67,9 +68,14 @@ def build_summary(
     artifact_repo: ArtifactRepository,
     discussion_repo: DiscussionRepository,
     run_repo: DiscoveryRunRepository,
+    admission: str = "verified,accepted",
 ) -> ProblemSummary:
-    """确定性汇总问题发现结果；只读，不调用 LLM。"""
-    problems = problem_repo.list_all()
+    """确定性汇总问题发现结果；只读，不调用 LLM。
+
+    默认只计 ``verified,accepted``。隔离卡仍在同一 ``problems/`` 目录，用
+    ``admission="all"`` 纳入计数。
+    """
+    problems = filter_by_admission(problem_repo.list_all(), admission)
     _, urls = _collect_sources(artifact_repo, discussion_repo)
 
     # 来源范围只算被卡片证据引用的来源（不是全量已导入工件池），避免把无关仓库算进去。

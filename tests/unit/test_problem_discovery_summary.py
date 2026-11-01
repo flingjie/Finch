@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from finch.problem_discovery.models import Problem, ProblemEvidence
+from finch.problem_discovery.models import Admission, Problem, ProblemEvidence
 from finch.problem_discovery.repository import (
     DiscoveryRunRepository,
     DiscussionRepository,
@@ -67,7 +67,10 @@ def test_build_summary_counts_and_scope(tmp_path):
             ],
         )
     )
-    problem_repo.upsert(Problem(problem_id="prob_2", title="no evidence"))  # 缺证据 + 缺角色
+    # 缺证据 + 缺角色，但显式 verified 才会进入默认 inbox 计数。
+    problem_repo.upsert(
+        Problem(problem_id="prob_2", title="no evidence", admission=Admission.VERIFIED)
+    )
 
     summary = build_summary(
         problem_repo=problem_repo,
@@ -87,3 +90,22 @@ def test_build_summary_counts_and_scope(tmp_path):
     assert summary.groups_available is False
     assert summary.latest_run_created_at == ""
     assert summary.latest_run_card_count == 0
+
+
+def test_build_summary_default_omits_quarantined(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    problem_repo = ProblemRepository(ws)
+    problem_repo.upsert(Problem(problem_id="prob_q", title="hidden"))
+    problem_repo.upsert(
+        Problem(problem_id="prob_ok", title="shown", admission=Admission.ACCEPTED)
+    )
+
+    summary = build_summary(
+        problem_repo=problem_repo,
+        artifact_repo=ArtifactRepository(ws),
+        discussion_repo=DiscussionRepository(ws),
+        run_repo=DiscoveryRunRepository(ws),
+    )
+    assert summary.total_cards == 1
+    assert summary.cards_without_evidence == ["prob_ok"]

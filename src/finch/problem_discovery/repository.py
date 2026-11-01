@@ -32,6 +32,17 @@ def _list_all[T: BaseModel](ws: Workspace, name: str, model_cls: type[T]) -> lis
     return out
 
 
+def filter_by_admission(
+    problems: list[Problem], admission: str = "verified,accepted"
+) -> list[Problem]:
+    """按写入策略过滤收件箱；``all`` / ``*`` / 空串保留全部（含隔离）。"""
+    key = admission.strip().lower()
+    if key in {"", "all", "*"}:
+        return list(problems)
+    allowed = {part.strip() for part in key.split(",") if part.strip()}
+    return [p for p in problems if p.admission.value in allowed]
+
+
 class ProblemRepository:
     """``var/problem_discovery[/shadow]/problems/<problem_id>.yaml``（幂等 upsert）。"""
 

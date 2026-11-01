@@ -178,6 +178,7 @@ from finch.problem_discovery.repository import (  # noqa: E402
     DiscoveryRunRepository,
     DiscussionRepository,
     ProblemRepository,
+    filter_by_admission,
 )
 from finch.problem_discovery.shadow import validate_upsert  # noqa: E402
 from finch.sources.store import ArtifactRepository  # noqa: E402
@@ -336,3 +337,20 @@ def test_discover_problems_keeps_accepted_on_force_reextract(tmp_path):
     stored_fresh = repo.get(fresh.problem_id)
     assert stored_fresh is not None
     assert stored_fresh.admission == Admission.VERIFIED
+
+
+def test_filter_default_hides_quarantined():
+    items = [
+        Problem(problem_id="1", title="a", admission=Admission.VERIFIED),
+        Problem(problem_id="2", title="b", admission=Admission.QUARANTINED),
+        Problem(problem_id="3", title="c", admission=Admission.ACCEPTED),
+    ]
+    out = filter_by_admission(items, "verified,accepted")
+    assert [p.problem_id for p in out] == ["1", "3"]
+
+
+def test_filter_all_returns_everything():
+    items = [
+        Problem(problem_id="1", title="a", admission=Admission.QUARANTINED),
+    ]
+    assert len(filter_by_admission(items, "all")) == 1
