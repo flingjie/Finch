@@ -150,10 +150,18 @@ def test_build_problem_two_refs_allow_e2():
         title="t",
         evidence=[
             ProblemEvidenceDraft(
-                source_ref="s1", quote="alpha", evidence_level="e2", author="a"
+                source_ref="s1",
+                quote="alpha",
+                evidence_level="e2",
+                author_id="alice",
+                author_identity_confidence="stated",
             ),
             ProblemEvidenceDraft(
-                source_ref="s2", quote="beta", evidence_level="e3", author="b"
+                source_ref="s2",
+                quote="beta",
+                evidence_level="e3",
+                author_id="bob",
+                author_identity_confidence="stated",
             ),
         ],
     )

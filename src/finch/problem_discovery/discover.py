@@ -125,16 +125,26 @@ def _cap_level(level: EvidenceLevel, cap: EvidenceLevel) -> EvidenceLevel:
     return level
 
 
+def _independent_author_ids(pending: list[tuple[ProblemEvidenceDraft, str]]) -> set[str]:
+    """非空 author_id，且身份置信度为 stated 或 verified。"""
+    ids: set[str] = set()
+    for ev, _ in pending:
+        aid = ev.author_id.strip()
+        conf = (ev.author_identity_confidence or "unknown").strip().lower()
+        if aid and conf in {"stated", "verified"}:
+            ids.add(aid)
+    return ids
+
+
 def _public_level_cap(
     *,
     is_marketing: bool,
-    distinct_refs: int,
-    distinct_authors: int,
+    independent_authors: int,
 ) -> EvidenceLevel:
-    """公开抓取材料的确定性等级上限：营销→E0；单源→E1；多独立→E2；永不 E3/E4。"""
+    """公开材料等级上限：营销→E0；≥2 个独立 stated/verified 作者→E2；否则 E1。"""
     if is_marketing:
         return EvidenceLevel.E0
-    if distinct_refs >= 2 or distinct_authors >= 2:
+    if independent_authors >= 2:
         return EvidenceLevel.E2
     return EvidenceLevel.E1
 
@@ -185,16 +195,14 @@ def build_problem(
             continue  # 摘录无法回溯到来源 → 丢弃（防伪造）
         pending.append((ev, ref))
 
-    distinct_refs = {ref for _, ref in pending}
-    distinct_authors = {ev.author.strip() for ev, _ in pending if ev.author.strip()}
+    independent_authors = len(_independent_author_ids(pending))
 
     evidence: list[ProblemEvidence] = []
     for ev, ref in pending:
         raw_level = _coerce_level(ev.evidence_level)
         cap = _public_level_cap(
             is_marketing=ev.is_marketing,
-            distinct_refs=len(distinct_refs),
-            distinct_authors=len(distinct_authors),
+            independent_authors=independent_authors,
         )
         evidence.append(
             ProblemEvidence(

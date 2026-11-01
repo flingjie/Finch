@@ -1,5 +1,12 @@
-from finch.problem_discovery.discover import admit_problem
-from finch.problem_discovery.models import Admission, Problem, ProblemEvidence
+from datetime import UTC, datetime
+
+from finch.problem_discovery.discover import (
+    ProblemDraft,
+    ProblemEvidenceDraft,
+    admit_problem,
+    build_problem,
+)
+from finch.problem_discovery.models import Admission, EvidenceLevel, Problem, ProblemEvidence
 
 
 def test_problem_default_admission_is_quarantined_when_no_evidence_on_construct():
@@ -73,3 +80,85 @@ def test_admit_problem_force_draft():
     out = admit_problem(p, force_draft=True)
     assert out.admission == Admission.DRAFT
     assert out.admission_reason == "host_draft"
+
+
+def _now():
+    return datetime(2026, 11, 1, tzinfo=UTC)
+
+
+def test_n05_same_author_id_two_refs_caps_e1():
+    draft = ProblemDraft(
+        title="t",
+        evidence=[
+            ProblemEvidenceDraft(
+                source_ref="s1",
+                quote="alpha",
+                evidence_level="e2",
+                author_id="alice",
+                author_identity_confidence="stated",
+            ),
+            ProblemEvidenceDraft(
+                source_ref="s2",
+                quote="beta",
+                evidence_level="e2",
+                author_id="alice",
+                author_identity_confidence="stated",
+            ),
+        ],
+    )
+    p = build_problem(
+        draft,
+        source_texts={"s1": "alpha here", "s2": "beta there"},
+        urls={},
+        now=_now(),
+    )
+    assert p is not None
+    assert all(e.evidence_level == EvidenceLevel.E1 for e in p.evidence)
+
+
+def test_n05_empty_authors_two_refs_caps_e1():
+    draft = ProblemDraft(
+        title="t",
+        evidence=[
+            ProblemEvidenceDraft(source_ref="s1", quote="alpha", evidence_level="e2"),
+            ProblemEvidenceDraft(source_ref="s2", quote="beta", evidence_level="e2"),
+        ],
+    )
+    p = build_problem(
+        draft,
+        source_texts={"s1": "alpha here", "s2": "beta there"},
+        urls={},
+        now=_now(),
+    )
+    assert p is not None
+    assert all(e.evidence_level == EvidenceLevel.E1 for e in p.evidence)
+
+
+def test_n05_two_stated_author_ids_allow_e2():
+    draft = ProblemDraft(
+        title="t",
+        evidence=[
+            ProblemEvidenceDraft(
+                source_ref="s1",
+                quote="alpha",
+                evidence_level="e2",
+                author_id="alice",
+                author_identity_confidence="stated",
+            ),
+            ProblemEvidenceDraft(
+                source_ref="s2",
+                quote="beta",
+                evidence_level="e2",
+                author_id="bob",
+                author_identity_confidence="stated",
+            ),
+        ],
+    )
+    p = build_problem(
+        draft,
+        source_texts={"s1": "alpha here", "s2": "beta there"},
+        urls={},
+        now=_now(),
+    )
+    assert p is not None
+    assert {e.evidence_level for e in p.evidence} == {EvidenceLevel.E2}
