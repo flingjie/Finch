@@ -13,13 +13,14 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
 from finch.llm.base import StructuredInferenceRunner
 from finch.problem_discovery.ids import problem_id_for
 from finch.problem_discovery.models import (
+    Admission,
     DiscoveryRun,
     EvidenceLevel,
     ExperienceLevel,
@@ -58,6 +59,8 @@ class ProblemEvidenceDraft(BaseModel):
     experience: str = "unknown"
     is_marketing: bool = False
     author: str = ""
+    author_id: str = ""
+    author_identity_confidence: str = "unknown"
 
 
 class ProblemDraft(BaseModel):
@@ -108,6 +111,12 @@ def _coerce_experience(value: str) -> ExperienceLevel:
         return ExperienceLevel(value)
     except ValueError:
         return ExperienceLevel.UNKNOWN
+
+
+def _coerce_identity_confidence(value: str) -> Literal["unknown", "stated", "verified"]:
+    if value in ("unknown", "stated", "verified"):
+        return cast(Literal["unknown", "stated", "verified"], value)
+    return "unknown"
 
 
 def _cap_level(level: EvidenceLevel, cap: EvidenceLevel) -> EvidenceLevel:
@@ -197,6 +206,10 @@ def build_problem(
                 experience=_coerce_experience(ev.experience),
                 is_marketing=ev.is_marketing,
                 author=ev.author.strip(),
+                author_id=ev.author_id,
+                author_identity_confidence=_coerce_identity_confidence(
+                    ev.author_identity_confidence
+                ),
             )
         )
 
@@ -225,6 +238,21 @@ def build_problem(
         status=ProblemStatus.NEW,
         created_at=now,
     )
+
+
+def admit_problem(problem: Problem, *, force_draft: bool = False) -> Problem:
+    """Write-policy gate: structure only (evidence count). Does not score claim semantics."""
+    if force_draft:
+        problem.admission = Admission.DRAFT
+        problem.admission_reason = "host_draft"
+        return problem
+    if problem.evidence:
+        problem.admission = Admission.VERIFIED
+        problem.admission_reason = "has_valid_evidence"
+    else:
+        problem.admission = Admission.QUARANTINED
+        problem.admission_reason = "no_valid_evidence"
+    return problem
 
 
 def _source_timestamp(
