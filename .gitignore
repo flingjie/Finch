@@ -35,3 +35,7 @@ angle_brief_*
 
 # Scratch / temporary output
 tmp/
+
+# Top-level eval harness (local experiments; regenerable / bulky).
+# Does not affect skills/*/evals/ case fixtures checked into the repo.
+evals/

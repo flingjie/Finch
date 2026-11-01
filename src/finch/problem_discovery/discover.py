@@ -159,7 +159,6 @@ def build_problem(
     URL 只取原始来源映射；空 quote 丢弃；证据等级按已核验材料封顶。
     无有效 evidence 时在 unknowns 追加「未验证：无证据」，不把推测当事实。
     """
-    _ = now
     if not draft.title.strip():
         return None
 
@@ -224,6 +223,7 @@ def build_problem(
         next_action=draft.next_action.strip(),
         source_refs=list(dict.fromkeys(e.source_ref for e in evidence)),
         status=ProblemStatus.NEW,
+        created_at=now,
     )
 
 

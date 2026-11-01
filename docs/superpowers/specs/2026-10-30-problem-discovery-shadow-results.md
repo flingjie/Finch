@@ -57,3 +57,14 @@ Fixtures：`tests/fixtures/problem_discovery_shadow/manifest.json`（10 条）
 1. 一次真实宿主影子会话（Browser-use / agent-stuck 主题）并填质量表。
 2. 若质量达标：再拆 `products/feedback` 分析层为 Skill + thin validate。
 3. 暂缓 Product↔Problem 关联大功能，直到 Skill-first 研究路径稳定。
+
+---
+
+## 补充：真实宿主会话（2026-10-31）
+
+详见 `evals/skill-first-pd/reports/HOST_SHADOW_SESSION.md`。
+
+- Control：`qwen3.7-max` discover，10 卡 / 82.7s / 证据 100%  
+- Shadow：Cursor 宿主 Skill 起草 + validate-upsert，10 卡 / 证据 100% / 救火 0  
+- Fingerprint 一致；主题覆盖对等；**Conditional Go，仍不删 control**  
+- 缺口：尚未做联网真实讨论会话
