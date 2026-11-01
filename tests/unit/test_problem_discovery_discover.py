@@ -53,6 +53,26 @@ def _art(
     )
 
 
+def test_build_problem_copies_author_identity_fields():
+    draft = ProblemDraft(
+        title="t",
+        evidence=[
+            ProblemEvidenceDraft(
+                source_ref="s",
+                quote="traceable",
+                author_id="user-42",
+                author_identity_confidence="stated",
+            )
+        ],
+    )
+    p = build_problem(
+        draft, source_texts={"s": "this text is traceable"}, urls={}, now=_now()
+    )
+    assert p is not None
+    assert p.evidence[0].author_id == "user-42"
+    assert p.evidence[0].author_identity_confidence == "stated"
+
+
 def test_build_problem_requires_title():
     assert build_problem(ProblemDraft(), source_texts={"s": "text"}, urls={}, now=_now()) is None
 

@@ -32,10 +32,20 @@ def test_legacy_dict_without_admission_empty_evidence_quarantines():
 
 
 def test_admit_problem_quarantines_without_evidence():
-    p = Problem(problem_id="prob_a", title="a", evidence=[])
+    # Explicit wrong admission survives _legacy_admission; admit_problem must overwrite it.
+    p = Problem(
+        problem_id="prob_a",
+        title="a",
+        evidence=[],
+        admission=Admission.VERIFIED,
+        admission_reason="wrong",
+    )
+    assert p.admission == Admission.VERIFIED
+    assert p.admission_reason == "wrong"
     out = admit_problem(p)
-    assert out.admission == Admission.QUARANTINED
-    assert out.admission_reason == "no_valid_evidence"
+    assert out is p
+    assert p.admission == Admission.QUARANTINED
+    assert p.admission_reason == "no_valid_evidence"
 
 
 def test_admit_problem_verifies_with_evidence():
@@ -43,10 +53,15 @@ def test_admit_problem_verifies_with_evidence():
         problem_id="prob_b",
         title="b",
         evidence=[ProblemEvidence(source_ref="s", quote="q")],
+        admission=Admission.QUARANTINED,
+        admission_reason="wrong",
     )
+    assert p.admission == Admission.QUARANTINED
+    assert p.admission_reason == "wrong"
     out = admit_problem(p)
-    assert out.admission == Admission.VERIFIED
-    assert out.admission_reason == "has_valid_evidence"
+    assert out is p
+    assert p.admission == Admission.VERIFIED
+    assert p.admission_reason == "has_valid_evidence"
 
 
 def test_admit_problem_force_draft():
