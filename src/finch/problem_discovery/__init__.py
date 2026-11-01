@@ -2,6 +2,7 @@
 
 from finch.problem_discovery.ids import discussion_id_for, problem_id_for
 from finch.problem_discovery.models import (
+    Admission,
     DiscoveryRun,
     EvidenceLevel,
     ExperienceLevel,
@@ -13,6 +14,7 @@ from finch.problem_discovery.models import (
 )
 
 __all__ = [
+    "Admission",
     "DiscoveryRun",
     "EvidenceLevel",
     "ExperienceLevel",

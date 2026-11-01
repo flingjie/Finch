@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class EvidenceLevel(StrEnum):
@@ -44,6 +44,15 @@ class ProblemStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class Admission(StrEnum):
+    """写入策略，与 ProblemStatus 并行：草稿 / 隔离 / 已核实 / 已接受。"""
+
+    DRAFT = "draft"
+    QUARANTINED = "quarantined"
+    VERIFIED = "verified"
+    ACCEPTED = "accepted"
+
+
 class ProblemScenario(BaseModel):
     """问题发生场景：任务 / 触发 / 后果。"""
 
@@ -63,6 +72,8 @@ class ProblemEvidence(BaseModel):
     experience: ExperienceLevel = ExperienceLevel.UNKNOWN
     is_marketing: bool = False
     author: str = ""
+    author_id: str = ""
+    author_identity_confidence: Literal["unknown", "stated", "verified"] = "unknown"
 
 
 class Problem(BaseModel):
@@ -79,7 +90,30 @@ class Problem(BaseModel):
     next_action: str = ""  # interview / observe（P0 只存不执行）
     source_refs: list[str] = Field(default_factory=list)  # evidence 的 source_ref 并集
     status: ProblemStatus = ProblemStatus.NEW
+    admission: Admission = Admission.QUARANTINED
+    admission_reason: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_admission(cls, data: object) -> object:
+        """旧载荷没有 admission 时，按 evidence 是否非空推断写入策略。
+
+        新鲜构造未传入 evidence（也未显式给 admission）时保持字段默认：
+        quarantined，且 admission_reason 为空。
+        """
+        if not isinstance(data, dict):
+            return data
+        if "admission" in data and data["admission"] not in (None, ""):
+            return data
+        # 构造函数只传 problem_id/title 时没有 evidence 键；不要写成 legacy 推断。
+        if "evidence" not in data and "admission" not in data:
+            return data
+        evidence = data.get("evidence") or []
+        data = {**data, "admission": "verified" if evidence else "quarantined"}
+        if not data.get("admission_reason"):
+            data["admission_reason"] = "has_valid_evidence" if evidence else "no_valid_evidence"
+        return data
 
 
 class ImportedDiscussion(BaseModel):
