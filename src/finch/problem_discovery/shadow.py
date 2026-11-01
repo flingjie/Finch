@@ -19,9 +19,10 @@ from finch.problem_discovery.discover import (
     _collect_sources,
     _fingerprint,
     _fingerprint_payload,
+    admit_problem,
     build_problem,
 )
-from finch.problem_discovery.models import DiscoveryRun, Problem
+from finch.problem_discovery.models import Admission, DiscoveryRun, Problem
 from finch.problem_discovery.repository import (
     DiscoveryRunRepository,
     DiscussionRepository,
@@ -147,6 +148,7 @@ def validate_upsert(
     max_chars_per_source: int | None = 4000,
     now: datetime | None = None,
     write_run: bool = True,
+    force: bool = False,
 ) -> ValidateUpsertResult:
     """对宿主草稿跑 ``build_problem`` 门禁并可选写入（含 shadow repo）。"""
     clock = now or datetime.now(UTC)
@@ -187,6 +189,17 @@ def validate_upsert(
                     "problem_id": problem.problem_id,
                 }
             )
+        problem = admit_problem(problem)
+        existing = problem_repo.get(problem.problem_id)
+        if (
+            existing is not None
+            and existing.admission == Admission.ACCEPTED
+            and not force
+            and problem.admission != Admission.ACCEPTED
+        ):
+            # 人工已接受的卡片不被静默降级；需 force=True 才覆盖。
+            problem.admission = Admission.ACCEPTED
+            problem.admission_reason = existing.admission_reason or "human_accepted"
         problem_repo.upsert(problem)
         kept.append(problem)
 

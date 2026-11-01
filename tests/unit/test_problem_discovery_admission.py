@@ -162,3 +162,93 @@ def test_n05_two_stated_author_ids_allow_e2():
     )
     assert p is not None
     assert {e.evidence_level for e in p.evidence} == {EvidenceLevel.E2}
+
+
+# --- validate_upsert / discover_problems integration ---
+
+import pytest  # noqa: E402
+
+from finch.problem_discovery.importing import import_discussion  # noqa: E402
+from finch.problem_discovery.repository import (  # noqa: E402
+    DiscoveryRunRepository,
+    DiscussionRepository,
+    ProblemRepository,
+)
+from finch.problem_discovery.shadow import validate_upsert  # noqa: E402
+from finch.sources.store import ArtifactRepository  # noqa: E402
+from finch.storage.workspace import Workspace  # noqa: E402
+
+_BODY = "Real body about session restore failure."
+
+
+def _setup(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    refs = import_discussion(
+        ws, url="https://example.com/x", text=_BODY, title="seed", author="u"
+    )
+    return ws, refs[0]
+
+
+def _run(ws, ref, quote, **kw):
+    drafts = {
+        "problems": [
+            {
+                "title": "Session restore",
+                "evidence": [{"source_ref": ref, "quote": quote, "claim": "c"}],
+            }
+        ]
+    }
+    return validate_upsert(
+        drafts,
+        artifact_repo=ArtifactRepository(ws),
+        discussion_repo=DiscussionRepository(ws),
+        problem_repo=ProblemRepository(ws, shadow=True),
+        run_repo=DiscoveryRunRepository(ws, shadow=True),
+        **kw,
+    )
+
+
+def test_validate_upsert_quarantines_invented_quote(tmp_path):
+    ws, ref = _setup(tmp_path)
+    out = _run(ws, ref, "zzz-not-in-body-zzzz")
+    assert out.kept_count == 1
+    assert out.problems[0].admission == Admission.QUARANTINED
+    assert out.problems[0].evidence == []
+    stored = ProblemRepository(ws, shadow=True).get(out.problems[0].problem_id)
+    assert stored is not None and stored.admission == Admission.QUARANTINED
+
+
+def test_validate_upsert_verifies_good_quote(tmp_path):
+    ws, ref = _setup(tmp_path)
+    out = _run(ws, ref, "session restore failure")
+    assert out.problems[0].admission == Admission.VERIFIED
+    assert len(out.problems[0].evidence) == 1
+
+
+def test_validate_upsert_protects_accepted_unless_force(tmp_path):
+    ws, ref = _setup(tmp_path)
+    first = _run(ws, ref, "session restore failure")
+    pid = first.problems[0].problem_id
+    repo = ProblemRepository(ws, shadow=True)
+    accepted = repo.get(pid)
+    accepted.admission = Admission.ACCEPTED
+    accepted.admission_reason = "human_accepted"
+    repo.upsert(accepted)
+
+    # Re-upsert with an invented quote -> would quarantine; must stay accepted.
+    out = _run(ws, ref, "zzz-not-in-body-zzzz")
+    assert out.problems[0].admission == Admission.ACCEPTED
+    assert repo.get(pid).admission == Admission.ACCEPTED
+    assert repo.get(pid).admission_reason == "human_accepted"
+
+    forced = _run(ws, ref, "zzz-not-in-body-zzzz", force=True)
+    assert forced.problems[0].admission == Admission.QUARANTINED
+    assert repo.get(pid).admission == Admission.QUARANTINED
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_validate_upsert_new_problem_unaffected_by_force(tmp_path, force):
+    ws, ref = _setup(tmp_path)
+    out = _run(ws, ref, "session restore failure", force=force)
+    assert out.problems[0].admission == Admission.VERIFIED

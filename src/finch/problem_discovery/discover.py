@@ -395,6 +395,7 @@ def discover_problems(
         for pd in draft.problems:
             problem = build_problem(pd, source_texts=batch_texts, urls=batch_urls, now=clock)
             if problem is not None:
+                problem = admit_problem(problem)
                 problem_repo.upsert(problem)
                 problems_by_id[problem.problem_id] = problem
 
