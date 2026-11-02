@@ -15,6 +15,7 @@ from finch.problem_discovery.discover import (
 )
 from finch.problem_discovery.ids import discussion_id_for
 from finch.problem_discovery.importing import import_discussion
+from finch.problem_discovery.models import EvidenceLevel
 from finch.problem_discovery.repository import (
     DiscoveryRunRepository,
     DiscussionRepository,
@@ -239,3 +240,103 @@ def test_import_fixture_style_discussions(tmp_path):
         "https://example.com/discuss/1",
         "Browser-use session restore fails when the tab crashes mid-task.",
     )
+
+
+def _identity_art(ref: str, body: str, external_id: str, handle: str) -> RawArtifact:
+    return RawArtifact(
+        artifact_id=ref,
+        source=Source.GITHUB,
+        source_type="issue",
+        source_id=ref,
+        author_identity=AuthorIdentity(
+            platform="github", external_id=external_id, handle=handle
+        ),
+        text=body,
+        retrieved_at=datetime(2026, 11, 2, tzinfo=UTC),
+    )
+
+
+def test_validate_upsert_is_host_path_e2(tmp_path):
+    # 验收案例 4：两名真实第一手报告者经 validate-upsert → E2
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    repo = ArtifactRepository(ws)
+    repo.upsert(_identity_art("gh:1", "restore fails for me", "alice", "Alice"))
+    repo.upsert(_identity_art("gh:2", "same restore failure here", "bob", "Bob"))
+    drafts = {
+        "problems": [
+            {
+                "title": "Restore failure",
+                "evidence": [
+                    {
+                        "source_ref": "gh:1",
+                        "quote": "restore fails for me",
+                        "experience": "first_hand",
+                        "author_id": "alice",
+                        "evidence_level": "e2",
+                    },
+                    {
+                        "source_ref": "gh:2",
+                        "quote": "same restore failure here",
+                        "experience": "first_hand",
+                        "author_id": "bob",
+                        "evidence_level": "e2",
+                    },
+                ],
+            }
+        ]
+    }
+    out = validate_upsert(
+        drafts,
+        artifact_repo=repo,
+        discussion_repo=DiscussionRepository(ws),
+        problem_repo=ProblemRepository(ws, shadow=True),
+        run_repo=DiscoveryRunRepository(ws, shadow=True),
+    )
+    assert {e.evidence_level for e in out.problems[0].evidence} == {EvidenceLevel.E2}
+
+
+def test_validate_upsert_accepts_host_claim_support(tmp_path):
+    # 验收案例 1：宿主标 conflicting（带理由）经 validate-upsert 保留
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    repo = ArtifactRepository(ws)
+    repo.upsert(_identity_art("gh:3", "it got slower after update", "carol", "Carol"))
+    drafts = {
+        "problems": [
+            {
+                "title": "Speed claim",
+                "evidence": [
+                    {
+                        "source_ref": "gh:3",
+                        "quote": "it got slower after update",
+                        "claim": "更新后变快了",
+                        "claim_support": "conflicting",
+                        "claim_support_reason": "摘录说变慢，主张说变快",
+                    }
+                ],
+            }
+        ]
+    }
+    out = validate_upsert(
+        drafts,
+        artifact_repo=repo,
+        discussion_repo=DiscussionRepository(ws),
+        problem_repo=ProblemRepository(ws, shadow=True),
+        run_repo=DiscoveryRunRepository(ws, shadow=True),
+    )
+    ev = out.problems[0].evidence[0]
+    assert ev.claim_support == "conflicting"
+    assert ev.claim_support_reason == "摘录说变慢，主张说变快"
+
+
+def test_export_candidates_includes_author(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    ArtifactRepository(ws).upsert(_identity_art("gh:4", "body", "dave", "Dave"))
+    export = export_candidates(
+        artifact_repo=ArtifactRepository(ws), discussion_repo=DiscussionRepository(ws)
+    )
+    row = next(s for s in export.sources if s["id"] == "gh:4")
+    assert row["author_id"] == "dave"
+    assert row["author"] == "Dave"

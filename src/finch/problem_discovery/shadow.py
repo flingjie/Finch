@@ -91,7 +91,7 @@ def export_candidates(
 ) -> CandidatesExport:
     """导出与 control 相同裁剪规则下的来源池。"""
     clock = now or datetime.now(UTC)
-    source_texts, urls, _authors = _collect_sources(
+    source_texts, urls, authors = _collect_sources(
         artifact_repo,
         discussion_repo,
         lookback_hours=lookback_hours,
@@ -102,7 +102,13 @@ def export_candidates(
     payload = _fingerprint_payload(source_texts, version)
     fingerprint = _fingerprint(payload) if source_texts else ""
     sources = [
-        {"id": ref, "url": urls.get(ref, ""), "text": text}
+        {
+            "id": ref,
+            "url": urls.get(ref, ""),
+            "author_id": authors.get(ref, ("", ""))[0],
+            "author": authors.get(ref, ("", ""))[1],
+            "text": text,
+        }
         for ref, text in sorted(source_texts.items())
     ]
     return CandidatesExport(
@@ -159,7 +165,7 @@ def validate_upsert(
             draft_count=0,
         )
 
-    source_texts, urls, _authors = _collect_sources(
+    source_texts, urls, authors = _collect_sources(
         artifact_repo,
         discussion_repo,
         lookback_hours=lookback_hours,
@@ -176,7 +182,14 @@ def validate_upsert(
     for draft in extraction.problems:
         title = draft.title.strip() or "(untitled)"
         before_ev = len(draft.evidence)
-        problem = build_problem(draft, source_texts=source_texts, urls=urls, now=clock)
+        problem = build_problem(
+            draft,
+            source_texts=source_texts,
+            urls=urls,
+            authors=authors,
+            now=clock,
+            host_authored=True,
+        )
         if problem is None:
             dropped.append({"title": title, "reason": "empty_title_or_invalid"})
             continue
