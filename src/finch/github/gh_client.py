@@ -251,7 +251,7 @@ class GhClient:
     def search_issues(self, query: str, *, limit: int = 30) -> list[dict]:
         """跨仓库 issue 搜索（``search/issues``）；调用方自行拼 q（含 type:issue 等）。"""
         cap = max(1, min(limit, 50))
-        q = quote(query, safe=":+ ")
+        q = quote(query, safe=":")
         data = self._gh_json(
             [
                 "gh",
