@@ -87,8 +87,11 @@ app.command("weekly", hidden=True)(frozen.weekly)
 app.command("summarize", hidden=True)(frozen.summarize)
 
 
-# 兼容再导出：现有测试通过 `finch.cli.<name>` 导入/打补丁，保持零改动。
-# isort: off
+# 兼容再导出：测试通过 `finch.cli.<name>` 导入或 monkeypatch，保持零改动。
+# 这些 import 必须留在挂载之后，故放行 E402；名字仅供再导出，故放行 F401。
+from finch.angle_discovery.mindmap_service import MindMapService  # noqa: E402,F401
+from finch.angle_discovery.service import AngleDiscoveryService  # noqa: E402,F401
+from finch.article.service import ArticleAnalysisService  # noqa: E402,F401
 from finch.cli.frozen import (  # noqa: E402,F401
     _lookback_hours,
     _persist_discovery,
@@ -101,30 +104,24 @@ from finch.cli.frozen import (  # noqa: E402,F401
     conversations_get,
     peers_get,
 )
-from finch.angle_discovery.mindmap_service import MindMapService  # noqa: E402,F401
-from finch.angle_discovery.service import AngleDiscoveryService  # noqa: E402,F401
-from finch.article.service import ArticleAnalysisService  # noqa: E402,F401
+from finch.codex.runner import CodexRunner  # noqa: E402,F401
 from finch.content.voice import load_voice_profile  # noqa: E402,F401
 from finch.content.writer import rewrite_with_instruction  # noqa: E402,F401
 from finch.content_summary.service import ContentSummaryService  # noqa: E402,F401
 from finch.drafts.service import DraftService  # noqa: E402,F401
 from finch.evidence.extractor import Extractor  # noqa: E402,F401
-from finch.github.commit_reader import CommitReader  # noqa: E402,F401
-from finch.github.commit_reader import load_commit_details  # noqa: E402,F401
+from finch.github.commit_reader import CommitReader, load_commit_details  # noqa: E402,F401
+from finch.github.gh_client import GhClient  # noqa: E402,F401
 from finch.ideas.commit_service import CommitService  # noqa: E402,F401
 from finch.ideas.divergence import IdeaDiverger  # noqa: E402,F401
 from finch.ideas.fragment_service import FragmentService  # noqa: E402,F401
 from finch.learn.reflection import WeeklyReflectionService  # noqa: E402,F401
-from finch.opportunities.prepare import prepare_contribution  # noqa: E402,F401
-from finch.storage.repositories import ConversationThreadRepository  # noqa: E402,F401
-from finch.codex.runner import CodexRunner  # noqa: E402,F401
-from finch.github.gh_client import GhClient  # noqa: E402,F401
 from finch.llm.openai_compatible import create_runner  # noqa: E402,F401
+from finch.opportunities.prepare import prepare_contribution  # noqa: E402,F401
 from finch.products.discovery import run_product_discovery  # noqa: E402,F401
 from finch.settings import load_settings  # noqa: E402,F401
+from finch.storage.repositories import ConversationThreadRepository  # noqa: E402,F401
 from finch.twitter.opencli_client import OpenCliClient  # noqa: E402,F401
-# isort: on
-
 
 _SUBMODULES = ("frozen", "problem_discovery", "products", "relationships", "sources")
 
