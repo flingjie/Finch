@@ -147,7 +147,7 @@ def _independent_firsthand_authors(
     ids: set[str] = set()
     for ev, _ref, external_id, _handle in bound:
         if external_id and _coerce_experience(ev.experience) is ExperienceLevel.FIRST_HAND:
-            ids.add(external_id)
+            ids.add(external_id.casefold())
     return ids
 
 

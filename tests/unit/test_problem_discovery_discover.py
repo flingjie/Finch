@@ -448,6 +448,39 @@ def test_e2_same_external_id_counts_once():
     assert {e.evidence_level for e in p.evidence} == {EvidenceLevel.E1}
 
 
+def test_e2_case_differing_external_ids_count_once():
+    # 外部 ID 仅大小写不同（Alice / alice）算同一个人 → 宿主 first_hand 仍封顶 E1
+    draft = ProblemDraft(
+        title="t",
+        evidence=[
+            ProblemEvidenceDraft(
+                source_ref="s1",
+                quote="alpha",
+                evidence_level="e2",
+                experience="first_hand",
+                author_id="Alice",
+            ),
+            ProblemEvidenceDraft(
+                source_ref="s2",
+                quote="beta",
+                evidence_level="e2",
+                experience="first_hand",
+                author_id="alice",
+            ),
+        ],
+    )
+    p = build_problem(
+        draft,
+        source_texts={"s1": "alpha here", "s2": "beta there"},
+        urls={},
+        authors={"s1": ("Alice", "Alice"), "s2": ("alice", "alice")},
+        now=_now2(),
+        host_authored=True,
+    )
+    assert p is not None
+    assert {e.evidence_level for e in p.evidence} == {EvidenceLevel.E1}
+
+
 def test_claim_support_requires_host_and_reason():
     # 验收案例 1 / 7：宿主带理由 → 保留；LLM 路径或空理由 → 回落 unknown
     def _draft(reason: str):
