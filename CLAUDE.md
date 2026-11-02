@@ -4,9 +4,9 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 
 ## Project
 
-Finch is an AI product discovery + founder connection copilot. It finds AI products and founders worth watching, explains why they are worth learning from or talking to, breaks down the solution (who it solves what problem for, the prior approach, the new solution, evidence vs. assumption), and threads real interactions into relationship context. Products are the main object of study; founders are the main object of connection. Problems are a first-class object of study alongside products, linked by evidence or manual confirmation. Content production is not the purpose and does not serve connection.
+Finch helps users find problems worth solving themselves, starting from real usage obstacles. Problems are the default entry and the core object of study. Products are existing solutions and alternatives; people are the parties to a problem, validation partners, and potential collaborators. When a problem study needs it, Finch explains an existing solution (who it solves what problem for, the prior approach, the new solution, evidence vs. assumption) and threads real interactions into relationship context. Product discovery, feedback research, and relationships are invoked as needed, and studying a problem does not require starting from product discovery or founder outreach. The operating aim is to advance at least one evidence-backed invest-or-abandon decision each week, recording actual validation, judgment changes, and real feedback separately, with no combined score and no promise of a weekly output. Content production is not the purpose and does not serve connection.
 
-Shipped scope: product discovery + solution explorer + problem inbox (`problem-discovery`) + relationships briefing. Product↔Problem relation layer, Problem Radar, and Investigate are later rounds, as are deeper founder connection, product comparison, and insight accumulation. Canonical definition: `docs/product-contract.md`. Finch is fully standalone — no builderDNA dependency.
+Shipped scope: problem inbox (`problem-discovery`) as the default entry; product discovery, solution explorer, feedback research, and relationships briefing are available when a problem study needs them. Product↔Problem relation layer, Problem Radar, and Investigate are later rounds, as are deeper collaboration, product comparison, and insight accumulation. Canonical definition: `docs/product-contract.md`. Finch is fully standalone — no builderDNA dependency.
 
 ## Commands
 
@@ -22,7 +22,7 @@ Run a single test file/pattern with `uv run pytest tests/unit/test_foo.py -k nam
 
 CLI surface (core): `finch products daily` (`--refresh` runs discovery, else replays latest snapshot; `--view home|browse`; `--json`; `--lookback-hours`; `--question`), `finch products list`, `finch products show <id>`, `finch products feedback <id>` (`--refresh` re-searches user feedback, else replays cache), `finch products explore <id>` (`--refresh` forces re-analysis; auto-runs feedback research when absent/stale; `--skip-feedback` to analyze from existing material only).
 
-Problem discovery: `finch problem-discovery add|discover|list|show|summary|present|last-presented`.
+Problem discovery: `finch problem-discovery add|discover|list|show|summary|present|last-presented|admit` (`admit` marks a card accepted). `list`, `summary`, and `present` default to admission filter `source_checked,accepted`. `source_checked` (引用已核对) means the citation was checked against its source; that is separate from the claim being supported and from the problem being reproduced. Reproduction is updated only from experiment results, in a later round.
 
 Relationships: `finch relationships import|add-person|add-event|record-contact|next|weekly`.
 
