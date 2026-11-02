@@ -110,3 +110,32 @@ def test_build_summary_default_omits_quarantined(tmp_path):
     )
     assert summary.total_cards == 1
     assert summary.cards_without_evidence == ["prob_ok"]
+
+
+def test_summary_reports_cards_needing_review(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    repo = ProblemRepository(ws)
+    repo.upsert(
+        Problem(
+            problem_id="prob_conf",
+            title="conflicted",
+            admission=Admission.SOURCE_CHECKED,
+            evidence=[
+                ProblemEvidence(
+                    source_ref="s",
+                    quote="q",
+                    claim_support="conflicting",
+                    claim_support_reason="r",
+                )
+            ],
+        )
+    )
+    summary = build_summary(
+        problem_repo=repo,
+        artifact_repo=ArtifactRepository(ws),
+        discussion_repo=DiscussionRepository(ws),
+        run_repo=DiscoveryRunRepository(ws),
+    )
+    assert summary.cards_needing_review == ["prob_conf"]
+    assert summary.total_cards == 0  # 冲突卡退出默认重点计数

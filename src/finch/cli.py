@@ -130,7 +130,7 @@ from .practice.observations import StyleObservationService
 from .practice.service import PracticeService
 from .problem_discovery.discover import discover_problems
 from .problem_discovery.importing import import_discussion
-from .problem_discovery.models import Admission, Problem
+from .problem_discovery.models import Admission, Problem, has_unresolved_conflict
 from .problem_discovery.presentation import ProblemPresentationRepository
 from .problem_discovery.repository import (
     DiscoveryRunRepository,
@@ -1506,8 +1506,17 @@ def relationships_show(
     _render_traceback(tb)
 
 
+_ADMISSION_LABEL = {
+    "source_checked": "引用已核对（不代表主张成立或已复现）",
+    "accepted": "已接受",
+    "quarantined": "隔离（无有效证据）",
+    "draft": "草稿",
+}
+
+
 def _render_problem(p: Problem) -> None:
     typer.echo(f"问题：{p.title or '-'}  [{p.problem_id}]")
+    typer.echo(f"  写入状态：{_ADMISSION_LABEL.get(p.admission.value, p.admission.value)}")
     if p.user_type:
         typer.echo(f"  用户类型：{p.user_type}")
     s = p.scenario
@@ -1522,6 +1531,11 @@ def _render_problem(p: Problem) -> None:
         typer.echo(f"    - [{e.evidence_level.value}] {e.claim or '-'}")
         if e.quote:
             typer.echo(f"      摘录：{e.quote}")
+        if e.claim_support != "unknown":
+            label = "支持" if e.claim_support == "supported" else "与摘录冲突"
+            typer.echo(f"      主张核对：{label}（{e.claim_support_reason}）")
+        if e.author:
+            typer.echo(f"      作者：{e.author}")
         if e.url:
             typer.echo(f"      来源：{e.url}")
     if p.hypotheses:
@@ -1608,22 +1622,28 @@ def problem_discovery_list(
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
     full: bool = typer.Option(False, "--full", help="显示完整问题卡片"),
     admission: str = typer.Option(
-        "verified,accepted",
+        "source_checked,accepted",
         "--admission",
-        help="Filter by admission (default verified,accepted; use all for quarantine)",
+        help=(
+            "Filter by admission (default source_checked,accepted; "
+            "legacy verified accepted; all for quarantine)"
+        ),
     ),
 ) -> None:
-    """列出问题卡片（默认 verified,accepted；隔离卡用 --admission all）。"""
+    """列出问题卡片（默认 source_checked,accepted；冲突卡单列待复查；隔离卡用 --admission all）。"""
     settings = load_settings()
     ws = Workspace(settings.paths.var_dir)
     ws.ensure()
-    problems = filter_by_admission(DiscoveredProblemRepository(ws).list_all(), admission)
+    all_problems = DiscoveredProblemRepository(ws).list_all()
+    problems = filter_by_admission(all_problems, admission)
+    conflicted = [p for p in problems if has_unresolved_conflict(p)]
+    problems = [p for p in problems if not has_unresolved_conflict(p)]
     if as_json:
         typer.echo(
             json.dumps([p.model_dump(mode="json") for p in problems], ensure_ascii=False, indent=2)
         )
         return
-    if not problems:
+    if not problems and not conflicted:
         typer.echo("暂无问题。可用 `uv run finch problem-discovery add` 导入讨论，再 `discover`。")
         return
     problems.sort(key=lambda p: (p.title.casefold(), p.problem_id))
@@ -1633,6 +1653,10 @@ def problem_discovery_list(
             _render_problem(p)
         else:
             _render_problem_line(i, p)
+    if conflicted:
+        typer.echo(f"待复查（主张与摘录冲突，不计入重点）：{len(conflicted)} 张")
+        for p in conflicted:
+            typer.echo(f"  - {p.title}  [{p.problem_id}]")
 
 
 @problem_discovery_app.command("show")
@@ -1658,9 +1682,12 @@ def problem_discovery_show(
 def problem_discovery_summary(
     as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
     admission: str = typer.Option(
-        "verified,accepted",
+        "source_checked,accepted",
         "--admission",
-        help="Filter by admission (default verified,accepted; use all for quarantine)",
+        help=(
+            "Filter by admission (default source_checked,accepted; "
+            "legacy verified accepted; all for quarantine)"
+        ),
     ),
 ) -> None:
     """确定性概览：卡片数 / 来源范围 / 缺失字段（供 Skill 呈现，不含重点选择）。"""
@@ -1687,6 +1714,8 @@ def problem_discovery_summary(
         typer.echo(f"  缺证据卡片：{len(summary.cards_without_evidence)} 张")
     if summary.cards_without_role:
         typer.echo(f"  缺角色卡片：{len(summary.cards_without_role)} 张")
+    if summary.cards_needing_review:
+        typer.echo(f"  待复查卡片：{len(summary.cards_needing_review)} 张")
 
 
 @problem_discovery_app.command("admit")
@@ -1700,7 +1729,7 @@ def problem_discovery_admit(
 ) -> None:
     """将卡片标为 accepted（admission_reason=human_accepted）。
 
-    只升级到 accepted（draft / quarantined / verified 均可）。--accepted 必填。
+    只升级到 accepted（draft / quarantined / source_checked 均可）。--accepted 必填。
     已是 accepted 时成功返回且不改写入。--force 仅为后续降级预留。
     """
     if not accepted:

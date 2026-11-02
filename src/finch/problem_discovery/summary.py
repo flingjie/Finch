@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field
 
 from finch.problem_discovery.discover import _collect_sources
+from finch.problem_discovery.models import has_unresolved_conflict
 from finch.problem_discovery.repository import (
     DiscoveryRunRepository,
     DiscussionRepository,
@@ -35,6 +36,8 @@ class ProblemSummary(BaseModel):
     source_scope: str = _SCOPE_NONE  # none | single_repo | mixed
     cards_without_evidence: list[str] = Field(default_factory=list)  # 缺证据的 problem_id
     cards_without_role: list[str] = Field(default_factory=list)  # user_type 为空的 problem_id
+    # 被标 claim 冲突、退出默认重点的卡（problem_id）
+    cards_needing_review: list[str] = Field(default_factory=list)
     latest_run_created_at: str = ""
     latest_run_card_count: int = 0
     groups_available: bool = False  # 问题组尚未合并（P2 落地后置 True）
@@ -68,15 +71,19 @@ def build_summary(
     artifact_repo: ArtifactRepository,
     discussion_repo: DiscussionRepository,
     run_repo: DiscoveryRunRepository,
-    admission: str = "verified,accepted",
+    admission: str = "source_checked,accepted",
 ) -> ProblemSummary:
     """确定性汇总问题发现结果；只读，不调用 LLM。
 
-    默认只计 ``verified,accepted``。隔离卡仍在同一 ``problems/`` 目录，用
+    默认只计 ``source_checked,accepted`` 且无主张冲突的卡；冲突卡进
+    ``cards_needing_review``。隔离卡仍在同一 ``problems/`` 目录，用
     ``admission="all"`` 纳入计数。
     """
-    problems = filter_by_admission(problem_repo.list_all(), admission)
-    _, urls, _authors = _collect_sources(artifact_repo, discussion_repo)
+    admitted = filter_by_admission(problem_repo.list_all(), admission)
+    needs_review = [p.problem_id for p in admitted if has_unresolved_conflict(p)]
+    review_set = set(needs_review)
+    problems = [p for p in admitted if p.problem_id not in review_set]
+    _, urls, _ = _collect_sources(artifact_repo, discussion_repo)
 
     # 来源范围只算被卡片证据引用的来源（不是全量已导入工件池），避免把无关仓库算进去。
     cited_refs = list(
@@ -104,6 +111,7 @@ def build_summary(
         source_scope=summarize_source_scope(source_urls),
         cards_without_evidence=cards_without_evidence,
         cards_without_role=cards_without_role,
+        cards_needing_review=needs_review,
         latest_run_created_at=latest_created_at,
         latest_run_card_count=latest_card_count,
         groups_available=False,

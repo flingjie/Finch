@@ -8,7 +8,12 @@ from typer.testing import CliRunner
 
 from finch import cli
 from finch.cli import app
-from finch.problem_discovery.models import Admission, Problem, ProblemScenario
+from finch.problem_discovery.models import (
+    Admission,
+    Problem,
+    ProblemEvidence,
+    ProblemScenario,
+)
 from finch.problem_discovery.repository import ProblemRepository
 from finch.settings import Paths, Settings
 from finch.storage.workspace import Workspace
@@ -224,3 +229,81 @@ def test_problem_discovery_admit_shadow(tmp_path, monkeypatch):
     assert stored.admission == Admission.ACCEPTED
     assert stored.admission_reason == "human_accepted"
     assert ProblemRepository(ws).get("prob_s") is None
+
+
+def test_show_accepted_without_evidence_displays_gap(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    ProblemRepository(ws).upsert(
+        Problem(
+            problem_id="prob_noev",
+            title="无证据已接受",
+            admission=Admission.ACCEPTED,
+            evidence=[],
+        )
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["problem-discovery", "show", "prob_noev"])
+    assert r.exit_code == 0, r.output
+    assert "已接受" in r.output
+    assert "证据（0 条）" in r.output
+
+
+def test_show_source_checked_wording_and_host_annotations(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    ProblemRepository(ws).upsert(
+        Problem(
+            problem_id="prob_sc",
+            title="已核对",
+            admission=Admission.SOURCE_CHECKED,
+            evidence=[
+                ProblemEvidence(
+                    source_ref="s",
+                    quote="q",
+                    claim_support="supported",
+                    claim_support_reason="原文一致",
+                    author="alice",
+                )
+            ],
+        )
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["problem-discovery", "show", "prob_sc"])
+    assert r.exit_code == 0, r.output
+    assert "引用已核对" in r.output
+    assert "主张核对：支持（原文一致）" in r.output
+    assert "作者：alice" in r.output
+
+
+def test_list_separates_conflicted_cards(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    ws = Workspace(settings.paths.var_dir)
+    ws.ensure()
+    _seed_problem(ws)
+    ProblemRepository(ws).upsert(
+        Problem(
+            problem_id="prob_conf",
+            title="冲突卡",
+            admission=Admission.SOURCE_CHECKED,
+            evidence=[
+                ProblemEvidence(
+                    source_ref="s",
+                    quote="q",
+                    claim_support="conflicting",
+                    claim_support_reason="r",
+                )
+            ],
+        )
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+
+    r = CliRunner().invoke(app, ["problem-discovery", "list"])
+    assert r.exit_code == 0, r.output
+    assert "问题（1）" in r.output
+    assert "待复查（主张与摘录冲突，不计入重点）：1 张" in r.output
+    assert "冲突卡  [prob_conf]" in r.output

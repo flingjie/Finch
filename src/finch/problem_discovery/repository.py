@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from finch.problem_discovery.models import DiscoveryRun, ImportedDiscussion, Problem
+from finch.problem_discovery.models import (
+    DiscoveryRun,
+    ImportedDiscussion,
+    Problem,
+    has_unresolved_conflict,
+)
 from finch.storage.workspace import Workspace
 
 _NS = "problem_discovery"
@@ -33,14 +38,26 @@ def _list_all[T: BaseModel](ws: Workspace, name: str, model_cls: type[T]) -> lis
 
 
 def filter_by_admission(
-    problems: list[Problem], admission: str = "verified,accepted"
+    problems: list[Problem], admission: str = "source_checked,accepted"
 ) -> list[Problem]:
-    """按写入策略过滤收件箱；``all`` / ``*`` / 空串保留全部（含隔离）。"""
+    """按写入策略过滤收件箱；``all`` / ``*`` / 空串保留全部（含隔离）。
+
+    旧 token ``verified`` 兼容映射为 ``source_checked``。
+    """
     key = admission.strip().lower()
     if key in {"", "all", "*"}:
         return list(problems)
-    allowed = {part.strip() for part in key.split(",") if part.strip()}
+    allowed = {
+        "source_checked" if part.strip() == "verified" else part.strip()
+        for part in key.split(",")
+        if part.strip()
+    }
     return [p for p in problems if p.admission.value in allowed]
+
+
+def filter_default_focus(problems: list[Problem]) -> list[Problem]:
+    """默认重点候选：source_checked|accepted 且无未解决的主张冲突（规格 §5）。"""
+    return [p for p in filter_by_admission(problems) if not has_unresolved_conflict(p)]
 
 
 class ProblemRepository:
