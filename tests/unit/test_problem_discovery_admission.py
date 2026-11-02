@@ -99,14 +99,12 @@ def test_n05_same_author_id_two_refs_caps_e1():
                 quote="alpha",
                 evidence_level="e2",
                 author_id="alice",
-                author_identity_confidence="stated",
             ),
             ProblemEvidenceDraft(
                 source_ref="s2",
                 quote="beta",
                 evidence_level="e2",
                 author_id="alice",
-                author_identity_confidence="stated",
             ),
         ],
     )
@@ -136,36 +134,6 @@ def test_n05_empty_authors_two_refs_caps_e1():
     )
     assert p is not None
     assert all(e.evidence_level == EvidenceLevel.E1 for e in p.evidence)
-
-
-def test_n05_two_stated_author_ids_allow_e2():
-    draft = ProblemDraft(
-        title="t",
-        evidence=[
-            ProblemEvidenceDraft(
-                source_ref="s1",
-                quote="alpha",
-                evidence_level="e2",
-                author_id="alice",
-                author_identity_confidence="stated",
-            ),
-            ProblemEvidenceDraft(
-                source_ref="s2",
-                quote="beta",
-                evidence_level="e2",
-                author_id="bob",
-                author_identity_confidence="stated",
-            ),
-        ],
-    )
-    p = build_problem(
-        draft,
-        source_texts={"s1": "alpha here", "s2": "beta there"},
-        urls={},
-        now=_now(),
-    )
-    assert p is not None
-    assert {e.evidence_level for e in p.evidence} == {EvidenceLevel.E2}
 
 
 # --- validate_upsert / discover_problems integration ---

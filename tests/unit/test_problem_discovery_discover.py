@@ -11,6 +11,7 @@ from finch.problem_discovery.discover import (
     ProblemDraft,
     ProblemEvidenceDraft,
     ProblemsExtraction,
+    _collect_sources,
     build_problem,
     discover_problems,
 )
@@ -53,7 +54,7 @@ def _art(
     )
 
 
-def test_build_problem_copies_author_identity_fields():
+def test_build_problem_binds_identity_from_source():
     draft = ProblemDraft(
         title="t",
         evidence=[
@@ -61,16 +62,19 @@ def test_build_problem_copies_author_identity_fields():
                 source_ref="s",
                 quote="traceable",
                 author_id="user-42",
-                author_identity_confidence="stated",
             )
         ],
     )
     p = build_problem(
-        draft, source_texts={"s": "this text is traceable"}, urls={}, now=_now()
+        draft,
+        source_texts={"s": "this text is traceable"},
+        urls={},
+        authors={"s": ("user-42", "u")},
+        now=_now(),
     )
     assert p is not None
     assert p.evidence[0].author_id == "user-42"
-    assert p.evidence[0].author_identity_confidence == "stated"
+    assert p.evidence[0].author == "u"
 
 
 def test_build_problem_requires_title():
@@ -153,15 +157,15 @@ def test_build_problem_two_refs_allow_e2():
                 source_ref="s1",
                 quote="alpha",
                 evidence_level="e2",
+                experience="first_hand",
                 author_id="alice",
-                author_identity_confidence="stated",
             ),
             ProblemEvidenceDraft(
                 source_ref="s2",
                 quote="beta",
                 evidence_level="e3",
+                experience="first_hand",
                 author_id="bob",
-                author_identity_confidence="stated",
             ),
         ],
     )
@@ -169,7 +173,9 @@ def test_build_problem_two_refs_allow_e2():
         draft,
         source_texts={"s1": "alpha here", "s2": "beta there"},
         urls={"s1": "u1", "s2": "u2"},
+        authors={"s1": ("alice", "alice"), "s2": ("bob", "bob")},
         now=_now(),
+        host_authored=True,
     )
     assert {e.evidence_level for e in p.evidence} == {EvidenceLevel.E2}
 
@@ -341,3 +347,140 @@ def test_discover_problems_no_sources_returns_none(tmp_path):
     ws.ensure()
     out = discover_problems(_BoomRunner(), **_discover_kwargs(ws))
     assert out is None
+
+
+def _now2():
+    return datetime(2026, 11, 2, tzinfo=UTC)
+
+
+def test_author_binding_accepts_matching_source_identity():
+    draft = ProblemDraft(
+        title="t",
+        evidence=[ProblemEvidenceDraft(source_ref="s", quote="alpha", author_id="Alice-1")],
+    )
+    p = build_problem(
+        draft,
+        source_texts={"s": "alpha here"},
+        urls={},
+        authors={"s": ("alice-1", "Alice")},
+        now=_now2(),
+    )
+    assert p is not None
+    assert p.evidence[0].author_id == "alice-1"
+    assert p.evidence[0].author == "Alice"
+
+
+def test_author_binding_clears_forged_identity():
+    # 验收案例 2：伪造 author_id 与来源外部 ID 不符 → 身份清空，证据保留
+    draft = ProblemDraft(
+        title="t",
+        evidence=[ProblemEvidenceDraft(source_ref="s", quote="alpha", author_id="mallory")],
+    )
+    p = build_problem(
+        draft,
+        source_texts={"s": "alpha here"},
+        urls={},
+        authors={"s": ("alice-1", "Alice")},
+        now=_now2(),
+    )
+    assert p is not None
+    assert len(p.evidence) == 1
+    assert p.evidence[0].author_id == ""
+    assert p.evidence[0].author == ""
+
+
+def test_e2_requires_host_authored_first_hand():
+    # 验收案例 4 / 4b：同样两条第一手证据，宿主路径 E2，LLM 路径封顶 E1
+    def _draft():
+        return ProblemDraft(
+            title="t",
+            evidence=[
+                ProblemEvidenceDraft(
+                    source_ref="s1",
+                    quote="alpha",
+                    evidence_level="e2",
+                    experience="first_hand",
+                    author_id="alice",
+                ),
+                ProblemEvidenceDraft(
+                    source_ref="s2",
+                    quote="beta",
+                    evidence_level="e2",
+                    experience="first_hand",
+                    author_id="bob",
+                ),
+            ],
+        )
+
+    kw = dict(
+        source_texts={"s1": "alpha here", "s2": "beta there"},
+        urls={},
+        authors={"s1": ("alice", "alice"), "s2": ("bob", "bob")},
+        now=_now2(),
+    )
+    host = build_problem(_draft(), host_authored=True, **kw)
+    llm = build_problem(_draft(), host_authored=False, **kw)
+    assert {e.evidence_level for e in host.evidence} == {EvidenceLevel.E2}
+    assert {e.evidence_level for e in llm.evidence} == {EvidenceLevel.E1}
+
+
+def test_e2_same_external_id_counts_once():
+    # 验收案例 3：同一外部 ID 多条来源算一个人 → E1
+    draft = ProblemDraft(
+        title="t",
+        evidence=[
+            ProblemEvidenceDraft(
+                source_ref="s1", quote="alpha", experience="first_hand", author_id="alice"
+            ),
+            ProblemEvidenceDraft(
+                source_ref="s2", quote="beta", experience="first_hand", author_id="alice"
+            ),
+        ],
+    )
+    p = build_problem(
+        draft,
+        source_texts={"s1": "alpha here", "s2": "beta there"},
+        urls={},
+        authors={"s1": ("alice", "alice"), "s2": ("alice", "alice")},
+        now=_now2(),
+        host_authored=True,
+    )
+    assert {e.evidence_level for e in p.evidence} == {EvidenceLevel.E1}
+
+
+def test_claim_support_requires_host_and_reason():
+    # 验收案例 1 / 7：宿主带理由 → 保留；LLM 路径或空理由 → 回落 unknown
+    def _draft(reason: str):
+        return ProblemDraft(
+            title="t",
+            evidence=[
+                ProblemEvidenceDraft(
+                    source_ref="s",
+                    quote="alpha",
+                    claim="速度变快",
+                    claim_support="conflicting",
+                    claim_support_reason=reason,
+                )
+            ],
+        )
+
+    kw = dict(source_texts={"s": "alpha here"}, urls={}, authors={}, now=_now2())
+    host = build_problem(_draft("摘录说变慢，主张说变快"), host_authored=True, **kw)
+    assert host.evidence[0].claim_support == "conflicting"
+    no_reason = build_problem(_draft(""), host_authored=True, **kw)
+    assert no_reason.evidence[0].claim_support == "unknown"
+    llm = build_problem(_draft("理由"), host_authored=False, **kw)
+    assert llm.evidence[0].claim_support == "unknown"
+
+
+def test_collect_sources_returns_author_map(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.ensure()
+    art = _art("github:issue:9", "body text")
+    art.author_identity.external_id = "carol-7"
+    art.author_identity.handle = "Carol"
+    ArtifactRepository(ws).upsert(art)
+    texts, urls, authors = _collect_sources(
+        ArtifactRepository(ws), DiscussionRepository(ws)
+    )
+    assert authors["github:issue:9"] == ("carol-7", "Carol")

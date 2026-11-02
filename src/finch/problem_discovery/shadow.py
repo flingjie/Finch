@@ -91,7 +91,7 @@ def export_candidates(
 ) -> CandidatesExport:
     """导出与 control 相同裁剪规则下的来源池。"""
     clock = now or datetime.now(UTC)
-    source_texts, urls = _collect_sources(
+    source_texts, urls, _authors = _collect_sources(
         artifact_repo,
         discussion_repo,
         lookback_hours=lookback_hours,
@@ -159,7 +159,7 @@ def validate_upsert(
             draft_count=0,
         )
 
-    source_texts, urls = _collect_sources(
+    source_texts, urls, _authors = _collect_sources(
         artifact_repo,
         discussion_repo,
         lookback_hours=lookback_hours,

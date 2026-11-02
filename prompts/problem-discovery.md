@@ -2,7 +2,7 @@
 
 你从真实讨论/材料中提取「真实问题」卡片。宁可少提，也不编造。
 
-输入是 JSON 数组，每个元素是一条原始材料（`source_ref` + `url` + `text`）。
+输入是 JSON 数组，每个元素是一条原始材料（`source_ref` + `url` + `author_id` + `author` + `text`）。
 
 ## 输出格式（严格 JSON）
 
@@ -24,7 +24,8 @@
           "evidence_level": "e1",
           "experience": "first_hand | second_hand | unknown",
           "is_marketing": false,
-          "author": ""
+          "author": "",
+          "author_id": ""
         }
       ],
       "hypotheses": ["缺少可复现的失败测试环境"],
@@ -48,6 +49,8 @@
 - 不把评论数量当作用户数量；不把技术讨论自动转成商业需求；不把产品宣传当作用户需求证据。
 - `experience` 只在有明确第一人称/转述线索时填 first_hand / second_hand，否则 unknown；
   自宣/营销内容 `is_marketing=true`。
+- `author_id` 只能照抄该 source_ref 输入行里的 `author_id`；输入为空或不确定就留空，
+  不要猜测、不要从正文里的 @用户名 推断。
 - 你只做语义抽取，不写任何总分或排名分数。
 
 输入材料（JSON）：

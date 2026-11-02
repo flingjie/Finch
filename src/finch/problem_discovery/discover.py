@@ -37,7 +37,7 @@ from finch.problem_discovery.repository import (
 from finch.sources.store import ArtifactRepository
 
 _PROMPT = Path("prompts/problem-discovery.md")
-PROBLEM_VERSION = "problem-v2"
+PROBLEM_VERSION = "problem-v3"
 
 _LEVEL_RANK = {
     EvidenceLevel.E0: 0,
@@ -61,6 +61,8 @@ class ProblemEvidenceDraft(BaseModel):
     author: str = ""
     author_id: str = ""
     author_identity_confidence: str = "unknown"
+    claim_support: str = "unknown"
+    claim_support_reason: str = ""
 
 
 class ProblemDraft(BaseModel):
@@ -113,27 +115,50 @@ def _coerce_experience(value: str) -> ExperienceLevel:
         return ExperienceLevel.UNKNOWN
 
 
-def _coerce_identity_confidence(value: str) -> Literal["unknown", "stated", "verified"]:
-    if value in ("unknown", "stated", "verified"):
-        return cast(Literal["unknown", "stated", "verified"], value)
-    return "unknown"
-
-
 def _cap_level(level: EvidenceLevel, cap: EvidenceLevel) -> EvidenceLevel:
     if _LEVEL_RANK[level] > _LEVEL_RANK[cap]:
         return cap
     return level
 
 
-def _independent_author_ids(pending: list[tuple[ProblemEvidenceDraft, str]]) -> set[str]:
-    """非空 author_id，且身份置信度为 stated 或 verified。"""
+def _bind_author(
+    ev: ProblemEvidenceDraft, ref: str, authors: dict[str, tuple[str, str]]
+) -> tuple[str, str]:
+    """草稿 author_id 与来源外部 ID 一致（忽略大小写）→ 绑定；否则身份清空。
+
+    身份只能来自采集边界（RawArtifact.author_identity）；LLM 无法发明身份。
+    一条来源最多算一个人（评论者不另算，见规格 §3.2）。
+    """
+    external_id, handle = authors.get(ref, ("", ""))
+    aid = ev.author_id.strip().casefold()
+    if aid and external_id and aid == external_id.casefold():
+        return external_id, handle
+    return "", ""
+
+
+def _independent_firsthand_authors(
+    bound: list[tuple[ProblemEvidenceDraft, str, str, str]],
+    *,
+    host_authored: bool,
+) -> set[str]:
+    """E2 计数：来源绑定的外部 ID × 宿主标注 first_hand。LLM 自报不计数。"""
+    if not host_authored:
+        return set()
     ids: set[str] = set()
-    for ev, _ in pending:
-        aid = ev.author_id.strip()
-        conf = (ev.author_identity_confidence or "unknown").strip().lower()
-        if aid and conf in {"stated", "verified"}:
-            ids.add(aid)
+    for ev, _ref, external_id, _handle in bound:
+        if external_id and _coerce_experience(ev.experience) is ExperienceLevel.FIRST_HAND:
+            ids.add(external_id)
     return ids
+
+
+def _coerce_claim_support(
+    value: str, reason: str, *, host_authored: bool
+) -> tuple[Literal["supported", "conflicting", "unknown"], str]:
+    """主张支持只能由宿主显式标注且必须附理由；否则强制 unknown。"""
+    v = (value or "unknown").strip().lower()
+    if not host_authored or v not in ("supported", "conflicting") or not reason.strip():
+        return "unknown", ""
+    return cast(Literal["supported", "conflicting"], v), reason.strip()
 
 
 def _public_level_cap(
@@ -141,7 +166,7 @@ def _public_level_cap(
     is_marketing: bool,
     independent_authors: int,
 ) -> EvidenceLevel:
-    """公开材料等级上限：营销→E0；≥2 个独立 stated/verified 作者→E2；否则 E1。"""
+    """公开材料等级上限：营销→E0；≥2 个来源绑定的第一手作者→E2；否则 E1。"""
     if is_marketing:
         return EvidenceLevel.E0
     if independent_authors >= 2:
@@ -149,9 +174,20 @@ def _public_level_cap(
     return EvidenceLevel.E1
 
 
-def render_candidates_json(source_texts: dict[str, str], urls: dict[str, str]) -> str:
+def render_candidates_json(
+    source_texts: dict[str, str],
+    urls: dict[str, str],
+    authors: dict[str, tuple[str, str]] | None = None,
+) -> str:
+    amap = authors or {}
     rows = [
-        {"source_ref": ref, "url": urls.get(ref, ""), "text": text}
+        {
+            "source_ref": ref,
+            "url": urls.get(ref, ""),
+            "author_id": amap.get(ref, ("", ""))[0],
+            "author": amap.get(ref, ("", ""))[1],
+            "text": text,
+        }
         for ref, text in sorted(source_texts.items())
     ]
     return json.dumps(rows, ensure_ascii=False, indent=2)
@@ -171,18 +207,23 @@ def build_problem(
     *,
     source_texts: dict[str, str],
     urls: dict[str, str],
+    authors: dict[str, tuple[str, str]] | None = None,
     now: datetime,
+    host_authored: bool = False,
 ) -> Problem | None:
     """确定性把 draft 转为 Problem；空标题丢弃；evidence 必须回溯到来源，否则丢弃。
 
-    URL 只取原始来源映射；空 quote 丢弃；证据等级按已核验材料封顶。
-    无有效 evidence 时在 unknowns 追加「未验证：无证据」，不把推测当事实。
+    URL 只取原始来源映射；空 quote 丢弃；作者身份只接受与采集端绑定一致的 ID
+    （否则清空）；E2 需两个来源绑定的不同外部 ID 且宿主标 first_hand；
+    claim_support 只接受宿主带理由的标注。无有效 evidence 时在 unknowns
+    追加「未验证：无证据」，不把推测当事实。
     """
     if not draft.title.strip():
         return None
 
+    amap = authors or {}
     normalized = {ref: _normalize(t) for ref, t in source_texts.items()}
-    pending: list[tuple[ProblemEvidenceDraft, str]] = []
+    bound: list[tuple[ProblemEvidenceDraft, str, str, str]] = []
     for ev in draft.evidence:
         ref = ev.source_ref.strip()
         if ref not in source_texts:
@@ -190,19 +231,22 @@ def build_problem(
         quote = ev.quote.strip()
         if not quote:
             continue  # 空摘录不可核验 → 丢弃
-        quote_norm = _normalize(quote)
-        if quote_norm not in normalized[ref]:
+        if _normalize(quote) not in normalized[ref]:
             continue  # 摘录无法回溯到来源 → 丢弃（防伪造）
-        pending.append((ev, ref))
+        external_id, handle = _bind_author(ev, ref, amap)
+        bound.append((ev, ref, external_id, handle))
 
-    independent_authors = len(_independent_author_ids(pending))
+    independent = len(_independent_firsthand_authors(bound, host_authored=host_authored))
 
     evidence: list[ProblemEvidence] = []
-    for ev, ref in pending:
+    for ev, ref, external_id, handle in bound:
         raw_level = _coerce_level(ev.evidence_level)
         cap = _public_level_cap(
             is_marketing=ev.is_marketing,
-            independent_authors=independent_authors,
+            independent_authors=independent,
+        )
+        support, support_reason = _coerce_claim_support(
+            ev.claim_support, ev.claim_support_reason, host_authored=host_authored
         )
         evidence.append(
             ProblemEvidence(
@@ -213,11 +257,10 @@ def build_problem(
                 evidence_level=_cap_level(raw_level, cap),
                 experience=_coerce_experience(ev.experience),
                 is_marketing=ev.is_marketing,
-                author=ev.author.strip(),
-                author_id=ev.author_id,
-                author_identity_confidence=_coerce_identity_confidence(
-                    ev.author_identity_confidence
-                ),
+                author=handle,
+                author_id=external_id,
+                claim_support=support,
+                claim_support_reason=support_reason,
             )
         )
 
@@ -277,13 +320,17 @@ def _collect_sources(
     max_sources: int | None = None,
     max_chars_per_source: int | None = None,
     now: datetime | None = None,
-) -> tuple[dict[str, str], dict[str, str]]:
-    """收集可抽取来源；可选时间窗、条数上限与单源字符预算。"""
+) -> tuple[dict[str, str], dict[str, str], dict[str, tuple[str, str]]]:
+    """收集可抽取来源；返回 (正文, URL, 作者身份) 三个映射。
+
+    作者身份来自采集边界：RawArtifact.author_identity → (external_id, handle)；
+    手工导入讨论无结构化身份 → ("", "")。可选时间窗、条数上限与单源字符预算。
+    """
     clock = now or datetime.now(UTC)
     cutoff = (
         clock - timedelta(hours=lookback_hours) if lookback_hours and lookback_hours > 0 else None
     )
-    candidates: list[tuple[datetime, str, str, str]] = []
+    candidates: list[tuple[datetime, str, str, str, str, str]] = []
     for art in artifact_repo.list_all():
         text = art.text.strip()
         if not text:
@@ -291,7 +338,16 @@ def _collect_sources(
         ts = _source_timestamp(art.published_at, art.retrieved_at) or clock
         if cutoff is not None and ts < cutoff:
             continue
-        candidates.append((ts, art.artifact_id, text, art.canonical_url))
+        candidates.append(
+            (
+                ts,
+                art.artifact_id,
+                text,
+                art.canonical_url,
+                art.author_identity.external_id,
+                art.author_identity.handle,
+            )
+        )
     for disc in discussion_repo.list_all():
         text = disc.text.strip()
         if not text:
@@ -299,7 +355,7 @@ def _collect_sources(
         ts = disc.retrieved_at or clock
         if cutoff is not None and ts < cutoff:
             continue
-        candidates.append((ts, disc.discussion_id, text, disc.url))
+        candidates.append((ts, disc.discussion_id, text, disc.url, "", ""))
 
     # 新近优先；同时间按 id 稳定排序。
     candidates.sort(key=lambda row: (-row[0].timestamp(), row[1]))
@@ -308,12 +364,14 @@ def _collect_sources(
 
     source_texts: dict[str, str] = {}
     urls: dict[str, str] = {}
-    for _, ref, text, url in candidates:
+    authors: dict[str, tuple[str, str]] = {}
+    for _, ref, text, url, external_id, handle in candidates:
         if max_chars_per_source is not None and max_chars_per_source > 0:
             text = text[:max_chars_per_source]
         source_texts[ref] = text
         urls[ref] = url
-    return source_texts, urls
+        authors[ref] = (external_id, handle)
+    return source_texts, urls, authors
 
 
 def _fingerprint_payload(source_texts: dict[str, str], version: str) -> dict[str, object]:
@@ -362,7 +420,7 @@ def discover_problems(
     ``force`` 只绕过指纹缓存，不把已 ``ACCEPTED`` 的卡片降级。
     """
     clock = now or datetime.now(UTC)
-    source_texts, urls = _collect_sources(
+    source_texts, urls, authors = _collect_sources(
         artifact_repo,
         discussion_repo,
         lookback_hours=lookback_hours,
@@ -388,13 +446,23 @@ def discover_problems(
     for batch_refs in _batches(refs, size):
         batch_texts = {ref: source_texts[ref] for ref in batch_refs}
         batch_urls = {ref: urls.get(ref, "") for ref in batch_refs}
-        draft = assess_problems(runner, render_candidates_json(batch_texts, batch_urls))
+        batch_authors = {ref: authors.get(ref, ("", "")) for ref in batch_refs}
+        draft = assess_problems(
+            runner, render_candidates_json(batch_texts, batch_urls, batch_authors)
+        )
         if draft.eval_failed:
             # 失败不写 DiscoveryRun，下次同指纹仍会重试。
             return None
         any_batch = True
         for pd in draft.problems:
-            problem = build_problem(pd, source_texts=batch_texts, urls=batch_urls, now=clock)
+            problem = build_problem(
+                pd,
+                source_texts=batch_texts,
+                urls=batch_urls,
+                authors=batch_authors,
+                now=clock,
+                host_authored=False,
+            )
             if problem is not None:
                 problem = admit_problem(problem)
                 # force 只绕过指纹缓存；已接受的卡片在这条路径上保持 ACCEPTED。

@@ -76,7 +76,7 @@ def build_summary(
     ``admission="all"`` 纳入计数。
     """
     problems = filter_by_admission(problem_repo.list_all(), admission)
-    _, urls = _collect_sources(artifact_repo, discussion_repo)
+    _, urls, _authors = _collect_sources(artifact_repo, discussion_repo)
 
     # 来源范围只算被卡片证据引用的来源（不是全量已导入工件池），避免把无关仓库算进去。
     cited_refs = list(
