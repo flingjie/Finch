@@ -13,52 +13,52 @@ import typer
 import yaml
 from pydantic import ValidationError
 
-from .angle_discovery.mindmap_models import MindMap
-from .angle_discovery.mindmap_render import render_combination, render_mindmap
-from .angle_discovery.mindmap_repository import MindMapRepository
-from .angle_discovery.mindmap_service import MindMapService, map_id
-from .angle_discovery.models import AngleBrief
-from .angle_discovery.repository import AngleBriefRepository
-from .angle_discovery.service import AngleContext, AngleDiscoveryService
-from .article.models import ArticleReport
-from .article.repository import ArticleReportRepository
-from .article.service import ArticleAnalysisService
-from .codex.runner import CodexRunner
-from .codex.structured_output import StructuredOutputError
-from .comparison.models import ComparisonRecord
-from .comparison.repository import ComparisonRepository
-from .comparison.service import ComparisonContext, ComparisonService
-from .content.jobs import AuthorPosition, ContentJob, ContentJobStatus
-from .content.models import Draft
-from .content.voice import (
+from finch.angle_discovery.mindmap_models import MindMap
+from finch.angle_discovery.mindmap_render import render_combination, render_mindmap
+from finch.angle_discovery.mindmap_repository import MindMapRepository
+from finch.angle_discovery.mindmap_service import MindMapService, map_id
+from finch.angle_discovery.models import AngleBrief
+from finch.angle_discovery.repository import AngleBriefRepository
+from finch.angle_discovery.service import AngleContext, AngleDiscoveryService
+from finch.article.models import ArticleReport
+from finch.article.repository import ArticleReportRepository
+from finch.article.service import ArticleAnalysisService
+from finch.codex.runner import CodexRunner
+from finch.codex.structured_output import StructuredOutputError
+from finch.comparison.models import ComparisonRecord
+from finch.comparison.repository import ComparisonRepository
+from finch.comparison.service import ComparisonContext, ComparisonService
+from finch.content.jobs import AuthorPosition, ContentJob, ContentJobStatus
+from finch.content.models import Draft
+from finch.content.voice import (
     ApprovedExample,
     RejectedExample,
     load_voice_profile,
     propose_voice_updates,
     save_voice_profile,
 )
-from .content.writer import rewrite_with_instruction
-from .content_summary.models import ContentSummary
-from .content_summary.repository import ContentSummaryRepository
-from .content_summary.service import ContentSummaryService, summary_id
-from .conversations.models import ConversationThread
-from .conversations.service import (
+from finch.content.writer import rewrite_with_instruction
+from finch.content_summary.models import ContentSummary
+from finch.content_summary.repository import ContentSummaryRepository
+from finch.content_summary.service import ContentSummaryService, summary_id
+from finch.conversations.models import ConversationThread
+from finch.conversations.service import (
     ConversationService,
     ConversationServiceError,
     active_observation_notes,
     commitment_id_for,
 )
-from .dialogue.models import DialogueNote
-from .dialogue.service import DialogueService, DialogueServiceError
-from .discovery.daily import DailyDiscoveryResult
-from .drafts.service import DraftCreateResult, DraftService
-from .engagement.flow import EngagementRunResult
-from .engagement.metrics import (
+from finch.dialogue.models import DialogueNote
+from finch.dialogue.service import DialogueService, DialogueServiceError
+from finch.discovery.daily import DailyDiscoveryResult
+from finch.drafts.service import DraftCreateResult, DraftService
+from finch.engagement.flow import EngagementRunResult
+from finch.engagement.metrics import (
     compute_relationship_metrics,
     explain_recommendation_adjustments,
     render_relationship_metrics,
 )
-from .engagement.models import (
+from finch.engagement.models import (
     ActionFeedbackValue,
     DiscoverySnapshot,
     HotPostEntry,
@@ -68,56 +68,56 @@ from .engagement.models import (
     RecommendationEntry,
     RecommendationFeedback,
 )
-from .evidence.extractor import Extractor, build_cards
-from .expression_methods.models import ExpressionMethod, MethodVerdict, ReplyMethodVerdict
-from .expression_methods.repository import ExpressionMethodRepository
-from .expression_methods.service import ExpressionMethodService
-from .github.commit_reader import CommitReader, load_commit_details
-from .github.gh_client import GhClient, GhError
-from .github.local_repo import resolve_commit_repo
-from .ideas.commit_service import CommitService
-from .ideas.divergence import IdeaDiverger
-from .ideas.fragment_service import FragmentService
-from .ideas.models import FactBundle, IdeaExploration, Selection
-from .ideas.service import IdeaService
-from .inbox.models import DecisionAction, InboxTrack
-from .inbox.service import InboxDecisionService, list_items
-from .ingest.resolver import SourceResolver
-from .knowledge.models import KnowledgeBasis
-from .knowledge.service import KnowledgeService
-from .learn.models import Feedback, OutcomeAssessment
-from .learn.reflection import (
+from finch.evidence.extractor import Extractor, build_cards
+from finch.expression_methods.models import ExpressionMethod, MethodVerdict, ReplyMethodVerdict
+from finch.expression_methods.repository import ExpressionMethodRepository
+from finch.expression_methods.service import ExpressionMethodService
+from finch.github.commit_reader import CommitReader, load_commit_details
+from finch.github.gh_client import GhClient, GhError
+from finch.github.local_repo import resolve_commit_repo
+from finch.ideas.commit_service import CommitService
+from finch.ideas.divergence import IdeaDiverger
+from finch.ideas.fragment_service import FragmentService
+from finch.ideas.models import FactBundle, IdeaExploration, Selection
+from finch.ideas.service import IdeaService
+from finch.inbox.models import DecisionAction, InboxTrack
+from finch.inbox.service import InboxDecisionService, list_items
+from finch.ingest.resolver import SourceResolver
+from finch.knowledge.models import KnowledgeBasis
+from finch.knowledge.service import KnowledgeService
+from finch.learn.models import Feedback, OutcomeAssessment
+from finch.learn.reflection import (
     WeeklyReflectionService,
     idea_revision_diff_lines,
     learning_loop_lines,
     render_reflection,
 )
-from .learn.weekly import weekly_analysis
-from .llm.openai_compatible import create_runner
-from .materials.service import MaterialService
-from .notion.client import NotionClient, NotionError
-from .opportunities.models import Opportunity as PreferredOpportunity
-from .opportunities.models import OpportunityStatus
-from .opportunities.prepare import (
+from finch.learn.weekly import weekly_analysis
+from finch.llm.openai_compatible import create_runner
+from finch.materials.service import MaterialService
+from finch.notion.client import NotionClient, NotionError
+from finch.opportunities.models import Opportunity as PreferredOpportunity
+from finch.opportunities.models import OpportunityStatus
+from finch.opportunities.prepare import (
     PreparedArtifact,
     PreparedContribution,
     artifact_id_for,
     effective_form,
     prepare_contribution,
 )
-from .opportunities.render import render_opportunity_questions
-from .opportunities.repository import (
+from finch.opportunities.render import render_opportunity_questions
+from finch.opportunities.repository import (
     ArtifactRepository as PreferredArtifactRepository,
 )
-from .opportunities.repository import (
+from finch.opportunities.repository import (
     OpportunityRepository as PreferredOpportunityRepository,
 )
-from .opportunities.service import OpportunityService
-from .peers.models import PeerProfile
-from .peers.service import PeerService, profile_url_for
-from .practice.attempts import PracticeOutcome
-from .practice.discovery import PracticeDiscoveryService
-from .practice.models import (
+from finch.opportunities.service import OpportunityService
+from finch.peers.models import PeerProfile
+from finch.peers.service import PeerService, profile_url_for
+from finch.practice.attempts import PracticeOutcome
+from finch.practice.discovery import PracticeDiscoveryService
+from finch.practice.models import (
     ExerciseLiteral,
     FinalSourceLiteral,
     ModeLiteral,
@@ -126,57 +126,57 @@ from .practice.models import (
     StructureHint,
     UserActionLiteral,
 )
-from .practice.observations import StyleObservationService
-from .practice.service import PracticeService
-from .problem_discovery.discover import discover_problems
-from .problem_discovery.importing import import_discussion
-from .problem_discovery.models import Admission, Problem, has_unresolved_conflict
-from .problem_discovery.presentation import ProblemPresentationRepository
-from .problem_discovery.repository import (
+from finch.practice.observations import StyleObservationService
+from finch.practice.service import PracticeService
+from finch.problem_discovery.discover import discover_problems
+from finch.problem_discovery.importing import import_discussion
+from finch.problem_discovery.models import Admission, Problem, has_unresolved_conflict
+from finch.problem_discovery.presentation import ProblemPresentationRepository
+from finch.problem_discovery.repository import (
     DiscoveryRunRepository,
     DiscussionRepository,
     filter_by_admission,
 )
-from .problem_discovery.repository import (
+from finch.problem_discovery.repository import (
     ProblemRepository as DiscoveredProblemRepository,
 )
-from .problem_discovery.summary import build_summary
-from .problems.render import render_active_problems
-from .products.discovery import DiscoveryRunReport, run_product_discovery
-from .products.explorer import explore_product
-from .products.feedback import research_feedback
-from .products.models import FeedbackReport, Product, Solution
-from .products.presentation import ProductPresentationRepository
-from .products.repository import (
+from finch.problem_discovery.summary import build_summary
+from finch.problems.render import render_active_problems
+from finch.products.discovery import DiscoveryRunReport, run_product_discovery
+from finch.products.explorer import explore_product
+from finch.products.feedback import research_feedback
+from finch.products.models import FeedbackReport, Product, Solution
+from finch.products.presentation import ProductPresentationRepository
+from finch.products.repository import (
     FeedbackRepository as ProductFeedbackRepository,
 )
-from .products.repository import (
+from finch.products.repository import (
     ProductRepository,
     ProductSnapshotRepository,
     SolutionRepository,
 )
-from .products.urls import product_url_for_key
-from .products.urls import profile_url_for as product_profile_url_for
-from .profile import bootstrap as profile_bootstrap
-from .profile.models import (
+from finch.products.urls import product_url_for_key
+from finch.products.urls import profile_url_for as product_profile_url_for
+from finch.profile import bootstrap as profile_bootstrap
+from finch.profile.models import (
     PracticeEvidenceStatus,
     PracticeItem,
     load_practice_profile,
     save_practice_profile,
 )
-from .profile.render import render_user_practices
-from .projections import (
+from finch.profile.render import render_user_practices
+from finch.projections import (
     TodayFocus,
     build_daily_context,
     build_pending_actions,
     build_today_focus,
 )
-from .reddit.opencli_client import RedditOpenCliClient
-from .relationships.briefing import generate_briefing
-from .relationships.ids import person_id_for
-from .relationships.importing import import_public_link as rel_import_link
-from .relationships.importing import import_summary as rel_import_summary
-from .relationships.models import (
+from finch.reddit.opencli_client import RedditOpenCliClient
+from finch.relationships.briefing import generate_briefing
+from finch.relationships.ids import person_id_for
+from finch.relationships.importing import import_public_link as rel_import_link
+from finch.relationships.importing import import_summary as rel_import_summary
+from finch.relationships.models import (
     Briefing,
     Contact,
     ContactDirection,
@@ -185,16 +185,16 @@ from .relationships.models import (
     PersonTraceback,
     TaskEvent,
 )
-from .relationships.repository import (
+from finch.relationships.repository import (
     BriefingRepository,
     ContactRepository,
     NextStepRepository,
     PersonRepository,
     TaskEventRepository,
 )
-from .relationships.service import RelationshipsService
-from .settings import Settings, load_settings
-from .storage.repositories import (
+from finch.relationships.service import RelationshipsService
+from finch.settings import Settings, load_settings
+from finch.storage.repositories import (
     ContentJobRepository,
     ConversationThreadRepository,
     CriticReportRepository,
@@ -217,11 +217,11 @@ from .storage.repositories import (
     RecommendationFeedbackRepository,
     StyleObservationRepository,
 )
-from .storage.workspace import Workspace
-from .twitter.normalizer import normalize_tweets
-from .twitter.opencli_client import OpenCliClient
-from .twitter.query_builder import QueryBuilder
-from .webfetch.fetcher import WebFetcher
+from finch.storage.workspace import Workspace
+from finch.twitter.normalizer import normalize_tweets
+from finch.twitter.opencli_client import OpenCliClient
+from finch.twitter.query_builder import QueryBuilder
+from finch.webfetch.fetcher import WebFetcher
 
 app = typer.Typer(help="Finch: AI 产品发现与创业者连接 Copilot。")
 
