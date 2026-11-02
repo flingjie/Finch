@@ -45,11 +45,15 @@ class ProblemStatus(StrEnum):
 
 
 class Admission(StrEnum):
-    """写入策略，与 ProblemStatus 并行：草稿 / 隔离 / 已核实 / 已接受。"""
+    """写入策略，与 ProblemStatus 并行：草稿 / 隔离 / 引用已核对 / 已接受。
+
+    ``SOURCE_CHECKED`` 只表示「至少一条摘录可回溯到来源」；不表示主张被支持，
+    更不表示问题已复现（复现只能由实验结果更新，属后续轮次）。
+    """
 
     DRAFT = "draft"
     QUARANTINED = "quarantined"
-    VERIFIED = "verified"
+    SOURCE_CHECKED = "source_checked"
     ACCEPTED = "accepted"
 
 
@@ -74,6 +78,11 @@ class ProblemEvidence(BaseModel):
     author: str = ""
     author_id: str = ""
     author_identity_confidence: Literal["unknown", "stated", "verified"] = "unknown"
+    # 主张支持情况：只能由宿主显式标注（build_problem 的 host_authored 路径），
+    # 且必须附理由；代码不做语义推断。author_identity_confidence 保留兼容读取，
+    # 不再参与门禁（身份可信 = 与采集端 author_identity 绑定成功）。
+    claim_support: Literal["supported", "conflicting", "unknown"] = "unknown"
+    claim_support_reason: str = ""
 
 
 class Problem(BaseModel):
@@ -97,23 +106,29 @@ class Problem(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _legacy_admission(cls, data: object) -> object:
-        """旧载荷没有 admission 时，按 evidence 是否非空推断写入策略。
+        """旧载荷兼容：``verified`` 映射 ``source_checked``；缺 admission 按 evidence 推断。
 
         新鲜构造未传入 evidence（也未显式给 admission）时保持字段默认：
-        quarantined，且 admission_reason 为空。
+        quarantined，且 admission_reason 为空。只改内存表示，不回写磁盘。
         """
         if not isinstance(data, dict):
             return data
+        if data.get("admission") == "verified":
+            data = {**data, "admission": "source_checked"}
         if "admission" in data and data["admission"] not in (None, ""):
             return data
-        # 构造函数只传 problem_id/title 时没有 evidence 键；不要写成 legacy 推断。
         if "evidence" not in data and "admission" not in data:
             return data
         evidence = data.get("evidence") or []
-        data = {**data, "admission": "verified" if evidence else "quarantined"}
+        data = {**data, "admission": "source_checked" if evidence else "quarantined"}
         if not data.get("admission_reason"):
-            data["admission_reason"] = "has_valid_evidence" if evidence else "no_valid_evidence"
+            data["admission_reason"] = "source_checked" if evidence else "no_valid_evidence"
         return data
+
+
+def has_unresolved_conflict(problem: Problem) -> bool:
+    """任一证据被宿主标为与主张冲突 → 需复查，退出默认重点。"""
+    return any(e.claim_support == "conflicting" for e in problem.evidence)
 
 
 class ImportedDiscussion(BaseModel):

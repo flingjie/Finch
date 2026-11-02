@@ -255,8 +255,8 @@ def admit_problem(problem: Problem, *, force_draft: bool = False) -> Problem:
         problem.admission_reason = "host_draft"
         return problem
     if problem.evidence:
-        problem.admission = Admission.VERIFIED
-        problem.admission_reason = "has_valid_evidence"
+        problem.admission = Admission.SOURCE_CHECKED
+        problem.admission_reason = "source_checked"
     else:
         problem.admission = Admission.QUARANTINED
         problem.admission_reason = "no_valid_evidence"

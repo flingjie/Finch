@@ -67,9 +67,9 @@ def test_build_summary_counts_and_scope(tmp_path):
             ],
         )
     )
-    # 缺证据 + 缺角色，但显式 verified 才会进入默认 inbox 计数。
+    # 缺证据 + 缺角色；显式 source_checked 才计入本次 admission 过滤。
     problem_repo.upsert(
-        Problem(problem_id="prob_2", title="no evidence", admission=Admission.VERIFIED)
+        Problem(problem_id="prob_2", title="no evidence", admission=Admission.SOURCE_CHECKED)
     )
 
     summary = build_summary(
@@ -77,6 +77,7 @@ def test_build_summary_counts_and_scope(tmp_path):
         artifact_repo=artifact_repo,
         discussion_repo=discussion_repo,
         run_repo=run_repo,
+        admission="source_checked,accepted",
     )
     assert summary.total_cards == 2
     assert summary.total_sources == 2

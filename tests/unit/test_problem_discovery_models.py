@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from finch.problem_discovery.ids import discussion_id_for, problem_id_for
 from finch.problem_discovery.models import (
+    Admission,
     EvidenceLevel,
     Problem,
     ProblemEvidence,
     ProblemStatus,
+    has_unresolved_conflict,
 )
 
 
@@ -53,3 +55,54 @@ def test_enum_values():
     assert EvidenceLevel.E0.value == "e0"
     assert EvidenceLevel.E4.value == "e4"
     assert ProblemStatus.NEW.value == "new"
+
+
+def test_admission_source_checked_value():
+    assert Admission.SOURCE_CHECKED.value == "source_checked"
+    assert not hasattr(Admission, "VERIFIED")
+
+
+def test_legacy_verified_admission_maps_to_source_checked():
+    # 旧磁盘数据 admission: verified → 读取映射，不报错（验收案例 6）
+    p = Problem.model_validate(
+        {"problem_id": "prob_old", "title": "t", "admission": "verified"}
+    )
+    assert p.admission == Admission.SOURCE_CHECKED
+
+
+def test_legacy_dict_without_admission_infers_source_checked():
+    raw = {
+        "problem_id": "prob_legacy",
+        "title": "legacy",
+        "evidence": [{"source_ref": "s1", "quote": "q", "claim": "c"}],
+    }
+    assert Problem.model_validate(raw).admission == Admission.SOURCE_CHECKED
+
+
+def test_claim_support_defaults_unknown():
+    e = ProblemEvidence(source_ref="s", quote="q")
+    assert e.claim_support == "unknown"
+    assert e.claim_support_reason == ""
+
+
+def test_has_unresolved_conflict():
+    clean = Problem(
+        problem_id="p1",
+        title="t",
+        evidence=[ProblemEvidence(source_ref="s", quote="q")],
+    )
+    conflicted = Problem(
+        problem_id="p2",
+        title="t",
+        evidence=[
+            ProblemEvidence(source_ref="s", quote="q"),
+            ProblemEvidence(
+                source_ref="s2",
+                quote="q2",
+                claim_support="conflicting",
+                claim_support_reason="摘录与主张相反",
+            ),
+        ],
+    )
+    assert not has_unresolved_conflict(clean)
+    assert has_unresolved_conflict(conflicted)

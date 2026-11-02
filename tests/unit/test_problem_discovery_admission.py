@@ -34,7 +34,7 @@ def test_legacy_dict_without_admission_infers_from_evidence():
         ],
     }
     p = Problem.model_validate(raw)
-    assert p.admission == Admission.VERIFIED
+    assert p.admission == Admission.SOURCE_CHECKED
 
 
 def test_legacy_dict_without_admission_empty_evidence_quarantines():
@@ -48,10 +48,10 @@ def test_admit_problem_quarantines_without_evidence():
         problem_id="prob_a",
         title="a",
         evidence=[],
-        admission=Admission.VERIFIED,
+        admission=Admission.SOURCE_CHECKED,
         admission_reason="wrong",
     )
-    assert p.admission == Admission.VERIFIED
+    assert p.admission == Admission.SOURCE_CHECKED
     assert p.admission_reason == "wrong"
     out = admit_problem(p)
     assert out is p
@@ -59,7 +59,7 @@ def test_admit_problem_quarantines_without_evidence():
     assert p.admission_reason == "no_valid_evidence"
 
 
-def test_admit_problem_verifies_with_evidence():
+def test_admit_problem_source_checks_with_evidence():
     p = Problem(
         problem_id="prob_b",
         title="b",
@@ -71,8 +71,8 @@ def test_admit_problem_verifies_with_evidence():
     assert p.admission_reason == "wrong"
     out = admit_problem(p)
     assert out is p
-    assert p.admission == Admission.VERIFIED
-    assert p.admission_reason == "has_valid_evidence"
+    assert p.admission == Admission.SOURCE_CHECKED
+    assert p.admission_reason == "source_checked"
 
 
 def test_admit_problem_force_draft():
@@ -228,7 +228,7 @@ def test_validate_upsert_quarantines_invented_quote(tmp_path):
 def test_validate_upsert_verifies_good_quote(tmp_path):
     ws, ref = _setup(tmp_path)
     out = _run(ws, ref, "session restore failure")
-    assert out.problems[0].admission == Admission.VERIFIED
+    assert out.problems[0].admission == Admission.SOURCE_CHECKED
     assert len(out.problems[0].evidence) == 1
 
 
@@ -257,7 +257,7 @@ def test_validate_upsert_protects_accepted_unless_force(tmp_path):
 def test_validate_upsert_new_problem_unaffected_by_force(tmp_path, force):
     ws, ref = _setup(tmp_path)
     out = _run(ws, ref, "session restore failure", force=force)
-    assert out.problems[0].admission == Admission.VERIFIED
+    assert out.problems[0].admission == Admission.SOURCE_CHECKED
 
 
 def test_discover_problems_keeps_accepted_on_force_reextract(tmp_path):
@@ -285,7 +285,7 @@ def test_discover_problems_keeps_accepted_on_force_reextract(tmp_path):
     kwargs = _discover_kwargs(ws)
     first = discover_problems(_VerifiedRunner(), **kwargs)
     assert first is not None and len(first) == 1
-    assert first[0].admission == Admission.VERIFIED
+    assert first[0].admission == Admission.SOURCE_CHECKED
     pid = first[0].problem_id
 
     repo = ProblemRepository(ws)
@@ -332,20 +332,20 @@ def test_discover_problems_keeps_accepted_on_force_reextract(tmp_path):
 
     fresh = by_title["New timeout"]
     assert fresh.problem_id != pid
-    assert fresh.admission == Admission.VERIFIED
-    assert fresh.admission_reason == "has_valid_evidence"
+    assert fresh.admission == Admission.SOURCE_CHECKED
+    assert fresh.admission_reason == "source_checked"
     stored_fresh = repo.get(fresh.problem_id)
     assert stored_fresh is not None
-    assert stored_fresh.admission == Admission.VERIFIED
+    assert stored_fresh.admission == Admission.SOURCE_CHECKED
 
 
 def test_filter_default_hides_quarantined():
     items = [
-        Problem(problem_id="1", title="a", admission=Admission.VERIFIED),
+        Problem(problem_id="1", title="a", admission=Admission.SOURCE_CHECKED),
         Problem(problem_id="2", title="b", admission=Admission.QUARANTINED),
         Problem(problem_id="3", title="c", admission=Admission.ACCEPTED),
     ]
-    out = filter_by_admission(items, "verified,accepted")
+    out = filter_by_admission(items, "source_checked,accepted")
     assert [p.problem_id for p in out] == ["1", "3"]
 
 

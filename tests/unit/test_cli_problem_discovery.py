@@ -27,7 +27,7 @@ def _seed_problem(ws: Workspace) -> str:
             user_type="Agent 应用开发者",
             scenario=ProblemScenario(task="调试 Agent 失败"),
             next_action="interview",
-            admission=Admission.VERIFIED,
+            admission=Admission.SOURCE_CHECKED,
         )
     )
     return "prob_x"
@@ -40,7 +40,10 @@ def test_problem_discovery_list_json(tmp_path, monkeypatch):
     _seed_problem(ws)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
-    r = CliRunner().invoke(app, ["problem-discovery", "list", "--json"])
+    r = CliRunner().invoke(
+        app,
+        ["problem-discovery", "list", "--admission", "source_checked,accepted", "--json"],
+    )
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert [p["problem_id"] for p in payload] == ["prob_x"]
@@ -53,7 +56,9 @@ def test_problem_discovery_list_compact(tmp_path, monkeypatch):
     _seed_problem(ws)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
-    r = CliRunner().invoke(app, ["problem-discovery", "list"])
+    r = CliRunner().invoke(
+        app, ["problem-discovery", "list", "--admission", "source_checked,accepted"]
+    )
     assert r.exit_code == 0, r.output
     assert "Agent 失败后难以复现" in r.output
     assert "查看：uv run finch problem-discovery show prob_x" in r.output
@@ -67,7 +72,9 @@ def test_problem_discovery_list_full(tmp_path, monkeypatch):
     _seed_problem(ws)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
-    r = CliRunner().invoke(app, ["problem-discovery", "list", "--full"])
+    r = CliRunner().invoke(
+        app, ["problem-discovery", "list", "--admission", "source_checked,accepted", "--full"]
+    )
     assert r.exit_code == 0, r.output
     assert "场景：任务=调试 Agent 失败" in r.output
 
@@ -110,7 +117,10 @@ def test_problem_discovery_summary_json(tmp_path, monkeypatch):
     _seed_problem(ws)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
-    r = CliRunner().invoke(app, ["problem-discovery", "summary", "--json"])
+    r = CliRunner().invoke(
+        app,
+        ["problem-discovery", "summary", "--admission", "source_checked,accepted", "--json"],
+    )
     assert r.exit_code == 0, r.output
     payload = json.loads(r.output)
     assert payload["total_cards"] == 1
